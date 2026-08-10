@@ -17,8 +17,8 @@ public class GameHealthSessionTests
 
         session.Receive(new HttpRequest("GET", "/health/live", "HTTP/1.1"));
 
-        await Assert.That(session.Response.Status).IsEqualTo(200);
-        await Assert.That(session.Response.Body).IsEqualTo("Live");
+        await Assert.That(session.CapturedResponse.Status).IsEqualTo(200);
+        await Assert.That(session.CapturedResponse.Body).IsEqualTo("Live");
     }
 
     [Test]
@@ -29,17 +29,17 @@ public class GameHealthSessionTests
         using var session = new GameHealthSessionFake(server, healthState);
 
         session.Receive(new HttpRequest("GET", "/health/ready", "HTTP/1.1"));
-        await Assert.That(session.Response.Status).IsEqualTo(503);
-        await Assert.That(session.Response.Body).IsEqualTo("Not ready");
+        await Assert.That(session.CapturedResponse.Status).IsEqualTo(503);
+        await Assert.That(session.CapturedResponse.Body).IsEqualTo("Not ready");
 
         healthState.MarkReady();
         session.Receive(new HttpRequest("GET", "/health/ready", "HTTP/1.1"));
-        await Assert.That(session.Response.Status).IsEqualTo(200);
-        await Assert.That(session.Response.Body).IsEqualTo("Ready");
+        await Assert.That(session.CapturedResponse.Status).IsEqualTo(200);
+        await Assert.That(session.CapturedResponse.Body).IsEqualTo("Ready");
 
         healthState.MarkNotReady();
         session.Receive(new HttpRequest("GET", "/health/ready", "HTTP/1.1"));
-        await Assert.That(session.Response.Status).IsEqualTo(503);
+        await Assert.That(session.CapturedResponse.Status).IsEqualTo(503);
     }
 
     [Test]
@@ -60,14 +60,14 @@ public class GameHealthSessionTests
 
         session.Receive(new HttpRequest(method, path, "HTTP/1.1"));
 
-        await Assert.That(session.Response.Status).IsEqualTo(404);
-        await Assert.That(session.Response.Body).IsEqualTo("Not found");
+        await Assert.That(session.CapturedResponse.Status).IsEqualTo(404);
+        await Assert.That(session.CapturedResponse.Body).IsEqualTo("Not found");
     }
 
     private sealed class GameHealthSessionFake(HttpServer server, GameHealthState healthState)
         : GameHealthSession(server, healthState)
     {
-        public HttpResponse Response { get; private set; }
+        public HttpResponse CapturedResponse { get; private set; }
 
         public void Receive(HttpRequest request)
         {
@@ -76,7 +76,7 @@ public class GameHealthSessionTests
 
         protected override void SendHealthResponseAsync(HttpResponse response)
         {
-            Response = response;
+            CapturedResponse = response;
         }
     }
 }
