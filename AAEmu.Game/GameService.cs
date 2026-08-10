@@ -15,6 +15,7 @@ using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Services.Health;
 using AAEmu.Game.Utils.Scripts;
 
 using Microsoft.Extensions.Hosting;
@@ -31,17 +32,24 @@ public sealed class GameService : IHostedService, IDisposable
     public static TimeSpan TimeSinceStart => s_timeProvider.GetUtcNow().UtcDateTime.Subtract(StartTime);
 
     private readonly ManagerOrchestrator _orchestrator;
+    private readonly GameHealthState _healthState;
 
-    public GameService(IServiceProvider serviceProvider, ManagerOrchestrator orchestrator, TimeProvider timeProvider)
+    public GameService(
+        IServiceProvider serviceProvider,
+        ManagerOrchestrator orchestrator,
+        TimeProvider timeProvider,
+        GameHealthState healthState)
     {
         SingletonContainer.ServiceProvider = serviceProvider;
         _orchestrator = orchestrator;
+        _healthState = healthState;
         s_timeProvider = timeProvider;
         StartTime = timeProvider.GetUtcNow().UtcDateTime;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        _healthState.MarkNotReady();
         Logger.Info("Starting daemon: AAEmu.Game");
 
         // Check for updates
@@ -117,12 +125,14 @@ public sealed class GameService : IHostedService, IDisposable
         StreamNetwork.Instance.Start();
         LoginNetwork.Instance.Start();
 
+        _healthState.MarkReady();
         stopWatch.Stop();
         Logger.Info($"Server started! Took {stopWatch.Elapsed}");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        _healthState.MarkNotReady();
         Logger.Info("Stopping daemon...");
 
         await SaveManager.Instance.StopAsync();
@@ -149,6 +159,7 @@ public sealed class GameService : IHostedService, IDisposable
 
     public void Dispose()
     {
+        _healthState.MarkNotReady();
         Logger.Info("Disposing...");
 
         LogManager.Flush();

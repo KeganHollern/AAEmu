@@ -23,6 +23,10 @@ The configuration structure is as follows:
     "Host": "*",
     "Port": 1280
 },
+"HealthNetwork": {
+    "Host": "*",
+    "Port": 1281
+},
 "LoginNetwork": {
     "Host": "%login_host%",             <-- the IP address of the login server
     "Port": "%login_port%"              <-- the port of the login server

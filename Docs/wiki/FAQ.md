@@ -80,6 +80,7 @@ Common defaults:
 - `1239`: game public
 - `1250`: game stream
 - `1280`: optional game Web API
+- `1281`: game liveness and readiness checks
 
 ### What should `GameServers` host be for local use
 
