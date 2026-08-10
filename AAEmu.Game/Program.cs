@@ -9,6 +9,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.Models;
 using AAEmu.Game.Services;
+using AAEmu.Game.Services.Health;
 using AAEmu.Game.Services.WebApi;
 using AAEmu.Game.Utils.DB;
 using AAEmu.Game.Utils.Scripts;
@@ -108,8 +109,10 @@ public static class Program
                 services.AddOptions();
                 services.Configure<AppConfiguration>(configurationRoot);
                 services.AddSingleton(TimeProvider.System);
+                services.AddSingleton<GameHealthState>();
 
                 // -- Hosted services --
+                services.AddSingleton<IHostedService, GameHealthService>();
                 services.AddSingleton<IHostedService, GameService>();
                 services.AddSingleton<IHostedService, WebApiService>();
                 services.AddSingleton<IHostedService, DiscordBotService>();

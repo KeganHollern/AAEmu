@@ -49,6 +49,8 @@ var gameServer = builder.AddProject<Projects.AAEmu_Game>("game-server")
         isExternal: true)
     .WithEndpoint(name: "game-stream-public", port: 1250, targetPort: 1250, isProxied: false,
         protocol: ProtocolType.Tcp, isExternal: true)
+    .WithEndpoint(name: "health", targetPort: 1281, scheme: "http", isExternal: false)
+    .WithHttpHealthCheck("/health/ready", endpointName: "health")
     .WithEnvironment("Connections__MySQLProvider__Database", mySqlGameDb.Resource.DatabaseName)
     .WithEnvironment("Connections__MySQLProvider__Host", mySql.Resource.PrimaryEndpoint.Property(EndpointProperty.Host))
     .WithEnvironment("Connections__MySQLProvider__Port", mySql.Resource.PrimaryEndpoint.Property(EndpointProperty.Port))

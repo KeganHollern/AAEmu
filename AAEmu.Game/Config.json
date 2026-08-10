@@ -15,6 +15,10 @@
         "Host": "*",
         "Port": 1280
     },
+    "HealthNetwork": {
+        "Host": "*",
+        "Port": 1281
+    },
     "LoginNetwork": {
         "Host": "%login_host%",
         "Port": "%login_port%"
