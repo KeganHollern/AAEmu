@@ -180,7 +180,7 @@ public class WorldCell
             var oX = sectorX * WorldManager.SECTOR_HMAP_RESOLUTION + unitX;
             var oY = sectorY * WorldManager.SECTOR_HMAP_RESOLUTION + unitY;
 
-            var height = node.GetHeight(unitX, unitY);
+            var height = node.GetHeightAtUnit(unitX, unitY);
             var value = (ushort)(height * Template.HeightMaxCoefficient);
 
             HeightMap[oX, oY] = value;
