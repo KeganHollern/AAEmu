@@ -128,33 +128,6 @@ public class WorldTemplate
     }
 
     /// <summary>
-    /// Line linear interpolation
-    /// </summary>
-    /// <param name="start"></param>
-    /// <param name="end"></param>
-    /// <param name="target">value 0 to 1</param>
-    /// <returns></returns>
-    private static float Lerp(float start, float end, float target)
-    {
-        return start + (end - start) * target;
-    }
-
-    /// <summary>
-    /// Square linear interpolation
-    /// </summary>
-    /// <param name="cX0Y0">Bottom-Left</param>
-    /// <param name="cX1Y0">Bottom-Right</param>
-    /// <param name="cX0Y1">Top-Left</param>
-    /// <param name="cX1Y1">Top-Right</param>
-    /// <param name="tx">value 0 to 1</param>
-    /// <param name="ty">value 0 to 1</param>
-    /// <returns></returns>
-    private static float Blerp(float cX0Y0, float cX1Y0, float cX0Y1, float cX1Y1, float tx, float ty)
-    {
-        return Lerp(Lerp(cX0Y0, cX1Y0, tx), Lerp(cX0Y1, cX1Y1, tx), ty);
-    }
-
-    /// <summary>
     /// Picks the nearest 4 points of a square that contain target position
     /// </summary>
     /// <param name="x"></param>
@@ -166,7 +139,7 @@ public class WorldTemplate
     }
 
     /// <summary>
-    /// Gets height at target position using interpolation
+    /// Gets height at target position using the terrain mesh's triangle interpolation
     /// </summary>
     /// <param name="x"></param>
     /// <param name="y"></param>
@@ -179,15 +152,19 @@ public class WorldTemplate
         var border = FindNearestSignificantPoints((int)Math.Floor(x), (int)Math.Floor(y));
 
         // Get heights for these points
-        var heightTl = GetRawHeightMapHeight(border.Left, border.Top);
-        var heightTr = GetRawHeightMapHeight(border.Right, border.Top);
-        var heightBl = GetRawHeightMapHeight(border.Left, border.Bottom);
-        var heightBr = GetRawHeightMapHeight(border.Right, border.Bottom);
+        var heightX0Y0 = GetRawHeightMapHeight(border.Left, border.Top);
+        var heightX1Y0 = GetRawHeightMapHeight(border.Right, border.Top);
+        var heightX0Y1 = GetRawHeightMapHeight(border.Left, border.Bottom);
+        var heightX1Y1 = GetRawHeightMapHeight(border.Right, border.Bottom);
         var offX = (x - border.Left) / 2;
         var offY = (y - border.Top) / 2;
-        var height = Blerp(heightTl, heightTr, heightBl, heightBr, offX, offY); // bilinear interpolation
 
-        return height;
+        // CryEngine renders each heightmap square as two triangles split between X1Y0 and X0Y1.
+        // Interpolate on that same surface so the server agrees with the terrain visible to clients.
+        if (offX + offY < 1f)
+            return heightX0Y0 * (1f - offX - offY) + heightX1Y0 * offX + heightX0Y1 * offY;
+
+        return heightX1Y1 * (offX + offY - 1f) + heightX0Y1 * (1f - offX) + heightX1Y0 * (1f - offY);
     }
 
     /// <summary>
