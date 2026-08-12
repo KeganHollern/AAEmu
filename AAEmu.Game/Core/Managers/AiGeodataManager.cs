@@ -314,10 +314,10 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
             }
             
             // Now compare to heightmap data
-            if (closestDistance >= float.MaxValue) 
+            if (closestDistance >= float.MaxValue)
             {
-                // Fall back to raw heightmap data
-                closestPoint = new Vector3(pos.X, pos.Y, worldTemplate.GetRawHeightMapHeight((int)MathF.Round(pos.X), (int)MathF.Round(pos.Y)));
+                // Fall back to the terrain surface rendered by the client.
+                closestPoint = new Vector3(pos.X, pos.Y, worldTemplate.GetHeight(pos.X, pos.Y));
             }
 
             return closestPoint.Z;

@@ -226,66 +226,14 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
     }
 
     /// <summary>
-    /// Line linear interpolation
-    /// </summary>
-    /// <param name="start"></param>
-    /// <param name="end"></param>
-    /// <param name="target">value 0 to 1</param>
-    /// <returns></returns>
-    private static float Lerp(float start, float end, float target)
-    {
-        return start + (end - start) * target;
-    }
-
-    /// <summary>
-    /// Square linear interpolation
-    /// </summary>
-    /// <param name="cX0Y0">Bottom-Left</param>
-    /// <param name="cX1Y0">Bottom-Right</param>
-    /// <param name="cX0Y1">Top-Left</param>
-    /// <param name="cX1Y1">Top-Right</param>
-    /// <param name="tx">value 0 to 1</param>
-    /// <param name="ty">value 0 to 1</param>
-    /// <returns></returns>
-    private static float Blerp(float cX0Y0, float cX1Y0, float cX0Y1, float cX1Y1, float tx, float ty)
-    {
-        return Lerp(Lerp(cX0Y0, cX1Y0, tx), Lerp(cX0Y1, cX1Y1, tx), ty);
-    }
-
-    /// <summary>
-    /// Picks the nearest 4 points of a square that contain target position
-    /// </summary>
-    /// <param name="x"></param>
-    /// <param name="y"></param>
-    /// <returns></returns>
-    private static System.Drawing.Rectangle FindNearestSignificantPoints(int x, int y)
-    {
-        return new System.Drawing.Rectangle(x - x % 2, y - y % 2, 2, 2);
-    }
-
-    /// <summary>
-    /// Gets height at target position using interpolation
+    /// Gets height at target position using the template's terrain surface
     /// </summary>
     /// <param name="x"></param>
     /// <param name="y"></param>
     /// <returns></returns>
     public float GetHeight(float x, float y)
     {
-        // return GetRawHeightMapHeight((int)x, (int)y); // <-- the old way we used to do things
-
-        // Get bordering points
-        var border = FindNearestSignificantPoints((int)Math.Floor(x), (int)Math.Floor(y));
-
-        // Get heights for these points
-        var heightTl = Template.GetRawHeightMapHeight(border.Left, border.Top);
-        var heightTr = Template.GetRawHeightMapHeight(border.Right, border.Top);
-        var heightBl = Template.GetRawHeightMapHeight(border.Left, border.Bottom);
-        var heightBr = Template.GetRawHeightMapHeight(border.Right, border.Bottom);
-        var offX = (x - border.Left) / 2;
-        var offY = (y - border.Top) / 2;
-        var height = Blerp(heightTl, heightTr, heightBl, heightBr, offX, offY); // bilinear interpolation
-
-        return height;
+        return Template.GetHeight(x, y);
     }
 
     /// <summary>
