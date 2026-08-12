@@ -237,6 +237,14 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
     }
 
     /// <summary>
+    /// Tries to get height at the target position using the template's terrain surface.
+    /// </summary>
+    public bool TryGetHeight(float x, float y, out float height)
+    {
+        return Template.TryGetHeight(x, y, out height);
+    }
+
+    /// <summary>
     /// Get Sector at specific offset
     /// </summary>
     /// <param name="sectorX">X offset of the Sector</param>

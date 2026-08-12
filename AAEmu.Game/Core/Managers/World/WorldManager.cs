@@ -756,31 +756,33 @@ public class WorldManager(
     /// <returns></returns>
     public float GetHeight(uint zoneKey, float x, float y, float z)
     {
-        // try to find Z first in GeoData, and then in HeightMaps, if not found, leave Z as it is
-        var height = 0f;
+        return TryGetHeight(zoneKey, x, y, z, out var height) ? height : 0f;
+    }
+
+    /// <summary>
+    /// Tries to get floor height for a zone, using geodata first and the heightmap second.
+    /// </summary>
+    public bool TryGetHeight(uint zoneKey, float x, float y, float z, out float height)
+    {
+        height = 0f;
+        if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(z))
+            return false;
+
         var world = GetWorldTemplateByZoneKey(zoneKey);
+        if (world is null)
+            return false;
 
-        if (AppConfiguration.Instance.World.GeoDataMode)
+        if (AppConfiguration.Instance.World?.GeoDataMode == true &&
+            world.GeoData is not null &&
+            world.GeoData.TryGetHeight(new Vector3(x, y, z), out height))
         {
-            var position = new Vector3(x, y, z);
-            height = world?.GeoData.GetHeight(position) ?? height;
+            return true;
         }
 
-        if (height != 0f || !AppConfiguration.Instance.HeightMapsEnable)
-        {
-            return height;
-        }
+        if (!AppConfiguration.Instance.HeightMapsEnable)
+            return false;
 
-        try
-        {
-            height = world?.GetHeight(x, y) ?? 0f;
-        }
-        catch
-        {
-            height = 0f;
-        }
-
-        return height;
+        return world.TryGetHeight(x, y, out height);
     }
 
     /// <summary>
@@ -790,39 +792,40 @@ public class WorldManager(
     /// <returns>Height at target world transform, or transform.World.Position.Z if no heightmap could be found</returns>
     public float GetHeight(Transform transform)
     {
-        // try to find Z first in GeoData, and then in HeightMaps, if not found, leave Z as it is
-        var height = 0f;
-        var world = GetWorld(transform.InstanceId);
-        if (world == null)
-        {
+        if (TryGetHeight(transform, out var height))
             return height;
-        }
-        if (AppConfiguration.Instance.World.GeoDataMode)
+
+        return transform is null || GetWorld(transform.InstanceId) is null ? 0f : transform.World.Position.Z;
+    }
+
+    /// <summary>
+    /// Tries to get floor height for a world transform, using geodata first and the heightmap second.
+    /// </summary>
+    public bool TryGetHeight(Transform transform, out float height)
+    {
+        height = 0f;
+        if (transform is null)
+            return false;
+
+        var world = GetWorld(transform.InstanceId);
+        if (world is null)
+            return false;
+
+        var worldPosition = transform.World.Position;
+        if (!float.IsFinite(worldPosition.X) || !float.IsFinite(worldPosition.Y) || !float.IsFinite(worldPosition.Z))
+            return false;
+
+        if (AppConfiguration.Instance.World?.GeoDataMode == true &&
+            world.Template.GeoData is not null &&
+            world.Template.GeoData.TryGetHeight(worldPosition, out height))
         {
-            height = world.Template.GeoData?.GetHeight(transform.World.Position) ?? 0f;
+            return true;
         }
 
-        // check, as there is no geodata for main_world yet
-        if (height == 0f)
-        {
-            if (AppConfiguration.Instance.HeightMapsEnable)
-            {
-                try
-                {
-                    height = world.GetHeight(transform.World.Position.X, transform.World.Position.Y);
-                }
-                catch
-                {
-                    height = transform.World.Position.Z;
-                }
-            }
-            else
-            {
-                height = transform.World.Position.Z;
-            }
-        }
+        if (!AppConfiguration.Instance.HeightMapsEnable)
+            return false;
 
-        return height;
+        return world.TryGetHeight(worldPosition.X, worldPosition.Y, out height);
     }
 
     public float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId)
@@ -853,11 +856,8 @@ public class WorldManager(
         }
 
         // 3. Terrain height retrieval
-        finalHeight = GetHeight(zoneId, x, y, z);
-        if (finalHeight != 0/* && Math.Abs(worldHeight - Spawner.Position.Z) <= 0.1f*/)
-        {
+        if (TryGetHeight(zoneId, x, y, z, out finalHeight))
             return finalHeight;
-        }
 
         // 4. Take the default height
         return ai.HomePosition.Z;

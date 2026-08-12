@@ -120,7 +120,6 @@ public class WorldCell
             if (Loaded)
                 return this;
 
-            HeightMap = new ushort[WorldManager.CELL_HMAP_RESOLUTION, WorldManager.CELL_HMAP_RESOLUTION];
             LoadBaiFiles();
             Loaded = LoadCellHeightMapFromClientData();
         }
@@ -146,6 +145,8 @@ public class WorldCell
         {
             return true;
         }
+
+        HeightMap = new ushort[WorldManager.CELL_HMAP_RESOLUTION, WorldManager.CELL_HMAP_RESOLUTION];
 
         // Logger.Debug($"Loading {heightMapFile}");
 
@@ -233,8 +234,9 @@ public class WorldCell
     public float GetHeightMapDataInCell(int heightMapDataX, int heightMapDataY)
     {
         if (HeightMap == null ||
-            heightMapDataX < 0 || heightMapDataX > WorldManager.CELL_HMAP_RESOLUTION ||
-            heightMapDataY < 0 || heightMapDataY > WorldManager.CELL_HMAP_RESOLUTION)
+            heightMapDataX < 0 || heightMapDataX >= HeightMap.GetLength(0) ||
+            heightMapDataY < 0 || heightMapDataY >= HeightMap.GetLength(1) ||
+            !double.IsFinite(Template.HeightMaxCoefficient) || Template.HeightMaxCoefficient <= 0d)
         {
             return 0f; // out of bounds or not loaded
         }
