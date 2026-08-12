@@ -1,9 +1,8 @@
-﻿using System.Drawing;
-
-namespace AAEmu.Game.Models.ClientData;
+﻿namespace AAEmu.Game.Models.ClientData;
 
 public class NodeCell
 {
+    private const int FullResolution = 32;
     private const int Inv5Cm = 20;
     private const uint Mask12Bit = (1 << 12) - 1;
 
@@ -61,7 +60,6 @@ public class NodeCell
         Init();
         if (!disabledReCalc && Version < 7)
             RescaleToInt();
-        UpScale();
     }
 
     public float RawDataToHeight(uint data)
@@ -104,6 +102,32 @@ public class NodeCell
         return 0f;
     }
 
+    /// <summary>
+    /// Samples the node's native height grid at a full-resolution sector coordinate.
+    /// Packed surface flags are excluded before interpolating the decoded heights.
+    /// </summary>
+    public float GetHeightAtUnit(ushort unitX, ushort unitY)
+    {
+        if (nSize <= 0)
+            return 0f;
+
+        var sourceScale = (nSize - 1) / (float)FullResolution;
+        var sourceX = unitX * sourceScale;
+        var sourceY = unitY * sourceScale;
+        var sourceX0 = (ushort)MathF.Floor(sourceX);
+        var sourceY0 = (ushort)MathF.Floor(sourceY);
+        var sourceX1 = (ushort)Math.Min(sourceX0 + 1, nSize - 1);
+        var sourceY1 = (ushort)Math.Min(sourceY0 + 1, nSize - 1);
+
+        return Blerp(
+            GetHeight(sourceX0, sourceY0),
+            GetHeight(sourceX1, sourceY0),
+            GetHeight(sourceX0, sourceY1),
+            GetHeight(sourceX1, sourceY1),
+            sourceX - sourceX0,
+            sourceY - sourceY0);
+    }
+
     private void Init()
     {
         fMin = fOffset;
@@ -138,48 +162,4 @@ public class NodeCell
         return Lerp(Lerp(cX0Y0, cX1Y0, tx), Lerp(cX0Y1, cX1Y1, tx), ty);
     }
 
-    private Rectangle FindNearestSignificantPoints(int x, int y)
-    {
-        return new Rectangle(x / nSize, y / nSize, 1, 1);
-    }
-
-    private ushort GetRawHeight(int x, int y)
-    {
-        return RawDataByIndex((ushort)x, (ushort)y);
-    }
-
-    private void UpScale()
-    {
-        if (nSize > 0 && nSize < 33)
-        {
-            var sourceScale = nSize / 33f;
-            var result = new ushort[33 * 33];
-
-            for (var targetX = 0; targetX <= 32; targetX++)
-                for (var targetY = 0; targetY <= 32; targetY++)
-                {
-                    var index = targetX * 33 + targetY;
-
-                    var sourceX = (ushort)Math.Floor(targetX * sourceScale);
-                    var sourceY = (ushort)Math.Floor(targetY * sourceScale);
-
-                    var nearestRawPoints = FindNearestSignificantPoints(sourceX, sourceY);
-
-                    // Get heights for these points
-                    var rawHeightTL = GetRawHeight(nearestRawPoints.Left, nearestRawPoints.Top);
-                    var rawHeightTR = GetRawHeight(nearestRawPoints.Right, nearestRawPoints.Top);
-                    var rawHeightBL = GetRawHeight(nearestRawPoints.Left, nearestRawPoints.Bottom);
-                    var rawHeightBR = GetRawHeight(nearestRawPoints.Right, nearestRawPoints.Bottom);
-                    // Calculate offset within points
-                    var offX = targetX * sourceScale - sourceX;
-                    var offY = targetY * sourceScale - sourceY;
-                    var height = Blerp(rawHeightTL, rawHeightTR, rawHeightBL, rawHeightBR, offX, offY);
-
-                    result[index] = (ushort)Math.Round(height);
-                    //result[index] = RawDataByIndex(sourceX, sourceY);
-                }
-
-            pHMData = result;
-        }
-    }
 }
