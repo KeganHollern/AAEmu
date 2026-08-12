@@ -1391,10 +1391,11 @@ public class NpcSpawner : Spawner<Npc>
         );
     }
 
-    public static T Clone<T>(T obj)
+    public static T Clone<T>(T obj) where T : NpcSpawner
     {
-        var inst = obj.GetType().GetMethod("MemberwiseClone", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var clone = (T)obj.MemberwiseClone();
+        clone.Position = obj.Position?.Clone();
 
-        return (T)inst?.Invoke(obj, null);
+        return clone;
     }
 }
