@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Reflection;
 
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.UnitTests.Game.Models.Game.World;
