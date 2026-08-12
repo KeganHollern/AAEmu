@@ -836,19 +836,19 @@ public class WorldManager(
             return finalHeight;
         }
 
-        // 1. If an NPC can fly, the height is taken from the spawner's position.
+        // 1. If an NPC can fly, preserve its runtime home height.
         if (ai.Owner.CanFly)
         {
-            finalHeight = ai.Owner.Spawner.Position.Z;
+            finalHeight = ai.HomePosition.Z;
             return finalHeight;
         }
 
-        // 2. For HoldPositionBehavior and IdleBehavior, the height is taken from the spawner.
+        // 2. For HoldPositionBehavior and IdleBehavior, preserve the runtime home height.
         switch (ai.GetCurrentBehavior())
         {
             case HoldPositionBehavior:
             case IdleBehavior:
-                finalHeight = ai.Owner.Spawner.Position.Z;
+                finalHeight = ai.HomePosition.Z;
                 return finalHeight;
         }
 
@@ -860,7 +860,7 @@ public class WorldManager(
         }
 
         // 4. Take the default height
-        return ai.Owner.Spawner?.Position.Z ?? ai.Owner.Transform.World.Position.Z;
+        return ai.HomePosition.Z;
     }
 
     /// <summary>

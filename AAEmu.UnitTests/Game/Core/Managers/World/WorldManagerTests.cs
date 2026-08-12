@@ -4,9 +4,14 @@ using System.Reflection;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Models.Game.AI.v2.AiCharacters;
+using AAEmu.Game.Models.Game.AI.v2.Behaviors.Common;
+using AAEmu.Game.Models.Game.AI.v2.Framework;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Transform;
 
 namespace AAEmu.UnitTests.Game.Core.Managers.World;
 
@@ -1142,6 +1147,36 @@ public class WorldManagerTests
 
         // Assert
         await Assert.That(manager.GetWorlds()).IsEmpty();
+    }
+
+    #endregion
+
+    #region Reference Height Tests
+
+    [Test]
+    public async Task GetReferenceHeight_IdleNpc_UsesRuntimeHomeHeight()
+    {
+        var manager = CreateWorldManager();
+        var npc = new Npc
+        {
+            Spawner = new NpcSpawner
+            {
+                Position = new WorldSpawnPosition { Z = 30f }
+            }
+        };
+        var ai = new DummyAiCharacter
+        {
+            Owner = npc,
+            HomePosition = new System.Numerics.Vector3(10f, 20f, 30.5f)
+        };
+        npc.Ai = ai;
+        var behavior = new IdleBehavior { Ai = ai };
+        typeof(NpcAi).GetField("_currentBehavior", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(ai, behavior);
+
+        var height = manager.GetReferenceHeight(ai, 10f, 20f, 100f, 1);
+
+        await Assert.That(height).IsEqualTo(30.5f);
+        await Assert.That(npc.Spawner.Position.Z).IsEqualTo(30f);
     }
 
     #endregion

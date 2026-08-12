@@ -3,6 +3,7 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Units.Route;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Transform;
 
 using NLog;
 
@@ -94,16 +95,12 @@ public class NpcSpawnerNpc : Spawner<Npc>
 
         Logger.Trace($"Spawn npc templateId {MemberId} objId {npc.ObjId} from spawnerId {NpcSpawnerTemplateId} at Position: {npcSpawner.Position}");
 
+        float? sampledGroundZ = null;
         if (!npc.CanFly)
-        {
-            var newZ = npcSpawner.ParentWorld.Template.GeoData.GetHeight(npcSpawner.Position.AsPositionVector());// WorldManager.Instance.GetHeight(npcSpawner.Position.ZoneId, npcSpawner.Position.X, npcSpawner.Position.Y, npcSpawner.Position.Z);
-            if (Math.Abs(npcSpawner.Position.Z - newZ) < 1f)
-            {
-                npcSpawner.Position.Z = newZ;
-            }
-        }
+            sampledGroundZ = npcSpawner.ParentWorld.Template.GeoData.GetHeight(npcSpawner.Position.AsPositionVector());
 
-        npc.Transform.ApplyWorldSpawnPosition(npcSpawner.Position);
+        var runtimeSpawnPosition = CreateRuntimeSpawnPosition(npcSpawner.Position, sampledGroundZ);
+        npc.Transform.ApplyWorldSpawnPosition(runtimeSpawnPosition);
         if (npc.Transform == null)
         {
             Logger.Error($"Can't spawn npc {MemberId} from spawnerId {NpcSpawnerTemplateId}. Transform is null.");
@@ -135,6 +132,15 @@ public class NpcSpawnerNpc : Spawner<Npc>
 
         npcs.Add(npc);
         return npcs;
+    }
+
+    internal static WorldSpawnPosition CreateRuntimeSpawnPosition(WorldSpawnPosition authoredPosition, float? sampledGroundZ)
+    {
+        var runtimePosition = authoredPosition.Clone();
+        if (sampledGroundZ.HasValue && Math.Abs(authoredPosition.Z - sampledGroundZ.Value) < 1f)
+            runtimePosition.Z = sampledGroundZ.Value;
+
+        return runtimePosition;
     }
 
     /// <summary>
