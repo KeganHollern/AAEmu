@@ -48,8 +48,12 @@ public class NpcSurfaceSubCommand : SubCommandBase
         var instanceId = npc.Transform.InstanceId;
         var zoneId = npc.Transform.ZoneId;
         var template = npc.ParentWorld?.Template;
-        var terrainZ = template is null ? null : TrySample(() => template.GetHeight(worldPosition.X, worldPosition.Y));
-        var geoDataZ = template?.GeoData is null ? null : TrySample(() => template.GeoData.GetHeight(worldPosition));
+        float? terrainZ = template is not null && template.TryGetHeight(worldPosition.X, worldPosition.Y, out var sampledTerrainZ)
+            ? sampledTerrainZ
+            : null;
+        float? geoDataZ = template?.GeoData is not null && template.GeoData.TryGetHeight(worldPosition, out var sampledGeoDataZ)
+            ? sampledGeoDataZ
+            : null;
 
         foreach (var line in BuildReport(npc, localPosition, worldPosition, instanceId, zoneId, terrainZ, geoDataZ))
             SendMessage(messageOutput, line);
@@ -73,18 +77,6 @@ public class NpcSurfaceSubCommand : SubCommandBase
             $"{FormatHeight("authored", authoredZ, worldPosition.Z)} {FormatHeight("home", homeZ, worldPosition.Z)} {FormatHeight("idle", idleZ, worldPosition.Z)}",
             $"{FormatHeight("terrain", terrainZ, worldPosition.Z)} {FormatHeight("legacyGeo", geoDataZ, worldPosition.Z)} geoMinusTerrain={FormatDifference(geoDataZ, terrainZ)}"
         ];
-    }
-
-    private static float? TrySample(Func<float> sampler)
-    {
-        try
-        {
-            return sampler();
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     private static string FormatVector(Vector3 position) =>

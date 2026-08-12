@@ -258,13 +258,25 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
     /// <returns></returns>
     public float GetHeight(Vector3 pos)
     {
-        float res;
+        return TryGetHeight(pos, out var height) ? height : 0f;
+    }
+
+    /// <summary>
+    /// Tries to get height using navigation data, falling back to the rendered terrain surface.
+    /// </summary>
+    public bool TryGetHeight(Vector3 pos, out float height)
+    {
+        height = 0f;
+        if (!float.IsFinite(pos.X) || !float.IsFinite(pos.Y) || !float.IsFinite(pos.Z))
+            return false;
+
         //var stopWatch = new Stopwatch();
         //stopWatch.Start();
         try
         {
             var closestPoint = Vector3.Zero;
             var closestDistance = float.MaxValue;
+            var closestPointFound = false;
 
             // Try to get height from .bai files data
             var bai = worldTemplate.GetBaiByPos(pos);
@@ -281,10 +293,16 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
                             {
                                 closestDistance = dist;
                                 closestPoint = nodeDescriptor.Pos;
+                                closestPointFound = true;
                                 // Slightly optimize if very close to target point
                                 if (closestDistance < 0.01f)
                                 {
-                                    return closestPoint.Z;
+                                    height = closestPoint.Z;
+                                    if (float.IsFinite(height))
+                                        return true;
+
+                                    height = 0f;
+                                    return false;
                                 }
                             }
                         }
@@ -302,10 +320,16 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
                             {
                                 closestDistance = dist;
                                 closestPoint = obstacleDataDescriptor.Pos;
+                                closestPointFound = true;
                                 // Slightly optimize if very close to target point
                                 if (closestDistance < 0.01f)
                                 {
-                                    return closestPoint.Z;
+                                    height = closestPoint.Z;
+                                    if (float.IsFinite(height))
+                                        return true;
+
+                                    height = 0f;
+                                    return false;
                                 }
                             }
                         }
@@ -314,22 +338,24 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
             }
             
             // Now compare to heightmap data
-            if (closestDistance >= float.MaxValue)
-            {
-                // Fall back to the terrain surface rendered by the client.
-                closestPoint = new Vector3(pos.X, pos.Y, worldTemplate.GetHeight(pos.X, pos.Y));
-            }
+            if (!closestPointFound)
+                return worldTemplate.TryGetHeight(pos.X, pos.Y, out height);
 
-            return closestPoint.Z;
+            height = closestPoint.Z;
+            if (float.IsFinite(height))
+                return true;
+
+            height = 0f;
+            return false;
         }
-        catch
+        catch (Exception ex)
         {
-            res = 0f;
+            Logger.Debug(ex, $"Failed to get geodata height at {pos} in world {worldTemplate?.Name ?? "unknown"}");
+            height = 0f;
+            return false;
         }
         //stopWatch.Stop();
         //Logger.Info($"GetHeight took {stopWatch.Elapsed}");
-
-        return res;
     }
 
     private static float DistanceBetweenPoints(Vector3 point, Vector3 compareTo)

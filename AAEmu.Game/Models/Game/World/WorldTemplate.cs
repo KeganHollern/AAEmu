@@ -117,14 +117,48 @@ public class WorldTemplate
     /// <returns></returns>
     public float GetRawHeightMapHeight(int x, int y)
     {
+        return TryGetRawHeightMapHeight(x, y, out var height) ? height : 0f;
+    }
+
+    /// <summary>
+    /// Tries to get an exact heightmap sample at the target position.
+    /// </summary>
+    public bool TryGetRawHeightMapHeight(int x, int y, out float height)
+    {
+        height = 0f;
+        if (x < 0 || y < 0 || Cells is null || !double.IsFinite(HeightMaxCoefficient) || HeightMaxCoefficient <= 0d)
+            return false;
+
         var cellX = x / WorldManager.CELL_SIZE;
         var cellY = y / WorldManager.CELL_SIZE;
-        if (cellX < 0 || cellX > CellX || cellY < 0 || cellY > CellY)
-            return 0f; // out of bounds
-        var cell = Cells[cellX, cellY].VerifyCellLoaded();
+        if (cellX >= Cells.GetLength(0) || cellY >= Cells.GetLength(1))
+            return false;
+
+        WorldCell cell;
+        try
+        {
+            cell = Cells[cellX, cellY]?.VerifyCellLoaded();
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, $"Failed to load terrain height at ({x}, {y}) in world {Name ?? "unknown"}");
+            return false;
+        }
+
+        if (cell is null || !cell.Loaded || cell.HeightMap is null)
+            return false;
+
         var sx = x % WorldManager.CELL_SIZE / 2;
         var sy = y % WorldManager.CELL_SIZE / 2;
-        return (float)(cell.HeightMap[sx, sy] / HeightMaxCoefficient);
+        if (sx >= cell.HeightMap.GetLength(0) || sy >= cell.HeightMap.GetLength(1))
+            return false;
+
+        height = (float)(cell.HeightMap[sx, sy] / HeightMaxCoefficient);
+        if (float.IsFinite(height))
+            return true;
+
+        height = 0f;
+        return false;
     }
 
     /// <summary>
@@ -146,25 +180,59 @@ public class WorldTemplate
     /// <returns></returns>
     public float GetHeight(float x, float y)
     {
-        // return GetRawHeightMapHeight((int)x, (int)y); // <-- the old way we used to do things
+        return TryGetHeight(x, y, out var height) ? height : 0f;
+    }
+
+    /// <summary>
+    /// Tries to get height at the target position using the terrain mesh's triangle interpolation.
+    /// </summary>
+    public bool TryGetHeight(float x, float y, out float height)
+    {
+        height = 0f;
+        if (!float.IsFinite(x) || !float.IsFinite(y) || x < 0f || y < 0f || Cells is null)
+            return false;
+
+        if (x >= Cells.GetLength(0) * WorldManager.CELL_SIZE || y >= Cells.GetLength(1) * WorldManager.CELL_SIZE)
+            return false;
 
         // Get bordering points
         var border = FindNearestSignificantPoints((int)Math.Floor(x), (int)Math.Floor(y));
 
-        // Get heights for these points
-        var heightX0Y0 = GetRawHeightMapHeight(border.Left, border.Top);
-        var heightX1Y0 = GetRawHeightMapHeight(border.Right, border.Top);
-        var heightX0Y1 = GetRawHeightMapHeight(border.Left, border.Bottom);
-        var heightX1Y1 = GetRawHeightMapHeight(border.Right, border.Bottom);
         var offX = (x - border.Left) / 2;
         var offY = (y - border.Top) / 2;
 
         // CryEngine renders each heightmap square as two triangles split between X1Y0 and X0Y1.
         // Interpolate on that same surface so the server agrees with the terrain visible to clients.
         if (offX + offY < 1f)
-            return heightX0Y0 * (1f - offX - offY) + heightX1Y0 * offX + heightX0Y1 * offY;
+        {
+            if (!TryGetWeightedHeight(border.Left, border.Top, 1f - offX - offY, out var heightX0Y0) ||
+                !TryGetWeightedHeight(border.Right, border.Top, offX, out var heightX1Y0) ||
+                !TryGetWeightedHeight(border.Left, border.Bottom, offY, out var heightX0Y1))
+                return false;
 
-        return heightX1Y1 * (offX + offY - 1f) + heightX0Y1 * (1f - offX) + heightX1Y0 * (1f - offY);
+            height = heightX0Y0 * (1f - offX - offY) + heightX1Y0 * offX + heightX0Y1 * offY;
+        }
+        else
+        {
+            if (!TryGetWeightedHeight(border.Right, border.Bottom, offX + offY - 1f, out var heightX1Y1) ||
+                !TryGetWeightedHeight(border.Left, border.Bottom, 1f - offX, out var heightX0Y1) ||
+                !TryGetWeightedHeight(border.Right, border.Top, 1f - offY, out var heightX1Y0))
+                return false;
+
+            height = heightX1Y1 * (offX + offY - 1f) + heightX0Y1 * (1f - offX) + heightX1Y0 * (1f - offY);
+        }
+
+        if (float.IsFinite(height))
+            return true;
+
+        height = 0f;
+        return false;
+    }
+
+    private bool TryGetWeightedHeight(int x, int y, float weight, out float height)
+    {
+        height = 0f;
+        return weight <= 0f || TryGetRawHeightMapHeight(x, y, out height);
     }
 
     /// <summary>
@@ -186,7 +254,7 @@ public class WorldTemplate
     /// <returns>Returns the cell, or null if the given index is out of bounds for this world</returns>
     public WorldCell GetCell(int cellX, int cellY)
     {
-        if (cellX < 0 || cellX > CellX || cellY < 0 || cellY > CellY)
+        if (Cells is null || cellX < 0 || cellX >= Cells.GetLength(0) || cellY < 0 || cellY >= Cells.GetLength(1))
             return null;
         return Cells[cellX, cellY];
     }
@@ -211,12 +279,21 @@ public class WorldTemplate
 
     public BaseBaiLoader GetBaiByPos(Vector3 pos)
     {
+        if (!float.IsFinite(pos.X) || !float.IsFinite(pos.Y) ||
+            pos.X < 0f || pos.Y < 0f || Cells is null ||
+            pos.X >= Cells.GetLength(0) * WorldManager.CELL_SIZE ||
+            pos.Y >= Cells.GetLength(1) * WorldManager.CELL_SIZE)
+            return null;
+
         if (ZoneBaiLoader.Count > 0)
             return ZoneBaiLoader.Values.First(); // TODO: Pick the actually correct zone
 
-        // First verify if target cell is loaded
         var cellPos = pos.ToCellIndex();
-        var cell = Cells[cellPos.Item1, cellPos.Item2];
+        var cell = GetCell(cellPos.Item1, cellPos.Item2);
+        if (cell is null)
+            return null;
+
+        // First verify if target cell is loaded
         cell.VerifyCellLoaded();
         // Return value from the main paths dictionary
         var pathsPos = pos.ToPathsIndex();
