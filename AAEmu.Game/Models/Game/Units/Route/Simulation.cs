@@ -353,6 +353,9 @@ public class Simulation : Patrol
 
     public void MoveTo(Simulation sim, Npc npc, Vector3 target)
     {
+        if (!(sim ?? this).MoveToPathEnabled)
+            return;
+
         var move = false;
         var distance = npc.BaseMoveSpeed * (100 / 1000.0f);
         distance *= npc.MoveSpeedMul; // Apply speed modifier
