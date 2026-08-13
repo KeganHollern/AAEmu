@@ -75,10 +75,21 @@ public class WorldTemplateTests
         var template = CreateWorldTemplate(CreateHeightMap(50));
         var geoData = new AiGeoDataManager(template);
 
+        var surfaceFound = geoData.TryGetGroundSurface(new Vector3(0.5f, 0.5f, 200f), out var surface);
         var found = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 200f), out var height);
+        var legacyFound = geoData.TryGetHeight(new Vector3(0.5f, 0.5f, 200f), out var legacyHeight);
 
+        await Assert.That(surfaceFound).IsTrue();
+        await Assert.That(surface.IsResolved).IsTrue();
+        await Assert.That(surface.Height).IsEqualTo(50f);
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.Terrain);
+        await Assert.That(surface.Decision).IsEqualTo(GroundSurfaceDecision.TerrainOnly);
+        await Assert.That(surface.Failure).IsEqualTo(GroundSurfaceFailure.None);
+        await Assert.That(surface.BaiReference).IsNull();
         await Assert.That(found).IsTrue();
-        await Assert.That(height).IsEqualTo(50f);
+        await Assert.That(height).IsEqualTo(surface.Height);
+        await Assert.That(legacyFound).IsTrue();
+        await Assert.That(legacyHeight).IsEqualTo(surface.Height);
     }
 
     [Test]
@@ -86,16 +97,31 @@ public class WorldTemplateTests
     {
         var template = CreateWorldTemplate(CreateHeightMap(50));
         var query = new Vector3(10f, 10f, 90f);
-        AddNetMissionBai(template, new Vector3(21.742f, 3.631f, 90f), BaiNavigationType.Triangular);
+        var nodePosition = new Vector3(21.742f, 3.631f, 90f);
+        AddNetMissionBai(template, nodePosition,
+            BaiNavigationType.Triangular | BaiNavigationType.CustomNavigation);
         var geoData = new AiGeoDataManager(template);
 
         var legacyFound = geoData.TryGetHeight(query, out var legacyHeight);
+        var surfaceFound = geoData.TryGetGroundSurface(query, out var surface);
         var groundFound = geoData.TryGetGroundHeight(query, out var groundHeight);
 
         await Assert.That(legacyFound).IsTrue();
         await Assert.That(legacyHeight).IsEqualTo(90f);
+        await Assert.That(surfaceFound).IsTrue();
+        await Assert.That(surface.Height).IsEqualTo(50f);
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.Terrain);
+        await Assert.That(surface.Decision).IsEqualTo(GroundSurfaceDecision.OutdoorTriangulation);
+        await Assert.That(surface.Failure).IsEqualTo(GroundSurfaceFailure.None);
+        await Assert.That(surface.BaiReference).IsNotNull();
+        await Assert.That(surface.BaiReference!.Value.Kind).IsEqualTo(BaiSurfaceReferenceKind.NavigationNode);
+        await Assert.That(surface.BaiReference!.Value.ZoneId).IsEqualTo(1u);
+        await Assert.That(surface.BaiReference!.Value.NodeId).IsEqualTo(1L);
+        await Assert.That(surface.BaiReference!.Value.NavigationType)
+            .IsEqualTo(BaiNavigationType.Triangular | BaiNavigationType.CustomNavigation);
+        await Assert.That(surface.BaiReference!.Value.Position).IsEqualTo(nodePosition);
         await Assert.That(groundFound).IsTrue();
-        await Assert.That(groundHeight).IsEqualTo(50f);
+        await Assert.That(groundHeight).IsEqualTo(surface.Height);
     }
 
     [Test]
@@ -113,32 +139,78 @@ public class WorldTemplateTests
         var geoData = new AiGeoDataManager(template);
 
         var legacyFound = geoData.TryGetHeight(new Vector3(0.5f, 0.5f, 90f), out var legacyHeight);
+        var surfaceFound = geoData.TryGetGroundSurface(new Vector3(0.5f, 0.5f, 90f), out var surface);
         var groundFound = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 90f), out var groundHeight);
 
         await Assert.That(legacyFound).IsTrue();
         await Assert.That(legacyHeight).IsEqualTo(90f);
+        await Assert.That(surfaceFound).IsTrue();
+        await Assert.That(surface.Height).IsEqualTo(50f);
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.Terrain);
+        await Assert.That(surface.Decision).IsEqualTo(GroundSurfaceDecision.ObstacleRejected);
+        await Assert.That(surface.Failure).IsEqualTo(GroundSurfaceFailure.None);
+        await Assert.That(surface.BaiReference).IsNotNull();
+        await Assert.That(surface.BaiReference!.Value.Kind).IsEqualTo(BaiSurfaceReferenceKind.ObstacleVertex);
+        await Assert.That(surface.BaiReference!.Value.ZoneId).IsEqualTo(1u);
+        await Assert.That(surface.BaiReference!.Value.NodeId).IsNull();
+        await Assert.That(surface.BaiReference!.Value.NavigationType).IsEqualTo(BaiNavigationType.Unset);
         await Assert.That(groundFound).IsTrue();
-        await Assert.That(groundHeight).IsEqualTo(50f);
+        await Assert.That(groundHeight).IsEqualTo(surface.Height);
     }
 
     [Test]
     public async Task TryGetGroundHeight_WaypointHumanNode_PreservesNavigationHeight()
     {
         var template = CreateWorldTemplate(CreateHeightMap(50));
-        AddNetMissionBai(template, new Vector3(0.5f, 0.5f, 90f), BaiNavigationType.WaypointHuman);
+        var navigationType = BaiNavigationType.WaypointHuman | BaiNavigationType.CustomNavigation;
+        AddNetMissionBai(template, new Vector3(0.5f, 0.5f, 90f), navigationType);
         var geoData = new AiGeoDataManager(template);
 
         var legacyFound = geoData.TryGetHeight(new Vector3(0.5f, 0.5f, 90f), out var legacyHeight);
+        var surfaceFound = geoData.TryGetGroundSurface(new Vector3(0.5f, 0.5f, 90f), out var surface);
         var groundFound = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 90f), out var groundHeight);
 
         await Assert.That(legacyFound).IsTrue();
         await Assert.That(legacyHeight).IsEqualTo(90f);
+        await Assert.That(surfaceFound).IsTrue();
+        await Assert.That(surface.Height).IsEqualTo(90f);
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.NavigationNode);
+        await Assert.That(surface.Decision).IsEqualTo(GroundSurfaceDecision.NavigationHeightPreserved);
+        await Assert.That(surface.Failure).IsEqualTo(GroundSurfaceFailure.None);
+        await Assert.That(surface.BaiReference).IsNotNull();
+        await Assert.That(surface.BaiReference!.Value.NavigationType).IsEqualTo(navigationType);
         await Assert.That(groundFound).IsTrue();
-        await Assert.That(groundHeight).IsEqualTo(legacyHeight);
+        await Assert.That(groundHeight).IsEqualTo(surface.Height);
+        await Assert.That(surface.Height).IsEqualTo(legacyHeight);
     }
 
     [Test]
-    public async Task TryGetGroundHeight_ClosestWaypointHumanNode_PreservesLayeredNavigationHeight()
+    public async Task TryGetGroundSurface_UntypedNavigationNode_PreservesLegacyHeight()
+    {
+        var template = CreateWorldTemplate(CreateHeightMap(50));
+        AddNetMissionBai(template, new Vector3(0.5f, 0.5f, 90f), (BaiNavigationType)0);
+        var geoData = new AiGeoDataManager(template);
+        var query = new Vector3(0.5f, 0.5f, 90f);
+
+        var surfaceFound = geoData.TryGetGroundSurface(query, out var surface);
+        var wrapperFound = geoData.TryGetGroundHeight(query, out var wrapperHeight);
+        var legacyFound = geoData.TryGetHeight(query, out var legacyHeight);
+
+        await Assert.That(surfaceFound).IsTrue();
+        await Assert.That(surface.Height).IsEqualTo(90f);
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.NavigationNode);
+        await Assert.That(surface.Decision).IsEqualTo(GroundSurfaceDecision.NavigationHeightPreserved);
+        await Assert.That(surface.Failure).IsEqualTo(GroundSurfaceFailure.None);
+        await Assert.That(surface.BaiReference).IsNotNull();
+        await Assert.That(surface.BaiReference!.Value.NavigationType).IsEqualTo((BaiNavigationType)0);
+        await Assert.That(wrapperFound).IsTrue();
+        await Assert.That(wrapperHeight).IsEqualTo(surface.Height);
+        await Assert.That(legacyFound).IsTrue();
+        await Assert.That(legacyHeight).IsEqualTo(surface.Height);
+    }
+
+    [Test]
+    public async Task TryGetGroundHeight_ClosestWaypointHumanNode_PreservesNavigationHeight()
     {
         var template = CreateWorldTemplate(CreateHeightMap(50));
         var bai = AddNetMissionBai(template, new Vector3(0.5f, 0.5f, 89f), BaiNavigationType.WaypointHuman);
@@ -157,10 +229,21 @@ public class WorldTemplateTests
         bai.VertexMissionReaders.Add(vertexMission);
         var geoData = new AiGeoDataManager(template);
 
-        var found = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 90f), out var height);
+        var query = new Vector3(0.5f, 0.5f, 90f);
+        var surfaceFound = geoData.TryGetGroundSurface(query, out var surface);
+        var found = geoData.TryGetGroundHeight(query, out var height);
 
+        await Assert.That(surfaceFound).IsTrue();
+        await Assert.That(surface.Height).IsEqualTo(89f);
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.NavigationNode);
+        await Assert.That(surface.Decision).IsEqualTo(GroundSurfaceDecision.NavigationHeightPreserved);
+        await Assert.That(surface.Failure).IsEqualTo(GroundSurfaceFailure.None);
+        await Assert.That(surface.BaiReference).IsNotNull();
+        await Assert.That(surface.BaiReference!.Value.Kind).IsEqualTo(BaiSurfaceReferenceKind.NavigationNode);
+        await Assert.That(surface.BaiReference!.Value.NodeId).IsEqualTo(1L);
+        await Assert.That(surface.BaiReference!.Value.NavigationType).IsEqualTo(BaiNavigationType.WaypointHuman);
         await Assert.That(found).IsTrue();
-        await Assert.That(height).IsEqualTo(89f);
+        await Assert.That(height).IsEqualTo(surface.Height);
     }
 
     [Test]
@@ -174,12 +257,21 @@ public class WorldTemplateTests
         var geoData = new AiGeoDataManager(template);
 
         var legacyFound = geoData.TryGetHeight(new Vector3(0.5f, 0.5f, 90f), out var legacyHeight);
+        var surfaceFound = geoData.TryGetGroundSurface(new Vector3(0.5f, 0.5f, 90f), out var surface);
         var groundFound = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 90f), out var groundHeight);
 
         await Assert.That(legacyFound).IsTrue();
         await Assert.That(legacyHeight).IsEqualTo(90f);
+        await Assert.That(surfaceFound).IsTrue();
+        await Assert.That(surface.Height).IsEqualTo(90f);
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.NavigationNode);
+        await Assert.That(surface.Decision).IsEqualTo(GroundSurfaceDecision.TerrainUnavailableFallback);
+        await Assert.That(surface.Failure).IsEqualTo(GroundSurfaceFailure.None);
+        await Assert.That(surface.BaiReference).IsNotNull();
+        await Assert.That(surface.BaiReference!.Value.NavigationType).IsEqualTo(BaiNavigationType.Triangular);
         await Assert.That(groundFound).IsTrue();
-        await Assert.That(groundHeight).IsEqualTo(legacyHeight);
+        await Assert.That(groundHeight).IsEqualTo(surface.Height);
+        await Assert.That(surface.Height).IsEqualTo(legacyHeight);
     }
 
     [Test]
@@ -189,10 +281,100 @@ public class WorldTemplateTests
         AddNetMissionBai(template, new Vector3(0.5f, 0.5f, 90f), BaiNavigationType.Triangular);
         var geoData = new AiGeoDataManager(template);
 
+        var surfaceFound = geoData.TryGetGroundSurface(new Vector3(0.5f, 0.5f, 90f), out var surface);
         var found = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 90f), out var height);
 
+        await Assert.That(surfaceFound).IsTrue();
+        await Assert.That(surface.IsResolved).IsTrue();
+        await Assert.That(surface.Height).IsEqualTo(0f);
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.Terrain);
+        await Assert.That(surface.Decision).IsEqualTo(GroundSurfaceDecision.OutdoorTriangulation);
+        await Assert.That(surface.Failure).IsEqualTo(GroundSurfaceFailure.None);
         await Assert.That(found).IsTrue();
-        await Assert.That(height).IsEqualTo(0f);
+        await Assert.That(height).IsEqualTo(surface.Height);
+    }
+
+    [Test]
+    public async Task TryGetGroundSurface_ObstacleWithoutTerrain_ReportsCompatibilityFallback()
+    {
+        var template = CreateWorldTemplate(1, 1);
+        var cell = new WorldCell(0, 0, template);
+        SetPrivateProperty(cell, nameof(WorldCell.Loaded), true);
+        template.Cells[0, 0] = cell;
+        var bai = new BaseBaiLoader(template);
+        var vertexMission = new VertexMissionReader(Stream.Null, 7);
+        vertexMission.ObstacleDataDescriptorList.Add(new ObstacleDataDescriptor(7)
+        {
+            Pos = new Vector3(0.5f, 0.5f, 73f)
+        });
+        bai.VertexMissionReaders.Add(vertexMission);
+        template.ZoneBaiLoader.Add(7, bai);
+        var geoData = new AiGeoDataManager(template);
+
+        var surfaceFound = geoData.TryGetGroundSurface(new Vector3(0.5f, 0.5f, 73f), out var surface);
+        var wrapperFound = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 73f), out var wrapperHeight);
+        var legacyFound = geoData.TryGetHeight(new Vector3(0.5f, 0.5f, 73f), out var legacyHeight);
+
+        await Assert.That(surfaceFound).IsTrue();
+        await Assert.That(surface.Height).IsEqualTo(73f);
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.ObstacleVertex);
+        await Assert.That(surface.Decision).IsEqualTo(GroundSurfaceDecision.TerrainUnavailableFallback);
+        await Assert.That(surface.Failure).IsEqualTo(GroundSurfaceFailure.None);
+        await Assert.That(surface.BaiReference).IsNotNull();
+        await Assert.That(surface.BaiReference!.Value.ZoneId).IsEqualTo(7u);
+        await Assert.That(wrapperFound).IsTrue();
+        await Assert.That(wrapperHeight).IsEqualTo(surface.Height);
+        await Assert.That(legacyFound).IsTrue();
+        await Assert.That(legacyHeight).IsEqualTo(surface.Height);
+    }
+
+    [Test]
+    public async Task TryGetGroundSurface_InvalidPosition_ReportsFailureAndWrappersRemainUnavailable()
+    {
+        var template = CreateWorldTemplate(CreateHeightMap(50));
+        var geoData = new AiGeoDataManager(template);
+        var query = new Vector3(float.NaN, 0.5f, 90f);
+
+        var surfaceFound = geoData.TryGetGroundSurface(query, out var surface);
+        var wrapperFound = geoData.TryGetGroundHeight(query, out var wrapperHeight);
+        var legacyFound = geoData.TryGetHeight(query, out var legacyHeight);
+
+        await Assert.That(surfaceFound).IsFalse();
+        await Assert.That(surface.IsResolved).IsFalse();
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.None);
+        await Assert.That(surface.Decision).IsEqualTo(GroundSurfaceDecision.None);
+        await Assert.That(surface.Failure).IsEqualTo(GroundSurfaceFailure.InvalidPosition);
+        await Assert.That(surface.BaiReference).IsNull();
+        await Assert.That(wrapperFound).IsFalse();
+        await Assert.That(wrapperHeight).IsEqualTo(0f);
+        await Assert.That(legacyFound).IsFalse();
+        await Assert.That(legacyHeight).IsEqualTo(0f);
+    }
+
+    [Test]
+    public async Task TryGetGroundSurface_MissingBaiAndTerrain_ReportsUnavailable()
+    {
+        var template = CreateWorldTemplate(1, 1);
+        var cell = new WorldCell(0, 0, template);
+        SetPrivateProperty(cell, nameof(WorldCell.Loaded), true);
+        template.Cells[0, 0] = cell;
+        var geoData = new AiGeoDataManager(template);
+        var query = new Vector3(0.5f, 0.5f, 90f);
+
+        var surfaceFound = geoData.TryGetGroundSurface(query, out var surface);
+        var wrapperFound = geoData.TryGetGroundHeight(query, out var wrapperHeight);
+        var legacyFound = geoData.TryGetHeight(query, out var legacyHeight);
+
+        await Assert.That(surfaceFound).IsFalse();
+        await Assert.That(surface.IsResolved).IsFalse();
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.None);
+        await Assert.That(surface.Decision).IsEqualTo(GroundSurfaceDecision.None);
+        await Assert.That(surface.Failure).IsEqualTo(GroundSurfaceFailure.Unavailable);
+        await Assert.That(surface.BaiReference).IsNull();
+        await Assert.That(wrapperFound).IsFalse();
+        await Assert.That(wrapperHeight).IsEqualTo(0f);
+        await Assert.That(legacyFound).IsFalse();
+        await Assert.That(legacyHeight).IsEqualTo(0f);
     }
 
     [Test]

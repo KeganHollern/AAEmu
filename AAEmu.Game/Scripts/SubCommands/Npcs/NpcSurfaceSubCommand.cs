@@ -54,13 +54,20 @@ public class NpcSurfaceSubCommand : SubCommandBase
         float? geoDataZ = template?.GeoData is not null && template.GeoData.TryGetHeight(worldPosition, out var sampledGeoDataZ)
             ? sampledGeoDataZ
             : null;
+        GroundSurfaceResult? groundSurface = null;
+        if (template?.GeoData is not null)
+        {
+            template.GeoData.TryGetGroundSurface(worldPosition, out var sampledGroundSurface);
+            groundSurface = sampledGroundSurface;
+        }
 
-        foreach (var line in BuildReport(npc, localPosition, worldPosition, instanceId, zoneId, terrainZ, geoDataZ))
+        foreach (var line in BuildReport(npc, localPosition, worldPosition, instanceId, zoneId, terrainZ, geoDataZ,
+                     groundSurface))
             SendMessage(messageOutput, line);
     }
 
     internal static string[] BuildReport(Npc npc, Vector3 localPosition, Vector3 worldPosition, uint instanceId, uint zoneId,
-        float? terrainZ, float? geoDataZ)
+        float? terrainZ, float? geoDataZ, GroundSurfaceResult? groundSurface)
     {
         var ai = npc.Ai;
         var behavior = ai?.GetCurrentBehavior()?.GetType().Name ?? (ai is null ? "no-ai" : "none");
@@ -75,8 +82,34 @@ public class NpcSurfaceSubCommand : SubCommandBase
             $"obj={npc.ObjId} template={npc.TemplateId} spawner={spawnerId} instance={instanceId} zone={zoneId} canFly={npc.CanFly} behavior={behavior}",
             $"packetLocal={FormatVector(localPosition)} queryWorld={FormatVector(worldPosition)}",
             $"{FormatHeight("authored", authoredZ, worldPosition.Z)} {FormatHeight("home", homeZ, worldPosition.Z)} {FormatHeight("idle", idleZ, worldPosition.Z)}",
-            $"{FormatHeight("terrain", terrainZ, worldPosition.Z)} {FormatHeight("legacyGeo", geoDataZ, worldPosition.Z)} geoMinusTerrain={FormatDifference(geoDataZ, terrainZ)}"
+            $"{FormatHeight("terrain", terrainZ, worldPosition.Z)} {FormatHeight("legacyGeo", geoDataZ, worldPosition.Z)} geoMinusTerrain={FormatDifference(geoDataZ, terrainZ)}",
+            FormatGroundSurface(groundSurface, worldPosition)
         ];
+    }
+
+    private static string FormatGroundSurface(GroundSurfaceResult? surface, Vector3 queryPosition)
+    {
+        if (!surface.HasValue)
+            return "selected=n/a decision=None failure=Unavailable";
+
+        var result = surface.Value;
+        var selected = result.IsResolved ? result.Source.ToString() : "n/a";
+        var height = result.IsResolved
+            ? $" z={Format(result.Height)} dZ={Format(queryPosition.Z - result.Height)}"
+            : string.Empty;
+        var line = $"selected={selected}{height} decision={result.Decision} failure={result.Failure}";
+        if (!result.BaiReference.HasValue)
+            return line;
+
+        var reference = result.BaiReference.Value;
+        var nodeId = reference.NodeId.HasValue
+            ? reference.NodeId.Value.ToString(CultureInfo.InvariantCulture)
+            : "n/a";
+        var navigationType = reference.NavigationType.ToString().Replace(", ", "|");
+        var referenceXy = Vector2.Distance(new Vector2(queryPosition.X, queryPosition.Y),
+            new Vector2(reference.Position.X, reference.Position.Y));
+        var referenceDz = queryPosition.Z - reference.Position.Z;
+        return $"{line} bai={reference.Kind}:{nodeId} zone={reference.ZoneId} nav={navigationType} ref={FormatVector(reference.Position)} refXY={Format(referenceXy)} refDZ={Format(referenceDz)}";
     }
 
     private static string FormatVector(Vector3 position) =>
