@@ -6,6 +6,8 @@
         "fly": 0,
         
         "online": 0,
+        "npc surface": 0,
+        "npc z": 0,
         "soloparty": 0,
         "teleport": 0,
         
