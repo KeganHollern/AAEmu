@@ -5,6 +5,9 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.CryEngine.Entities;
+using AAEmu.Game.Models.CryEngine.Loaders;
+using AAEmu.Game.Models.CryEngine.Readers;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.AI.v2.AiCharacters;
 using AAEmu.Game.Models.Game.NPChar;
@@ -52,6 +55,30 @@ public sealed class WorldManagerHeightTests
 
         await Assert.That(found).IsTrue();
         await Assert.That(sampledHeight).IsEqualTo(0f);
+        await Assert.That(height).IsEqualTo(0f);
+    }
+
+    [Test]
+    public async Task GetReferenceHeight_TriangularNavigationNode_UsesTerrainSurface()
+    {
+        AppConfiguration.Instance.World.GeoDataMode = true;
+        var manager = CreateManagerWithFlatHeightTemplate();
+        var template = manager.GetWorldTemplateByZoneKey(100);
+        var bai = new BaseBaiLoader(template);
+        var netMission = new NetMissionReader(Stream.Null, 1);
+        netMission.NodeDescriptorList.TryAdd(1, new NodeDescriptor(netMission)
+        {
+            Id = 1,
+            Pos = new System.Numerics.Vector3(12f, 5f, 90f),
+            NavigationType = BaiNavigationType.Triangular
+        });
+        bai.NetMissionReaders.Add(netMission);
+        template.ZoneBaiLoader.Add(1, bai);
+        template.GeoData = new AiGeoDataManager(template);
+        var ai = CreateNpcAi(30.5f);
+
+        var height = manager.GetReferenceHeight(ai, 0.5f, 0.5f, 90f, 100);
+
         await Assert.That(height).IsEqualTo(0f);
     }
 

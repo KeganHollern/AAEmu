@@ -50,10 +50,9 @@ public class NetMissionReader : BaiReader
                 nodeDescriptor.Obstacle[j] = Reader.ReadInt32();
             }
 
-            nodeDescriptor.Type = Reader.ReadByte();
-            nodeDescriptor.Unk1 = Reader.ReadByte();
-            nodeDescriptor.BitField0 = Reader.ReadByte();
-            nodeDescriptor.Bitfield1 = Reader.ReadByte();
+            nodeDescriptor.NavigationType = (BaiNavigationType)Reader.ReadUInt16();
+            nodeDescriptor.Flags = Reader.ReadByte();
+            nodeDescriptor.Padding = Reader.ReadByte();
             if (!NodeDescriptorList.TryAdd(nodeDescriptor.Id, nodeDescriptor))
                 Console.WriteLine($"Duplicate node ID {nodeDescriptor.Id}");
             //throw new Exception("Duplicate Id for NodeDescriptor");

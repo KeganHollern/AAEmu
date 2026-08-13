@@ -12,10 +12,9 @@ public class NodeDescriptor(NetMissionReader netMission)
     public Vector3 Pos { get; set; } = Vector3.Zero;
     public int Index { get; set; }
     public int[] Obstacle { get; set; } = [];
-    public byte Type { get; set; }
-    public byte Unk1 { get; set; }
-    public byte BitField0 { get; set; }
-    public byte Bitfield1 { get; set; }
+    public BaiNavigationType NavigationType { get; set; }
+    public byte Flags { get; set; }
+    public byte Padding { get; set; }
 
     public bool Equals(NodeDescriptor other)
     {
@@ -27,10 +26,9 @@ public class NodeDescriptor(NetMissionReader netMission)
 
         return Id == other.Id &&
                Index == other.Index &&
-               Type == other.Type &&
-               Unk1 == other.Unk1 &&
-               BitField0 == other.BitField0 &&
-               Bitfield1 == other.Bitfield1 &&
+               NavigationType == other.NavigationType &&
+               Flags == other.Flags &&
+               Padding == other.Padding &&
                Dir.Equals(other.Dir) &&
                Up.Equals(other.Up) &&
                Pos.Equals(other.Pos) &&
@@ -39,6 +37,6 @@ public class NodeDescriptor(NetMissionReader netMission)
 
     public override string ToString()
     {
-        return $"Pos: {Pos}, Id: {Id}, Index: {Index}, Type: {Type}";
+        return $"Pos: {Pos}, Id: {Id}, Index: {Index}, NavigationType: {NavigationType}";
     }
 }

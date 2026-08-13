@@ -70,6 +70,132 @@ public class WorldTemplateTests
     }
 
     [Test]
+    public async Task TryGetGroundHeight_WithoutBai_UsesTerrainSurface()
+    {
+        var template = CreateWorldTemplate(CreateHeightMap(50));
+        var geoData = new AiGeoDataManager(template);
+
+        var found = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 200f), out var height);
+
+        await Assert.That(found).IsTrue();
+        await Assert.That(height).IsEqualTo(50f);
+    }
+
+    [Test]
+    public async Task TryGetGroundHeight_TriangularNavigationNode_UsesTerrainWhileLegacyUsesNode()
+    {
+        var template = CreateWorldTemplate(CreateHeightMap(50));
+        var query = new Vector3(10f, 10f, 90f);
+        AddNetMissionBai(template, new Vector3(21.742f, 3.631f, 90f), BaiNavigationType.Triangular);
+        var geoData = new AiGeoDataManager(template);
+
+        var legacyFound = geoData.TryGetHeight(query, out var legacyHeight);
+        var groundFound = geoData.TryGetGroundHeight(query, out var groundHeight);
+
+        await Assert.That(legacyFound).IsTrue();
+        await Assert.That(legacyHeight).IsEqualTo(90f);
+        await Assert.That(groundFound).IsTrue();
+        await Assert.That(groundHeight).IsEqualTo(50f);
+    }
+
+    [Test]
+    public async Task TryGetGroundHeight_VertexMissionObstacle_UsesTerrainWhileLegacyUsesObstacle()
+    {
+        var template = CreateWorldTemplate(CreateHeightMap(50));
+        var bai = new BaseBaiLoader(template);
+        var vertexMission = new VertexMissionReader(Stream.Null, 1);
+        vertexMission.ObstacleDataDescriptorList.Add(new ObstacleDataDescriptor(1)
+        {
+            Pos = new Vector3(0.5f, 0.5f, 90f)
+        });
+        bai.VertexMissionReaders.Add(vertexMission);
+        template.ZoneBaiLoader.Add(1, bai);
+        var geoData = new AiGeoDataManager(template);
+
+        var legacyFound = geoData.TryGetHeight(new Vector3(0.5f, 0.5f, 90f), out var legacyHeight);
+        var groundFound = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 90f), out var groundHeight);
+
+        await Assert.That(legacyFound).IsTrue();
+        await Assert.That(legacyHeight).IsEqualTo(90f);
+        await Assert.That(groundFound).IsTrue();
+        await Assert.That(groundHeight).IsEqualTo(50f);
+    }
+
+    [Test]
+    public async Task TryGetGroundHeight_WaypointHumanNode_PreservesNavigationHeight()
+    {
+        var template = CreateWorldTemplate(CreateHeightMap(50));
+        AddNetMissionBai(template, new Vector3(0.5f, 0.5f, 90f), BaiNavigationType.WaypointHuman);
+        var geoData = new AiGeoDataManager(template);
+
+        var legacyFound = geoData.TryGetHeight(new Vector3(0.5f, 0.5f, 90f), out var legacyHeight);
+        var groundFound = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 90f), out var groundHeight);
+
+        await Assert.That(legacyFound).IsTrue();
+        await Assert.That(legacyHeight).IsEqualTo(90f);
+        await Assert.That(groundFound).IsTrue();
+        await Assert.That(groundHeight).IsEqualTo(legacyHeight);
+    }
+
+    [Test]
+    public async Task TryGetGroundHeight_ClosestWaypointHumanNode_PreservesLayeredNavigationHeight()
+    {
+        var template = CreateWorldTemplate(CreateHeightMap(50));
+        var bai = AddNetMissionBai(template, new Vector3(0.5f, 0.5f, 89f), BaiNavigationType.WaypointHuman);
+        var netMission = bai.NetMissionReaders[0];
+        netMission.NodeDescriptorList.TryAdd(2, new NodeDescriptor(netMission)
+        {
+            Id = 2,
+            Pos = new Vector3(2.5f, 0.5f, 90f),
+            NavigationType = BaiNavigationType.Triangular
+        });
+        var vertexMission = new VertexMissionReader(Stream.Null, 1);
+        vertexMission.ObstacleDataDescriptorList.Add(new ObstacleDataDescriptor(1)
+        {
+            Pos = new Vector3(0.5f, 2f, 90f)
+        });
+        bai.VertexMissionReaders.Add(vertexMission);
+        var geoData = new AiGeoDataManager(template);
+
+        var found = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 90f), out var height);
+
+        await Assert.That(found).IsTrue();
+        await Assert.That(height).IsEqualTo(89f);
+    }
+
+    [Test]
+    public async Task TryGetGroundHeight_TriangularNodeWithoutTerrain_FallsBackToNavigationHeight()
+    {
+        var template = CreateWorldTemplate(1, 1);
+        var cell = new WorldCell(0, 0, template);
+        SetPrivateProperty(cell, nameof(WorldCell.Loaded), true);
+        template.Cells[0, 0] = cell;
+        AddNetMissionBai(template, new Vector3(0.5f, 0.5f, 90f), BaiNavigationType.Triangular);
+        var geoData = new AiGeoDataManager(template);
+
+        var legacyFound = geoData.TryGetHeight(new Vector3(0.5f, 0.5f, 90f), out var legacyHeight);
+        var groundFound = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 90f), out var groundHeight);
+
+        await Assert.That(legacyFound).IsTrue();
+        await Assert.That(legacyHeight).IsEqualTo(90f);
+        await Assert.That(groundFound).IsTrue();
+        await Assert.That(groundHeight).IsEqualTo(legacyHeight);
+    }
+
+    [Test]
+    public async Task TryGetGroundHeight_TriangularNodeAtSeaLevelTerrain_ReturnsValidZero()
+    {
+        var template = CreateWorldTemplate(CreateHeightMap());
+        AddNetMissionBai(template, new Vector3(0.5f, 0.5f, 90f), BaiNavigationType.Triangular);
+        var geoData = new AiGeoDataManager(template);
+
+        var found = geoData.TryGetGroundHeight(new Vector3(0.5f, 0.5f, 90f), out var height);
+
+        await Assert.That(found).IsTrue();
+        await Assert.That(height).IsEqualTo(0f);
+    }
+
+    [Test]
     public async Task TryGetHeight_FlatSeaLevel_IsAValidSurfaceAcrossProviders()
     {
         var template = CreateWorldTemplate(CreateHeightMap());
@@ -218,6 +344,22 @@ public class WorldTemplateTests
             HeightMaxCoefficient = 1d,
             Cells = new WorldCell[cellCountX, cellCountY]
         };
+    }
+
+    private static BaseBaiLoader AddNetMissionBai(WorldTemplate template, Vector3 position,
+        BaiNavigationType navigationType)
+    {
+        var bai = new BaseBaiLoader(template);
+        var netMission = new NetMissionReader(Stream.Null, 1);
+        netMission.NodeDescriptorList.TryAdd(1, new NodeDescriptor(netMission)
+        {
+            Id = 1,
+            Pos = position,
+            NavigationType = navigationType
+        });
+        bai.NetMissionReaders.Add(netMission);
+        template.ZoneBaiLoader.Add(1, bai);
+        return bai;
     }
 
     private static void SetLoadedCell(WorldTemplate template, int cellX, int cellY, ushort[,] heightMap)

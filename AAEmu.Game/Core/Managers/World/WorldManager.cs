@@ -774,7 +774,7 @@ public class WorldManager(
 
         if (AppConfiguration.Instance.World?.GeoDataMode == true &&
             world.GeoData is not null &&
-            world.GeoData.TryGetHeight(new Vector3(x, y, z), out height))
+            world.GeoData.TryGetGroundHeight(new Vector3(x, y, z), out height))
         {
             return true;
         }
@@ -817,7 +817,7 @@ public class WorldManager(
 
         if (AppConfiguration.Instance.World?.GeoDataMode == true &&
             world.Template.GeoData is not null &&
-            world.Template.GeoData.TryGetHeight(worldPosition, out height))
+            world.Template.GeoData.TryGetGroundHeight(worldPosition, out height))
         {
             return true;
         }
