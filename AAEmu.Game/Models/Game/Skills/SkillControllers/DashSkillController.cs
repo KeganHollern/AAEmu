@@ -160,9 +160,7 @@ public class DashSkillController : SkillController
             travelDist, targetDist, Owner.Transform.Local.Position, _endPosition);
         Owner.Transform.Local.SetPosition(newX, newY, newZ);
 
-        var updZ = Owner.ParentWorld.Template.GeoData.GetHeight(Owner.Transform.World.Position);
-        if (Math.Abs(newZ - updZ) < 1f)
-            Owner.Transform.Local.SetHeight(updZ);
+        TrySnapOwnerToGround(newZ, 1f);
 
         var angle = MathUtil.CalculateAngleFrom(Owner.Transform.Local.Position, _endPosition);
         var (velX, velY) = MathUtil.AddDistanceToFront(4000, 0, 0, (float)angle.DegToRad());

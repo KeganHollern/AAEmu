@@ -1,3 +1,4 @@
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 
@@ -57,6 +58,30 @@ public class SkillController
         if (Owner.ActiveSkillController == this)
             Owner.ActiveSkillController = null;
         Logger.Trace($"SkillController: Npc {Owner.Name}:{Owner.ObjId} entering end state={State}");
+    }
+
+    /// <summary>
+    /// Resolves the ground beneath the owner without grounding NPCs whose movement model can fly or swim.
+    /// </summary>
+    protected bool TryGetOwnerGroundHeight(out float height)
+    {
+        height = 0f;
+        if (Owner is Npc { CanFly: true })
+            return false;
+
+        return Owner.ParentWorld.Template.GeoData.TryGetGroundHeight(Owner.Transform.World.Position, out height);
+    }
+
+    /// <summary>
+    /// Snaps a movement candidate to resolved ground when it remains within the caller's existing tolerance.
+    /// </summary>
+    protected bool TrySnapOwnerToGround(float candidateZ, float tolerance)
+    {
+        if (!TryGetOwnerGroundHeight(out var groundZ) || !(Math.Abs(candidateZ - groundZ) < tolerance))
+            return false;
+
+        Owner.Transform.Local.SetHeight(groundZ);
+        return true;
     }
 
     public static SkillController CreateSkillController(SkillControllerTemplate template, BaseUnit owner, BaseUnit target,

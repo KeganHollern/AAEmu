@@ -385,14 +385,13 @@ public class CharacterCraft(Character owner)
     private bool ValidateCraftLocation(Craft craft, uint doodadId)
     {
         var doodad = doodadId == 0 ? null : Owner.ParentWorld.GetDoodad(doodadId);
-        if (craft.ReqDoodadId > 0 && (doodad == null || doodad.TemplateId != craft.ReqDoodadId))
-        {
-            Owner.SendErrorMessage(doodad == null ? ErrorMessageType.CraftLocatingUnitIsNotExist : ErrorMessageType.CraftInvalidCraftType);
-            return false;
-        }
-
+        var requiresCraftLocation = craft.ReqDoodadId > 0 || craft.CraftPackIds.Count > 0;
         if (doodad == null)
-            return doodadId == 0;
+        {
+            if (requiresCraftLocation)
+                Owner.SendErrorMessage(ErrorMessageType.CraftLocatingUnitIsNotExist);
+            return !requiresCraftLocation && doodadId == 0;
+        }
 
         if (Owner.GetDistanceTo(doodad, true) > 5f)
         {
@@ -406,13 +405,22 @@ public class CharacterCraft(Character owner)
             .OfType<DoodadFuncCraftPack>()
             .Select(func => func.CraftPackId)
             .ToHashSet();
-        if (craft.CraftPackIds.Count > 0 && !craft.CraftPackIds.Overlaps(exposedPacks))
+        if (!IsCraftLocationAuthorized(craft.ReqDoodadId, craft.CraftPackIds, doodad.TemplateId, exposedPacks))
         {
             Owner.SendErrorMessage(ErrorMessageType.CraftInvalidCraftType);
             return false;
         }
 
         return true;
+    }
+
+    internal static bool IsCraftLocationAuthorized(uint requiredDoodadId, IReadOnlySet<uint> allowedPacks,
+        uint actualDoodadTemplateId, IReadOnlySet<uint> exposedPacks)
+    {
+        if (allowedPacks.Count > 0)
+            return allowedPacks.Overlaps(exposedPacks);
+
+        return requiredDoodadId == 0 || actualDoodadTemplateId == requiredDoodadId;
     }
 
     private void CraftOrCancel()
