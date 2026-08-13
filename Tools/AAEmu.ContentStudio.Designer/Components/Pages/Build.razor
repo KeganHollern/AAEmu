@@ -1,0 +1,23 @@
+@page "/build"
+@inject DesignerWorkspace Workspace
+
+<PageTitle>Build & Deploy</PageTitle>
+<header class="page-head compact"><div><p class="eyebrow">REPRODUCIBLE OUTPUT</p><h1>Build & deploy</h1><p class="lede">Compile from the pristine baseline. Nothing touches a live database until you explicitly deploy.</p></div><button class="button primary" @onclick="BuildArtifact" disabled="@_busy">@(_busy?"Building…":"Build verified compact")</button></header>
+<section class="metric-grid">
+    <article class="metric"><small>Source validation</small><strong class="@(_validation?.IsValid==true?"good":"")">@(_validation is null?"Not run":_validation.IsValid?"Passed":"Blocked")</strong><button class="text-button" @onclick="Validate">Run validation</button></article>
+    <article class="metric"><small>Artifact</small><strong>@(_result is null?"Not built":FormatBytes(_result.Manifest.ArtifactLength))</strong><span>@(_result?.Manifest.ArtifactSha256[..Math.Min(16,_result.Manifest.ArtifactSha256.Length)])</span></article>
+    <article class="metric"><small>Changes</small><strong>@(_result?.Manifest.Changes.Count??0)</strong><span>@(_result is null?"Build to preview":$"{_result.Manifest.RecipeCount} recipes · {_result.Manifest.WorkbenchCount} workbenches")</span></article>
+</section>
+@if(_result is not null){<section class="two-column"><article class="panel"><h2>Build artifact</h2><p class="path">@_result.ArtifactPath</p><div class="issue-list">@foreach(var change in _result.Manifest.Changes){<div class="issue information"><strong>@change.EntityType · @change.Id</strong><span>@change.Summary</span></div>}</div></article><article class="panel"><h2>Deployment targets</h2><p>Each deployment preserves the current database in a timestamped backup first.</p>@foreach(var target in _targets){<div class="deploy-row"><div><strong>@target.Key</strong><span>@target.Value.Path</span></div><button class="button danger" @onclick="()=>Deploy(target.Key)">Deploy</button></div>}</article></section>}
+@if(_validation is not null&&!_validation.IsValid){<section class="panel"><h2>Blocking issues</h2>@foreach(var issue in _validation.Issues.Where(i=>i.Severity==ValidationSeverity.Error)){<p><code>@issue.Code</code> @issue.Message</p>}</section>}
+@if (!string.IsNullOrEmpty(_message)) { <div class="toast @(_isError?"error":"success")">@_message</div> }
+
+@code {
+    private ValidationReport? _validation; private ContentBuildResult? _result; private Dictionary<string,DeploymentTarget> _targets=[]; private bool _busy; private string? _message; private bool _isError;
+    protected override void OnInitialized(){try{_targets=Workspace.LoadConfiguration().Targets;}catch(Exception e){_message=e.Message;_isError=true;}}
+    private void Validate()=>Try(()=>{var c=Workspace.LoadConfiguration();var p=new ProjectRepository().LoadProject(c.ProjectPath);_validation=new ContentValidator().ValidateProject(p,c.BaselinePath);},_validation?.IsValid==true?"Validation passed.":null);
+    private void BuildArtifact(){_busy=true;Try(()=>{var c=Workspace.LoadConfiguration();_result=new BuildService().Build(new ContentBuildRequest{BaselinePath=c.BaselinePath,BaselineDescriptorPath=c.BaselineDescriptorPath,ProjectPath=c.ProjectPath,OutputDirectory=c.OutputDirectory});_validation=_result.Manifest.Validation;_targets=c.Targets;},"Verified artifact built.");_busy=false;}
+    private void Deploy(string name)=>Try(()=>{if(_result is null)throw new ContentStudioException("Build an artifact first.");var c=Workspace.LoadConfiguration();var m=new DeploymentService().Deploy(_result.ArtifactPath,name,c.Targets[name],c.OutputDirectory);_message=$"Deployed to {m.TargetPath}. Backup: {m.BackupPath??"none"}";},null);
+    private void Try(Action action,string? success){try{action();_isError=false;if(success is not null)_message=success;}catch(Exception e){_isError=true;_message=e.Message;}}
+    private static string FormatBytes(long value)=>$"{value/1024d/1024d:N1} MB";
+}

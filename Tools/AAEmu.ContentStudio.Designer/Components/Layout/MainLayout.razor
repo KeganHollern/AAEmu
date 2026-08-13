@@ -1,0 +1,19 @@
+@inherits LayoutComponentBase
+
+<div class="studio-shell">
+    <aside class="rail">
+        <div class="brand"><span class="brand-mark">AA</span><div><strong>Content Studio</strong><small>r208022 workshop</small></div></div>
+        <nav>
+            <NavLink href="/" Match="NavLinkMatch.All">Overview</NavLink>
+            <NavLink href="/catalog">Game search</NavLink>
+            <NavLink href="/recipes">Recipe maker</NavLink>
+            <NavLink href="/workbenches">Workbench maker</NavLink>
+            <NavLink href="/manifests">Manifest editor</NavLink>
+            <NavLink href="/build">Build & deploy</NavLink>
+        </nav>
+        <div class="rail-note"><span class="status-dot"></span> Local-only designer<br /><small>127.0.0.1:5188</small></div>
+    </aside>
+    <main>
+        @Body
+    </main>
+</div>

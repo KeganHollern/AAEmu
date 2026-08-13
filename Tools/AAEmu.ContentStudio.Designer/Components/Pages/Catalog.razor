@@ -1,0 +1,219 @@
+@page "/catalog"
+@inject DesignerWorkspace Workspace
+
+<PageTitle>Game Search</PageTitle>
+
+<header class="page-head search-heading">
+    <div>
+        <p class="eyebrow">DISCOVER THE COMPACT</p>
+        <h1>Search the whole game</h1>
+        <p class="lede">Use the name you would use in conversation. Content Studio searches items, recipes, workbenches, NPCs, skills, buffs, quests, zones, and every other translated game record together.</p>
+    </div>
+</header>
+
+<section class="search-hero panel">
+    <div class="search-box">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input aria-label="Search everything" @bind="_query" @bind:event="oninput" @onkeydown="HandleKey" placeholder="Try “archeum”, “alchemy workbench”, an NPC name, quest, skill, or ID…" autofocus />
+        <button class="button primary" @onclick="Search" disabled="@_busy">@(_busy ? "Searching…" : "Search")</button>
+    </div>
+    <div class="search-examples">
+        <span>Not sure where to start?</span>
+        @foreach (var example in s_examples)
+        {
+            <button @onclick="() => SearchFor(example)">@example</button>
+        }
+    </div>
+</section>
+
+@if (_response is null)
+{
+    <section class="discovery-grid">
+        <article class="discovery-card"><span>01</span><h2>Search normal names</h2><p>No table name or ID required. Partial words and small spelling mistakes are okay.</p></article>
+        <article class="discovery-card"><span>02</span><h2>Follow relationships</h2><p>An item search also finds recipes that use or produce it, then the workbenches offering those recipes.</p></article>
+        <article class="discovery-card"><span>03</span><h2>Reuse what works</h2><p>Inspect a recipe or workbench, then send its ID directly into the appropriate cloning wizard.</p></article>
+    </section>
+    <section class="panel searchable-things">
+        <p class="eyebrow">SEARCHABLE BY NAME</p>
+        <div>
+            @foreach (var label in s_searchableKinds)
+            {
+                <span>@label</span>
+            }
+        </div>
+    </section>
+}
+else if (_response.Results.Count == 0)
+{
+    <section class="panel empty-search">
+        <h2>No results for “@_response.Query”</h2>
+        <p>Try a shorter phrase, one distinctive word, or an ID. Searching <button class="inline-action" @onclick='() => SearchFor("archeum")'>archeum</button> is a useful example.</p>
+    </section>
+}
+else
+{
+    <section class="results-head">
+        <div><strong>@_response.Results.Count</strong> top matches for “@_response.Query”</div>
+        @if (_response.UsedFuzzyMatching)
+        {
+            <span class="fuzzy-note">Includes close spelling matches</span>
+        }
+    </section>
+    <nav class="facet-bar" aria-label="Result types">
+        @foreach (var filter in KindFilters())
+        {
+            <button class="@(_activeKind == filter.Key ? "active" : null)" @onclick="() => SetFilter(filter.Key)">@filter.Label <span>@filter.Count</span></button>
+        }
+    </nav>
+
+    <section class="search-workspace">
+        <div class="result-list">
+            @foreach (var result in VisibleResults())
+            {
+                <button class="search-result @SelectedClass(result)" @onclick="() => Inspect(result)">
+                    <span class="kind-badge @result.Kind">@result.KindLabel</span>
+                    <span class="result-copy">
+                        <strong>@result.Name</strong>
+                        @if (!string.IsNullOrWhiteSpace(result.Context))
+                        {
+                            <small>@result.Context</small>
+                        }
+                    </span>
+                    <code>@result.Id</code>
+                    <span class="result-arrow">›</span>
+                </button>
+            }
+        </div>
+
+        <aside class="inspector panel">
+            @if (_selected is null)
+            {
+                <div class="inspector-empty"><span>↖</span><h2>Choose a result</h2><p>Its useful relationships and next actions will appear here.</p></div>
+            }
+            else
+            {
+                <div class="inspector-title"><span class="kind-badge @_selected.Kind">@_selected.KindLabel</span><code>ID @_selected.Id</code></div>
+                <h2>@_selected.Name</h2>
+                @if (!string.IsNullOrWhiteSpace(_selected.Context)) { <p class="match-context">@_selected.Context</p> }
+
+                @if (_recipe is not null)
+                {
+                    <div class="detail-stats"><span><small>Labor</small><strong>@_recipe.LaborCost</strong></span><span><small>Cast</small><strong>@(_recipe.CastingTime / 1000d) sec</strong></span><span><small>Workbench</small><strong>@(_recipe.RequiredDoodadId == 0 ? "Any" : _recipe.RequiredDoodadId)</strong></span></div>
+                    <h3>Materials</h3>
+                    <ul class="ingredient-list">@foreach (var material in _recipe.Materials){<li><span>@material.ItemName</span><strong>× @material.Amount</strong><code>@material.ItemId</code></li>}</ul>
+                    <h3>Products</h3>
+                    <ul class="ingredient-list">@foreach (var product in _recipe.Products){<li><span>@product.ItemName</span><strong>× @product.Amount</strong><code>@product.ItemId</code></li>}</ul>
+                    <a class="button primary inspector-action" href="@($"/recipes?source={_recipe.Id}")">Use as recipe source</a>
+                }
+                else if (_workbench is not null)
+                {
+                    <div class="detail-stats"><span><small>Groups</small><strong>@_workbench.Groups.Count</strong></span><span><small>Functions</small><strong>@_workbench.Groups.Sum(group => group.Functions.Count)</strong></span><span><small>Recipes</small><strong>@_workbench.RecipeIds.Count</strong></span></div>
+                    <h3>Recipes available here</h3>
+                    @if (_workbenchRecipes.Count == 0) { <p class="muted-copy">No recipes were resolved for this workbench.</p> }
+                    else { <ul class="linked-list">@foreach(var recipe in _workbenchRecipes){<li><button @onclick="() => SearchFor(recipe.Name)"><span>@recipe.Name</span><code>@recipe.Id</code></button></li>}</ul> }
+                    <a class="button primary inspector-action" href="@($"/workbenches?source={_workbench.Id}")">Use as workbench source</a>
+                }
+                else if (_selected.Kind == "item" && _selected.Table == "items")
+                {
+                    var related = RelatedTo(_selected).ToList();
+                    <p class="muted-copy">This is a game item. Related crafting results from this search are shown below.</p>
+                    @if (related.Count > 0)
+                    {
+                        <h3>Crafting relationships</h3>
+                        <ul class="linked-list">@foreach(var result in related){<li><button @onclick="() => Inspect(result)"><span>@result.Name<small>@result.Context</small></span><code>@result.Id</code></button></li>}</ul>
+                    }
+                    else
+                    {
+                        <p class="empty-related">No recipe relationship was found in the displayed results.</p>
+                    }
+                }
+                else
+                {
+                    <p class="muted-copy">This translated record lives in <code>@_selected.Table</code>, field <code>@_selected.Field</code>. Use its table and ID for deeper compact research.</p>
+                }
+            }
+        </aside>
+    </section>
+}
+
+<details class="advanced-search panel">
+    <summary>Advanced: inspect database table schemas</summary>
+    <div class="advanced-row"><input @bind="_schemaQuery" @bind:event="oninput" placeholder="Table name, for example quest or doodad" /><button class="button" @onclick="InspectSchema">Find tables</button></div>
+    @if (_schemas is not null)
+    {
+        <div class="schema-list">@foreach(var schema in _schemas.Take(40)){<span><strong>@schema.Name</strong><small>@schema.RowCount.ToString("N0") rows · @schema.Columns.Count columns</small></span>}</div>
+    }
+</details>
+
+@if (!string.IsNullOrWhiteSpace(_error)) { <div class="toast error">@_error</div> }
+
+@code {
+    private static readonly string[] s_examples = ["Unstable Solution", "archeum", "alchemy", "merchant", "glider", "honor"];
+    private static readonly string[] s_searchableKinds = ["Items", "Recipes", "Workbenches", "NPCs", "Skills", "Buffs", "Quests", "Achievements", "Titles", "Zones", "Housing", "Vehicles", "Interface text", "and more"];
+    private static readonly (string Key, string Label)[] s_filters = [("all", "All"), ("item", "Items"), ("recipe", "Recipes"), ("workbench", "Workbenches"), ("npc", "NPCs"), ("skill", "Skills & buffs"), ("quest", "Quests"), ("world", "World"), ("achievement", "Achievements"), ("other", "Other")];
+
+    private string _query = "";
+    private string _activeKind = "all";
+    private string _schemaQuery = "";
+    private bool _busy;
+    private string? _error;
+    private CatalogSearchResponse? _response;
+    private CatalogSearchResult? _selected;
+    private RecipeGraph? _recipe;
+    private WorkbenchGraph? _workbench;
+    private IReadOnlyList<RecipeGraph> _workbenchRecipes = [];
+    private IReadOnlyList<TableSchema>? _schemas;
+
+    private async Task HandleKey(KeyboardEventArgs args) { if (args.Key == "Enter") await Search(); }
+    private async Task SearchFor(string query) { _query = query; await Search(); }
+
+    private async Task Search()
+    {
+        if (string.IsNullOrWhiteSpace(_query)) return;
+        try
+        {
+            _busy = true; _error = null; _selected = null; _recipe = null; _workbench = null; _workbenchRecipes = [];
+            var config = Workspace.LoadConfiguration();
+            _response = await Task.Run(() => new CatalogSearchService().SearchEverything(config.BaselinePath, _query, limit: 60));
+            _activeKind = "all";
+        }
+        catch (Exception exception) { _error = exception.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task Inspect(CatalogSearchResult result)
+    {
+        try
+        {
+            _selected = result; _recipe = null; _workbench = null; _workbenchRecipes = []; _error = null;
+            var config = Workspace.LoadConfiguration();
+            var catalog = new CompactCatalogService();
+            if (result.Kind == "recipe")
+            {
+                _recipe = await Task.Run(() => catalog.GetRecipe(config.BaselinePath, result.Id));
+            }
+            else if (result.Kind == "workbench")
+            {
+                _workbench = await Task.Run(() => catalog.GetWorkbench(config.BaselinePath, result.Id));
+                if (_workbench is not null)
+                {
+                    _workbenchRecipes = await Task.Run(() => _workbench.RecipeIds.Take(40).Select(id => catalog.GetRecipe(config.BaselinePath, id)).Where(recipe => recipe is not null).Cast<RecipeGraph>().ToList());
+                }
+            }
+        }
+        catch (Exception exception) { _error = exception.Message; }
+    }
+
+    private IEnumerable<CatalogSearchResult> VisibleResults() => _response?.Results.Where(MatchesActiveFilter) ?? [];
+    private IEnumerable<CatalogSearchResult> RelatedTo(CatalogSearchResult result) => _response?.Results.Where(candidate => candidate.RelatedTable == result.Table && candidate.RelatedId == result.Id) ?? [];
+    private bool MatchesActiveFilter(CatalogSearchResult result) => _activeKind == "all" || (_activeKind == "other" ? !s_filters.Any(filter => filter.Key != "all" && filter.Key != "other" && filter.Key == result.Kind) : result.Kind == _activeKind);
+    private IEnumerable<(string Key, string Label, int Count)> KindFilters() => s_filters.Select(filter => (filter.Key, filter.Label, Count: _response?.Results.Count(result => filter.Key == "all" || (filter.Key == "other" ? !s_filters.Any(known => known.Key != "all" && known.Key != "other" && known.Key == result.Kind) : result.Kind == filter.Key)) ?? 0)).Where(filter => filter.Count > 0);
+    private void SetFilter(string key) { _activeKind = key; _selected = null; _recipe = null; _workbench = null; _workbenchRecipes = []; }
+    private string SelectedClass(CatalogSearchResult result) => _selected?.Table == result.Table && _selected.Id == result.Id ? "selected" : "";
+
+    private void InspectSchema()
+    {
+        try { var config = Workspace.LoadConfiguration(); _schemas = new CompactCatalogService().ListSchema(config.BaselinePath, _schemaQuery); _error = null; }
+        catch (Exception exception) { _error = exception.Message; }
+    }
+}

@@ -1,0 +1,25 @@
+{
+    "$schema": "../schemas/baseline.schema.json",
+    "schemaVersion": 1,
+    "key": "r208022",
+    "clientBuild": "ArcheAge 1.2.4.13 (r208022)",
+    "sha256": "784D362434A2A0FD0A29FBC1BBB7F771D9FFBE2C8568339AC54D6FDCF44D2ED7",
+    "length": 126414848,
+    "tableCount": 635,
+    "requiredTables": {
+        "crafts": ["id", "title", "skill_id", "req_doodad_id"],
+        "craft_materials": ["id", "craft_id", "item_id", "amount"],
+        "craft_products": ["id", "craft_id", "item_id", "amount"],
+        "craft_packs": ["id", "name"],
+        "craft_pack_crafts": ["id", "craft_pack_id", "craft_id"],
+        "doodad_almighties": ["id", "name", "model"],
+        "doodad_func_groups": ["id", "doodad_almighty_id", "doodad_func_group_kind_id"],
+        "doodad_funcs": ["id", "doodad_func_group_id", "actual_func_id", "actual_func_type"],
+        "doodad_phase_funcs": ["id", "doodad_func_group_id", "actual_func_id", "actual_func_type"],
+        "doodad_func_craft_packs": ["id", "craft_pack_id"],
+        "items": ["id", "name", "category_id"],
+        "skills": ["id", "consume_lp", "casting_time"],
+        "skill_effects": ["id", "skill_id", "effect_id"],
+        "localized_texts": ["id", "tbl_name", "tbl_column_name", "idx", "en_us"]
+    }
+}

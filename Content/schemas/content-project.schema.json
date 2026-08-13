@@ -1,0 +1,19 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AAEmu Content Studio project",
+    "type": "object",
+    "required": ["schemaVersion", "key", "name", "targetBaseline", "idRegistry"],
+    "properties": {
+        "$schema": { "type": "string" },
+        "schemaVersion": { "const": 1 },
+        "key": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+        "name": { "type": "string", "minLength": 1 },
+        "targetBaseline": { "type": "string", "minLength": 1 },
+        "defaultLanguage": { "type": "string", "default": "en_us" },
+        "idRegistry": { "type": "string" },
+        "recipes": { "type": "array", "items": { "type": "string" } },
+        "workbenches": { "type": "array", "items": { "type": "string" } },
+        "rawSql": { "type": "array", "items": { "type": "string" } }
+    },
+    "additionalProperties": false
+}

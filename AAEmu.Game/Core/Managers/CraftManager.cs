@@ -109,7 +109,9 @@ public class CraftManager : Singleton<CraftManager>, ICraftManager
                         var craftId = reader.GetUInt32("craft_id");
                         if (!_crafts.TryGetValue(craftId, out var craft))
                             continue;
+                        var craftPackId = reader.GetUInt32("craft_pack_id");
                         craft.IsPack = true;
+                        craft.CraftPackIds.Add(craftPackId);
                     }
                 }
             }
@@ -121,5 +123,12 @@ public class CraftManager : Singleton<CraftManager>, ICraftManager
     public Craft GetCraftById(uint craftId)
     {
         return _crafts[craftId];
+    }
+
+    public bool TryGetCraftById(uint craftId, out Craft craft) => _crafts.TryGetValue(craftId, out craft);
+
+    public bool IsCraftInPack(uint craftId, uint craftPackId)
+    {
+        return _crafts.TryGetValue(craftId, out var craft) && craft.CraftPackIds.Contains(craftPackId);
     }
 }

@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "key": "recipe.example-unstable-solution",
+  "id": 9100000,
+  "names": {
+    "en_us": "Example Unstable Solution"
+  },
+  "descriptions": {},
+  "craftPackIds": [],
+  "skillId": 9400000,
+  "skillClone": {
+    "sourceId": 14644,
+    "id": 9400000,
+    "laborCost": 10,
+    "castingTime": 6500,
+    "skillEffectRowIds": [
+      9500000
+    ]
+  },
+  "requiredDoodadId": 9200000,
+  "actabilityCategoryId": 48,
+  "actabilityLimit": 10000,
+  "castDelay": 7000,
+  "worldInteractionId": 51,
+  "recommendLevel": 0,
+  "visibleOrder": 0,
+  "needBind": false,
+  "showUpperCrafts": false,
+  "rowIds": {
+    "localization": {
+      "title": 9600000
+    },
+    "craftPackLinks": []
+  },
+  "materials": [
+    {
+      "id": 9700000,
+      "itemId": 24911,
+      "amount": 3,
+      "mainGrade": false,
+      "requiredGrade": -1
+    },
+    {
+      "id": 9700001,
+      "itemId": 16348,
+      "amount": 3,
+      "mainGrade": false,
+      "requiredGrade": -1
+    },
+    {
+      "id": 9700002,
+      "itemId": 8328,
+      "amount": 1,
+      "mainGrade": false,
+      "requiredGrade": -1
+    }
+  ],
+  "products": [
+    {
+      "id": 9750000,
+      "itemId": 27546,
+      "amount": 1,
+      "rate": 100,
+      "showLowerCrafts": false,
+      "useGrade": false,
+      "itemGradeId": 0
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+    "$schema": "../../schemas/content-project.schema.json",
+    "schemaVersion": 1,
+    "key": "custom",
+    "name": "AAEmu Custom Content",
+    "targetBaseline": "r208022",
+    "defaultLanguage": "en_us",
+    "idRegistry": "id-registry.json",
+    "recipes": ["recipes/*.json"],
+    "workbenches": ["workbenches/*.json"],
+    "rawSql": ["raw-sql/*.sql"]
+}

@@ -1,0 +1,109 @@
+{
+    "$schema": "../../schemas/id-registry.schema.json",
+  "schemaVersion": 1,
+  "ranges": {
+    "crafts": {
+      "start": 9100000,
+      "end": 9199999
+    },
+    "doodad_almighties": {
+      "start": 9200000,
+      "end": 9299999
+    },
+    "craft_packs": {
+      "start": 9300000,
+      "end": 9399999
+    },
+    "skills": {
+      "start": 9400000,
+      "end": 9499999
+    },
+    "skill_effects": {
+      "start": 9500000,
+      "end": 9599999
+    },
+    "localized_texts": {
+      "start": 9600000,
+      "end": 9699999
+    },
+    "craft_materials": {
+      "start": 9700000,
+      "end": 9749999
+    },
+    "craft_products": {
+      "start": 9750000,
+      "end": 9799999
+    },
+    "craft_pack_crafts": {
+      "start": 9800000,
+      "end": 9849999
+    },
+    "doodad_func_groups": {
+      "start": 9850000,
+      "end": 9874999
+    },
+    "doodad_funcs": {
+      "start": 9875000,
+      "end": 9899999
+    },
+    "doodad_phase_funcs": {
+      "start": 9900000,
+      "end": 9924999
+    },
+    "doodad_func_craft_packs": {
+      "start": 9925000,
+      "end": 9949999
+    }
+  },
+  "allocations": {
+    "crafts": {
+      "recipe.example-unstable-solution:row": 9100000
+    },
+    "craft_materials": {
+      "recipe.example-unstable-solution:material:0": 9700000,
+      "recipe.example-unstable-solution:material:1": 9700001,
+      "recipe.example-unstable-solution:material:2": 9700002
+    },
+    "craft_products": {
+      "recipe.example-unstable-solution:product:0": 9750000
+    },
+    "localized_texts": {
+      "recipe.example-unstable-solution:title": 9600000,
+      "workbench.example-alchemy-workbench:name": 9600001
+    },
+    "skills": {
+      "recipe.example-unstable-solution:skill": 9400000
+    },
+    "skill_effects": {
+      "recipe.example-unstable-solution:skill-effect:0": 9500000
+    },
+    "doodad_almighties": {
+      "workbench.example-alchemy-workbench:row": 9200000
+    },
+    "craft_packs": {
+      "workbench.example-alchemy-workbench:craft-pack": 9300000
+    },
+    "doodad_func_groups": {
+      "workbench.example-alchemy-workbench:group:16902": 9850000,
+      "workbench.example-alchemy-workbench:group:16903": 9850001
+    },
+    "doodad_funcs": {
+      "workbench.example-alchemy-workbench:func:13830": 9875000,
+      "workbench.example-alchemy-workbench:func:13831": 9875001,
+      "workbench.example-alchemy-workbench:func:13832": 9875002,
+      "workbench.example-alchemy-workbench:func:13833": 9875003
+    },
+    "doodad_func_craft_packs": {
+      "workbench.example-alchemy-workbench:craft-pack-payload:129": 9925000,
+      "workbench.example-alchemy-workbench:craft-pack-payload:130": 9925001
+    },
+    "doodad_phase_funcs": {
+      "workbench.example-alchemy-workbench:phase-func:22358": 9900000,
+      "workbench.example-alchemy-workbench:phase-func:22359": 9900001
+    },
+    "craft_pack_crafts": {
+      "workbench.example-alchemy-workbench:pack-link:0": 9800000
+    }
+  },
+  "tombstones": {}
+}

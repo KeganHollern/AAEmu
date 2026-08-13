@@ -1,0 +1,42 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AAEmu Content Studio cloned workbench",
+    "type": "object",
+    "required": ["schemaVersion", "key", "id", "sourceDoodadId", "names", "craftPack", "recipeIds", "rowIds"],
+    "properties": {
+        "$schema": { "type": "string" },
+        "schemaVersion": { "const": 1 },
+        "key": { "type": "string", "pattern": "^workbench\\.[a-z0-9._-]+$" },
+        "id": { "$ref": "#/$defs/id" },
+        "sourceDoodadId": { "$ref": "#/$defs/id" },
+        "names": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string", "minLength": 1 } },
+        "modelOverride": { "type": ["string", "null"] },
+        "craftPack": {
+            "type": "object",
+            "required": ["id", "name"],
+            "properties": {
+                "id": { "$ref": "#/$defs/id" },
+                "name": { "type": "string", "minLength": 1 }
+            }
+        },
+        "recipeIds": { "type": "array", "items": { "$ref": "#/$defs/id" }, "uniqueItems": true },
+        "rowIds": {
+            "type": "object",
+            "required": ["functionGroups", "functions", "phaseFunctions", "craftPackPayloads", "localization", "craftPackLinks"],
+            "properties": {
+                "functionGroups": { "$ref": "#/$defs/idMap" },
+                "functions": { "$ref": "#/$defs/idMap" },
+                "phaseFunctions": { "$ref": "#/$defs/idMap" },
+                "craftPackPayloads": { "$ref": "#/$defs/idMap" },
+                "localization": { "type": "object", "additionalProperties": { "$ref": "#/$defs/id" } },
+                "craftPackLinks": { "type": "array", "items": { "$ref": "#/$defs/id" }, "uniqueItems": true }
+            },
+            "additionalProperties": false
+        }
+    },
+    "$defs": {
+        "id": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "idMap": { "type": "object", "patternProperties": { "^[0-9]+$": { "$ref": "#/$defs/id" } }, "additionalProperties": false }
+    },
+    "additionalProperties": false
+}

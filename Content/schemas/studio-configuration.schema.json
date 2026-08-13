@@ -1,0 +1,27 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AAEmu Content Studio local configuration",
+    "type": "object",
+    "required": ["schemaVersion", "baselinePath", "baselineDescriptorPath", "projectPath", "outputDirectory", "targets"],
+    "properties": {
+        "$schema": { "type": "string" },
+        "schemaVersion": { "const": 1 },
+        "baselinePath": { "type": "string", "minLength": 1 },
+        "baselineDescriptorPath": { "type": "string", "minLength": 1 },
+        "projectPath": { "type": "string", "minLength": 1 },
+        "outputDirectory": { "type": "string", "minLength": 1 },
+        "targets": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "required": ["path", "backupDirectory"],
+                "properties": {
+                    "path": { "type": "string", "minLength": 1 },
+                    "backupDirectory": { "type": "string", "minLength": 1 }
+                },
+                "additionalProperties": false
+            }
+        }
+    },
+    "additionalProperties": false
+}
