@@ -20,11 +20,15 @@ public class AccessLevelManager(IOptions<AppConfiguration> options) : Singleton<
         Logger.Info($"Loaded {CMD.Count} CommandAccessLevels");
     }
 
-    public int GetLevel(string commandStr)
+    public int GetLevel(params string[] commandPath)
     {
-        var result = CMD.Find(o => o.CommandName == commandStr);
-        if (result != null)
-            return result.CommandLevel;
+        for (var length = commandPath.Length; length > 0; length--)
+        {
+            var candidate = string.Join(" ", commandPath.Take(length));
+            var result = CMD.Find(o => o.CommandName.Equals(candidate, StringComparison.OrdinalIgnoreCase));
+            if (result != null)
+                return result.CommandLevel;
+        }
 
         return 100;
     }

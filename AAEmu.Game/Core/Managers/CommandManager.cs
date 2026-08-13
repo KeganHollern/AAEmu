@@ -141,7 +141,10 @@ public partial class CommandManager : Singleton<CommandManager>, ICommandManager
         if (command == null)
             return false;
 
-        if (AccessLevelManager.Instance.GetLevel(thisCommand) > characterAccessLevel)
+        var accessPath = command is ICommandV2
+            ? words.Skip(1).Prepend(thisCommand).ToArray()
+            : [thisCommand];
+        if (AccessLevelManager.Instance.GetLevel(accessPath) > characterAccessLevel)
         {
             messageOutput.SendMessage("|cFFFF0000Insufficient privileges.|r");
             return true;
