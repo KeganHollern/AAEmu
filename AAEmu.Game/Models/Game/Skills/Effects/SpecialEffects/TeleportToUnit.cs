@@ -58,9 +58,7 @@ public class TeleportToUnit : SpecialEffectAction
                 var oldPosition = npc.Transform.Local.ClonePosition();
 
                 var endZ = targetPosition.Z;
-                var groundZ = npc.ParentWorld?.Template.GeoData.GetHeight(new Vector3(endX, endY, endZ)) ?? 0f;
-                if (groundZ > 0 && Math.Abs(endZ - groundZ) < 5f)
-                    endZ = groundZ;
+                endZ = NpcEffectGrounding.ResolveHeight(npc, new Vector3(endX, endY, endZ), 5f);
 
                 npc.Transform.Local.SetPosition(endX, endY, endZ);
 
