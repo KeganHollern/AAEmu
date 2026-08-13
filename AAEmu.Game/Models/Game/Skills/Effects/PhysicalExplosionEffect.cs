@@ -49,9 +49,7 @@ public class PhysicalExplosionEffect : EffectTemplate
 
             var oldPosition = npc.Transform.Local.ClonePosition();
 
-            var groundZ = npc.ParentWorld.Template.GeoData.GetHeight(new Vector3(endPos.X, endPos.Y, endPos.Z));
-            if (groundZ > 0 && Math.Abs(endPos.Z - groundZ) < 5f)
-                endPos.Z = groundZ;
+            endPos.Z = NpcEffectGrounding.ResolveHeight(npc, endPos, 5f);
 
             npc.Transform.Local.SetPosition(endPos.X, endPos.Y, endPos.Z);
 
