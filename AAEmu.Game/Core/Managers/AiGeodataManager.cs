@@ -302,9 +302,9 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
         {
             if (!TryGetLegacyBaiSample(pos, out var sample))
             {
-                if (worldTemplate.TryGetHeight(pos.X, pos.Y, out var terrainHeight))
+                if (worldTemplate.TryGetHeight(pos.X, pos.Y, out var terrainOnlyHeight))
                 {
-                    surface = new GroundSurfaceResult(terrainHeight, GroundSurfaceSource.Terrain,
+                    surface = new GroundSurfaceResult(terrainOnlyHeight, GroundSurfaceSource.Terrain,
                         GroundSurfaceDecision.TerrainOnly, GroundSurfaceFailure.None, null);
                     return true;
                 }
