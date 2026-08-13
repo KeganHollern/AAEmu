@@ -1,4 +1,5 @@
 ﻿using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 
 using AAEmu.Commons.Network;
@@ -19,7 +20,7 @@ public class ServerTests
         await Assert.That(session.RemoteEndPoint).IsEqualTo(new IPEndPoint(IPAddress.Loopback, 1239));
         await Assert.That(server.GetSessions()).Contains(session);
 
-        SetProperty(session, nameof(session.IsConnected), false);
+        SetBackingField(session, nameof(session.IsConnected), false);
         server.SimulateDisconnected(session);
     }
 
@@ -30,7 +31,7 @@ public class ServerTests
         var session = CreateConnectedSessionWithDisposedSocket(server, 1250);
         server.SimulateConnected(session);
 
-        SetProperty(session, nameof(session.IsConnected), false);
+        SetBackingField(session, nameof(session.IsConnected), false);
         server.SimulateDisconnected(session);
         server.SimulateConnected(session);
 
@@ -52,25 +53,40 @@ public class ServerTests
         await Assert.That(snapshot).IsEmpty();
         await Assert.That(current).Contains(session);
 
-        SetProperty(session, nameof(session.IsConnected), false);
+        SetBackingField(session, nameof(session.IsConnected), false);
         server.SimulateDisconnected(session);
     }
 
     private static Session CreateConnectedSessionWithDisposedSocket(TestServer server, int port)
     {
         var session = new Session(server);
-        SetProperty(session, nameof(session.RemoteEndPoint), new IPEndPoint(IPAddress.Loopback, port));
-        SetProperty(session, nameof(session.IsConnected), true);
+        SetBackingField(session, nameof(session.RemoteEndPoint), new IPEndPoint(IPAddress.Loopback, port));
+        SetBackingField(session, nameof(session.IsConnected), true);
 
-        session.Socket.Dispose();
+        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        socket.Dispose();
+        SetBackingField(session, nameof(session.Socket), socket);
 
         return session;
     }
 
-    private static void SetProperty<T>(Session session, string name, T value)
+    private static void SetBackingField<T>(Session session, string propertyName, T value)
     {
-        typeof(Session).GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
-            .SetValue(session, value);
+        var fieldName = $"<{propertyName}>k__BackingField";
+        var declaringType = session.GetType();
+        while (declaringType != null)
+        {
+            var field = declaringType.GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            if (field != null)
+            {
+                field.SetValue(session, value);
+                return;
+            }
+
+            declaringType = declaringType.BaseType;
+        }
+
+        throw new MissingFieldException(session.GetType().FullName, fieldName);
     }
 
     private sealed class TestServer : Server
