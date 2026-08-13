@@ -415,11 +415,12 @@ public class CharacterCraft(Character owner)
     }
 
     internal static bool IsCraftLocationAuthorized(uint requiredDoodadId, IReadOnlySet<uint> allowedPacks,
-        uint actualDoodadId, IReadOnlySet<uint> exposedPacks)
+        uint actualDoodadTemplateId, IReadOnlySet<uint> exposedPacks)
     {
-        var matchesRequiredDoodad = requiredDoodadId > 0 && actualDoodadId == requiredDoodadId;
-        var matchesCraftPack = allowedPacks.Count > 0 && allowedPacks.Overlaps(exposedPacks);
-        return matchesRequiredDoodad || matchesCraftPack || requiredDoodadId == 0 && allowedPacks.Count == 0;
+        if (allowedPacks.Count > 0)
+            return allowedPacks.Overlaps(exposedPacks);
+
+        return requiredDoodadId == 0 || actualDoodadTemplateId == requiredDoodadId;
     }
 
     private void CraftOrCancel()
