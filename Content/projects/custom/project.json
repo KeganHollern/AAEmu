@@ -8,5 +8,6 @@
     "idRegistry": "id-registry.json",
     "recipes": ["recipes/*.json"],
     "workbenches": ["workbenches/*.json"],
+    "records": ["records/*.json"],
     "rawSql": ["raw-sql/*.sql"]
 }

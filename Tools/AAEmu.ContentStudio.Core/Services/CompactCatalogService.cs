@@ -38,12 +38,19 @@ public sealed class CompactCatalogService
                AND lt.idx = i.id
              WHERE CAST(i.id AS TEXT) = @exact
                 OR LOWER(COALESCE(lt.{BaselineVerifier.QuoteIdentifier(language)}, i.name, '')) LIKE @query
-             ORDER BY CASE WHEN CAST(i.id AS TEXT) = @exact THEN 0 ELSE 1 END,
+             ORDER BY CASE
+                        WHEN CAST(i.id AS TEXT) = @exact THEN 0
+                        WHEN LOWER(COALESCE(NULLIF(lt.{BaselineVerifier.QuoteIdentifier(language)}, ''), i.name, '')) = @normalized THEN 1
+                        WHEN LOWER(COALESCE(NULLIF(lt.{BaselineVerifier.QuoteIdentifier(language)}, ''), i.name, '')) LIKE @prefix THEN 2
+                        ELSE 3
+                      END,
                       LOWER(COALESCE(lt.{BaselineVerifier.QuoteIdentifier(language)}, i.name, '')),
                       i.id
              LIMIT @limit;
             """;
         command.Parameters.AddWithValue("@exact", query.Trim());
+        command.Parameters.AddWithValue("@normalized", query.Trim().ToLowerInvariant());
+        command.Parameters.AddWithValue("@prefix", $"{query.Trim().ToLowerInvariant()}%");
         command.Parameters.AddWithValue("@query", $"%{query.Trim().ToLowerInvariant()}%");
         command.Parameters.AddWithValue("@limit", Math.Clamp(limit, 1, 500));
         using var reader = command.ExecuteReader();
@@ -60,6 +67,203 @@ public sealed class CompactCatalogService
         return result;
     }
 
+    public IReadOnlyList<RecipeLookupResult> SearchRecipes(string compactPath, string query, string language = "en_us", int limit = 30)
+    {
+        ValidateLanguageColumn(language);
+        using var connection = CompactConnectionFactory.OpenReadOnly(compactPath);
+        using var command = connection.CreateCommand();
+        var languageColumn = BaselineVerifier.QuoteIdentifier(language);
+        command.CommandText = $"""
+            SELECT c.id,
+                   COALESCE(NULLIF(lt.{languageColumn}, ''), c.title, ''),
+                   (SELECT COUNT(*) FROM craft_materials cm WHERE cm.craft_id = c.id),
+                   (SELECT COUNT(*) FROM craft_products cp WHERE cp.craft_id = c.id),
+                   COALESCE(c.req_doodad_id, 0)
+              FROM crafts c
+              LEFT JOIN localized_texts lt
+                ON lt.tbl_name = 'crafts'
+               AND lt.tbl_column_name = 'title'
+               AND lt.idx = c.id
+             WHERE CAST(c.id AS TEXT) = @exact
+                OR LOWER(COALESCE(NULLIF(lt.{languageColumn}, ''), c.title, '')) LIKE @query
+             ORDER BY CASE
+                        WHEN CAST(c.id AS TEXT) = @exact THEN 0
+                        WHEN LOWER(COALESCE(NULLIF(lt.{languageColumn}, ''), c.title, '')) = @normalized THEN 1
+                        WHEN LOWER(COALESCE(NULLIF(lt.{languageColumn}, ''), c.title, '')) LIKE @prefix THEN 2
+                        ELSE 3
+                      END,
+                      LOWER(COALESCE(NULLIF(lt.{languageColumn}, ''), c.title, '')),
+                      c.id
+             LIMIT @limit;
+            """;
+        AddLookupParameters(command, query, limit);
+        using var reader = command.ExecuteReader();
+        var result = new List<RecipeLookupResult>();
+        while (reader.Read())
+        {
+            result.Add(new RecipeLookupResult(
+                Convert.ToUInt32(reader.GetInt64(0)),
+                reader.GetString(1),
+                reader.GetInt32(2),
+                reader.GetInt32(3),
+                Convert.ToUInt32(reader.GetInt64(4))));
+        }
+
+        return result;
+    }
+
+    public IReadOnlyList<RecipeLookupResult> GetRecipeLookups(string compactPath, IEnumerable<uint> recipeIds, string language = "en_us")
+    {
+        ValidateLanguageColumn(language);
+        var ids = recipeIds.Distinct().Take(900).ToArray();
+        if (ids.Length == 0)
+        {
+            return [];
+        }
+        using var connection = CompactConnectionFactory.OpenReadOnly(compactPath);
+        using var command = connection.CreateCommand();
+        var parameters = new List<string>(ids.Length);
+        for (var index = 0; index < ids.Length; index++)
+        {
+            var name = $"@id{index}";
+            parameters.Add(name);
+            command.Parameters.AddWithValue(name, ids[index]);
+        }
+        var languageColumn = BaselineVerifier.QuoteIdentifier(language);
+        command.CommandText = $"""
+            SELECT c.id,
+                   COALESCE(NULLIF(lt.{languageColumn}, ''), c.title, ''),
+                   (SELECT COUNT(*) FROM craft_materials cm WHERE cm.craft_id = c.id),
+                   (SELECT COUNT(*) FROM craft_products cp WHERE cp.craft_id = c.id),
+                   COALESCE(c.req_doodad_id, 0)
+              FROM crafts c
+              LEFT JOIN localized_texts lt
+                ON lt.tbl_name = 'crafts'
+               AND lt.tbl_column_name = 'title'
+               AND lt.idx = c.id
+             WHERE c.id IN ({string.Join(", ", parameters)})
+             ORDER BY LOWER(COALESCE(NULLIF(lt.{languageColumn}, ''), c.title, '')), c.id;
+            """;
+        using var reader = command.ExecuteReader();
+        var result = new List<RecipeLookupResult>();
+        while (reader.Read())
+        {
+            result.Add(new RecipeLookupResult(
+                Convert.ToUInt32(reader.GetInt64(0)),
+                reader.GetString(1),
+                reader.GetInt32(2),
+                reader.GetInt32(3),
+                Convert.ToUInt32(reader.GetInt64(4))));
+        }
+        return result;
+    }
+
+    public IReadOnlyList<WorkbenchLookupResult> SearchWorkbenches(string compactPath, string query, string language = "en_us", int limit = 30)
+    {
+        ValidateLanguageColumn(language);
+        using var connection = CompactConnectionFactory.OpenReadOnly(compactPath);
+        using var command = connection.CreateCommand();
+        var languageColumn = BaselineVerifier.QuoteIdentifier(language);
+        command.CommandText = $"""
+            WITH candidates AS MATERIALIZED (
+                SELECT d.id,
+                       COALESCE(NULLIF(lt.{languageColumn}, ''), d.name, '') AS resolved_name,
+                       COALESCE(d.model, '') AS model,
+                       CASE
+                         WHEN CAST(d.id AS TEXT) = @exact THEN 0
+                         WHEN LOWER(COALESCE(NULLIF(lt.{languageColumn}, ''), d.name, '')) = @normalized THEN 1
+                         WHEN LOWER(COALESCE(NULLIF(lt.{languageColumn}, ''), d.name, '')) LIKE @prefix THEN 2
+                         ELSE 3
+                       END AS match_order
+                  FROM doodad_almighties d
+                  LEFT JOIN localized_texts lt
+                    ON lt.tbl_name = 'doodad_almighties'
+                   AND lt.tbl_column_name = 'name'
+                   AND lt.idx = d.id
+                 WHERE CAST(d.id AS TEXT) = @exact
+                    OR LOWER(COALESCE(NULLIF(lt.{languageColumn}, ''), d.name, '')) LIKE @query
+                 ORDER BY match_order, LOWER(COALESCE(NULLIF(lt.{languageColumn}, ''), d.name, '')), d.id
+                 LIMIT 200
+            )
+            SELECT d.id,
+                   d.resolved_name,
+                   d.model,
+                   (SELECT COUNT(*) FROM doodad_func_groups groups WHERE groups.doodad_almighty_id = d.id),
+                   (SELECT COUNT(*)
+                      FROM doodad_funcs funcs
+                      JOIN doodad_func_groups groups ON groups.id = funcs.doodad_func_group_id
+                     WHERE groups.doodad_almighty_id = d.id),
+                   (SELECT COUNT(DISTINCT links.craft_id)
+                      FROM doodad_funcs funcs
+                      JOIN doodad_func_groups groups ON groups.id = funcs.doodad_func_group_id
+                      JOIN doodad_func_craft_packs payload
+                        ON funcs.actual_func_type = 'DoodadFuncCraftPack'
+                       AND payload.id = funcs.actual_func_id
+                      JOIN craft_pack_crafts links ON links.craft_pack_id = payload.craft_pack_id
+                     WHERE groups.doodad_almighty_id = d.id)
+              FROM candidates d
+             WHERE EXISTS (
+                   SELECT 1
+                     FROM doodad_funcs funcs
+                     JOIN doodad_func_groups groups ON groups.id = funcs.doodad_func_group_id
+                    WHERE groups.doodad_almighty_id = d.id
+                      AND funcs.actual_func_type = 'DoodadFuncCraftPack')
+             ORDER BY d.match_order, LOWER(d.resolved_name), d.id
+             LIMIT @limit;
+            """;
+        AddLookupParameters(command, query, limit);
+        using var reader = command.ExecuteReader();
+        var result = new List<WorkbenchLookupResult>();
+        while (reader.Read())
+        {
+            result.Add(new WorkbenchLookupResult(
+                Convert.ToUInt32(reader.GetInt64(0)),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt32(3),
+                reader.GetInt32(4),
+                reader.GetInt32(5)));
+        }
+
+        return result;
+    }
+
+    public IReadOnlyList<ItemRecipeRelationship> GetRecipesConsumingItem(string compactPath, uint itemId, string language = "en_us")
+    {
+        ValidateLanguageColumn(language);
+        using var connection = CompactConnectionFactory.OpenReadOnly(compactPath);
+        using var command = connection.CreateCommand();
+        var languageColumn = BaselineVerifier.QuoteIdentifier(language);
+        command.CommandText = $"""
+            SELECT c.id,
+                   COALESCE(NULLIF(lt.{languageColumn}, ''), c.title, ''),
+                   SUM(cm.amount),
+                   COALESCE(c.req_doodad_id, 0)
+              FROM craft_materials cm
+              JOIN crafts c ON c.id = cm.craft_id
+              LEFT JOIN localized_texts lt
+                ON lt.tbl_name = 'crafts'
+               AND lt.tbl_column_name = 'title'
+               AND lt.idx = c.id
+             WHERE cm.item_id = @itemId
+             GROUP BY c.id, COALESCE(NULLIF(lt.{languageColumn}, ''), c.title, ''), c.req_doodad_id
+             ORDER BY LOWER(COALESCE(NULLIF(lt.{languageColumn}, ''), c.title, '')), c.id;
+            """;
+        command.Parameters.AddWithValue("@itemId", itemId);
+        using var reader = command.ExecuteReader();
+        var result = new List<ItemRecipeRelationship>();
+        while (reader.Read())
+        {
+            result.Add(new ItemRecipeRelationship(
+                Convert.ToUInt32(reader.GetInt64(0)),
+                reader.GetString(1),
+                reader.GetInt32(2),
+                Convert.ToUInt32(reader.GetInt64(3))));
+        }
+
+        return result;
+    }
+
     public RecipeGraph? GetRecipe(string compactPath, uint recipeId, string language = "en_us")
     {
         ValidateLanguageColumn(language);
@@ -67,17 +271,22 @@ public sealed class CompactCatalogService
         using var command = connection.CreateCommand();
         command.CommandText = $"""
             SELECT c.id,
-                   COALESCE(NULLIF(lt.{BaselineVerifier.QuoteIdentifier(language)}, ''), c.title, ''),
+                   COALESCE(NULLIF(title_text.{BaselineVerifier.QuoteIdentifier(language)}, ''), c.title, ''),
+                   COALESCE(NULLIF(description_text.{BaselineVerifier.QuoteIdentifier(language)}, ''), c.desc, ''),
                    COALESCE(c.skill_id, 0),
                    COALESCE(s.consume_lp, 0),
                    COALESCE(s.casting_time, 0),
                    COALESCE(c.req_doodad_id, 0)
               FROM crafts c
               LEFT JOIN skills s ON s.id = c.skill_id
-              LEFT JOIN localized_texts lt
-                ON lt.tbl_name = 'crafts'
-               AND lt.tbl_column_name = 'title'
-               AND lt.idx = c.id
+              LEFT JOIN localized_texts title_text
+                ON title_text.tbl_name = 'crafts'
+               AND title_text.tbl_column_name = 'title'
+               AND title_text.idx = c.id
+              LEFT JOIN localized_texts description_text
+                ON description_text.tbl_name = 'crafts'
+               AND description_text.tbl_column_name = 'desc'
+               AND description_text.idx = c.id
              WHERE c.id = @id
              LIMIT 1;
             """;
@@ -92,10 +301,11 @@ public sealed class CompactCatalogService
         {
             Id = Convert.ToUInt32(reader.GetInt64(0)),
             Name = reader.GetString(1),
-            SkillId = Convert.ToUInt32(reader.GetInt64(2)),
-            LaborCost = reader.GetInt32(3),
-            CastingTime = reader.GetInt32(4),
-            RequiredDoodadId = Convert.ToUInt32(reader.GetInt64(5))
+            Description = reader.GetString(2),
+            SkillId = Convert.ToUInt32(reader.GetInt64(3)),
+            LaborCost = reader.GetInt32(4),
+            CastingTime = reader.GetInt32(5),
+            RequiredDoodadId = Convert.ToUInt32(reader.GetInt64(6))
         };
         reader.Close();
         graph.CraftPackIds = ReadUIntList(connection, "SELECT craft_pack_id FROM craft_pack_crafts WHERE craft_id = @id ORDER BY craft_pack_id;", recipeId);
@@ -222,7 +432,8 @@ public sealed class CompactCatalogService
                    cp.amount,
                    COALESCE(cp.rate, 0),
                    COALESCE(cp.use_grade, 0),
-                   COALESCE(cp.item_grade_id, 0)
+                   COALESCE(cp.item_grade_id, 0),
+                   COALESCE(cp.show_lower_crafts, 0)
               FROM craft_products cp
               LEFT JOIN items i ON i.id = cp.item_id
               LEFT JOIN localized_texts lt
@@ -243,6 +454,7 @@ public sealed class CompactCatalogService
                 reader.GetString(2),
                 reader.GetInt32(3),
                 reader.GetInt32(4),
+                ReadBoolean(reader, 7),
                 ReadBoolean(reader, 5),
                 Convert.ToUInt32(reader.GetInt64(6))));
         }
@@ -333,6 +545,16 @@ public sealed class CompactCatalogService
             string text => text.Equals("t", StringComparison.OrdinalIgnoreCase) || text == "1",
             _ => Convert.ToBoolean(value)
         };
+    }
+
+    private static void AddLookupParameters(SqliteCommand command, string query, int limit)
+    {
+        var normalized = query.Trim().ToLowerInvariant();
+        command.Parameters.AddWithValue("@exact", query.Trim());
+        command.Parameters.AddWithValue("@normalized", normalized);
+        command.Parameters.AddWithValue("@prefix", $"{normalized}%");
+        command.Parameters.AddWithValue("@query", $"%{normalized}%");
+        command.Parameters.AddWithValue("@limit", Math.Clamp(limit, 1, 100));
     }
 
     internal static void ValidateLanguageColumn(string language)

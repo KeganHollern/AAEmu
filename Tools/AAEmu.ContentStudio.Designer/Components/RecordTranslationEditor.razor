@@ -1,0 +1,36 @@
+@using AAEmu.ContentStudio.Core.Models
+
+<article class="translation-card">
+    <label>@Field.Label <small>English (US)</small></label>
+    @if (IsLongText(Field.Field))
+    {
+        <textarea @bind="English" @bind:event="oninput" disabled="@(!Editing)"></textarea>
+    }
+    else
+    {
+        <input @bind="English" @bind:event="oninput" disabled="@(!Editing)" />
+    }
+    <details>
+        <summary>Other languages</summary>
+        <div class="language-grid">
+            @foreach (var language in s_languages)
+            {
+                <label>@language.Value<input value="@Field.Values.GetValueOrDefault(language.Key)" @oninput="args => SetLanguage(language.Key, args)" disabled="@(!Editing)" /></label>
+            }
+        </div>
+    </details>
+</article>
+
+@code {
+    [Parameter, EditorRequired] public CatalogLocalizationField Field { get; set; } = null!;
+    [Parameter] public bool Editing { get; set; }
+
+    private static readonly Dictionary<string, string> s_languages = new()
+    {
+        ["de"] = "German", ["fr"] = "French", ["ja"] = "Japanese", ["ko"] = "Korean",
+        ["ru"] = "Russian", ["zh_cn"] = "Chinese (Simplified)", ["zh_tw"] = "Chinese (Traditional)"
+    };
+    private string English { get => Field.Values.GetValueOrDefault("en_us", string.Empty); set => Field.Values["en_us"] = value; }
+    private static bool IsLongText(string field) => field.Contains("desc", StringComparison.OrdinalIgnoreCase) || field.Contains("text", StringComparison.OrdinalIgnoreCase);
+    private void SetLanguage(string language, ChangeEventArgs args) => Field.Values[language] = Convert.ToString(args.Value) ?? string.Empty;
+}

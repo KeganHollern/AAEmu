@@ -90,6 +90,156 @@ public class ContentStudioPipelineTests
         await Assert.That(response.UsedFuzzyMatching).IsTrue();
         await Assert.That(response.Results.Any(result => result.Table == "items" && result.Id == 10)).IsTrue();
     }
+
+    [Test]
+    public async Task SearchEverything_ListsAbilitiesAndTheirSkills()
+    {
+        using var workspace = TestWorkspace.Create();
+        var search = new CatalogSearchService().SearchEverything(workspace.BaselinePath, "abilities");
+        var ability = new CatalogRecordService().GetAbility(workspace.BaselinePath, 1);
+
+        await Assert.That(search.Results.Any(result => result.Kind == "ability" && result.Name == "Battlerage")).IsTrue();
+        await Assert.That(ability).IsNotNull();
+        await Assert.That(ability!.Skills.Any(skill => skill.Id == 200 && skill.Name == "Whirlwind Slash")).IsTrue();
+    }
+
+    [Test]
+    public async Task FriendlyCloneLookups_FindNamedSourcesAndLoadEveryDirectRecipe()
+    {
+        using var workspace = TestWorkspace.Create();
+        using (var connection = new SqliteConnection($"Data Source={workspace.BaselinePath};Pooling=False"))
+        {
+            connection.Open();
+            for (var index = 0; index < 12; index++)
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = "INSERT INTO crafts VALUES (@id, @title, 1000, 0, 200, 0, '', 0, 300, 0, 0, 0, 0, 1, 1, 0); INSERT INTO craft_materials VALUES (@rowId, @id, 10, 1, 0, -1);";
+                command.Parameters.AddWithValue("@id", 1_000 + index);
+                command.Parameters.AddWithValue("@title", $"Moonlight Part {index + 1}");
+                command.Parameters.AddWithValue("@rowId", 2_000 + index);
+                command.ExecuteNonQuery();
+            }
+        }
+
+        var catalog = new CompactCatalogService();
+        var recipes = catalog.SearchRecipes(workspace.BaselinePath, "Archeum Tonic");
+        var workbenches = catalog.SearchWorkbenches(workspace.BaselinePath, "Alchemy Workbench");
+        var relationships = catalog.GetRecipesConsumingItem(workspace.BaselinePath, 10);
+        var draft = new ScaffoldService().CreateRecipeDraft(workspace.BaselinePath, 100);
+
+        await Assert.That(recipes.Any(recipe => recipe.Id == 100 && recipe.Name == "Archeum Tonic")).IsTrue();
+        await Assert.That(workbenches.Any(workbench => workbench.Id == 300 && workbench.Name == "Alchemy Workbench")).IsTrue();
+        await Assert.That(relationships.Count).IsEqualTo(13);
+        await Assert.That(draft.Materials).HasSingleItem();
+        await Assert.That(draft.Products).HasSingleItem();
+        await Assert.That(draft.Names["en_us"]).IsEqualTo("Custom Archeum Tonic");
+    }
+
+    [Test]
+    public async Task ItemReferencePicker_RanksExactNamesAndClassifiesOnlyItemTemplates()
+    {
+        using var workspace = TestWorkspace.Create();
+        var results = new CompactCatalogService().SearchItems(workspace.BaselinePath, "Moonlight Archeum Dust");
+
+        await Assert.That(results.First().Id).IsEqualTo(10u);
+        await Assert.That(CatalogRecordService.ReferenceTableFor("required_item_id")).IsEqualTo("items");
+        await Assert.That(CatalogRecordService.ReferenceTableFor("consume_item_id")).IsEqualTo("items");
+        await Assert.That(CatalogRecordService.ReferenceTableFor("item_grade_id")).IsEqualTo("item_grades");
+        await Assert.That(CatalogRecordService.ReferenceTableFor("starter_item_pack_id")).IsNull();
+    }
+
+    [Test]
+    public async Task ItemGameplayProfile_ExplainsGearStatsEffectsAndSetBonuses()
+    {
+        using var workspace = TestWorkspace.Create();
+        var profile = new ItemGameplayService().GetProfile(workspace.BaselinePath, 12)!;
+
+        await Assert.That(profile.IsEquipment).IsTrue();
+        await Assert.That(profile.GearKind).IsEqualTo("Weapon");
+        await Assert.That(profile.StatWeights.Any(stat => stat.Name == "Intelligence" && stat.Percentage == 67)).IsTrue();
+        await Assert.That(profile.StatWeights.Any(stat => stat.Name == "Spirit" && stat.Percentage == 33)).IsTrue();
+        await Assert.That(profile.EquipmentSet).IsNotNull();
+        await Assert.That(profile.EquipmentSet!.Pieces.Any(piece => piece.Id == 12)).IsTrue();
+        await Assert.That(profile.EquipmentSet.Bonuses.Single().Buff!.Name).IsEqualTo("Wave Wisdom");
+        await Assert.That(profile.Effects.Single(effect => effect.Source == "Weapon proc").Name).IsEqualTo("Wave Burst");
+    }
+
+    [Test]
+    public async Task DeleteRecipe_DetachesWorkbenchAndRetiresEveryOwnedId()
+    {
+        using var workspace = TestWorkspace.Create();
+        var manifests = new ManifestService();
+        var deletion = new ChangeDeletionService();
+        var recipePath = manifests.FindByKey(workspace.ProjectPath, "recipe.test-recipe");
+
+        var preview = deletion.Preview(workspace.ProjectPath, recipePath);
+        var result = deletion.Delete(workspace.ProjectPath, recipePath);
+        var project = new ProjectRepository().LoadProject(workspace.ProjectPath);
+
+        await Assert.That(preview.CanDelete).IsTrue();
+        await Assert.That(preview.Consequences.Any(value => value.Contains("removed from 1 saved workbench", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(File.Exists(recipePath)).IsFalse();
+        await Assert.That(project.Workbenches.Single().RecipeIds).IsEmpty();
+        await Assert.That(project.Workbenches.Single().RowIds.CraftPackLinks).IsEmpty();
+        await Assert.That(project.Registry.Allocations["crafts"].ContainsKey("recipe.test-recipe:row")).IsFalse();
+        await Assert.That(project.Registry.Tombstones["crafts"]["recipe.test-recipe:row"]).IsEqualTo(9_100_000u);
+        await Assert.That(project.Registry.Tombstones["craft_pack_crafts"]["workbench.test-workbench:pack-link:0"]).IsEqualTo(9_800_000u);
+        await Assert.That(result.UpdatedChangeCount).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task DeleteWorkbench_KeepsRecipeAndRemovesItsWorkbenchRequirement()
+    {
+        using var workspace = TestWorkspace.Create();
+        var manifests = new ManifestService();
+        var deletion = new ChangeDeletionService();
+        var workbenchPath = manifests.FindByKey(workspace.ProjectPath, "workbench.test-workbench");
+
+        var preview = deletion.Preview(workspace.ProjectPath, workbenchPath);
+        var result = deletion.Delete(workspace.ProjectPath, workbenchPath);
+        var project = new ProjectRepository().LoadProject(workspace.ProjectPath);
+
+        await Assert.That(preview.CanDelete).IsTrue();
+        await Assert.That(File.Exists(workbenchPath)).IsFalse();
+        await Assert.That(project.Recipes.Single().RequiredDoodadId).IsEqualTo(0u);
+        await Assert.That(project.Registry.Tombstones["doodad_almighties"]["workbench.test-workbench:row"]).IsEqualTo(9_200_000u);
+        await Assert.That(result.UpdatedChangeCount).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RecordDetails_ShowsEveryColumnAndDuplicatesSkillGraph()
+    {
+        using var workspace = TestWorkspace.Create();
+        var catalog = new CatalogRecordService();
+        var record = catalog.GetRecord(workspace.BaselinePath, "skills", 200)!;
+
+        await Assert.That(record.Fields.Count).IsEqualTo(14);
+        await Assert.That(record.Fields.Any(field => field.Name == "cooldown_time" && field.Help!.Contains("milliseconds"))).IsTrue();
+        await Assert.That(record.Fields.Single(field => field.Name == "skill_controller_id").IsNull).IsTrue();
+        await Assert.That(record.GameplayLinks.Single().Facts.Any(fact => fact.Label == "Protection / charge" && fact.Value == "561")).IsTrue();
+        await Assert.That(record.GameplayLinks.Single().Facts.Any(fact => fact.Label == "Physical defense" && fact.Value == "+700")).IsTrue();
+
+        record.Fields.Single(field => field.Name == "name").Value = "Custom Whirlwind Slash";
+        record.Localizations.Single(field => field.Field == "name").Values["en_us"] = "Custom Whirlwind Slash";
+        var saved = new RecordScaffoldService().Save(new RecordDraftRequest
+        {
+            ProjectPath = workspace.ProjectPath,
+            BaselinePath = workspace.BaselinePath,
+            Table = "skills",
+            SourceId = 200,
+            Mode = RecordChangeMode.Duplicate,
+            DisplayName = "Custom Whirlwind Slash",
+            Values = record.Fields.Where(field => !field.IsIdentity).ToDictionary(field => field.Name, field => field.Value),
+            Localizations = record.Localizations.ToDictionary(field => field.Field, field => field.Values)
+        });
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        var duplicate = catalog.GetRecord(build.ArtifactPath, "skills", saved.Id)!;
+
+        await Assert.That(saved.Id).IsEqualTo(9_400_001u);
+        await Assert.That(saved.RelatedRowsCopied).IsEqualTo(1);
+        await Assert.That(duplicate.Name).IsEqualTo("Custom Whirlwind Slash");
+        await Assert.That(duplicate.Fields.Single(field => field.Name == "skill_controller_id").IsNull).IsTrue();
+    }
 }
 
 internal sealed class TestWorkspace : IDisposable
@@ -140,10 +290,23 @@ internal sealed class TestWorkspace : IDisposable
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            CREATE TABLE items (id INTEGER, name TEXT, category_id INTEGER, price INTEGER);
+            CREATE TABLE items (id INTEGER, name TEXT, category_id INTEGER, price INTEGER, description TEXT, level INTEGER, level_requirement INTEGER, gradable NUM, fixed_grade INTEGER, buff_id INTEGER, use_skill_id INTEGER);
             CREATE TABLE crafts (id INTEGER, title TEXT, cast_delay INTEGER, tool_id INTEGER, skill_id INTEGER, wi_id INTEGER, desc TEXT, milestone_id INTEGER, req_doodad_id INTEGER, need_bind TEXT, ac_id INTEGER, actability_limit INTEGER, show_upper_crafts TEXT, recommend_level INTEGER, visible_order INTEGER, translate TEXT);
-            CREATE TABLE skills (id INTEGER, name TEXT, consume_lp INTEGER, casting_time INTEGER);
-            CREATE TABLE skill_effects (id INTEGER, skill_id INTEGER, effect_id INTEGER);
+            CREATE TABLE skills (id INTEGER, name TEXT, desc TEXT, web_desc TEXT, ability_id INTEGER, ability_level INTEGER, mana_cost INTEGER, cooldown_time INTEGER, consume_lp INTEGER, casting_time INTEGER, show NUM, icon_id INTEGER, max_range INTEGER, skill_controller_id INTEGER);
+            CREATE TABLE skill_effects (id INTEGER, skill_id INTEGER, effect_id INTEGER, start_level INTEGER, end_level INTEGER, chance INTEGER);
+            CREATE TABLE effects (id INTEGER, actual_type TEXT, actual_id INTEGER);
+            CREATE TABLE buff_effects (id INTEGER, buff_id INTEGER, chance INTEGER, stack INTEGER, ab_level INTEGER);
+            CREATE TABLE buffs (id INTEGER, duration INTEGER, level_duration INTEGER, init_min_charge INTEGER, init_max_charge INTEGER, max_stack INTEGER);
+            CREATE TABLE unit_modifiers (id INTEGER, owner_id INTEGER, owner_type TEXT, unit_attribute_id INTEGER, unit_modifier_type_id INTEGER, value INTEGER, linear_level_bonus INTEGER);
+            CREATE TABLE item_weapons (id INTEGER, item_id INTEGER, holdable_id INTEGER, mod_set_id INTEGER, eiset_id INTEGER, base_enchantable NUM, repairable NUM, durability_multiplier INTEGER, recharge_buff_id INTEGER);
+            CREATE TABLE item_armors (id INTEGER, item_id INTEGER, type_id INTEGER, slot_type_id INTEGER, mod_set_id INTEGER, eiset_id INTEGER, base_enchantable NUM, repairable NUM, durability_multiplier INTEGER, recharge_buff_id INTEGER);
+            CREATE TABLE item_accessories (id INTEGER, item_id INTEGER, type_id INTEGER, slot_type_id INTEGER, mod_set_id INTEGER, eiset_id INTEGER, repairable NUM, durability_multiplier INTEGER, recharge_buff_id INTEGER);
+            CREATE TABLE holdables (id INTEGER, name TEXT, code TEXT, slot_type_id INTEGER, speed INTEGER, damage_scale INTEGER, max_range INTEGER, item_proc_id INTEGER);
+            CREATE TABLE wearables (id INTEGER, armor_type_id INTEGER, slot_type_id INTEGER, armor_bp INTEGER, magic_resistance_bp INTEGER);
+            CREATE TABLE equip_item_attr_modifiers (id INTEGER, str_weight INTEGER, dex_weight INTEGER, sta_weight INTEGER, int_weight INTEGER, spi_weight INTEGER);
+            CREATE TABLE equip_item_sets (id INTEGER, name TEXT, description TEXT);
+            CREATE TABLE equip_item_set_bonuses (id INTEGER, equip_item_set_id INTEGER, num_pieces INTEGER, buff_id INTEGER, proc_id INTEGER);
+            CREATE TABLE item_procs (id INTEGER, name TEXT, description TEXT);
             CREATE TABLE craft_materials (id INTEGER, craft_id INTEGER, item_id INTEGER, amount INTEGER, main_grade TEXT, require_grade INTEGER);
             CREATE TABLE craft_products (id INTEGER, craft_id INTEGER, item_id INTEGER, amount INTEGER, rate INTEGER, show_lower_crafts TEXT, use_grade TEXT, item_grade_id INTEGER);
             CREATE TABLE craft_packs (id INTEGER, name TEXT);
@@ -154,9 +317,24 @@ internal sealed class TestWorkspace : IDisposable
             CREATE TABLE doodad_phase_funcs (id INTEGER, doodad_func_group_id INTEGER, actual_func_id INTEGER, actual_func_type TEXT);
             CREATE TABLE doodad_func_craft_packs (id INTEGER, craft_pack_id INTEGER);
             CREATE TABLE localized_texts (id INTEGER, tbl_name TEXT, tbl_column_name TEXT, idx INTEGER, ko TEXT, ko_ver INTEGER, en_us TEXT, en_us_ver INTEGER, zh_cn TEXT, zh_cn_ver INTEGER, ja TEXT, ja_ver INTEGER, ru TEXT, ru_ver INTEGER, zh_tw TEXT, zh_tw_ver INTEGER, de TEXT, de_ver INTEGER, fr TEXT, fr_ver INTEGER);
-            INSERT INTO items VALUES (10, 'Input', 1, 1), (11, 'Output', 1, 1);
-            INSERT INTO skills VALUES (200, 'Craft', 5, 1000);
-            INSERT INTO skill_effects VALUES (201, 200, 1);
+            INSERT INTO items VALUES
+              (10, 'Input', 1, 1, '', 1, 0, 0, 0, 0, 0),
+              (11, 'Output', 1, 1, '', 1, 0, 0, 0, 0, 0),
+              (12, 'Wave Scepter', 75, 36300, 'A scepter from the Delphinad Wave set.', 50, 50, 1, 0, 0, 0);
+            INSERT INTO skills VALUES (200, 'Whirlwind Slash', 'Spin and attack nearby enemies.', 'Spin and attack nearby enemies.', 1, 10, 15, 12000, 5, 1000, 't', 42, 4000, '--- :null');
+            INSERT INTO skill_effects VALUES (201, 200, 1, 10, 19, 100);
+            INSERT INTO effects VALUES (1, 'BuffEffect', 2);
+            INSERT INTO buff_effects VALUES (2, 3, 100, 1, 0);
+            INSERT INTO buffs VALUES (3, 0, 0, 561, 561, 1);
+            INSERT INTO buffs VALUES (4, 0, 0, 0, 0, 1);
+            INSERT INTO unit_modifiers VALUES (4, 3, 'Buff', 8, 0, 700, 0);
+            INSERT INTO unit_modifiers VALUES (5, 4, 'Buff', 5, 0, 12, 0);
+            INSERT INTO item_weapons VALUES (600, 12, 20, 30, 40, 1, 1, 100, 0);
+            INSERT INTO holdables VALUES (20, 'Scepter', '1h_staff', 2, 1000, 100, 4000, 50);
+            INSERT INTO equip_item_attr_modifiers VALUES (30, 0, 0, 0, 2, 1);
+            INSERT INTO equip_item_sets VALUES (40, 'Wave Set', 'Equipment favored by Wave spellcasters.');
+            INSERT INTO equip_item_set_bonuses VALUES (41, 40, 2, 4, 0);
+            INSERT INTO item_procs VALUES (50, 'Wave Burst', 'Occasionally releases a burst of magic.');
             INSERT INTO crafts VALUES (100, 'Source Recipe', 1000, 0, 200, 0, '', 0, 300, 0, 0, 0, 0, 1, 1, 0);
             INSERT INTO craft_materials VALUES (400, 100, 10, 2, 0, -1);
             INSERT INTO craft_products VALUES (401, 100, 11, 1, 100, 0, 0, 0);
@@ -172,6 +350,13 @@ internal sealed class TestWorkspace : IDisposable
               (501, 'items', 'name', 11, 'Unstable Solution'),
               (502, 'crafts', 'title', 100, 'Archeum Tonic'),
               (503, 'doodad_almighties', 'name', 300, 'Alchemy Workbench');
+            INSERT INTO localized_texts (id, tbl_name, tbl_column_name, idx, en_us) VALUES
+              (504, 'skills', 'name', 200, 'Whirlwind Slash'),
+              (505, 'skills', 'web_desc', 200, 'Spin and attack nearby enemies.'),
+              (506, 'buffs', 'name', 3, 'Protective Ward'),
+              (507, 'items', 'name', 12, 'Delphinad Wave Scepter'),
+              (508, 'buffs', 'name', 4, 'Wave Wisdom'),
+              (509, 'item_procs', 'name', 50, 'Wave Burst');
             """;
         command.ExecuteNonQuery();
     }
@@ -184,7 +369,7 @@ internal sealed class TestWorkspace : IDisposable
             ClientBuild = "test",
             Length = new FileInfo(BaselinePath).Length,
             Sha256 = FileHashService.CalculateSha256(BaselinePath),
-            TableCount = 14,
+            TableCount = 27,
             RequiredTables = []
         };
         File.WriteAllText(DescriptorPath, ContentStudioJson.Serialize(descriptor));
@@ -205,9 +390,9 @@ internal sealed class TestWorkspace : IDisposable
                 ["crafts"] = Range(9_100_000),
                 ["doodad_almighties"] = Range(9_200_000),
                 ["craft_packs"] = Range(9_300_000),
-                ["skills"] = Range(9_400_000),
-                ["skill_effects"] = Range(9_500_000),
-                ["localized_texts"] = new IdRange { Start = 9_600_000, End = 9_600_001 },
+                ["skills"] = new IdRange { Start = 9_400_000, End = 9_400_010 },
+                ["skill_effects"] = new IdRange { Start = 9_500_000, End = 9_500_010 },
+                ["localized_texts"] = new IdRange { Start = 9_600_000, End = 9_600_010 },
                 ["craft_materials"] = Range(9_700_000),
                 ["craft_products"] = Range(9_750_000),
                 ["craft_pack_crafts"] = Range(9_800_000),

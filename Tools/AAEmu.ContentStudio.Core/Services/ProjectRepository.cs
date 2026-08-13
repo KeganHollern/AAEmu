@@ -44,13 +44,16 @@ public sealed class ProjectRepository
 
         var recipeFiles = ExpandPatterns(projectDirectory, definition.Recipes);
         var workbenchFiles = ExpandPatterns(projectDirectory, definition.Workbenches);
+        var recordFiles = ExpandPatterns(projectDirectory, definition.Records);
         var rawSqlFiles = ExpandPatterns(projectDirectory, definition.RawSql);
         var recipes = recipeFiles.Select(path => ContentStudioJson.Deserialize<RecipeDefinition>(File.ReadAllText(path), path)).ToList();
         var workbenches = workbenchFiles.Select(path => ContentStudioJson.Deserialize<WorkbenchDefinition>(File.ReadAllText(path), path)).ToList();
+        var records = recordFiles.Select(path => ContentStudioJson.Deserialize<RecordDefinition>(File.ReadAllText(path), path)).ToList();
 
         var sourceFiles = new[] { fullProjectPath, registryPath }
             .Concat(recipeFiles)
             .Concat(workbenchFiles)
+            .Concat(recordFiles)
             .Concat(rawSqlFiles)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
@@ -63,6 +66,7 @@ public sealed class ProjectRepository
             Registry = registry,
             Recipes = recipes,
             Workbenches = workbenches,
+            Records = records,
             RawSqlFiles = rawSqlFiles,
             SourceFiles = sourceFiles
         };

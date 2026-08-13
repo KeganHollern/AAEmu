@@ -15,7 +15,7 @@ public sealed class CatalogSearchService
         ["doodad_almighties"] = ("doodad", "Doodad", "generic"),
         ["npcs"] = ("npc", "NPC", "generic"),
         ["skills"] = ("skill", "Skill", "generic"),
-        ["buffs"] = ("skill", "Buff", "generic"),
+        ["buffs"] = ("buff", "Buff", "generic"),
         ["quest_contexts"] = ("quest", "Quest", "generic"),
         ["quest_names"] = ("quest", "Quest name", "generic"),
         ["quest_categories"] = ("quest", "Quest category", "generic"),
@@ -26,7 +26,7 @@ public sealed class CatalogSearchService
         ["return_points"] = ("world", "Return point", "generic"),
         ["housings"] = ("world", "Housing", "generic"),
         ["slaves"] = ("world", "Vehicle", "generic"),
-        ["abilities"] = ("skill", "Ability", "generic"),
+        ["abilities"] = ("ability", "Ability / skillset", "ability"),
         ["actability_categories"] = ("skill", "Proficiency", "generic"),
         ["ui_texts"] = ("other", "Interface text", "generic")
     };
@@ -42,9 +42,10 @@ public sealed class CatalogSearchService
 
         limit = Math.Clamp(limit, 1, 200);
         using var connection = CompactConnectionFactory.OpenReadOnly(compactPath);
+        var results = new Dictionary<(string Table, uint Id), CatalogSearchResult>();
+        AddAbilityMatches(results, search);
         var labels = ReadLabels(connection, language);
         var candidates = ReadTextMatches(connection, search, language);
-        var results = new Dictionary<(string Table, uint Id), CatalogSearchResult>();
 
         foreach (var candidate in candidates)
         {
@@ -96,6 +97,33 @@ public sealed class CatalogSearchService
             UsedFuzzyMatching = usedFuzzyMatching,
             Results = SelectDiversified(ordered, limit)
         };
+    }
+
+    private static void AddAbilityMatches(IDictionary<(string Table, uint Id), CatalogSearchResult> results, string search)
+    {
+        var normalized = Normalize(search);
+        var asksForAll = normalized is "ability" or "abilities" or "skillset" or "skillsets" or "class" or "classes";
+        foreach (var (id, ability) in CatalogRecordService.Abilities)
+        {
+            var name = Normalize(ability.Name);
+            if (!asksForAll && !name.Contains(normalized, StringComparison.Ordinal) && !normalized.Contains(name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            AddOrImprove(results, new CatalogSearchResult
+            {
+                Id = id,
+                Name = ability.Name,
+                Kind = "ability",
+                KindLabel = "Ability / skillset",
+                Table = "abilities",
+                Field = "name",
+                Context = ability.Description,
+                Score = asksForAll ? 1_025 : name == normalized ? 1_150 : 1_075,
+                InspectKind = "ability"
+            });
+        }
     }
 
     private static Dictionary<(string Table, uint Id), SearchLabel> ReadLabels(SqliteConnection connection, string language)
@@ -499,14 +527,16 @@ public sealed class CatalogSearchService
 
     private static int KindOrder(string kind) => kind switch
     {
-        "item" => 0,
-        "recipe" => 1,
-        "workbench" => 2,
-        "npc" => 3,
-        "skill" => 4,
-        "quest" => 5,
-        "world" => 6,
-        _ => 7
+        "ability" => 0,
+        "skill" => 1,
+        "buff" => 2,
+        "item" => 3,
+        "recipe" => 4,
+        "workbench" => 5,
+        "npc" => 6,
+        "quest" => 7,
+        "world" => 8,
+        _ => 9
     };
 
     private static List<CatalogSearchResult> SelectDiversified(List<CatalogSearchResult> ordered, int limit)

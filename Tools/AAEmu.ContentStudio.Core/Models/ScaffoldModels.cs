@@ -9,6 +9,7 @@ public sealed class RecipeScaffoldRequest
     public string Name { get; init; } = string.Empty;
     public uint[]? CraftPackIds { get; init; }
     public bool CloneSkill { get; init; }
+    public RecipeDefinition? Draft { get; init; }
     public bool DryRun { get; init; }
 }
 
@@ -20,6 +21,8 @@ public sealed class WorkbenchScaffoldRequest
     public required uint SourceDoodadId { get; init; }
     public string Name { get; init; } = string.Empty;
     public uint[] RecipeIds { get; init; } = [];
+    public string? ModelOverride { get; init; }
+    public string? CraftPackName { get; init; }
     public bool DryRun { get; init; }
 }
 

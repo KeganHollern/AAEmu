@@ -1,5 +1,5 @@
 {
-    "$schema": "../../schemas/id-registry.schema.json",
+  "$schema": "../../schemas/id-registry.schema.json",
   "schemaVersion": 1,
   "ranges": {
     "crafts": {
@@ -57,6 +57,35 @@
   },
   "allocations": {
     "crafts": {
+      "recipe.custom-lumber:row": 9100001
+    },
+    "craft_materials": {
+      "recipe.custom-lumber:material:0": 9700003
+    },
+    "craft_products": {
+      "recipe.custom-lumber:product:0": 9750001
+    },
+    "localized_texts": {
+      "recipe.custom-lumber:title": 9600002
+    },
+    "skills": {
+      "recipe.custom-lumber:skill": 9400001
+    },
+    "skill_effects": {
+      "recipe.custom-lumber:skill-effect:0": 9500001
+    },
+    "doodad_almighties": {},
+    "craft_packs": {},
+    "doodad_func_groups": {},
+    "doodad_funcs": {},
+    "doodad_func_craft_packs": {},
+    "doodad_phase_funcs": {},
+    "craft_pack_crafts": {
+      "recipe.custom-lumber:pack-link:0": 9800001
+    }
+  },
+  "tombstones": {
+    "crafts": {
       "recipe.example-unstable-solution:row": 9100000
     },
     "craft_materials": {
@@ -76,6 +105,9 @@
     },
     "skill_effects": {
       "recipe.example-unstable-solution:skill-effect:0": 9500000
+    },
+    "craft_pack_crafts": {
+      "workbench.example-alchemy-workbench:pack-link:0": 9800000
     },
     "doodad_almighties": {
       "workbench.example-alchemy-workbench:row": 9200000
@@ -100,10 +132,6 @@
     "doodad_phase_funcs": {
       "workbench.example-alchemy-workbench:phase-func:22358": 9900000,
       "workbench.example-alchemy-workbench:phase-func:22359": 9900001
-    },
-    "craft_pack_crafts": {
-      "workbench.example-alchemy-workbench:pack-link:0": 9800000
     }
-  },
-  "tombstones": {}
+  }
 }

@@ -15,6 +15,7 @@ public sealed class ContentValidator
         var report = new ValidationReport();
         ValidateUnique(project.Recipes.Select(recipe => (recipe.Key, recipe.Id)), "recipe", report);
         ValidateUnique(project.Workbenches.Select(workbench => (workbench.Key, workbench.Id)), "workbench", report);
+        ValidateUnique(project.Records.Select(record => (record.Key, record.Id)), "entry", report);
 
         using var connection = CompactConnectionFactory.OpenReadOnly(compactPath);
         foreach (var recipe in project.Recipes)
@@ -25,6 +26,11 @@ public sealed class ContentValidator
         foreach (var workbench in project.Workbenches)
         {
             ValidateWorkbench(connection, workbench, report);
+        }
+
+        foreach (var record in project.Records)
+        {
+            ValidateRecord(connection, record, report);
         }
 
         ValidateAllocatedIds(project, report);
@@ -79,7 +85,16 @@ public sealed class ContentValidator
             }
         }
 
-        AddDuplicateChecks(connection, report);
+        foreach (var record in project.Records)
+        {
+            RequireRow(connection, record.Table, record.Id, report, record.Key);
+            foreach (var child in record.Children)
+            {
+                RequireRow(connection, child.Table, child.Id, report, record.Key);
+            }
+        }
+
+        AddDuplicateChecks(connection, report, project);
         if (report.IsValid)
         {
             report.AddInformation("artifact.valid", "The compiled database passed integrity and graph validation.", compactPath);
@@ -193,6 +208,20 @@ public sealed class ContentValidator
         }
     }
 
+    private static void ValidateRecord(SqliteConnection connection, RecordDefinition record, ValidationReport report)
+    {
+        var entity = string.IsNullOrWhiteSpace(record.Key) ? $"{record.Table}/{record.Id}" : record.Key;
+        if (!record.Key.StartsWith("record.", StringComparison.Ordinal) || !IsValidKey(record.Key))
+            report.AddError("record.key", "Changed-entry keys must begin with 'record.' and contain only lowercase letters, numbers, dots, underscores, or hyphens.", entity: entity);
+        if (string.IsNullOrWhiteSpace(record.Table) || record.SourceId == 0 || record.Id == 0)
+            report.AddError("record.identity", "A changed entry needs a source table, source ID, and output ID.", entity: entity);
+        else if (!SqliteRowService.Exists(connection, null, record.Table, record.SourceId))
+            report.AddError("record.source", $"Source {record.Table} entry {record.SourceId} does not exist.", entity: entity);
+        if (record.Mode == RecordChangeMode.Modify && record.Id != record.SourceId)
+            report.AddError("record.modifyId", "A modification must retain the source entry ID.", entity: entity);
+        ValidateLanguages(record.Localizations.Values.SelectMany(values => values.Keys), report, entity);
+    }
+
     private static List<uint> ReadCraftPackPayloadIds(SqliteConnection connection, IEnumerable<uint> groups)
     {
         var ids = new List<uint>();
@@ -273,6 +302,12 @@ public sealed class ContentValidator
             expected.AddRange(workbench.RowIds.Localization.Values.Select(id => ("localized_texts", id, workbench.Key)));
             expected.AddRange(workbench.RowIds.CraftPackLinks.Select(id => ("craft_pack_crafts", id, workbench.Key)));
         }
+        foreach (var record in project.Records.Where(record => record.Mode == RecordChangeMode.Duplicate))
+        {
+            expected.Add((record.Table, record.Id, record.Key));
+            expected.AddRange(record.LocalizationRowIds.Values.Select(id => ("localized_texts", id, record.Key)));
+            expected.AddRange(record.Children.Select(child => (child.Table, child.Id, record.Key)));
+        }
         foreach (var duplicate in expected.GroupBy(row => (row.Table, row.Id)).Where(group => group.Key.Id != 0 && group.Count() > 1))
         {
             report.AddError("project.rowIdCollision", $"Target ID {duplicate.Key.Id} is used more than once in table '{duplicate.Key.Table}'.");
@@ -313,9 +348,13 @@ public sealed class ContentValidator
         }
     }
 
-    private static void AddDuplicateChecks(SqliteConnection connection, ValidationReport report)
+    private static void AddDuplicateChecks(SqliteConnection connection, ValidationReport report, LoadedContentProject project)
     {
-        foreach (var table in new[] { "crafts", "skills", "skill_effects", "craft_materials", "craft_products", "craft_packs", "craft_pack_crafts", "doodad_almighties", "doodad_func_groups", "doodad_funcs", "doodad_phase_funcs", "doodad_func_craft_packs", "localized_texts" })
+        var tables = new[] { "crafts", "skills", "skill_effects", "craft_materials", "craft_products", "craft_packs", "craft_pack_crafts", "doodad_almighties", "doodad_func_groups", "doodad_funcs", "doodad_phase_funcs", "doodad_func_craft_packs", "localized_texts" }
+            .Concat(project.Records.Where(record => record.Mode == RecordChangeMode.Duplicate).Select(record => record.Table))
+            .Concat(project.Records.SelectMany(record => record.Children).Select(child => child.Table))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var table in tables)
         {
             using var command = connection.CreateCommand();
             command.CommandText = $"SELECT id FROM {BaselineVerifier.QuoteIdentifier(table)} GROUP BY id HAVING COUNT(*) > 1 LIMIT 1;";

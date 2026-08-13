@@ -1,0 +1,253 @@
+@inject DesignerWorkspace Workspace
+
+<div class="item-reference-picker @(Disabled ? "read-only" : null)">
+    @if (!Disabled)
+    {
+        <div class="item-picker-input">
+            <input role="combobox"
+                   aria-label="@AriaLabel"
+                   aria-autocomplete="list"
+                   aria-expanded="@_showMatches"
+                   aria-controls="@_listId"
+                   autocomplete="off"
+                   value="@_searchText"
+                   @onfocus="ShowCurrentMatches"
+                   @oninput="SearchChanged"
+                   @onkeydown="HandleKey"
+                   placeholder="@Placeholder" />
+            @if (_busy) { <span class="item-picker-status">Searching...</span> }
+        </div>
+    }
+
+    @if (_selected is not null)
+    {
+        <div class="item-picker-selected">
+            <span class="selected-check">&#10003;</span>
+            <span><small>SELECTED ITEM</small><strong>@_selected.Name</strong></span>
+            <code>ID @_selected.Id</code>
+            <a href="@($"/entry?table=items&id={_selected.Id}")">View item</a>
+        </div>
+    }
+    else if (Disabled)
+    {
+        <div class="item-picker-selected empty"><span>No item selected</span></div>
+    }
+
+    @if (_showMatches && !Disabled)
+    {
+        <div class="item-picker-results" id="@_listId" role="listbox" aria-label="Matching items">
+            @if (_matches.Count == 0 && !_busy)
+            {
+                <p class="item-picker-empty">No matching items. Try fewer words or an exact ID.</p>
+            }
+            else
+            {
+                @for (var index = 0; index < _matches.Count; index++)
+                {
+                    var item = _matches[index];
+                    var highlighted = index == _highlightedIndex;
+                    <button type="button" role="option" aria-selected="@(item.Id == ItemId)" class="item-picker-option @(highlighted ? "is-highlighted" : null)" @onmouseenter="() => _highlightedIndex = _matches.IndexOf(item)" @onclick="() => Select(item)">
+                        <span><strong>@item.Name</strong><small>@(IsCustom(item) ? "Custom item from My changes" : $"Category {item.CategoryId}")</small></span>
+                        <code>@item.Id</code>
+                    </button>
+                }
+            }
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <p class="item-picker-error">@_error</p>
+    }
+</div>
+
+@code {
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ItemSearchResult> s_itemCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly string _listId = $"item-options-{Guid.NewGuid():N}";
+    private readonly HashSet<uint> _customItemIds = [];
+    private List<ItemSearchResult> _matches = [];
+    private ItemSearchResult? _selected;
+    private string _searchText = string.Empty;
+    private string? _error;
+    private uint _loadedId = uint.MaxValue;
+    private int _searchRevision;
+    private int _highlightedIndex;
+    private bool _busy;
+    private bool _showMatches;
+
+    [Parameter] public uint ItemId { get; set; }
+    [Parameter] public EventCallback<uint> ItemIdChanged { get; set; }
+    [Parameter] public EventCallback<ItemSearchResult> ItemSelected { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string AriaLabel { get; set; } = "Find an item";
+    [Parameter] public string Placeholder { get; set; } = "Type an item name or ID...";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == ItemId)
+        {
+            return;
+        }
+        _loadedId = ItemId;
+        if (ItemId == 0)
+        {
+            _selected = null;
+            _searchText = string.Empty;
+            return;
+        }
+        _selected = await ResolveById(ItemId);
+        _searchText = _selected?.Name ?? $"Item {ItemId}";
+    }
+
+    private async Task SearchChanged(ChangeEventArgs args)
+    {
+        _searchText = Convert.ToString(args.Value) ?? string.Empty;
+        _error = null;
+        var revision = ++_searchRevision;
+        if (_searchText.Trim().Length < 2 && !uint.TryParse(_searchText, out _))
+        {
+            _matches.Clear();
+            _showMatches = false;
+            return;
+        }
+        _busy = true;
+        _showMatches = true;
+        await Task.Delay(180);
+        if (revision != _searchRevision)
+        {
+            return;
+        }
+        try
+        {
+            _matches = await Search(_searchText);
+            _highlightedIndex = 0;
+        }
+        catch (Exception exception)
+        {
+            _matches.Clear();
+            _error = exception.Message;
+        }
+        finally
+        {
+            if (revision == _searchRevision)
+            {
+                _busy = false;
+            }
+        }
+    }
+
+    private void ShowCurrentMatches()
+    {
+        if (_matches.Count > 0)
+        {
+            _showMatches = true;
+        }
+    }
+
+    private async Task HandleKey(KeyboardEventArgs args)
+    {
+        if (!_showMatches || _matches.Count == 0)
+        {
+            return;
+        }
+        if (args.Key == "ArrowDown")
+        {
+            _highlightedIndex = Math.Min(_highlightedIndex + 1, _matches.Count - 1);
+        }
+        else if (args.Key == "ArrowUp")
+        {
+            _highlightedIndex = Math.Max(_highlightedIndex - 1, 0);
+        }
+        else if (args.Key == "Enter")
+        {
+            await Select(_matches[_highlightedIndex]);
+        }
+        else if (args.Key == "Escape")
+        {
+            _showMatches = false;
+        }
+    }
+
+    private async Task Select(ItemSearchResult item)
+    {
+        _selected = item;
+        _loadedId = item.Id;
+        _searchText = item.Name;
+        _showMatches = false;
+        _matches.Clear();
+        _error = null;
+        Cache(item);
+        await ItemIdChanged.InvokeAsync(item.Id);
+        await ItemSelected.InvokeAsync(item);
+    }
+
+    private async Task<ItemSearchResult?> ResolveById(uint id)
+    {
+        try
+        {
+            var config = Workspace.LoadConfiguration();
+            var key = CacheKey(config, id);
+            if (s_itemCache.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+            var custom = LoadCustomItems(config).FirstOrDefault(item => item.Id == id);
+            if (custom is not null)
+            {
+                Cache(custom, config);
+                return custom;
+            }
+            var item = await Task.Run(() => new CompactCatalogService().SearchItems(config.BaselinePath, id.ToString(), limit: 1).FirstOrDefault());
+            if (item is not null) Cache(item, config);
+            return item ?? new ItemSearchResult(id, $"Unknown item {id}", 0, 0);
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+            return new ItemSearchResult(id, $"Item {id}", 0, 0);
+        }
+    }
+
+    private async Task<List<ItemSearchResult>> Search(string query)
+    {
+        var config = Workspace.LoadConfiguration();
+        var baseline = await Task.Run(() => new CompactCatalogService().SearchItems(config.BaselinePath, query, limit: 20));
+        var custom = LoadCustomItems(config)
+            .Where(item => item.Id.ToString() == query.Trim() || item.Name.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase));
+        var normalized = query.Trim();
+        return baseline.Concat(custom)
+            .GroupBy(item => item.Id)
+            .Select(group => group.Last())
+            .OrderBy(item => item.Id.ToString() == normalized ? 0 : item.Name.Equals(normalized, StringComparison.OrdinalIgnoreCase) ? 1 : item.Name.StartsWith(normalized, StringComparison.OrdinalIgnoreCase) ? 2 : 3)
+            .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Id)
+            .Take(20)
+            .ToList();
+    }
+
+    private List<ItemSearchResult> LoadCustomItems(StudioConfiguration config)
+    {
+        var items = new ProjectRepository().LoadProject(config.ProjectPath).Records
+            .Where(record => record.Table.Equals("items", StringComparison.OrdinalIgnoreCase))
+            .Select(record => new ItemSearchResult(
+                record.Id,
+                record.Localizations.GetValueOrDefault("name")?.GetValueOrDefault("en_us", record.DisplayName) ?? record.DisplayName,
+                ParseUInt(record.Values.GetValueOrDefault("category_id")),
+                ParseInt(record.Values.GetValueOrDefault("price"))))
+            .ToList();
+        _customItemIds.Clear();
+        foreach (var item in items)
+        {
+            _customItemIds.Add(item.Id);
+            Cache(item, config);
+        }
+        return items;
+    }
+
+    private bool IsCustom(ItemSearchResult item) => _customItemIds.Contains(item.Id);
+    private void Cache(ItemSearchResult item) => Cache(item, Workspace.LoadConfiguration());
+    private static void Cache(ItemSearchResult item, StudioConfiguration config) => s_itemCache[CacheKey(config, item.Id)] = item;
+    private static string CacheKey(StudioConfiguration config, uint id) => $"{config.BaselinePath}|{config.ProjectPath}|{id}";
+    private static uint ParseUInt(string? value) => uint.TryParse(value, out var parsed) ? parsed : 0;
+    private static int ParseInt(string? value) => int.TryParse(value, out var parsed) ? parsed : 0;
+}

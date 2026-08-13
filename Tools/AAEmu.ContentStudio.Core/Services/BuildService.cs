@@ -93,6 +93,12 @@ public sealed class BuildService
         var changes = new List<ContentChange>();
         var workbenchCompiler = new WorkbenchCompiler();
         var recipeCompiler = new RecipeCompiler();
+        var recordCompiler = new RecordCompiler();
+
+        foreach (var record in project.Records.OrderBy(record => record.Table).ThenBy(record => record.Id))
+        {
+            changes.AddRange(recordCompiler.Compile(connection, transaction, record));
+        }
 
         foreach (var workbench in project.Workbenches.OrderBy(workbench => workbench.Id))
         {
@@ -134,6 +140,7 @@ public sealed class BuildService
         builder.AppendLine($"- SHA-256: `{manifest.ArtifactSha256}`");
         builder.AppendLine($"- Recipes: {manifest.RecipeCount}");
         builder.AppendLine($"- Workbenches: {manifest.WorkbenchCount}").AppendLine();
+        builder.AppendLine($"- Other changed or copied entries: {manifest.Changes.Count(change => change.EntityType == "record")}").AppendLine();
         builder.AppendLine("## Changes").AppendLine();
         foreach (var change in manifest.Changes)
         {

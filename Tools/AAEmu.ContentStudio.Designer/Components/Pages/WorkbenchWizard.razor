@@ -1,22 +1,374 @@
 @page "/workbenches"
 @inject DesignerWorkspace Workspace
 
-<PageTitle>Workbench Maker</PageTitle>
-<header class="page-head compact"><div><p class="eyebrow">GRAPH-AWARE CLONING</p><h1>Workbench maker</h1><p class="lede">Clone every group, function, phase, and craft-pack payload behind a proven doodad.</p></div></header>
-<section class="two-column form-grid">
-    <article class="panel"><h2>1 · Choose a working doodad</h2><label>Source doodad ID</label><input type="number" @bind="_source" /><button class="button" @onclick="Preview">Preview source</button>@if(_preview is not null){<div class="source-card"><strong>@_preview.Name</strong><span>@_preview.Groups.Count groups · @_preview.Groups.Sum(g=>g.Functions.Count) functions</span><span>@_preview.CraftPackIds.Count craft packs · @_preview.RecipeIds.Count recipes</span></div>}</article>
-    <article class="panel"><h2>2 · Create the custom graph</h2><label>Stable key</label><input @bind="_key" @bind:event="oninput" placeholder="workbench.moonlit-alchemy-bench" /><label>English name</label><input @bind="_name" @bind:event="oninput" placeholder="Moonlit Alchemy Bench" /><label>Recipe IDs <small>(comma separated)</small></label><input @bind="_recipes" @bind:event="oninput" placeholder="9100000" /><button class="button primary" @onclick="Create">Reserve graph IDs & create manifest</button></article>
-</section>
-@if(_result is not null){<section class="panel success-panel"><p class="eyebrow">CREATED</p><h2>@_result.Key <code>@_result.Id</code></h2><p>@_result.Path</p><p>@_result.Allocations.Count IDs reserved across the cloned graph.</p><p>Test spawn: <code>@_result.GmCommand</code></p><a class="button" href="/manifests">Open manifests</a></section>}
-@if (!string.IsNullOrEmpty(_error)) { <div class="toast error">@_error</div> }
+<PageTitle>@(_isExisting ? $"Edit {_name}" : "Workbench Maker")</PageTitle>
+
+<header class="page-head compact">
+    <div>
+        @if (_isExisting)
+        {
+            <a class="back-link" href="/manifests">← Back to My changes</a>
+            <p class="eyebrow">EDITING A SAVED WORKBENCH</p>
+            <h1>@_name</h1>
+            <p class="lede">World object ID @_workbench?.Id · recipes, player-facing details, and safe appearance choices are organized below.</p>
+        }
+        else
+        {
+            <p class="eyebrow">SEARCH · CLONE · CUSTOMIZE</p>
+            <h1>Workbench maker</h1>
+            <p class="lede">Find a working crafting object by name. Content Studio copies its proven behavior graph while you choose its name, appearance, and recipes.</p>
+        }
+    </div>
+</header>
+
+@if (!_isExisting)
+{
+    <section class="clone-source panel">
+        <div class="section-intro"><span>1</span><div><p class="eyebrow">CHOOSE A PROVEN STARTING POINT</p><h2>Which workbench should this copy?</h2><p>Search ordinary names such as Carpentry Workbench or Alchemy Workbench. Only objects with crafting behavior are shown.</p></div></div>
+        <div class="clone-search">
+            <input aria-label="Find a workbench to copy" @bind="_sourceQuery" @bind:event="oninput" @onkeydown="HandleSourceSearchKey" placeholder="For example: Carpentry Workbench…" />
+            <button class="button" @onclick="SearchSources" disabled="@_busy">@(_busy ? "Searching…" : "Find workbenches")</button>
+        </div>
+        @if (_sourceMatches is not null)
+        {
+            @if (_sourceMatches.Count == 0)
+            {
+                <p class="picker-empty">No crafting workbench matched that name. Try a shorter phrase or a world-object ID.</p>
+            }
+            else
+            {
+                <div class="clone-results" role="list" aria-label="Matching workbenches">
+                    @foreach (var match in _sourceMatches)
+                    {
+                        <button class="clone-result @(match.Id == _source ? "selected" : "")" @onclick="() => SelectSource(match)">
+                            <span><strong>@match.Name</strong><small>@match.RecipeCount recipe(s) · @match.GroupCount behavior group(s) · @match.FunctionCount function(s)</small></span>
+                            <code>@match.Id</code>
+                        </button>
+                    }
+                </div>
+            }
+        }
+        @if (_sourceGraph is not null)
+        {
+            <div class="selected-source"><div><small>COPYING</small><strong>@_sourceGraph.Name</strong><span>World object @_sourceGraph.Id · model @_sourceGraph.Model</span></div><button class="text-button" @onclick="ClearSource">Choose a different workbench</button></div>
+        }
+    </section>
+}
+
+@if (_workbench is not null)
+{
+    <section class="entry-help panel"><span class="help-icon">?</span><div><strong>@(_isExisting ? "You are changing the saved plan, not the live game." : "This is the editable copy. The original workbench will not be changed.")</strong><p>The complicated function graph remains protected. You can safely change what players see, choose an existing client model, and manage recipes by name.</p></div></section>
+
+    <section class="entry-section panel">
+        <div class="section-intro"><span>@(_isExisting ? "1" : "2")</span><div><p class="eyebrow">WHAT PLAYERS SEE</p><h2>Name and appearance</h2><p>Leave the appearance override empty to keep the selected workbench's known-good model.</p></div></div>
+        <div class="friendly-field-grid">
+            @if (!_isExisting)
+            {
+                <article class="friendly-field"><div class="field-label"><label>Project key</label></div><input @bind="_key" @bind:event="oninput" placeholder="workbench.custom-carpentry" /><p>An internal label used in My changes. Players never see it.</p></article>
+            }
+            <article class="friendly-field"><div class="field-label"><label>English name</label></div><input @bind="_name" @bind:event="oninput" /><p>The interaction name shown to English-language players.</p></article>
+            <article class="friendly-field"><div class="field-label"><label>Existing model override</label></div><input @bind="_workbench.ModelOverride" @bind:event="oninput" placeholder="Leave empty to keep the source model" /><p>Only use a model already present in the r208022 client. Source model: <code>@(_sourceGraph?.Model ?? "kept from the saved source")</code></p></article>
+        </div>
+    </section>
+
+    <section class="entry-section panel">
+        <div class="section-intro"><span>@(_isExisting ? "2" : "3")</span><div><p class="eyebrow">WHAT IT OFFERS</p><h2>Attached recipes</h2><p>Find recipes by name or ID, add the ones this workbench should offer, and remove anything that does not belong.</p></div></div>
+        <div class="recipe-picker">
+            <div class="clone-search">
+                <input aria-label="Find a recipe to attach" @bind="_recipeQuery" @bind:event="oninput" @onkeydown="HandleRecipeSearchKey" placeholder="Type a recipe name, including one from My changes…" />
+                <button class="button" @onclick="SearchRecipes" disabled="@_busy">Find recipes</button>
+            </div>
+            @if (_recipeMatches is not null)
+            {
+                @if (_recipeMatches.Count == 0)
+                {
+                    <p class="picker-empty">No recipes matched. Try a shorter name or exact recipe ID.</p>
+                }
+                else
+                {
+                    <div class="clone-results compact-results" role="list" aria-label="Recipes available to attach">
+                        @foreach (var match in _recipeMatches)
+                        {
+                            var attached = _selectedRecipes.Any(recipe => recipe.Id == match.Id);
+                            <button class="clone-result @(attached ? "selected" : "")" @onclick="() => AddRecipe(match)" disabled="@attached">
+                                <span><strong>@match.Name</strong><small>@match.MaterialCount ingredient(s) → @match.ProductCount product(s)</small></span>
+                                <span class="result-action">@(attached ? "Added" : "+ Add")</span>
+                            </button>
+                        }
+                    </div>
+                }
+            }
+        </div>
+        <div class="relationship-heading attached-heading"><h3>Recipes on this workbench</h3><span>@_selectedRecipes.Count total</span></div>
+        @if (_selectedRecipes.Count == 0)
+        {
+            <p class="empty-related">No recipes are attached yet. Use the search above to add one.</p>
+        }
+        else
+        {
+            <div class="attached-recipe-list">
+                @foreach (var recipe in _selectedRecipes)
+                {
+                    <article><div><strong>@recipe.Name</strong><small>Recipe @recipe.Id · @recipe.MaterialCount ingredient(s) → @recipe.ProductCount product(s)</small></div><button class="text-button danger-text" @onclick="() => RemoveRecipe(recipe)">Remove</button></article>
+                }
+            </div>
+        }
+    </section>
+
+    <details class="entry-section panel all-data">
+        <summary><span><strong>Advanced workbench identity</strong><small>Normally managed automatically</small></span></summary>
+        <p class="advanced-explanation">These values connect the copied function graph to its recipe group. Most designers should leave them alone.</p>
+        <div class="field-group"><div class="friendly-field-grid">
+            <article class="friendly-field"><div class="field-label"><label>Craft-pack name</label></div><input @bind="_workbench.CraftPack.Name" /><p>An internal grouping name; players do not see it.</p></article>
+            <article class="friendly-field identity"><div class="field-label"><label>Source world-object ID</label></div><div class="read-value"><code>@_workbench.SourceDoodadId</code><small>The proven behavior graph being copied</small></div></article>
+            @if (_isExisting)
+            {
+                <article class="friendly-field identity"><div class="field-label"><label>Craft-pack ID</label></div><div class="read-value"><code>@_workbench.CraftPack.Id</code><small>Managed automatically</small></div></article>
+            }
+        </div></div>
+    </details>
+
+    <section class="save-dock panel"><div><strong>@(_isExisting ? "Ready to update this workbench?" : "Ready to save this custom workbench?")</strong><span>@(_isExisting ? "Its existing custom IDs and full function graph remain unchanged." : "Safe IDs will be reserved across the complete behavior graph.")</span></div><button class="button primary" @onclick="Save" disabled="@_busy">@(_busy ? "Saving…" : _isExisting ? "Update saved workbench" : "Save custom workbench")</button></section>
+}
+else if (!_busy)
+{
+    <section class="panel picker-welcome"><span>↑</span><h2>Start by finding a workbench you recognize</h2><p>The safe editable copy will appear here as soon as you select a result.</p></section>
+}
+
+@if (_result is not null)
+{
+    <section class="panel success-panel saved-entry"><p class="eyebrow">SAVED</p><h2>@_result.Key <code>@_result.Id</code></h2><p>@_result.Allocations.Count safe IDs were reserved across the complete behavior graph.</p><p>Test spawn: <code>@_result.GmCommand</code></p><div><a class="button primary" href="/manifests">Review in My changes</a></div></section>
+}
+
+@if (!string.IsNullOrEmpty(_message)) { <div class="toast @(_isError ? "error" : "success")">@_message</div> }
 
 @code {
     [SupplyParameterFromQuery(Name = "source")] public int? Source { get; set; }
-    private uint _source=6387; private string _key=""; private string _name=""; private string _recipes="";
-    private WorkbenchGraph? _preview; private ScaffoldResult? _result; private string? _error;
-    private void Preview()=>Try(()=>{var c=Workspace.LoadConfiguration();_preview=new CompactCatalogService().GetWorkbench(c.BaselinePath,_source)??throw new ContentStudioException("Workbench not found.");});
-    private void Create()=>Try(()=>{var c=Workspace.LoadConfiguration();_result=new ScaffoldService().CreateWorkbench(new WorkbenchScaffoldRequest{ProjectPath=c.ProjectPath,BaselinePath=c.BaselinePath,Key=_key,SourceDoodadId=_source,Name=_name,RecipeIds=ParseIds(_recipes)});});
-    private static uint[] ParseIds(string text)=>string.IsNullOrWhiteSpace(text)?[]:text.Split(',',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries).Select(uint.Parse).ToArray();
-    private void Try(Action action){try{_error=null;action();}catch(Exception exception){_error=exception.Message;}}
-    protected override void OnParametersSet() { if (Source is >= 0) _source = (uint)Source.Value; }
+    [SupplyParameterFromQuery(Name = "plan")] public string? Plan { get; set; }
+
+    private uint _source;
+    private string _sourceQuery = string.Empty;
+    private string _recipeQuery = string.Empty;
+    private string _key = string.Empty;
+    private string _name = string.Empty;
+    private bool _isExisting;
+    private bool _busy;
+    private WorkbenchGraph? _sourceGraph;
+    private IReadOnlyList<WorkbenchLookupResult>? _sourceMatches;
+    private IReadOnlyList<RecipeLookupResult>? _recipeMatches;
+    private readonly List<RecipeLookupResult> _selectedRecipes = [];
+    private WorkbenchDefinition? _workbench;
+    private ScaffoldResult? _result;
+    private string? _editPath;
+    private string? _message;
+    private bool _isError;
+
+    protected override void OnParametersSet()
+    {
+        if (!string.IsNullOrWhiteSpace(Plan))
+        {
+            Try(LoadWorkbench, null);
+            return;
+        }
+        if (_isExisting)
+        {
+            return;
+        }
+        if (Source is > 0 && (uint)Source.Value != _source)
+        {
+            Try(() => SelectSourceById((uint)Source.Value), null);
+        }
+    }
+
+    private async Task HandleSourceSearchKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter") await SearchSources();
+    }
+
+    private async Task HandleRecipeSearchKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter") await SearchRecipes();
+    }
+
+    private Task SearchSources()
+    {
+        if (string.IsNullOrWhiteSpace(_sourceQuery))
+        {
+            _message = "Type part of a workbench name first."; _isError = true; return Task.CompletedTask;
+        }
+        return RunBusy(() =>
+        {
+            var config = Workspace.LoadConfiguration();
+            _sourceMatches = new CompactCatalogService().SearchWorkbenches(config.BaselinePath, _sourceQuery, limit: 40);
+        });
+    }
+
+    private void SelectSource(WorkbenchLookupResult source) => Try(() => SelectSourceById(source.Id), null);
+
+    private void SelectSourceById(uint sourceId)
+    {
+        var config = Workspace.LoadConfiguration();
+        var catalog = new CompactCatalogService();
+        _sourceGraph = catalog.GetWorkbench(config.BaselinePath, sourceId) ?? throw new ContentStudioException("That workbench could not be loaded.");
+        _source = sourceId;
+        _sourceQuery = _sourceGraph.Name;
+        _name = $"Custom {_sourceGraph.Name}";
+        _key = $"workbench.custom-{Slug(_sourceGraph.Name)}";
+        _workbench = new WorkbenchDefinition
+        {
+            SourceDoodadId = sourceId,
+            Names = new Dictionary<string, string> { ["en_us"] = _name },
+            CraftPack = new WorkbenchCraftPackDefinition { Name = $"custom_{Slug(_sourceGraph.Name).Replace('-', '_')}" }
+        };
+        _selectedRecipes.Clear();
+        _selectedRecipes.AddRange(ResolveRecipes(config, _sourceGraph.RecipeIds));
+        _message = null;
+        _result = null;
+    }
+
+    private void ClearSource()
+    {
+        _source = 0; _sourceGraph = null; _workbench = null; _selectedRecipes.Clear(); _result = null;
+    }
+
+    private Task SearchRecipes()
+    {
+        if (string.IsNullOrWhiteSpace(_recipeQuery))
+        {
+            _message = "Type part of a recipe name first."; _isError = true; return Task.CompletedTask;
+        }
+        return RunBusy(() =>
+        {
+            var config = Workspace.LoadConfiguration();
+            var catalog = new CompactCatalogService();
+            var matches = catalog.SearchRecipes(config.BaselinePath, _recipeQuery, limit: 40).ToList();
+            var normalized = _recipeQuery.Trim();
+            var project = new ProjectRepository().LoadProject(config.ProjectPath);
+            matches.AddRange(project.Recipes
+                .Where(recipe => recipe.Id.ToString() == normalized || recipe.Names.GetValueOrDefault("en_us", recipe.Key).Contains(normalized, StringComparison.OrdinalIgnoreCase))
+                .Select(recipe => new RecipeLookupResult(recipe.Id, recipe.Names.GetValueOrDefault("en_us", recipe.Key), recipe.Materials.Count, recipe.Products.Count, recipe.RequiredDoodadId)));
+            _recipeMatches = matches.GroupBy(match => match.Id).Select(group => group.First()).OrderBy(match => match.Name, StringComparer.OrdinalIgnoreCase).Take(50).ToList();
+        });
+    }
+
+    private void AddRecipe(RecipeLookupResult recipe)
+    {
+        if (_selectedRecipes.All(existing => existing.Id != recipe.Id)) _selectedRecipes.Add(recipe);
+    }
+
+    private void RemoveRecipe(RecipeLookupResult recipe) => _selectedRecipes.Remove(recipe);
+
+    private void LoadWorkbench()
+    {
+        var config = Workspace.LoadConfiguration();
+        var manifests = new ManifestService();
+        _editPath = manifests.FindByKey(config.ProjectPath, Plan!);
+        if (!_editPath.Contains($"{Path.DirectorySeparatorChar}workbenches{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)) throw new ContentStudioException("That saved change is not a workbench.");
+        _workbench = ContentStudioJson.Deserialize<WorkbenchDefinition>(manifests.Read(_editPath), _editPath);
+        _isExisting = true;
+        _source = _workbench.SourceDoodadId;
+        _name = _workbench.Names.GetValueOrDefault("en_us", _workbench.Key);
+        _sourceGraph = new CompactCatalogService().GetWorkbench(config.BaselinePath, _workbench.SourceDoodadId);
+        _selectedRecipes.Clear();
+        _selectedRecipes.AddRange(ResolveRecipes(config, _workbench.RecipeIds));
+    }
+
+    private static IReadOnlyList<RecipeLookupResult> ResolveRecipes(StudioConfiguration config, IEnumerable<uint> recipeIds)
+    {
+        var ids = recipeIds.Distinct().ToArray();
+        var projectRecipes = new ProjectRepository().LoadProject(config.ProjectPath).Recipes
+            .Where(recipe => ids.Contains(recipe.Id))
+            .ToDictionary(recipe => recipe.Id, recipe => new RecipeLookupResult(recipe.Id, recipe.Names.GetValueOrDefault("en_us", recipe.Key), recipe.Materials.Count, recipe.Products.Count, recipe.RequiredDoodadId));
+        var baselineRecipes = new CompactCatalogService().GetRecipeLookups(config.BaselinePath, ids.Where(id => !projectRecipes.ContainsKey(id)))
+            .ToDictionary(recipe => recipe.Id);
+        var result = new List<RecipeLookupResult>(ids.Length);
+        foreach (var id in ids)
+        {
+            if (projectRecipes.TryGetValue(id, out var projectRecipe)) result.Add(projectRecipe);
+            else if (baselineRecipes.TryGetValue(id, out var baselineRecipe)) result.Add(baselineRecipe);
+            else result.Add(new RecipeLookupResult(id, $"Unknown recipe {id}", 0, 0, 0));
+        }
+        return result;
+    }
+
+    private void Save()
+    {
+        if (_isExisting) SaveWorkbench(); else CreateWorkbench();
+    }
+
+    private void CreateWorkbench() => Try(() =>
+    {
+        if (_workbench is null || _sourceGraph is null || _source == 0) throw new ContentStudioException("Choose a source workbench first.");
+        ValidateScreen();
+        var config = Workspace.LoadConfiguration();
+        _result = new ScaffoldService().CreateWorkbench(new WorkbenchScaffoldRequest
+        {
+            ProjectPath = config.ProjectPath,
+            BaselinePath = config.BaselinePath,
+            Key = _key,
+            SourceDoodadId = _source,
+            Name = _name,
+            RecipeIds = _selectedRecipes.Select(recipe => recipe.Id).ToArray(),
+            ModelOverride = _workbench.ModelOverride,
+            CraftPackName = _workbench.CraftPack.Name
+        });
+        _editPath = _result.Path;
+        _workbench = ContentStudioJson.Deserialize<WorkbenchDefinition>(new ManifestService().Read(_editPath), _editPath);
+        _isExisting = true;
+    }, "Custom workbench saved. You can continue editing it here.");
+
+    private void SaveWorkbench() => Try(() =>
+    {
+        if (_workbench is null || _editPath is null) return;
+        ValidateScreen();
+        var config = Workspace.LoadConfiguration();
+        _workbench.Names["en_us"] = _name.Trim();
+        _workbench.ModelOverride = string.IsNullOrWhiteSpace(_workbench.ModelOverride) ? null : _workbench.ModelOverride.Trim();
+        _workbench.RecipeIds = _selectedRecipes.Select(recipe => recipe.Id).ToArray();
+        _workbench.RowIds.CraftPackLinks = EnsureLinkIds(config, _workbench.Key, _workbench.RowIds.CraftPackLinks, _workbench.RecipeIds.Length);
+        new ManifestService().Save(_editPath, ContentStudioJson.Serialize(_workbench));
+    }, "Saved workbench updated.");
+
+    private void ValidateScreen()
+    {
+        if (string.IsNullOrWhiteSpace(_name)) throw new ContentStudioException("Give the custom workbench an English name.");
+        if (_selectedRecipes.Count == 0) throw new ContentStudioException("Attach at least one recipe.");
+        if (_workbench is not null) _workbench.Names["en_us"] = _name.Trim();
+    }
+
+    private static uint[] EnsureLinkIds(StudioConfiguration config, string key, uint[] existing, int count)
+    {
+        var result = existing.Take(count).ToList();
+        if (result.Count == count) return [.. result];
+        var repository = new ProjectRepository();
+        var project = repository.LoadProject(config.ProjectPath);
+        var ids = new IdRegistryService();
+        var used = result.ToHashSet();
+        for (var suffix = 0; result.Count < count; suffix++)
+        {
+            var allocation = ids.Allocate(project.Registry, config.BaselinePath, "craft_pack_crafts", $"{key}:pack-link:{suffix}");
+            if (used.Add(allocation.Id)) result.Add(allocation.Id);
+        }
+        repository.SaveRegistry(config.ProjectPath, project.Registry);
+        return [.. result];
+    }
+
+    private static string Slug(string value)
+    {
+        var characters = value.ToLowerInvariant().Select(character => char.IsLetterOrDigit(character) ? character : '-').ToArray();
+        return string.Join('-', new string(characters).Split('-', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private async Task RunBusy(Action action)
+    {
+        try { _busy = true; _message = null; _isError = false; await Task.Run(action); }
+        catch (Exception exception) { _isError = true; _message = exception.Message; }
+        finally { _busy = false; }
+    }
+
+    private void Try(Action action, string? success)
+    {
+        try { _message = null; action(); _isError = false; _message = success; }
+        catch (Exception exception) { _isError = true; _message = exception.Message; }
+    }
 }

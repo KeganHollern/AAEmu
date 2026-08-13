@@ -1,22 +1,461 @@
 @page "/recipes"
 @inject DesignerWorkspace Workspace
 
-<PageTitle>Recipe Maker</PageTitle>
-<header class="page-head compact"><div><p class="eyebrow">GUIDED AUTHORING</p><h1>Recipe maker</h1><p class="lede">Start from a recipe the client already understands, then edit its readable manifest.</p></div></header>
-<section class="two-column form-grid">
-    <article class="panel"><h2>1 · Choose a source</h2><label>Source recipe ID</label><input type="number" @bind="_source" /><button class="button" @onclick="Preview">Preview source</button>@if(_preview is not null){<div class="source-card"><strong>@_preview.Name</strong><span>ID @_preview.Id · skill @_preview.SkillId</span><span>@_preview.Materials.Count materials → @_preview.Products.Count products</span></div>}</article>
-    <article class="panel"><h2>2 · Name the custom recipe</h2><label>Stable key</label><input @bind="_key" @bind:event="oninput" placeholder="recipe.moonlit-tonic" /><label>English name</label><input @bind="_name" @bind:event="oninput" placeholder="Moonlit Tonic" /><label>Craft-pack IDs <small>(comma separated)</small></label><input @bind="_packs" @bind:event="oninput" placeholder="90" /><label class="check"><input type="checkbox" @bind="_cloneSkill" /> Clone skill rows so labor and cast time can be customized</label><button class="button primary" @onclick="Create">Reserve IDs & create manifest</button></article>
-</section>
-@if(_result is not null){<section class="panel success-panel"><p class="eyebrow">CREATED</p><h2>@_result.Key <code>@_result.Id</code></h2><p>@_result.Path</p><p>@_result.Allocations.Count IDs reserved. Continue in the Manifest editor.</p><a class="button" href="/manifests">Open manifests</a></section>}
-@if (!string.IsNullOrEmpty(_error)) { <div class="toast error">@_error</div> }
+<PageTitle>@(_isExisting ? $"Edit {_name}" : "Recipe Maker")</PageTitle>
+
+<header class="page-head compact">
+    <div>
+        @if (_isExisting)
+        {
+            <a class="back-link" href="/manifests">← Back to My changes</a>
+            <p class="eyebrow">EDITING A SAVED RECIPE</p>
+            <h1>@_name</h1>
+            <p class="lede">Recipe ID @_recipe?.Id · every editable recipe setting is organized below.</p>
+        }
+        else
+        {
+            <p class="eyebrow">SEARCH · CLONE · CUSTOMIZE</p>
+            <h1>Recipe maker</h1>
+            <p class="lede">Find an existing recipe by the name players know, select it, then customize the complete copy on this page.</p>
+        }
+    </div>
+</header>
+
+@if (!_isExisting)
+{
+    <section class="clone-source panel">
+        <div class="section-intro">
+            <span>1</span>
+            <div><p class="eyebrow">CHOOSE A PROVEN STARTING POINT</p><h2>Which recipe should this copy?</h2><p>Type any part of its name. An ID also works when you already know one.</p></div>
+        </div>
+        <div class="clone-search">
+            <input aria-label="Find a recipe to copy" @bind="_sourceQuery" @bind:event="oninput" @onkeydown="HandleSourceSearchKey" placeholder="For example: Lumber, Healing Potion, Adventurer's Bow…" />
+            <button class="button" @onclick="SearchSources" disabled="@_busy">@(_busy ? "Searching…" : "Find recipes")</button>
+        </div>
+        @if (_sourceMatches is not null)
+        {
+            @if (_sourceMatches.Count == 0)
+            {
+                <p class="picker-empty">No recipes matched that name. Try a shorter phrase or a recipe ID.</p>
+            }
+            else
+            {
+                <div class="clone-results" role="list" aria-label="Matching recipes">
+                    @foreach (var match in _sourceMatches)
+                    {
+                        <button class="clone-result @(match.Id == _source ? "selected" : "")" @onclick="() => SelectSource(match)">
+                            <span><strong>@match.Name</strong><small>@match.MaterialCount ingredient(s) → @match.ProductCount product(s)@(match.RequiredDoodadId == 0 ? " · no required workbench" : $" · workbench {match.RequiredDoodadId}")</small></span>
+                            <code>@match.Id</code>
+                        </button>
+                    }
+                </div>
+            }
+        }
+        @if (_sourceGraph is not null)
+        {
+            <div class="selected-source">
+                <div><small>COPYING</small><strong>@_sourceGraph.Name</strong><span>Recipe @_sourceGraph.Id · skill @_sourceGraph.SkillId</span></div>
+                <button class="text-button" @onclick="ClearSource">Choose a different recipe</button>
+            </div>
+        }
+    </section>
+}
+
+@if (_recipe is not null)
+{
+    <section class="entry-help panel">
+        <span class="help-icon">?</span>
+        <div><strong>@(_isExisting ? "You are changing the saved plan, not the live game." : "This is the editable copy. The original recipe will not be changed.")</strong><p>Player-facing text, ingredients, products, requirements, and advanced behavior are all available. Content Studio protects generated database IDs automatically.</p></div>
+    </section>
+
+    <section class="entry-section panel">
+        <div class="section-intro"><span>@(_isExisting ? "1" : "2")</span><div><p class="eyebrow">WHAT PLAYERS SEE</p><h2>Name and description</h2><p>Use a clear name that distinguishes the custom recipe from the original.</p></div></div>
+        <div class="friendly-field-grid">
+            @if (!_isExisting)
+            {
+                <article class="friendly-field"><div class="field-label"><label>Project key</label></div><input @bind="_key" @bind:event="oninput" placeholder="recipe.custom-lumber" /><p>An internal label used in My changes. Players never see it.</p></article>
+            }
+            <article class="friendly-field"><div class="field-label"><label>English name</label></div><input @bind="_name" @bind:event="oninput" /><p>The recipe name shown to English-language players.</p></article>
+            <article class="friendly-field"><div class="field-label"><label>English description</label></div><textarea @bind="_description" @bind:event="oninput"></textarea><p>Optional explanatory text shown with the recipe.</p></article>
+        </div>
+    </section>
+
+    <section class="entry-section panel">
+        <div class="section-intro"><span>@(_isExisting ? "2" : "3")</span><div><p class="eyebrow">CRAFTING RULES</p><h2>Where, when, and who can craft it</h2><p>These values are copied from the source and can be changed deliberately.</p></div></div>
+        <div class="friendly-field-grid">
+            <article class="friendly-field"><div class="field-label"><label>Required workbench ID</label></div><input type="number" min="0" @bind="_recipe.RequiredDoodadId" /><p>Zero allows crafting without a specific workbench. A custom workbench can update this automatically.</p></article>
+            <article class="friendly-field"><div class="field-label"><label>Craft-pack IDs</label></div><input value="@_packs" @oninput="e => _packs = Convert.ToString(e.Value) ?? string.Empty" /><p>Existing recipe groups that list this recipe, separated by commas. Leave empty when a custom workbench will own it.</p></article>
+            <article class="friendly-field"><div class="field-label"><label>Crafting time</label></div><input type="number" min="0" @bind="_recipe.CastDelay" /><p>Delay stored on the recipe, in milliseconds.</p></article>
+            <article class="friendly-field"><div class="field-label"><label>Proficiency category ID</label></div><input type="number" min="0" @bind="_recipe.ActabilityCategoryId" /><p>The vocation used for proficiency checks, such as Alchemy or Cooking.</p></article>
+            <article class="friendly-field"><div class="field-label"><label>Required proficiency</label></div><input type="number" @bind="_recipe.ActabilityLimit" /><p>The minimum proficiency needed to craft it.</p></article>
+            <article class="friendly-field"><div class="field-label"><label>Recommended level</label></div><input type="number" @bind="_recipe.RecommendLevel" /><p>Player guidance; zero means no recommendation.</p></article>
+        </div>
+    </section>
+
+    <section class="entry-section panel">
+        <div class="section-intro"><span>@(_isExisting ? "3" : "4")</span><div><p class="eyebrow">WHAT IT CONSUMES</p><h2>Ingredients</h2><p>Every ingredient is shown by name and ID. Add, remove, or rebalance the copied list.</p></div></div>
+        <div class="semantic-row-list">
+            @foreach (var material in _recipe.Materials)
+            {
+                <article class="semantic-row">
+                    <div class="semantic-row-head"><div><small>INGREDIENT</small><h3>@ItemName(material.ItemId)</h3></div><button class="text-button danger-text" @onclick="() => RemoveMaterial(material)">Remove</button></div>
+                    <div class="friendly-field-grid">
+                        <article class="friendly-field"><div class="field-label"><label>Item</label></div><ItemReferencePicker ItemId="@material.ItemId" ItemIdChanged="id => SetMaterialItem(material, id)" ItemSelected="RememberItem" AriaLabel="Find an ingredient item" Placeholder="Type an ingredient name or ID…" /><p>Type the name players know, then choose the exact item from the dropdown.</p></article>
+                        <article class="friendly-field"><div class="field-label"><label>Quantity consumed</label></div><input type="number" min="1" @bind="material.Amount" /><p>How many items one crafting action removes.</p></article>
+                        <article class="friendly-field"><div class="field-label"><label>Minimum grade</label></div><input type="number" @bind="material.RequiredGrade" /><p>-1 means any grade.</p></article>
+                        <article class="friendly-field"><label class="plain-toggle"><input type="checkbox" @bind="material.MainGrade" /><span>Use this ingredient's grade as the main grade</span></label></article>
+                    </div>
+                </article>
+            }
+        </div>
+        <button class="button add-row" @onclick="AddMaterial">+ Add another ingredient</button>
+    </section>
+
+    <section class="entry-section panel">
+        <div class="section-intro"><span>@(_isExisting ? "4" : "5")</span><div><p class="eyebrow">WHAT IT CREATES</p><h2>Products</h2><p>Products can be guaranteed results or lower-probability bonus results.</p></div></div>
+        <div class="semantic-row-list">
+            @foreach (var product in _recipe.Products)
+            {
+                <article class="semantic-row">
+                    <div class="semantic-row-head"><div><small>PRODUCT</small><h3>@ItemName(product.ItemId)</h3></div><button class="text-button danger-text" @onclick="() => RemoveProduct(product)">Remove</button></div>
+                    <div class="friendly-field-grid">
+                        <article class="friendly-field"><div class="field-label"><label>Item</label></div><ItemReferencePicker ItemId="@product.ItemId" ItemIdChanged="id => SetProductItem(product, id)" ItemSelected="RememberItem" AriaLabel="Find a product item" Placeholder="Type a product name or ID…" /><p>Type the result item's name, then choose the exact item from the dropdown.</p></article>
+                        <article class="friendly-field"><div class="field-label"><label>Quantity created</label></div><input type="number" min="1" @bind="product.Amount" /></article>
+                        <article class="friendly-field"><div class="field-label"><label>Success rate (%)</label></div><input type="number" min="0" max="100" @bind="product.Rate" /><p>100 means this product is always created.</p></article>
+                        <article class="friendly-field"><label class="plain-toggle"><input type="checkbox" @bind="product.ShowLowerCrafts" /><span>Show recipes that create lower versions</span></label></article>
+                        <article class="friendly-field"><label class="plain-toggle"><input type="checkbox" @bind="product.UseGrade" /><span>Use a fixed item grade</span></label></article>
+                        <article class="friendly-field"><div class="field-label"><label>Fixed item-grade ID</label></div><input type="number" min="0" @bind="product.ItemGradeId" disabled="@(!product.UseGrade)" /><p>Only used when fixed item grade is enabled.</p></article>
+                    </div>
+                </article>
+            }
+        </div>
+        <button class="button add-row" @onclick="AddProduct">+ Add another product</button>
+    </section>
+
+    <section class="entry-section panel">
+        <div class="section-intro"><span>@(_isExisting ? "5" : "6")</span><div><p class="eyebrow">CRAFTING ACTION</p><h2>Labor and animation timing</h2><p>Independent values require a private copy of the source crafting skill.</p></div></div>
+        @if (!_isExisting)
+        {
+            <label class="choice-card"><input type="checkbox" @bind="_cloneSkill" /><span><strong>Make labor and casting time independently editable</strong><small>Recommended when this custom recipe should differ from the original.</small></span></label>
+        }
+        @if (_cloneSkill || _recipe.SkillClone is not null)
+        {
+            <div class="friendly-field-grid skill-settings">
+                <article class="friendly-field"><div class="field-label"><label>Labor cost</label></div><input type="number" min="0" @bind="_laborCost" /><p>Labor points removed when crafting succeeds.</p></article>
+                <article class="friendly-field"><div class="field-label"><label>Action casting time</label></div><input type="number" min="0" @bind="_castingTime" /><p>Skill animation time in milliseconds.</p></article>
+            </div>
+        }
+        else
+        {
+            <p class="editing-warning">This plan shares the original crafting skill, so labor and skill-animation timing stay unchanged.</p>
+        }
+    </section>
+
+    <details class="entry-section panel all-data">
+        <summary><span><strong>Advanced recipe behavior</strong><small>Less commonly changed settings · nothing hidden</small></span></summary>
+        <p class="advanced-explanation">These fields are copied exactly from the source. Change them only when you understand the behavior you want.</p>
+        <div class="field-group"><div class="friendly-field-grid">
+            <article class="friendly-field"><div class="field-label"><label>World-interaction ID</label></div><input type="number" min="0" @bind="_recipe.WorldInteractionId" /><p>Connects the recipe to an existing client interaction.</p></article>
+            <article class="friendly-field"><div class="field-label"><label>Visible order</label></div><input type="number" @bind="_recipe.VisibleOrder" /><p>Controls ordering where the client honors recipe order.</p></article>
+            <article class="friendly-field"><label class="plain-toggle"><input type="checkbox" @bind="_recipe.NeedBind" /><span>Bind the created item when required</span></label></article>
+            <article class="friendly-field"><label class="plain-toggle"><input type="checkbox" @bind="_recipe.ShowUpperCrafts" /><span>Show recipes that create higher versions</span></label></article>
+            <article class="friendly-field identity"><div class="field-label"><label>Crafting skill ID</label></div><div class="read-value"><code>@_recipe.SkillId</code><small>Copied or allocated automatically</small></div></article>
+            @if (_isExisting)
+            {
+                <article class="friendly-field identity"><div class="field-label"><label>Recipe ID</label></div><div class="read-value"><code>@_recipe.Id</code><small>Managed automatically</small></div></article>
+            }
+        </div></div>
+    </details>
+
+    <section class="save-dock panel">
+        <div><strong>@(_isExisting ? "Ready to update this recipe?" : "Ready to save this custom recipe?")</strong><span>@(_isExisting ? "Existing custom IDs remain unchanged." : "Safe IDs will be reserved for the recipe and every connected row.")</span></div>
+        <button class="button primary" @onclick="Save" disabled="@_busy">@(_busy ? "Saving…" : _isExisting ? "Update saved recipe" : "Save custom recipe")</button>
+    </section>
+}
+else if (!_busy)
+{
+    <section class="panel picker-welcome"><span>↑</span><h2>Start by finding the recipe you already know</h2><p>The editable copy will appear here as soon as you select a result.</p></section>
+}
+
+@if (_result is not null)
+{
+    <section class="panel success-panel saved-entry"><p class="eyebrow">SAVED</p><h2>@_result.Key <code>@_result.Id</code></h2><p>@_result.Allocations.Count safe IDs were reserved. You can keep editing above or review it in My changes.</p><div><a class="button primary" href="/manifests">Review in My changes</a></div></section>
+}
+
+@if (!string.IsNullOrEmpty(_message)) { <div class="toast @(_isError ? "error" : "success")">@_message</div> }
 
 @code {
     [SupplyParameterFromQuery(Name = "source")] public int? Source { get; set; }
-    private uint _source = 5545; private string _key = ""; private string _name = ""; private string _packs = ""; private bool _cloneSkill;
-    private RecipeGraph? _preview; private ScaffoldResult? _result; private string? _error;
-    private void Preview() => Try(() => { var c=Workspace.LoadConfiguration(); _preview=new CompactCatalogService().GetRecipe(c.BaselinePath,_source) ?? throw new ContentStudioException("Recipe not found."); });
-    private void Create() => Try(() => { var c=Workspace.LoadConfiguration(); _result=new ScaffoldService().CreateRecipe(new RecipeScaffoldRequest { ProjectPath=c.ProjectPath, BaselinePath=c.BaselinePath, Key=_key, SourceRecipeId=_source, Name=_name, CraftPackIds=ParseIds(_packs), CloneSkill=_cloneSkill }); });
-    private static uint[]? ParseIds(string text) => string.IsNullOrWhiteSpace(text) ? null : text.Split(',', StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries).Select(uint.Parse).ToArray();
-    private void Try(Action action){try{_error=null;action();}catch(Exception exception){_error=exception.Message;}}
-    protected override void OnParametersSet() { if (Source is >= 0) _source = (uint)Source.Value; }
+    [SupplyParameterFromQuery(Name = "plan")] public string? Plan { get; set; }
+
+    private uint _source;
+    private string _sourceQuery = string.Empty;
+    private string _key = string.Empty;
+    private string _name = string.Empty;
+    private string _description = string.Empty;
+    private string _packs = string.Empty;
+    private bool _cloneSkill;
+    private int _laborCost;
+    private int _castingTime;
+    private bool _isExisting;
+    private bool _busy;
+    private RecipeGraph? _sourceGraph;
+    private IReadOnlyList<RecipeLookupResult>? _sourceMatches;
+    private RecipeDefinition? _recipe;
+    private ScaffoldResult? _result;
+    private string? _editPath;
+    private string? _message;
+    private bool _isError;
+    private readonly Dictionary<uint, string> _itemNames = [];
+
+    protected override void OnParametersSet()
+    {
+        if (!string.IsNullOrWhiteSpace(Plan))
+        {
+            Try(LoadRecipe, null);
+            return;
+        }
+        if (_isExisting)
+        {
+            return;
+        }
+        if (Source is > 0 && (uint)Source.Value != _source)
+        {
+            Try(() => SelectSourceById((uint)Source.Value), null);
+        }
+    }
+
+    private async Task HandleSourceSearchKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await SearchSources();
+        }
+    }
+
+    private Task SearchSources()
+    {
+        if (string.IsNullOrWhiteSpace(_sourceQuery))
+        {
+            _message = "Type part of a recipe name first.";
+            _isError = true;
+            return Task.CompletedTask;
+        }
+        return RunBusy(() =>
+        {
+            var config = Workspace.LoadConfiguration();
+            _sourceMatches = new CompactCatalogService().SearchRecipes(config.BaselinePath, _sourceQuery, limit: 40);
+        });
+    }
+
+    private void SelectSource(RecipeLookupResult source) => Try(() => SelectSourceById(source.Id), null);
+
+    private void SelectSourceById(uint sourceId)
+    {
+        var config = Workspace.LoadConfiguration();
+        var catalog = new CompactCatalogService();
+        _sourceGraph = catalog.GetRecipe(config.BaselinePath, sourceId) ?? throw new ContentStudioException("That recipe could not be loaded.");
+        _source = sourceId;
+        _sourceQuery = _sourceGraph.Name;
+        _recipe = new ScaffoldService().CreateRecipeDraft(config.BaselinePath, sourceId);
+        _name = _recipe.Names.GetValueOrDefault("en_us", $"Custom {_sourceGraph.Name}");
+        _description = _recipe.Descriptions.GetValueOrDefault("en_us", string.Empty);
+        _packs = string.Join(", ", _recipe.CraftPackIds);
+        _laborCost = _sourceGraph.LaborCost;
+        _castingTime = _sourceGraph.CastingTime;
+        _cloneSkill = false;
+        _key = $"recipe.custom-{Slug(_sourceGraph.Name)}";
+        _itemNames.Clear();
+        foreach (var material in _sourceGraph.Materials) _itemNames[material.ItemId] = material.ItemName;
+        foreach (var product in _sourceGraph.Products) _itemNames[product.ItemId] = product.ItemName;
+        _message = null;
+        _result = null;
+    }
+
+    private void ClearSource()
+    {
+        _source = 0;
+        _sourceGraph = null;
+        _recipe = null;
+        _result = null;
+        _itemNames.Clear();
+    }
+
+    private void LoadRecipe()
+    {
+        var config = Workspace.LoadConfiguration();
+        var manifests = new ManifestService();
+        _editPath = manifests.FindByKey(config.ProjectPath, Plan!);
+        if (!_editPath.Contains($"{Path.DirectorySeparatorChar}recipes{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ContentStudioException("That saved change is not a recipe.");
+        }
+        _recipe = ContentStudioJson.Deserialize<RecipeDefinition>(manifests.Read(_editPath), _editPath);
+        _isExisting = true;
+        _name = _recipe.Names.GetValueOrDefault("en_us", _recipe.Key);
+        _description = _recipe.Descriptions.GetValueOrDefault("en_us", string.Empty);
+        _packs = string.Join(", ", _recipe.CraftPackIds);
+        _cloneSkill = _recipe.SkillClone is not null;
+        _laborCost = _recipe.SkillClone?.LaborCost ?? 0;
+        _castingTime = _recipe.SkillClone?.CastingTime ?? 0;
+        ResolveItemNames(config.BaselinePath);
+    }
+
+    private void Save()
+    {
+        if (_isExisting) SaveRecipe(); else CreateRecipe();
+    }
+
+    private void CreateRecipe() => Try(() =>
+    {
+        if (_recipe is null || _sourceGraph is null || _source == 0) throw new ContentStudioException("Choose a source recipe first.");
+        ApplyScreenValues();
+        _recipe.SkillClone = _cloneSkill ? new SkillCloneDefinition { SourceId = _sourceGraph.SkillId, LaborCost = _laborCost, CastingTime = _castingTime } : null;
+        var config = Workspace.LoadConfiguration();
+        _result = new ScaffoldService().CreateRecipe(new RecipeScaffoldRequest
+        {
+            ProjectPath = config.ProjectPath,
+            BaselinePath = config.BaselinePath,
+            Key = _key,
+            SourceRecipeId = _source,
+            Name = _name,
+            CraftPackIds = _recipe.CraftPackIds,
+            CloneSkill = _cloneSkill,
+            Draft = _recipe
+        });
+        _editPath = _result.Path;
+        _isExisting = true;
+    }, "Custom recipe saved. You can continue editing it here.");
+
+    private void SaveRecipe() => Try(() =>
+    {
+        if (_recipe is null || _editPath is null) return;
+        ApplyScreenValues();
+        if (_recipe.SkillClone is not null)
+        {
+            _recipe.SkillClone.LaborCost = _laborCost;
+            _recipe.SkillClone.CastingTime = _castingTime;
+        }
+        var config = Workspace.LoadConfiguration();
+        EnsureRecipeIds(config, _recipe);
+        new ManifestService().Save(_editPath, ContentStudioJson.Serialize(_recipe));
+    }, "Saved recipe updated.");
+
+    private void ApplyScreenValues()
+    {
+        if (_recipe is null) return;
+        if (string.IsNullOrWhiteSpace(_name)) throw new ContentStudioException("Give the custom recipe an English name.");
+        if (_recipe.Materials.Count == 0) throw new ContentStudioException("Add at least one ingredient.");
+        if (_recipe.Products.Count == 0) throw new ContentStudioException("Add at least one product.");
+        _recipe.Names["en_us"] = _name.Trim();
+        if (string.IsNullOrWhiteSpace(_description)) _recipe.Descriptions.Remove("en_us"); else _recipe.Descriptions["en_us"] = _description.Trim();
+        _recipe.CraftPackIds = ParseIds(_packs) ?? [];
+    }
+
+    private void AddMaterial() => _recipe?.Materials.Add(new RecipeMaterialDefinition { Amount = 1, RequiredGrade = -1 });
+    private void RemoveMaterial(RecipeMaterialDefinition material) => _recipe?.Materials.Remove(material);
+    private void AddProduct() => _recipe?.Products.Add(new RecipeProductDefinition { Amount = 1, Rate = 100 });
+    private void RemoveProduct(RecipeProductDefinition product) => _recipe?.Products.Remove(product);
+
+    private void SetMaterialItem(RecipeMaterialDefinition material, uint id) => material.ItemId = id;
+    private void SetProductItem(RecipeProductDefinition product, uint id) => product.ItemId = id;
+    private void RememberItem(ItemSearchResult item) => _itemNames[item.Id] = item.Name;
+
+    private string ItemName(uint id) => id == 0 ? "Choose an item" : _itemNames.GetValueOrDefault(id, $"Item {id}");
+
+    private void ResolveItemNames(string baselinePath)
+    {
+        if (_recipe is null) return;
+        _itemNames.Clear();
+        var catalog = new CompactCatalogService();
+        foreach (var id in _recipe.Materials.Select(row => row.ItemId).Concat(_recipe.Products.Select(row => row.ItemId)).Where(id => id > 0).Distinct())
+        {
+            var item = catalog.SearchItems(baselinePath, id.ToString(), limit: 1).FirstOrDefault();
+            _itemNames[id] = item?.Name ?? $"Unknown item {id}";
+        }
+    }
+
+    private static void EnsureRecipeIds(StudioConfiguration config, RecipeDefinition recipe)
+    {
+        var repository = new ProjectRepository();
+        var project = repository.LoadProject(config.ProjectPath);
+        var ids = new IdRegistryService();
+        var materialIds = recipe.Materials.Where(row => row.Id > 0).Select(row => row.Id).ToHashSet();
+        var productIds = recipe.Products.Where(row => row.Id > 0).Select(row => row.Id).ToHashSet();
+        var linkIds = recipe.RowIds.CraftPackLinks.Take(recipe.CraftPackIds.Length).ToList();
+
+        foreach (var material in recipe.Materials.Where(row => row.Id == 0))
+        {
+            material.Id = AllocateUnused(ids, project.Registry, config.BaselinePath, "craft_materials", recipe.Key, "material", materialIds);
+        }
+        foreach (var product in recipe.Products.Where(row => row.Id == 0))
+        {
+            product.Id = AllocateUnused(ids, project.Registry, config.BaselinePath, "craft_products", recipe.Key, "product", productIds);
+        }
+        var usedLinks = linkIds.ToHashSet();
+        while (linkIds.Count < recipe.CraftPackIds.Length)
+        {
+            linkIds.Add(AllocateUnused(ids, project.Registry, config.BaselinePath, "craft_pack_crafts", recipe.Key, "pack-link", usedLinks));
+        }
+        recipe.RowIds.CraftPackLinks = [.. linkIds];
+        if (!recipe.RowIds.Localization.ContainsKey("title"))
+        {
+            recipe.RowIds.Localization["title"] = ids.Allocate(project.Registry, config.BaselinePath, "localized_texts", $"{recipe.Key}:title").Id;
+        }
+        if (recipe.Descriptions.Count > 0 && !recipe.RowIds.Localization.ContainsKey("desc"))
+        {
+            recipe.RowIds.Localization["desc"] = ids.Allocate(project.Registry, config.BaselinePath, "localized_texts", $"{recipe.Key}:desc").Id;
+        }
+        repository.SaveRegistry(config.ProjectPath, project.Registry);
+    }
+
+    private static uint AllocateUnused(IdRegistryService ids, IdRegistry registry, string baselinePath, string table, string key, string suffix, HashSet<uint> used)
+    {
+        for (var index = 0; ; index++)
+        {
+            var allocation = ids.Allocate(registry, baselinePath, table, $"{key}:{suffix}:{index}");
+            if (used.Add(allocation.Id)) return allocation.Id;
+        }
+    }
+
+    private static uint[]? ParseIds(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var result = new List<uint>();
+        foreach (var part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!uint.TryParse(part, out var id)) throw new ContentStudioException($"'{part}' is not a whole-number ID. Separate multiple IDs with commas.");
+            result.Add(id);
+        }
+        return [.. result];
+    }
+
+    private static string Slug(string value)
+    {
+        var characters = value.ToLowerInvariant().Select(character => char.IsLetterOrDigit(character) ? character : '-').ToArray();
+        return string.Join('-', new string(characters).Split('-', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private async Task RunBusy(Action action)
+    {
+        try
+        {
+            _busy = true; _message = null; _isError = false;
+            await Task.Run(action);
+        }
+        catch (Exception exception)
+        {
+            _isError = true; _message = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Try(Action action, string? success)
+    {
+        try { _message = null; action(); _isError = false; _message = success; }
+        catch (Exception exception) { _isError = true; _message = exception.Message; }
+    }
 }
