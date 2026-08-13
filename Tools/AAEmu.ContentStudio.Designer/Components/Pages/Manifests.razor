@@ -1,0 +1,20 @@
+@page "/manifests"
+@inject DesignerWorkspace Workspace
+
+<PageTitle>Manifest Editor</PageTitle>
+<header class="page-head compact"><div><p class="eyebrow">SOURCE OF TRUTH</p><h1>Manifest editor</h1><p class="lede">Review or fine-tune the JSON that drives repeatable builds. Invalid JSON is never saved.</p></div><button class="button" @onclick="Refresh">Refresh list</button></header>
+<section class="editor-shell panel">
+    <aside class="file-list">@foreach(var file in _files){<button class="@(file==_selected?"selected":"")" @onclick="()=>Select(file)"><small>@Kind(file)</small>@Path.GetFileName(file)</button>}</aside>
+    <div class="editor-pane">@if(_selected is null){<div class="empty">Create a recipe or workbench, then select it here.</div>}else{<div class="editor-bar"><code>@_selected</code><button class="button primary" @onclick="Save">Validate & save</button></div><textarea class="code-editor" @bind="_text" @bind:event="oninput" spellcheck="false"></textarea>}</div>
+</section>
+@if (!string.IsNullOrEmpty(_message)) { <div class="toast @(_isError?"error":"success")">@_message</div> }
+
+@code {
+    private readonly ManifestService _service=new(); private IReadOnlyList<string> _files=[]; private string? _selected; private string _text=""; private string? _message; private bool _isError;
+    protected override void OnInitialized()=>Refresh();
+    private void Refresh()=>Try(()=>{var c=Workspace.LoadConfiguration();_files=_service.List(c.ProjectPath);if(_selected is not null&&!_files.Contains(_selected))_selected=null;},null);
+    private void Select(string path)=>Try(()=>{_selected=path;_text=_service.Read(path);},null);
+    private void Save()=>Try(()=>_service.Save(_selected??throw new ContentStudioException("Select a manifest first."),_text),"Manifest validated and saved.");
+    private void Try(Action action,string? success){try{action();_isError=false;_message=success;}catch(Exception e){_isError=true;_message=e.Message;}}
+    private static string Kind(string path)=>path.Contains("recipes",StringComparison.OrdinalIgnoreCase)?"RECIPE":path.Contains("workbenches",StringComparison.OrdinalIgnoreCase)?"WORKBENCH":"PROJECT";
+}

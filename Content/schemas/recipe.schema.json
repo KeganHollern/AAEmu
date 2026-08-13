@@ -1,0 +1,76 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AAEmu Content Studio recipe",
+    "type": "object",
+    "required": ["schemaVersion", "key", "id", "names", "skillId", "rowIds", "materials", "products"],
+    "properties": {
+        "$schema": { "type": "string" },
+        "schemaVersion": { "const": 1 },
+        "key": { "type": "string", "pattern": "^recipe\\.[a-z0-9._-]+$" },
+        "id": { "$ref": "#/$defs/id" },
+        "names": { "$ref": "#/$defs/localizedText" },
+        "descriptions": { "$ref": "#/$defs/localizedText" },
+        "craftPackIds": { "type": "array", "items": { "$ref": "#/$defs/id" }, "uniqueItems": true },
+        "skillId": { "$ref": "#/$defs/id" },
+        "skillClone": {
+            "type": ["object", "null"],
+            "required": ["sourceId", "id", "skillEffectRowIds"],
+            "properties": {
+                "sourceId": { "$ref": "#/$defs/id" },
+                "id": { "$ref": "#/$defs/id" },
+                "laborCost": { "type": ["integer", "null"], "minimum": 0 },
+                "castingTime": { "type": ["integer", "null"], "minimum": 0 },
+                "skillEffectRowIds": { "type": "array", "items": { "$ref": "#/$defs/id" }, "uniqueItems": true }
+            }
+        },
+        "requiredDoodadId": { "type": "integer", "minimum": 0 },
+        "actabilityCategoryId": { "type": "integer", "minimum": 0 },
+        "actabilityLimit": { "type": "integer", "minimum": 0 },
+        "castDelay": { "type": "integer", "minimum": 0 },
+        "worldInteractionId": { "type": "integer", "minimum": 0 },
+        "recommendLevel": { "type": "integer", "minimum": 0 },
+        "visibleOrder": { "type": "integer" },
+        "needBind": { "type": "boolean" },
+        "showUpperCrafts": { "type": "boolean" },
+        "rowIds": {
+            "type": "object",
+            "required": ["localization", "craftPackLinks"],
+            "properties": {
+                "localization": { "type": "object", "additionalProperties": { "$ref": "#/$defs/id" } },
+                "craftPackLinks": { "type": "array", "items": { "$ref": "#/$defs/id" }, "uniqueItems": true }
+            },
+            "additionalProperties": false
+        },
+        "materials": { "type": "array", "items": { "$ref": "#/$defs/material" }, "minItems": 1 },
+        "products": { "type": "array", "items": { "$ref": "#/$defs/product" }, "minItems": 1 }
+    },
+    "$defs": {
+        "id": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "localizedText": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string", "minLength": 1 } },
+        "material": {
+            "type": "object",
+            "required": ["id", "itemId", "amount"],
+            "properties": {
+                "id": { "$ref": "#/$defs/id" },
+                "itemId": { "$ref": "#/$defs/id" },
+                "amount": { "type": "integer", "minimum": 1 },
+                "mainGrade": { "type": "boolean" },
+                "requiredGrade": { "type": "integer", "minimum": -1 }
+            }
+        },
+        "product": {
+            "type": "object",
+            "required": ["id", "itemId", "amount"],
+            "properties": {
+                "id": { "$ref": "#/$defs/id" },
+                "itemId": { "$ref": "#/$defs/id" },
+                "amount": { "type": "integer", "minimum": 1 },
+                "rate": { "type": "integer", "minimum": 0, "maximum": 100 },
+                "showLowerCrafts": { "type": "boolean" },
+                "useGrade": { "type": "boolean" },
+                "itemGradeId": { "type": "integer", "minimum": 0 }
+            }
+        }
+    },
+    "additionalProperties": false
+}

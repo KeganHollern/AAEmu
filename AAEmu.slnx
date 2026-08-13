@@ -120,8 +120,14 @@
     <Project Path="AAEmu.Login/AAEmu.Login.csproj" />
   </Folder>
   <Folder Name="/Tests/">
+    <Project Path="Tools/AAEmu.ContentStudio.Tests/AAEmu.ContentStudio.Tests.csproj" />
     <Project Path="AAEmu.IntegrationTests/AAEmu.IntegrationTests.csproj" />
     <Project Path="AAEmu.Login.IntegrationTests/AAEmu.Login.IntegrationTests.csproj" />
     <Project Path="AAEmu.UnitTests/AAEmu.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/Tools/">
+    <Project Path="Tools/AAEmu.ContentStudio.Cli/AAEmu.ContentStudio.Cli.csproj" />
+    <Project Path="Tools/AAEmu.ContentStudio.Core/AAEmu.ContentStudio.Core.csproj" />
+    <Project Path="Tools/AAEmu.ContentStudio.Designer/AAEmu.ContentStudio.Designer.csproj" />
   </Folder>
 </Solution>

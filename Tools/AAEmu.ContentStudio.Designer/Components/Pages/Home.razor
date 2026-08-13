@@ -1,0 +1,41 @@
+@page "/"
+@inject DesignerWorkspace Workspace
+
+<PageTitle>AAEmu Content Studio</PageTitle>
+<header class="page-head">
+    <div><p class="eyebrow">SERVER-SIDE CONTENT PIPELINE</p><h1>Build ArcheAge content with guardrails.</h1><p class="lede">Inspect the original compact database, author readable manifests, then compile a verified database for both server and client.</p></div>
+    <button class="button primary" @onclick="RunDoctor">Run preflight</button>
+</header>
+
+<section class="metric-grid">
+    <article class="metric"><small>Baseline</small><strong>@(_configuration?.BaselinePath is null ? "Not loaded" : "r208022")</strong><span>Immutable source</span></article>
+    <article class="metric"><small>Project</small><strong>@(_project?.Definition.Name ?? "Not loaded")</strong><span>@(_project is null ? "—" : $"{_project.Recipes.Count} recipes · {_project.Workbenches.Count} workbenches")</span></article>
+    <article class="metric"><small>Preflight</small><strong class="@(_report?.IsValid == true ? "good" : "")">@Status</strong><span>@(_report is null ? "Run before authoring" : $"{_report.ErrorCount} errors · {_report.WarningCount} warnings")</span></article>
+</section>
+
+<section class="two-column">
+    <article class="panel"><p class="eyebrow">WORKFLOW</p><h2>Clone, shape, compile</h2><ol class="steps"><li><span>01</span><div><strong>Inspect known-good content</strong><p>Search items and follow complete recipe or doodad graphs.</p></div></li><li><span>02</span><div><strong>Scaffold safe manifests</strong><p>The studio reserves IDs and clones all dependent rows.</p></div></li><li><span>03</span><div><strong>Build from a pristine baseline</strong><p>Every run is repeatable, transactional, and integrity checked.</p></div></li></ol></article>
+    <article class="panel"><p class="eyebrow">CONFIGURATION</p><h2>Active workspace</h2><label>Configuration file</label><input @bind="Workspace.ConfigurationPath" @bind:event="oninput" /><button class="button" @onclick="Load">Reload</button><p class="path">@Workspace.ConfigurationPath</p></article>
+</section>
+
+@if (_report is not null)
+{
+    <section class="panel"><h2>Preflight report</h2><div class="issue-list">@foreach (var issue in _report.Issues){<div class="issue @issue.Severity.ToString().ToLowerInvariant()"><strong>@issue.Code</strong><span>@issue.Message</span></div>}</div></section>
+}
+@if (!string.IsNullOrEmpty(_error)) { <div class="toast error">@_error</div> }
+
+@code {
+    private StudioConfiguration? _configuration;
+    private LoadedContentProject? _project;
+    private ValidationReport? _report;
+    private string? _error;
+    private string Status => _report is null ? "Not run" : _report.IsValid ? "Ready" : "Blocked";
+
+    protected override void OnInitialized() => Load();
+    private void Load()
+    {
+        Try(() => { _configuration = Workspace.LoadConfiguration(); _project = new ProjectRepository().LoadProject(_configuration.ProjectPath); });
+    }
+    private void RunDoctor() => Try(() => { _configuration = Workspace.LoadConfiguration(); _report = new DoctorService().Diagnose(_configuration); _project = new ProjectRepository().LoadProject(_configuration.ProjectPath); });
+    private void Try(Action action) { try { _error = null; action(); } catch (Exception exception) { _error = exception.Message; } }
+}

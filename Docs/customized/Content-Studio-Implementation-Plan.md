@@ -1,9 +1,9 @@
 # AAEmu Content Studio Implementation Plan
 
-- Status: Planned
+- Status: Implemented (initial custom recipe/workbench vertical slice)
 - Audience: AAEmu developers, content designers, automation agents, and reviewers
 - Target client: ArcheAge 1.2 (`r208022`)
-- Last updated: August 12, 2026
+- Last updated: August 13, 2026
 
 ## Goal
 

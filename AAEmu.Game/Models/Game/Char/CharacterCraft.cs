@@ -1,7 +1,9 @@
 ﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Crafts;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
@@ -14,6 +16,8 @@ namespace AAEmu.Game.Models.Game.Char;
 
 public class CharacterCraft(Character owner)
 {
+    public const int MaxRequestedCraftCount = 1000;
+
     private int Count { get; set; }
     private Craft CurrentCraft { get; set; }
     /// <summary>
@@ -26,6 +30,27 @@ public class CharacterCraft(Character owner)
 
     public void Craft(Craft craft, int count, uint doodadId)
     {
+        if (craft == null || count is <= 0 or > MaxRequestedCraftCount)
+        {
+            Owner.SendErrorMessage(ErrorMessageType.CraftInvalidAmount);
+            CancelCraft();
+            return;
+        }
+
+        if (!ValidateCraftLocation(craft, doodadId))
+        {
+            CancelCraft();
+            return;
+        }
+
+        var skillTemplate = SkillManager.Instance.GetSkillTemplate(craft.SkillId);
+        if (skillTemplate == null)
+        {
+            Owner.SendErrorMessage(ErrorMessageType.CraftInvalidCraftType);
+            CancelCraft();
+            return;
+        }
+
         CurrentCraft = craft;
         Count = count;
         DoodadId = doodadId;
@@ -108,7 +133,7 @@ public class CharacterCraft(Character owner)
         var target = SkillCastTarget.GetByType(SkillCastTargetType.Doodad);
         target.ObjId = doodadId;
 
-        var skill = new Skill(SkillManager.Instance.GetSkillTemplate(craft.SkillId));
+        var skill = new Skill(skillTemplate);
         ConsumeLaborPower = skill.Template.ConsumeLaborPower;
         var speedMultiplier = 1f;
         if (skill.Template.ActabilityGroupId > 0)
@@ -179,6 +204,16 @@ public class CharacterCraft(Character owner)
             // TODO not verified
             Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.NotEnoughSpace, 0, false);
             CraftOrCancel();
+            return;
+        }
+
+        // Materials can change while the cast is running. Recheck immediately before granting products.
+        var stillHasMaterials = CurrentCraft.CraftMaterials.Count == 0 || CurrentCraft.CraftMaterials.All(material =>
+            material.Amount > 0 && Owner.Inventory.GetItemsCount(material.ItemId) >= material.Amount);
+        if (!stillHasMaterials)
+        {
+            Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.NotEnoughRequiredItem, 0, false);
+            CancelCraft();
             return;
         }
 
@@ -345,6 +380,39 @@ public class CharacterCraft(Character owner)
         {
             CancelCraft();
         }
+    }
+
+    private bool ValidateCraftLocation(Craft craft, uint doodadId)
+    {
+        var doodad = doodadId == 0 ? null : Owner.ParentWorld.GetDoodad(doodadId);
+        if (craft.ReqDoodadId > 0 && (doodad == null || doodad.TemplateId != craft.ReqDoodadId))
+        {
+            Owner.SendErrorMessage(doodad == null ? ErrorMessageType.CraftLocatingUnitIsNotExist : ErrorMessageType.CraftInvalidCraftType);
+            return false;
+        }
+
+        if (doodad == null)
+            return doodadId == 0;
+
+        if (Owner.GetDistanceTo(doodad, true) > 5f)
+        {
+            Owner.SendErrorMessage(ErrorMessageType.TooFarAway);
+            return false;
+        }
+
+        var exposedPacks = doodad.CurrentFuncs
+            .Where(func => func.FuncType == "DoodadFuncCraftPack")
+            .Select(func => DoodadManager.Instance.GetFuncTemplate(func.FuncId, func.FuncType))
+            .OfType<DoodadFuncCraftPack>()
+            .Select(func => func.CraftPackId)
+            .ToHashSet();
+        if (craft.CraftPackIds.Count > 0 && !craft.CraftPackIds.Overlaps(exposedPacks))
+        {
+            Owner.SendErrorMessage(ErrorMessageType.CraftInvalidCraftType);
+            return false;
+        }
+
+        return true;
     }
 
     private void CraftOrCancel()

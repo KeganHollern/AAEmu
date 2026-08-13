@@ -1,0 +1,22 @@
+@page "/recipes"
+@inject DesignerWorkspace Workspace
+
+<PageTitle>Recipe Maker</PageTitle>
+<header class="page-head compact"><div><p class="eyebrow">GUIDED AUTHORING</p><h1>Recipe maker</h1><p class="lede">Start from a recipe the client already understands, then edit its readable manifest.</p></div></header>
+<section class="two-column form-grid">
+    <article class="panel"><h2>1 · Choose a source</h2><label>Source recipe ID</label><input type="number" @bind="_source" /><button class="button" @onclick="Preview">Preview source</button>@if(_preview is not null){<div class="source-card"><strong>@_preview.Name</strong><span>ID @_preview.Id · skill @_preview.SkillId</span><span>@_preview.Materials.Count materials → @_preview.Products.Count products</span></div>}</article>
+    <article class="panel"><h2>2 · Name the custom recipe</h2><label>Stable key</label><input @bind="_key" @bind:event="oninput" placeholder="recipe.moonlit-tonic" /><label>English name</label><input @bind="_name" @bind:event="oninput" placeholder="Moonlit Tonic" /><label>Craft-pack IDs <small>(comma separated)</small></label><input @bind="_packs" @bind:event="oninput" placeholder="90" /><label class="check"><input type="checkbox" @bind="_cloneSkill" /> Clone skill rows so labor and cast time can be customized</label><button class="button primary" @onclick="Create">Reserve IDs & create manifest</button></article>
+</section>
+@if(_result is not null){<section class="panel success-panel"><p class="eyebrow">CREATED</p><h2>@_result.Key <code>@_result.Id</code></h2><p>@_result.Path</p><p>@_result.Allocations.Count IDs reserved. Continue in the Manifest editor.</p><a class="button" href="/manifests">Open manifests</a></section>}
+@if (!string.IsNullOrEmpty(_error)) { <div class="toast error">@_error</div> }
+
+@code {
+    [SupplyParameterFromQuery(Name = "source")] public int? Source { get; set; }
+    private uint _source = 5545; private string _key = ""; private string _name = ""; private string _packs = ""; private bool _cloneSkill;
+    private RecipeGraph? _preview; private ScaffoldResult? _result; private string? _error;
+    private void Preview() => Try(() => { var c=Workspace.LoadConfiguration(); _preview=new CompactCatalogService().GetRecipe(c.BaselinePath,_source) ?? throw new ContentStudioException("Recipe not found."); });
+    private void Create() => Try(() => { var c=Workspace.LoadConfiguration(); _result=new ScaffoldService().CreateRecipe(new RecipeScaffoldRequest { ProjectPath=c.ProjectPath, BaselinePath=c.BaselinePath, Key=_key, SourceRecipeId=_source, Name=_name, CraftPackIds=ParseIds(_packs), CloneSkill=_cloneSkill }); });
+    private static uint[]? ParseIds(string text) => string.IsNullOrWhiteSpace(text) ? null : text.Split(',', StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries).Select(uint.Parse).ToArray();
+    private void Try(Action action){try{_error=null;action();}catch(Exception exception){_error=exception.Message;}}
+    protected override void OnParametersSet() { if (Source is >= 0) _source = (uint)Source.Value; }
+}

@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AAEmu.ContentStudio.Core\AAEmu.ContentStudio.Core.csproj" />
+  </ItemGroup>
+</Project>

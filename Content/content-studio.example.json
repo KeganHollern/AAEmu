@@ -1,0 +1,18 @@
+{
+    "$schema": "schemas/studio-configuration.schema.json",
+    "schemaVersion": 1,
+    "baselinePath": "../.content-studio/baselines/r208022/compact.sqlite3",
+    "baselineDescriptorPath": "baselines/r208022.json",
+    "projectPath": "projects/custom/project.json",
+    "outputDirectory": "../.content-studio/build",
+    "targets": {
+        "server": {
+            "path": "../AAEmu.Game/Data/compact.sqlite3",
+            "backupDirectory": "../.content-studio/backups/server"
+        },
+        "client": {
+            "path": "D:/path/to/client/game/db/compact.sqlite3",
+            "backupDirectory": "../.content-studio/backups/client"
+        }
+    }
+}

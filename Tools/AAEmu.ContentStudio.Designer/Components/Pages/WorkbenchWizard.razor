@@ -1,0 +1,22 @@
+@page "/workbenches"
+@inject DesignerWorkspace Workspace
+
+<PageTitle>Workbench Maker</PageTitle>
+<header class="page-head compact"><div><p class="eyebrow">GRAPH-AWARE CLONING</p><h1>Workbench maker</h1><p class="lede">Clone every group, function, phase, and craft-pack payload behind a proven doodad.</p></div></header>
+<section class="two-column form-grid">
+    <article class="panel"><h2>1 · Choose a working doodad</h2><label>Source doodad ID</label><input type="number" @bind="_source" /><button class="button" @onclick="Preview">Preview source</button>@if(_preview is not null){<div class="source-card"><strong>@_preview.Name</strong><span>@_preview.Groups.Count groups · @_preview.Groups.Sum(g=>g.Functions.Count) functions</span><span>@_preview.CraftPackIds.Count craft packs · @_preview.RecipeIds.Count recipes</span></div>}</article>
+    <article class="panel"><h2>2 · Create the custom graph</h2><label>Stable key</label><input @bind="_key" @bind:event="oninput" placeholder="workbench.moonlit-alchemy-bench" /><label>English name</label><input @bind="_name" @bind:event="oninput" placeholder="Moonlit Alchemy Bench" /><label>Recipe IDs <small>(comma separated)</small></label><input @bind="_recipes" @bind:event="oninput" placeholder="9100000" /><button class="button primary" @onclick="Create">Reserve graph IDs & create manifest</button></article>
+</section>
+@if(_result is not null){<section class="panel success-panel"><p class="eyebrow">CREATED</p><h2>@_result.Key <code>@_result.Id</code></h2><p>@_result.Path</p><p>@_result.Allocations.Count IDs reserved across the cloned graph.</p><p>Test spawn: <code>@_result.GmCommand</code></p><a class="button" href="/manifests">Open manifests</a></section>}
+@if (!string.IsNullOrEmpty(_error)) { <div class="toast error">@_error</div> }
+
+@code {
+    [SupplyParameterFromQuery(Name = "source")] public int? Source { get; set; }
+    private uint _source=6387; private string _key=""; private string _name=""; private string _recipes="";
+    private WorkbenchGraph? _preview; private ScaffoldResult? _result; private string? _error;
+    private void Preview()=>Try(()=>{var c=Workspace.LoadConfiguration();_preview=new CompactCatalogService().GetWorkbench(c.BaselinePath,_source)??throw new ContentStudioException("Workbench not found.");});
+    private void Create()=>Try(()=>{var c=Workspace.LoadConfiguration();_result=new ScaffoldService().CreateWorkbench(new WorkbenchScaffoldRequest{ProjectPath=c.ProjectPath,BaselinePath=c.BaselinePath,Key=_key,SourceDoodadId=_source,Name=_name,RecipeIds=ParseIds(_recipes)});});
+    private static uint[] ParseIds(string text)=>string.IsNullOrWhiteSpace(text)?[]:text.Split(',',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries).Select(uint.Parse).ToArray();
+    private void Try(Action action){try{_error=null;action();}catch(Exception exception){_error=exception.Message;}}
+    protected override void OnParametersSet() { if (Source is >= 0) _source = (uint)Source.Value; }
+}
