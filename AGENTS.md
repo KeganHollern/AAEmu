@@ -8,7 +8,13 @@ Open-source **ArcheAge** server emulator in **.NET** (`AAEmu.Login`, `AAEmu.Game
 
 Target client: **ArcheAge 1.2** (`r208022`).
 
-Human docs live under `Docs/wiki/` (synced to GitHub wiki). Prefer those over inventing setup steps.
+Existing human-facing setup and architecture docs live under `Docs/wiki/` (synced to GitHub wiki). Update those pages in place instead of inventing duplicate setup steps; route newly created documentation according to the policy below.
+
+## Documentation location policy
+
+- Put **all newly created documentation files** under `Docs/customized/`, including plans, research, design notes, decisions, runbooks, and project-specific guides.
+- Update existing documentation in its current location when appropriate. In particular, keep existing `Docs/wiki/` pages aligned with user-facing setup, configuration, architecture, and behavior changes.
+- Do not create new Markdown files outside `Docs/customized/` unless the user explicitly requests another location or an established generated-document workflow requires it.
 
 ## Getting the stack running (players and contributors)
 
@@ -82,6 +88,7 @@ Authoritative component diagram: [`Docs/wiki/Components.md`](Docs/wiki/Component
 | `AAEmu.Login.IntegrationTests/` | Login + Testcontainers MySQL |
 | `SQL/` | Base schema + incremental updates |
 | `Docs/wiki/` | Human-facing setup and architecture docs |
+| `Docs/customized/` | All new custom plans, research, design, decision, and project documentation |
 | `Scripts/` | Build/start helpers (bat/ps1/sh) |
 | `Tools/` | Offline utilities (e.g. WorldConverter) |
 | `.client_files/` | **Local only** (gitignored): extracted 1.2 client + launcher |
@@ -371,7 +378,7 @@ Circular manager deps: inject `Lazy<T>` so the orchestrator does not treat them 
 4. **SQL** — if schema changes, add `SQL/updates/…` **and** update base `SQL/aaemu_*.sql`.
 5. **Test** — add or extend tests in `AAEmu.UnitTests` when changing behavior; reuse existing patterns.
 6. **Verify** — `dotnet build` and `dotnet test` must pass before claiming done.
-7. **Document** — update `Docs/wiki/` only when user-facing setup, config, or behavior changes; follow `Documentation-Maintenance.md`. Do not add unsolicited markdown elsewhere.
+7. **Document** — create all new documentation under `Docs/customized/`. Update existing `Docs/wiki/` pages in place when user-facing setup, config, architecture, or behavior changes, following `Documentation-Maintenance.md`. Do not create Markdown elsewhere unless the user explicitly requests it.
 
 **Avoid:** drive-by refactors, new frameworks, reformatting unrelated files, renaming domain terms away from wiki vocabulary, and broad style “cleanup” outside the requested change.
 
