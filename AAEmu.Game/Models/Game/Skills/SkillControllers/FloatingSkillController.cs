@@ -123,7 +123,7 @@ public class FloatingSkillController : SkillController
         if (!force && _isLiftMode && !_isFalling && Owner != null && !Owner.IsDead)
         {
             var groundZ = GetGroundHeight();
-            if (groundZ > 0 && Owner.Transform.Local.Position.Z > groundZ + 0.5f)
+            if (Owner.Transform.Local.Position.Z > groundZ + 0.5f)
             {
                 Logger.Debug("FloatingSC.End [LIFT→FALL]: owner={0} starting fall from Z={1:F1} to ground={2:F1}",
                     Owner.ObjId, Owner.Transform.Local.Position.Z, groundZ);
@@ -246,8 +246,6 @@ public class FloatingSkillController : SkillController
         var currentPos = Owner.Transform.Local.Position;
         var groundZ = GetGroundHeight();
 
-        if (groundZ <= 0) groundZ = _startZ;
-
         if (currentPos.Z <= groundZ + 0.1f)
         {
             Logger.Debug("FloatingSC [FALL]: owner={0} reached ground Z={1:F1}", Owner.ObjId, groundZ);
@@ -296,8 +294,7 @@ public class FloatingSkillController : SkillController
 
     private float GetGroundHeight()
     {
-        var geoZ = Owner.ParentWorld.Template.GeoData.GetHeight(Owner.Transform.World.Position);
-        return geoZ > 0 ? geoZ : _startZ;
+        return TryGetOwnerGroundHeight(out var groundZ) ? groundZ : _startZ;
     }
 
     private void PullTick(TimeSpan delta)
@@ -331,9 +328,7 @@ public class FloatingSkillController : SkillController
             travelDist, targetDist, currentPos, _endPosition);
         Owner.Transform.Local.SetPosition(newX, newY, newZ);
 
-        var updZ = Owner.ParentWorld.Template.GeoData.GetHeight(Owner.Transform.World.Position);
-        if (Math.Abs(newZ - updZ) < 1f)
-            Owner.Transform.Local.SetHeight(updZ);
+        TrySnapOwnerToGround(newZ, 1f);
 
         var angle = MathUtil.CalculateAngleFrom(Owner.Transform.Local.Position, _endPosition);
         var (velX, velY) = MathUtil.AddDistanceToFront(4000, 0, 0, (float)angle.DegToRad());
