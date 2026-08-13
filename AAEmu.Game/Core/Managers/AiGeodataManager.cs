@@ -266,6 +266,20 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
     /// </summary>
     public bool TryGetHeight(Vector3 pos, out float height)
     {
+        return TryResolveHeight(pos, false, out height);
+    }
+
+    /// <summary>
+    /// Tries to get a ground height. Outdoor triangular BAI nodes and their obstacle vertices describe
+    /// coarse two-dimensional navigation topology, so rendered terrain is authoritative at the query XY.
+    /// </summary>
+    public bool TryGetGroundHeight(Vector3 pos, out float height)
+    {
+        return TryResolveHeight(pos, true, out height);
+    }
+
+    private bool TryResolveHeight(Vector3 pos, bool preferTerrainForGround, out float height)
+    {
         height = 0f;
         if (!float.IsFinite(pos.X) || !float.IsFinite(pos.Y) || !float.IsFinite(pos.Z))
             return false;
@@ -274,74 +288,16 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
         //stopWatch.Start();
         try
         {
-            var closestPoint = Vector3.Zero;
-            var closestDistance = float.MaxValue;
-            var closestPointFound = false;
-
-            // Try to get height from .bai files data
-            var bai = worldTemplate.GetBaiByPos(pos);
-            if (bai != null)
-            {
-                if (bai.NetMissionReaders.Count > 0)
-                {
-                    foreach (var netMission in bai.NetMissionReaders)
-                    {
-                        foreach (var (_, nodeDescriptor) in netMission.NodeDescriptorList)
-                        {
-                            var dist = (nodeDescriptor.Pos - pos).Length();
-                            if (dist < closestDistance)
-                            {
-                                closestDistance = dist;
-                                closestPoint = nodeDescriptor.Pos;
-                                closestPointFound = true;
-                                // Slightly optimize if very close to target point
-                                if (closestDistance < 0.01f)
-                                {
-                                    height = closestPoint.Z;
-                                    if (float.IsFinite(height))
-                                        return true;
-
-                                    height = 0f;
-                                    return false;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (bai.VertexMissionReaders.Count > 0)
-                {
-                    foreach (var vertexMission in bai.VertexMissionReaders)
-                    {
-                        foreach (var obstacleDataDescriptor in vertexMission.ObstacleDataDescriptorList)
-                        {
-                            var dist = (obstacleDataDescriptor.Pos - pos).Length();
-                            if (dist < closestDistance)
-                            {
-                                closestDistance = dist;
-                                closestPoint = obstacleDataDescriptor.Pos;
-                                closestPointFound = true;
-                                // Slightly optimize if very close to target point
-                                if (closestDistance < 0.01f)
-                                {
-                                    height = closestPoint.Z;
-                                    if (float.IsFinite(height))
-                                        return true;
-
-                                    height = 0f;
-                                    return false;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Now compare to heightmap data
-            if (!closestPointFound)
+            if (!TryGetLegacyBaiSample(pos, out var sample))
                 return worldTemplate.TryGetHeight(pos.X, pos.Y, out height);
 
-            height = closestPoint.Z;
+            if (preferTerrainForGround && sample.UsesTerrainForGround &&
+                worldTemplate.TryGetHeight(pos.X, pos.Y, out height))
+            {
+                return true;
+            }
+
+            height = sample.Position.Z;
             if (float.IsFinite(height))
                 return true;
 
@@ -356,6 +312,72 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
         }
         //stopWatch.Stop();
         //Logger.Info($"GetHeight took {stopWatch.Elapsed}");
+    }
+
+    private bool TryGetLegacyBaiSample(Vector3 pos, out BaiHeightSample sample)
+    {
+        sample = default;
+        var closestDistance = float.MaxValue;
+        var sampleFound = false;
+
+        var bai = worldTemplate.GetBaiByPos(pos);
+        if (bai == null)
+            return false;
+
+        if (bai.NetMissionReaders.Count > 0)
+        {
+            foreach (var netMission in bai.NetMissionReaders)
+            {
+                foreach (var (_, nodeDescriptor) in netMission.NodeDescriptorList)
+                {
+                    var distance = (nodeDescriptor.Pos - pos).Length();
+                    if (distance < closestDistance)
+                    {
+                        closestDistance = distance;
+                        sample = new BaiHeightSample(nodeDescriptor.Pos, BaiHeightSource.NavigationNode,
+                            nodeDescriptor.NavigationType);
+                        sampleFound = true;
+                        if (closestDistance < 0.01f)
+                            return true;
+                    }
+                }
+            }
+        }
+
+        if (bai.VertexMissionReaders.Count > 0)
+        {
+            foreach (var vertexMission in bai.VertexMissionReaders)
+            {
+                foreach (var obstacleDataDescriptor in vertexMission.ObstacleDataDescriptorList)
+                {
+                    var distance = (obstacleDataDescriptor.Pos - pos).Length();
+                    if (distance < closestDistance)
+                    {
+                        closestDistance = distance;
+                        sample = new BaiHeightSample(obstacleDataDescriptor.Pos, BaiHeightSource.ObstacleVertex,
+                            BaiNavigationType.Unset);
+                        sampleFound = true;
+                        if (closestDistance < 0.01f)
+                            return true;
+                    }
+                }
+            }
+        }
+
+        return sampleFound;
+    }
+
+    private enum BaiHeightSource
+    {
+        NavigationNode,
+        ObstacleVertex
+    }
+
+    private readonly record struct BaiHeightSample(Vector3 Position, BaiHeightSource Source,
+        BaiNavigationType NavigationType)
+    {
+        public bool UsesTerrainForGround => Source == BaiHeightSource.ObstacleVertex ||
+                                            (NavigationType & BaiNavigationType.Triangular) != 0;
     }
 
     private static float DistanceBetweenPoints(Vector3 point, Vector3 compareTo)

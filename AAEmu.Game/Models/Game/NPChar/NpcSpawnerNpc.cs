@@ -96,8 +96,11 @@ public class NpcSpawnerNpc : Spawner<Npc>
         Logger.Trace($"Spawn npc templateId {MemberId} objId {npc.ObjId} from spawnerId {NpcSpawnerTemplateId} at Position: {npcSpawner.Position}");
 
         float? sampledGroundZ = null;
-        if (!npc.CanFly)
-            sampledGroundZ = npcSpawner.ParentWorld.Template.GeoData.GetHeight(npcSpawner.Position.AsPositionVector());
+        if (!npc.CanFly && npcSpawner.ParentWorld.Template.GeoData.TryGetGroundHeight(
+                npcSpawner.Position.AsPositionVector(), out var groundZ))
+        {
+            sampledGroundZ = groundZ;
+        }
 
         var runtimeSpawnPosition = CreateRuntimeSpawnPosition(npcSpawner.Position, sampledGroundZ);
         npc.Transform.ApplyWorldSpawnPosition(runtimeSpawnPosition);
