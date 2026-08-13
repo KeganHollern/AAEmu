@@ -266,7 +266,7 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
     /// </summary>
     public bool TryGetHeight(Vector3 pos, out float height)
     {
-        return TryResolveHeight(pos, false, out height);
+        return TryResolveLegacyHeight(pos, out height);
     }
 
     /// <summary>
@@ -275,10 +275,81 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
     /// </summary>
     public bool TryGetGroundHeight(Vector3 pos, out float height)
     {
-        return TryResolveHeight(pos, true, out height);
+        if (TryGetGroundSurface(pos, out var surface))
+        {
+            height = surface.Height;
+            return true;
+        }
+
+        height = 0f;
+        return false;
     }
 
-    private bool TryResolveHeight(Vector3 pos, bool preferTerrainForGround, out float height)
+    /// <summary>
+    /// Tries to resolve a ground surface and reports the selected source and its BAI reference, when any.
+    /// </summary>
+    public bool TryGetGroundSurface(Vector3 pos, out GroundSurfaceResult surface)
+    {
+        surface = default;
+        if (!float.IsFinite(pos.X) || !float.IsFinite(pos.Y) || !float.IsFinite(pos.Z))
+        {
+            surface = new GroundSurfaceResult(0f, GroundSurfaceSource.None, GroundSurfaceDecision.None,
+                GroundSurfaceFailure.InvalidPosition, null);
+            return false;
+        }
+
+        try
+        {
+            if (!TryGetLegacyBaiSample(pos, out var sample))
+            {
+                if (worldTemplate.TryGetHeight(pos.X, pos.Y, out var terrainHeight))
+                {
+                    surface = new GroundSurfaceResult(terrainHeight, GroundSurfaceSource.Terrain,
+                        GroundSurfaceDecision.TerrainOnly, GroundSurfaceFailure.None, null);
+                    return true;
+                }
+
+                surface = new GroundSurfaceResult(0f, GroundSurfaceSource.None, GroundSurfaceDecision.None,
+                    GroundSurfaceFailure.Unavailable, null);
+                return false;
+            }
+
+            var baiReference = sample.ToSurfaceReference();
+            if (sample.UsesTerrainForGround &&
+                worldTemplate.TryGetHeight(pos.X, pos.Y, out var terrainHeight))
+            {
+                var decision = sample.Kind == BaiSurfaceReferenceKind.ObstacleVertex
+                    ? GroundSurfaceDecision.ObstacleRejected
+                    : GroundSurfaceDecision.OutdoorTriangulation;
+                surface = new GroundSurfaceResult(terrainHeight, GroundSurfaceSource.Terrain, decision,
+                    GroundSurfaceFailure.None, baiReference);
+                return true;
+            }
+
+            if (float.IsFinite(sample.Position.Z))
+            {
+                var decision = sample.UsesTerrainForGround
+                    ? GroundSurfaceDecision.TerrainUnavailableFallback
+                    : GroundSurfaceDecision.NavigationHeightPreserved;
+                surface = new GroundSurfaceResult(sample.Position.Z, sample.Source, decision,
+                    GroundSurfaceFailure.None, baiReference);
+                return true;
+            }
+
+            surface = new GroundSurfaceResult(0f, GroundSurfaceSource.None, GroundSurfaceDecision.None,
+                GroundSurfaceFailure.InvalidSample, baiReference);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, $"Failed to get geodata height at {pos} in world {worldTemplate?.Name ?? "unknown"}");
+            surface = new GroundSurfaceResult(0f, GroundSurfaceSource.None, GroundSurfaceDecision.None,
+                GroundSurfaceFailure.ResolverError, null);
+            return false;
+        }
+    }
+
+    private bool TryResolveLegacyHeight(Vector3 pos, out float height)
     {
         height = 0f;
         if (!float.IsFinite(pos.X) || !float.IsFinite(pos.Y) || !float.IsFinite(pos.Z))
@@ -290,12 +361,6 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
         {
             if (!TryGetLegacyBaiSample(pos, out var sample))
                 return worldTemplate.TryGetHeight(pos.X, pos.Y, out height);
-
-            if (preferTerrainForGround && sample.UsesTerrainForGround &&
-                worldTemplate.TryGetHeight(pos.X, pos.Y, out height))
-            {
-                return true;
-            }
 
             height = sample.Position.Z;
             if (float.IsFinite(height))
@@ -334,8 +399,8 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
                     if (distance < closestDistance)
                     {
                         closestDistance = distance;
-                        sample = new BaiHeightSample(nodeDescriptor.Pos, BaiHeightSource.NavigationNode,
-                            nodeDescriptor.NavigationType);
+                        sample = new BaiHeightSample(nodeDescriptor.Pos, BaiSurfaceReferenceKind.NavigationNode,
+                            netMission.ZoneId, nodeDescriptor.Id, nodeDescriptor.NavigationType);
                         sampleFound = true;
                         if (closestDistance < 0.01f)
                             return true;
@@ -354,8 +419,8 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
                     if (distance < closestDistance)
                     {
                         closestDistance = distance;
-                        sample = new BaiHeightSample(obstacleDataDescriptor.Pos, BaiHeightSource.ObstacleVertex,
-                            BaiNavigationType.Unset);
+                        sample = new BaiHeightSample(obstacleDataDescriptor.Pos, BaiSurfaceReferenceKind.ObstacleVertex,
+                            vertexMission.ZoneId, null, BaiNavigationType.Unset);
                         sampleFound = true;
                         if (closestDistance < 0.01f)
                             return true;
@@ -367,17 +432,18 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
         return sampleFound;
     }
 
-    private enum BaiHeightSource
+    private readonly record struct BaiHeightSample(Vector3 Position, BaiSurfaceReferenceKind Kind, uint ZoneId,
+        long? NodeId, BaiNavigationType NavigationType)
     {
-        NavigationNode,
-        ObstacleVertex
-    }
+        public GroundSurfaceSource Source => Kind == BaiSurfaceReferenceKind.NavigationNode
+            ? GroundSurfaceSource.NavigationNode
+            : GroundSurfaceSource.ObstacleVertex;
 
-    private readonly record struct BaiHeightSample(Vector3 Position, BaiHeightSource Source,
-        BaiNavigationType NavigationType)
-    {
-        public bool UsesTerrainForGround => Source == BaiHeightSource.ObstacleVertex ||
+        public bool UsesTerrainForGround => Kind == BaiSurfaceReferenceKind.ObstacleVertex ||
                                             (NavigationType & BaiNavigationType.Triangular) != 0;
+
+        public BaiSurfaceReference ToSurfaceReference() =>
+            new(Kind, ZoneId, NodeId, NavigationType, Position);
     }
 
     private static float DistanceBetweenPoints(Vector3 point, Vector3 compareTo)

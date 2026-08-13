@@ -1,5 +1,7 @@
 using System.Numerics;
 
+using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.CryEngine.Entities;
 using AAEmu.Game.Models.Game.AI.v2.AiCharacters;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.World.Transform;
@@ -33,12 +35,18 @@ public class NpcSurfaceSubCommandTests
         var local = new Vector3(1.25f, 2.5f, 5.5f);
         var world = new Vector3(11.25f, 12.5f, 5.5f);
 
-        var report = NpcSurfaceSubCommand.BuildReport(npc, local, world, 23, 29, 5f, 6f);
+        var reference = new BaiSurfaceReference(BaiSurfaceReferenceKind.NavigationNode, 31, 37,
+            BaiNavigationType.WaypointHuman | BaiNavigationType.CustomNavigation, new Vector3(11f, 12f, 5f));
+        var surface = new GroundSurfaceResult(5f, GroundSurfaceSource.NavigationNode,
+            GroundSurfaceDecision.NavigationHeightPreserved, GroundSurfaceFailure.None, reference);
+
+        var report = NpcSurfaceSubCommand.BuildReport(npc, local, world, 23, 29, 5f, 6f, surface);
 
         await Assert.That(report[0]).IsEqualTo("obj=7 template=13 spawner=17/19 instance=23 zone=29 canFly=False behavior=none");
         await Assert.That(report[1]).IsEqualTo("packetLocal=(1.250,2.500,5.500) queryWorld=(11.250,12.500,5.500)");
         await Assert.That(report[2]).IsEqualTo("authored=4.000 dZ=1.500 home=4.500 dZ=1.000 idle=4.750 dZ=0.750");
         await Assert.That(report[3]).IsEqualTo("terrain=5.000 dZ=0.500 legacyGeo=6.000 dZ=-0.500 geoMinusTerrain=1.000");
+        await Assert.That(report[4]).IsEqualTo("selected=NavigationNode z=5.000 dZ=0.500 decision=NavigationHeightPreserved failure=None bai=NavigationNode:37 zone=31 nav=WaypointHuman|CustomNavigation ref=(11.000,12.000,5.000) refXY=0.559 refDZ=0.500");
         await Assert.That(npc.Spawner.Position.Z).IsEqualTo(4f);
         await Assert.That(npc.Ai.HomePosition.Z).IsEqualTo(4.5f);
     }
@@ -48,11 +56,25 @@ public class NpcSurfaceSubCommandTests
     {
         var npc = new Npc { ObjId = 1, TemplateId = 2 };
 
-        var report = NpcSurfaceSubCommand.BuildReport(npc, Vector3.Zero, Vector3.Zero, 3, 4, null, null);
+        var surface = new GroundSurfaceResult(0f, GroundSurfaceSource.None, GroundSurfaceDecision.None,
+            GroundSurfaceFailure.Unavailable, null);
+
+        var report = NpcSurfaceSubCommand.BuildReport(npc, Vector3.Zero, Vector3.Zero, 3, 4, null, null, surface);
 
         await Assert.That(report[0]).Contains("spawner=n/a");
         await Assert.That(report[0]).Contains("behavior=no-ai");
         await Assert.That(report[2]).IsEqualTo("authored=n/a dZ=n/a home=n/a dZ=n/a idle=n/a dZ=n/a");
         await Assert.That(report[3]).IsEqualTo("terrain=n/a dZ=n/a legacyGeo=n/a dZ=n/a geoMinusTerrain=n/a");
+        await Assert.That(report[4]).IsEqualTo("selected=n/a decision=None failure=Unavailable");
+    }
+
+    [Test]
+    public async Task BuildReport_WithoutGroundSurfaceResolver_ReportsUnavailable()
+    {
+        var npc = new Npc { ObjId = 1, TemplateId = 2 };
+
+        var report = NpcSurfaceSubCommand.BuildReport(npc, Vector3.Zero, Vector3.Zero, 3, 4, null, null, null);
+
+        await Assert.That(report[4]).IsEqualTo("selected=n/a decision=None failure=Unavailable");
     }
 }
