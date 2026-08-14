@@ -371,6 +371,22 @@ public class ContentStudioPipelineTests
     }
 
     [Test]
+    public async Task RecordDetails_ResolvesOnlyTablesThatExistInTheCompactSchema()
+    {
+        using var workspace = TestWorkspace.Create();
+        var catalog = new CatalogRecordService();
+
+        var record = catalog.GetRecord(workspace.BaselinePath, "SKILLS", 200);
+        var rejected = catalog.GetRecord(workspace.BaselinePath, "skills; DROP TABLE items; --", 200);
+        var itemStillExists = catalog.GetRecord(workspace.BaselinePath, "items", 12);
+
+        await Assert.That(record).IsNotNull();
+        await Assert.That(record!.Table).IsEqualTo("skills");
+        await Assert.That(rejected).IsNull();
+        await Assert.That(itemStillExists).IsNotNull();
+    }
+
+    [Test]
     public async Task RecordEditor_ModificationIsSparseAndDiffShowsChangedCell()
     {
         using var workspace = TestWorkspace.Create();

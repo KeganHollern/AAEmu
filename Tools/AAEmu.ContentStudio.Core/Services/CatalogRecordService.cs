@@ -111,14 +111,22 @@ public sealed class CatalogRecordService
     {
         CompactCatalogService.ValidateLanguageColumn(language);
         using var connection = CompactConnectionFactory.OpenReadOnly(compactPath);
-        var columns = ReadColumns(connection, table);
+        var resolvedTable = ResolveTableName(connection, table);
+        if (resolvedTable is null)
+        {
+            return null;
+        }
+
+        var columns = ReadColumns(connection, resolvedTable);
         if (columns.Count == 0 || columns.All(column => !column.Name.Equals("id", StringComparison.OrdinalIgnoreCase)))
         {
             return null;
         }
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT * FROM {BaselineVerifier.QuoteIdentifier(table)} WHERE id = @id LIMIT 1;";
+        // SQLite cannot parameterize an identifier. Only interpolate the canonical name read from
+        // sqlite_master; the designer-supplied table name is used solely as a bound lookup value.
+        command.CommandText = $"SELECT * FROM {BaselineVerifier.QuoteIdentifier(resolvedTable)} WHERE id = @id LIMIT 1;";
         command.Parameters.AddWithValue("@id", id);
         using var reader = command.ExecuteReader();
         if (!reader.Read())
@@ -137,45 +145,45 @@ public sealed class CatalogRecordService
             fields.Add(new CatalogRecordField
             {
                 Name = name,
-                Label = FriendlyName(table, name),
+                Label = FriendlyName(resolvedTable, name),
                 Type = type,
-                Group = ClassifyGroup(table, name),
+                Group = ClassifyGroup(resolvedTable, name),
                 Help = Describe(name),
                 Value = value,
                 IsNull = isNull,
                 IsBoolean = IsBoolean(name, type, value),
-                IsEssential = IsEssential(table, name),
+                IsEssential = IsEssential(resolvedTable, name),
                 IsIdentity = name.Equals("id", StringComparison.OrdinalIgnoreCase),
-                IsEditable = !type.Contains("BLOB", StringComparison.OrdinalIgnoreCase) && !IsStructuralBalanceKey(table, name),
+                IsEditable = !type.Contains("BLOB", StringComparison.OrdinalIgnoreCase) && !IsStructuralBalanceKey(resolvedTable, name),
                 ReferenceTable = ReferenceTableFor(name)
             });
         }
         reader.Close();
 
-        var localizations = ReadLocalizations(connection, table, id);
+        var localizations = ReadLocalizations(connection, resolvedTable, id);
         var nameValue = localizations
             .Where(field => field.Field is "name" or "title")
             .Select(field => field.Values.GetValueOrDefault(language))
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
         nameValue ??= fields.FirstOrDefault(field => field.Name is "name" or "title")?.Value;
 
-        var (kind, kindLabel) = ClassifyTable(table);
-        nameValue = FriendlyRecordName(table, id, fields, nameValue);
+        var (kind, kindLabel) = ClassifyTable(resolvedTable);
+        nameValue = FriendlyRecordName(resolvedTable, id, fields, nameValue);
         return new CatalogRecord
         {
-            Table = table,
+            Table = resolvedTable,
             Id = id,
             Name = string.IsNullOrWhiteSpace(nameValue) ? $"Unnamed {kindLabel.ToLowerInvariant()}" : nameValue,
             Kind = kind,
             KindLabel = kindLabel,
             CanChange = true,
             CanDuplicate = true,
-            DuplicateNote = DuplicateNote(table),
+            DuplicateNote = DuplicateNote(resolvedTable),
             Fields = fields,
             Localizations = localizations,
-            RelatedSections = ReadRelatedSections(connection, table, id),
-            LinkedRecords = table.Equals("items", StringComparison.OrdinalIgnoreCase) ? ReadItemLinkedRecords(connection, id) : [],
-            GameplayLinks = table.Equals("skills", StringComparison.OrdinalIgnoreCase) ? ReadSkillGameplayLinks(connection, id, language) : []
+            RelatedSections = ReadRelatedSections(connection, resolvedTable, id),
+            LinkedRecords = resolvedTable.Equals("items", StringComparison.OrdinalIgnoreCase) ? ReadItemLinkedRecords(connection, id) : [],
+            GameplayLinks = resolvedTable.Equals("skills", StringComparison.OrdinalIgnoreCase) ? ReadSkillGameplayLinks(connection, id, language) : []
         };
     }
 
@@ -225,23 +233,25 @@ public sealed class CatalogRecordService
 
     private static List<(string Name, string Type)> ReadColumns(SqliteConnection connection, string table)
     {
-        using var exists = connection.CreateCommand();
-        exists.CommandText = "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = @name);";
-        exists.Parameters.AddWithValue("@name", table);
-        if (Convert.ToInt32(exists.ExecuteScalar(), CultureInfo.InvariantCulture) == 0)
-        {
-            return [];
-        }
-
         using var command = connection.CreateCommand();
-        command.CommandText = $"PRAGMA table_info({BaselineVerifier.QuoteIdentifier(table)});";
+        command.CommandText = "SELECT name, type FROM pragma_table_info(@table) ORDER BY cid;";
+        command.Parameters.AddWithValue("@table", table);
         using var reader = command.ExecuteReader();
         var columns = new List<(string Name, string Type)>();
         while (reader.Read())
         {
-            columns.Add((reader.GetString(1), reader.GetString(2)));
+            columns.Add((reader.GetString(0), reader.GetString(1)));
         }
         return columns;
+    }
+
+    private static string? ResolveTableName(SqliteConnection connection, string requestedTable)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name = @table COLLATE NOCASE LIMIT 1;";
+        command.Parameters.AddWithValue("@table", requestedTable);
+        var value = command.ExecuteScalar();
+        return IsCompactNull(value) ? null : Convert.ToString(value, CultureInfo.InvariantCulture);
     }
 
     private static List<CatalogLocalizationField> ReadLocalizations(SqliteConnection connection, string table, uint id)
