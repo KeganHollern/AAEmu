@@ -76,7 +76,25 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
                 Logger.Info($"{character.Name}:{character.ObjId} is using skill={skillId}");
         }
 
-        if (skillCaster is SkillCasterMount scm)
+        if (skillId > 0 && SkillManager.Instance.IsComboFollowupSkill(skillId))
+        {
+            // Every client-selected path for a compact-defined combo follow-up is gated here,
+            // before mount, common, item, learned-skill, variant, or interaction routing.
+            var template = SkillManager.Instance.GetSkillTemplate(skillId);
+            if (template is null ||
+                !TryAuthorizeComboFollowup(Connection.ActiveChar.Skills.ComboState, skillId, isOwnUnitCast))
+            {
+                Logger.Warn($"StartSkill: Character {Connection.ActiveChar.ObjId} attempted unauthorized combo follow-up {skillId}");
+                skill = new Skill(new SkillTemplate { Id = skillId });
+                skillResult = SkillResult.InvalidSkill;
+            }
+            else
+            {
+                skill = new Skill(template, Connection.ActiveChar);
+                skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+            }
+        }
+        else if (skillCaster is SkillCasterMount scm)
         {
             // Mount or Slave skill
             Logger.Trace($"SkillCasterMount - MountSkillTemplateId {scm.MountSkillTemplateId}");
@@ -155,16 +173,6 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
             skill = new Skill(template, Connection.ActiveChar);
             skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
         }
-        else if (skillId > 0 && isOwnUnitCast && Connection.ActiveChar.Skills.ComboState.TryConsume(skillId))
-        {
-            // The client selects hidden combo stages, but the server authorizes each exact
-            // transition for the compact-defined time window before accepting the cast.
-            var template = SkillManager.Instance.GetSkillTemplate(skillId);
-            skill = new Skill(template, Connection.ActiveChar);
-            skillResult = template is null
-                ? SkillResult.InvalidSkill
-                : skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
-        }
         else if (skillId > 0 && Connection.ActiveChar.Skills.IsVariantOfSkill(skillId))
         {
             // Variant of learned skill?
@@ -172,19 +180,22 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
             skill = new Skill(SkillManager.Instance.GetSkillTemplate(skillId));
             skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
         }
-        else if (isOwnUnitCast)
-        {
-            Logger.Warn($"StartSkill: Character {Connection.ActiveChar.ObjId} attempted unauthorized skill {skillId}");
-            skill = new Skill(new SkillTemplate { Id = skillId });
-            skillResult = SkillResult.InvalidSkill;
-        }
         else
         {
             // No idea what this is
             Logger.Warn($"StartSkill: Id {skillId}, undefined use type");
             // If it's a valid skill cast it. This fixes interactions with quest items/doodads.
-            skill = new Skill(SkillManager.Instance.GetSkillTemplate(skillId));
-            skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+            var template = SkillManager.Instance.GetSkillTemplate(skillId);
+            if (template is null)
+            {
+                skill = new Skill(new SkillTemplate { Id = skillId });
+                skillResult = SkillResult.InvalidSkill;
+            }
+            else
+            {
+                skill = new Skill(template);
+                skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+            }
         }
 
         if (skillResult != SkillResult.Success)
@@ -199,5 +210,10 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
             scSkillStartedPacket.SetResultUInt(skillResultErrorValue);
             Connection.ActiveChar.SendPacket(scSkillStartedPacket);
         }
+    }
+
+    internal static bool TryAuthorizeComboFollowup(SkillComboState state, uint skillId, bool isOwnUnitCast)
+    {
+        return isOwnUnitCast && state.TryConsume(skillId);
     }
 }

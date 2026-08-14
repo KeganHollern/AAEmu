@@ -3,10 +3,10 @@ using AAEmu.Game.Models.Game.Char;
 
 namespace AAEmu.Game.Models.Tasks.Mate;
 
-public sealed class TemporaryMateDespawnTask(MateManager manager, Character owner, uint tlId) : Task
+public sealed class TemporaryMateDespawnTask(MateManager manager, Character owner, Game.Units.Mate mate) : Task
 {
     public override void Execute()
     {
-        manager.RemoveActiveMateAndDespawn(owner, tlId);
+        manager.RemoveActiveMateAndDespawn(owner, mate);
     }
 }

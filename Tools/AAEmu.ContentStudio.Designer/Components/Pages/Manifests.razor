@@ -167,7 +167,7 @@ else
         try
         {
             _deleting = true;
-            var result = _deletion.Delete(Workspace.LoadConfiguration().ProjectPath, _deletePreview.Path);
+            var result = _deletion.Delete(Workspace.LoadConfiguration().ProjectPath, _deletePreview.Path, _deletePreview.Version);
             _deletePreview = null;
             Refresh();
             _isError = false;

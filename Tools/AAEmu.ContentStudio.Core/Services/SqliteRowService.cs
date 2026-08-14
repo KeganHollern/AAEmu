@@ -4,6 +4,27 @@ namespace AAEmu.ContentStudio.Core.Services;
 
 internal static class SqliteRowService
 {
+    public static string? ResolveTableName(SqliteConnection connection, SqliteTransaction? transaction, string requestedTable)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name = @table COLLATE NOCASE LIMIT 1;";
+        command.Parameters.AddWithValue("@table", requestedTable);
+        var value = command.ExecuteScalar();
+        return value is null or DBNull ? null : Convert.ToString(value);
+    }
+
+    public static string? ResolveColumnName(SqliteConnection connection, SqliteTransaction? transaction, string table, string requestedColumn)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT name FROM pragma_table_info(@table) WHERE name = @column COLLATE NOCASE LIMIT 1;";
+        command.Parameters.AddWithValue("@table", table);
+        command.Parameters.AddWithValue("@column", requestedColumn);
+        var value = command.ExecuteScalar();
+        return value is null or DBNull ? null : Convert.ToString(value);
+    }
+
     public static bool Exists(SqliteConnection connection, SqliteTransaction? transaction, string table, uint id)
     {
         using var command = connection.CreateCommand();

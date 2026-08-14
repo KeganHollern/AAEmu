@@ -48,9 +48,9 @@ It is not the same database as AAEmu's MySQL databases:
 | `aaemu_game` MySQL | Characters, inventories, housing, mail, and other live state | Read/write |
 | `aaemu_login` MySQL | Accounts, bans, and login state | Read/write |
 
-The r208022 compact has 635 tables but no primary keys, foreign keys, views, triggers, or useful relational enforcement. An `id` column therefore looks like a key but SQLite does not protect it. Content Studio supplies the missing checks.
+The pristine r208022 client compact has 635 tables but no primary keys, foreign keys, views, triggers, or useful relational enforcement. An `id` column therefore looks like a key but SQLite does not protect it. Content Studio supplies the missing checks.
 
-The server and client must receive the same compiled compact artifact. A server-only recipe can be authoritative but will not display correctly in the unmodified client. Existing client assets can be reused; adding a completely new model, icon, or item asset still requires client asset work beyond the compact database.
+The server and client need matching content changes, but they do not use interchangeable database files. AAEmu's server compact contains additional runtime-only tables. Build each artifact from its own approved baseline, preserve target-only data, and verify that both artifacts express the same shared rows. Content Studio refuses to replace a target whose schema differs from the artifact. Existing client assets can be reused; adding a completely new model, icon, or item asset still requires client asset work beyond the compact database.
 
 ## Why a workbench is a graph
 
@@ -117,7 +117,7 @@ Agents should treat display names as the collaboration language and internal num
 
 Designers work only with display names, named enum choices, and contextual descriptions. Search results, relationship pickers, My Changes cards, and guided forms intentionally do not display database IDs. When a legacy relationship cannot yet be mapped to a verified name catalog, the GUI preserves it as **Kept from the source** instead of presenting a numeric input.
 
-This is also the repository's only Content Studio project. Feature areas such as levels 51–55, skill-tree enablement, gear balance, recipes, and workbenches are grouped by namespaced plan filenames inside `Content/projects/custom/`; they do not receive separate projects or configurations. A build always represents the complete release and the exact same artifact must be published to the client and server.
+This is also the repository's only Content Studio project. Feature areas such as levels 51–55, skill-tree enablement, gear balance, recipes, and workbenches are grouped by namespaced plan filenames inside `Content/projects/custom/`; they do not receive separate feature projects. A build represents the complete intended change set for one compatible baseline. Client and server publication requires separate target-compatible artifacts, never copying one compact across their different schemas.
 
 ## One-time setup
 
@@ -342,7 +342,7 @@ Use **Gear balance** in the main navigation when the intended change is broad. I
 
 Each shared rule shows its blast radius before offering **Plan broad change**. The rule then opens in the same friendly, fully explained editor as every other entry, and the saved plan remains visible and editable in **My changes**. This makes changes such as “increase every scepter,” “reduce all plate defense,” or “flatten the gap between quality grades” explicit instead of requiring hand-edited SQL.
 
-The final values players see are composed at runtime from the item's power level, its primary-stat proportions, grade multipliers, its weapon type or armor class, its equipment-slot coverage, and global constants. Build and deploy the project after saving; restart the server and client so both load the matching generated database.
+The final values players see are composed at runtime from the item's power level, its primary-stat proportions, grade multipliers, its weapon type or armor class, its equipment-slot coverage, and global constants. Build target-compatible artifacts after saving; restart the server and client so both load the matching intended changes from their respective compact schemas.
 
 Raw schema inspection remains available through the command-line tooling for agents and developers, outside the designer workflow.
 
@@ -414,9 +414,9 @@ The buff editor puts these controls near the top:
 
 The skill and its buff are separate game entries. Save each intended change as its own clearly named plan so **My changes** can show exactly what will be altered.
 
-## Deploy to server and client
+## Deploy a target-compatible artifact
 
-Stop AAEmu.Game and close the ArcheAge client before replacing either database.
+Stop the process that owns the target before replacing its database. The checked-in r208022 baseline descriptor is for the client compact. Do not use that artifact as the AAEmu server compact; the server has additional runtime-only tables. A server deployment remains gated until the same plans can be compiled against and validated on the server-superset baseline.
 
 First preview deployment:
 
@@ -424,32 +424,29 @@ First preview deployment:
 dotnet run --project Tools/AAEmu.ContentStudio.Cli -- `
   deploy --config Content/content-studio.json `
   --artifact .content-studio/build/compact.custom.sqlite3 `
-  --target server --dry-run
+  --sha256 <artifactSha256-from-content-build-manifest> `
+  --target client --dry-run
 ```
 
-Deploy the exact same artifact to both targets:
+Deploy only to the compatible configured target:
 
 ```powershell
 dotnet run --project Tools/AAEmu.ContentStudio.Cli -- `
   deploy --config Content/content-studio.json `
   --artifact .content-studio/build/compact.custom.sqlite3 `
-  --target server
-
-dotnet run --project Tools/AAEmu.ContentStudio.Cli -- `
-  deploy --config Content/content-studio.json `
-  --artifact .content-studio/build/compact.custom.sqlite3 `
+  --sha256 <artifactSha256-from-content-build-manifest> `
   --target client
 ```
 
 Deployment performs these steps:
 
-1. Integrity-check the artifact.
-2. Integrity-check the existing target when present.
-3. Copy the existing target to a timestamped backup.
-4. Stage the new database next to the target.
-5. Compare the staged SHA-256 with the artifact.
+1. Stage the artifact and verify it still matches the reviewed build SHA-256.
+2. Integrity-check the immutable staged artifact.
+3. Integrity-check the existing target when present.
+4. Verify that the staged artifact and target schemas match exactly.
+5. Copy the existing target to a timestamped backup.
 6. Atomically replace the target.
-7. Integrity-check the deployed target.
+7. Integrity-check the deployed target and verify its reviewed SHA-256.
 8. Write a deployment manifest.
 
 Rollback uses the exact backup path printed in the deployment manifest:
@@ -463,15 +460,13 @@ dotnet run --project Tools/AAEmu.ContentStudio.Cli -- `
 
 ## Test in game
 
-1. Confirm both server and client received the same artifact hash.
-2. Start Login and Game. Craft and doodad managers load the new rows at startup, so a server restart is required after deployment.
+1. Confirm the separately built server and client artifacts contain the same intended shared-row changes while retaining their target-specific schemas.
+2. Start Login and Game. Craft and doodad managers load new server rows at startup, so a server restart is required after deployment.
 3. Log in with a GM-capable character.
-4. Spawn the example with `/doodad spawn 9200000`.
-5. Approach the workbench and open it.
-6. Confirm recipe `9100000` appears with the expected name, materials, product, labor, and cast time.
-7. Craft one item and verify material consumption and result creation.
-8. Move farther than five meters and confirm a forged or stale craft request is rejected.
-9. Confirm another workbench cannot execute the custom recipe.
+4. Exercise each named change from the reviewed build manifest; the canonical project intentionally contains no production test recipe or test workbench.
+5. For a reviewed recipe, confirm its expected workbench, materials, products, labor, and cast time, then craft one result.
+6. Move farther than five meters and confirm a forged or stale craft request is rejected.
+7. Confirm an unrelated workbench cannot execute the recipe.
 
 The server now rejects:
 
@@ -527,7 +522,7 @@ Scripts\StartContentStudio.ps1 -Url http://127.0.0.1:5190
 
 ### The recipe does not appear
 
-Inspect both graphs in the built artifact. The recipe must point to the custom `requiredDoodadId`, and `craft_pack_crafts` must connect the workbench's custom pack to the recipe. Confirm the client received the same artifact and was fully closed during replacement.
+Inspect both graphs in each target-compatible artifact. The recipe must point to the custom `requiredDoodadId`, and `craft_pack_crafts` must connect the workbench's custom pack to the recipe. Confirm the client received its compatible artifact and was fully closed during replacement.
 
 ### The workbench appears but has the wrong visual
 

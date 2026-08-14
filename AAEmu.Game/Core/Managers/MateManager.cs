@@ -23,6 +23,8 @@ public class MateManager(WorldInstance parentWorldInstance)
     private Regex _nameRegex;
 
     private Dictionary<uint, List<Mate>> _activeMates = []; // ownerId, Mount
+    private readonly HashSet<Mate> _matesBeingRemoved = [];
+    private readonly object _activeMatesLock = new();
 
     private WorldInstance World { get; init; } = parentWorldInstance;
 
@@ -33,7 +35,8 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// <returns></returns>
     public List<Mate> GetActiveMates(uint ownerId)
     {
-        return _activeMates.GetValueOrDefault(ownerId) ?? [];
+        lock (_activeMatesLock)
+            return _activeMates.TryGetValue(ownerId, out var mates) ? [.. mates] : [];
     }
 
     /// <summary>
@@ -43,7 +46,14 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// <returns></returns>
     public Mate GetActiveMateByTlId(uint tlId)
     {
-        return _activeMates.Values.SelectMany(mateList => mateList).FirstOrDefault(mate => mate.TlId == tlId);
+        lock (_activeMatesLock)
+            return _activeMates.Values.SelectMany(mateList => mateList).FirstOrDefault(mate => mate.TlId == tlId);
+    }
+
+    public Mate GetActiveMateByTlId(uint ownerId, uint tlId)
+    {
+        lock (_activeMatesLock)
+            return _activeMates.GetValueOrDefault(ownerId)?.FirstOrDefault(mate => mate.TlId == tlId);
     }
 
     /// <summary>
@@ -53,7 +63,8 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// <returns></returns>
     public Mate GetActiveMateByMateObjId(uint mateObjId)
     {
-        return _activeMates.Values.SelectMany(mateList => mateList).FirstOrDefault(mate => mate.ObjId == mateObjId);
+        lock (_activeMatesLock)
+            return _activeMates.Values.SelectMany(mateList => mateList).FirstOrDefault(mate => mate.ObjId == mateObjId);
     }
 
     /// <summary>
@@ -65,7 +76,10 @@ public class MateManager(WorldInstance parentWorldInstance)
     public Mate GetIsMounted(uint objId, out AttachPointKind attachPoint)
     {
         attachPoint = AttachPointKind.System;
-        foreach (var mate in _activeMates.Values.SelectMany(mateList => mateList))
+        List<Mate> mates;
+        lock (_activeMatesLock)
+            mates = [.. _activeMates.Values.SelectMany(mateList => mateList)];
+        foreach (var mate in mates)
             foreach (var ati in mate.Passengers.Where(ati => ati.Value._objId == objId))
             {
                 attachPoint = ati.Key;
@@ -186,7 +200,14 @@ public class MateManager(WorldInstance parentWorldInstance)
     public void UnMountMate(Character character, uint tlId, AttachPointKind attachPoint, AttachUnitReason reason)
     {
         var mateInfo = GetActiveMateByTlId(tlId);
-        if (mateInfo == null) return;
+        if (mateInfo == null)
+            return;
+
+        UnMountMate(character, mateInfo, attachPoint, reason);
+    }
+
+    private void UnMountMate(Character character, Mate mateInfo, AttachPointKind attachPoint, AttachUnitReason reason)
+    {
 
         mateInfo.StopUpdateXp();
 
@@ -235,28 +256,37 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// <param name="item"></param>
     public void AddActiveMateAndSpawn(Character owner, Mate mate, Item item)
     {
-        // Get or set entry for player objId
-        if (!_activeMates.TryGetValue(owner.Id, out var activeMateList))
+        Mate existingMate;
+        lock (_activeMatesLock)
         {
-            activeMateList = [];
-            _activeMates.Add(owner.Id, activeMateList);
+            // Temporary skill summons coexist with the player's one persistent mount or battle pet.
+            existingMate = _activeMates.GetValueOrDefault(owner.Id)?.FirstOrDefault(active => !active.IsTemporarySummon);
+            if (existingMate is null)
+                TrackActiveMateUnsafe(owner.Id, mate, prioritize: true);
         }
 
-        // TODO: For later versions, allow multiple pets if they are different types (mount, battle, skill)
-        foreach (var mateInfo in activeMateList)
+        if (existingMate is not null)
         {
-            owner.Mates.DespawnMate(mateInfo.TlId);
+            // SpawnMount constructs and reserves IDs for the incoming mate before this toggle
+            // check. Retire that never-tracked instance before despawning the existing mate.
+            DespawnReservedMate(owner, mate);
+            owner.Mates.DespawnMate(existingMate.TlId);
             return;
         }
 
-        activeMateList.Add(mate);
+        if (!CanSpawnTrackedMate(owner.IsOnline, owner.Hp, mate.IsTemporarySummon, mate.DespawnOnCreatorDeath))
+        {
+            RemoveActiveMateAndDespawn(owner, mate);
+            return;
+        }
 
-        owner.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.UpdateSummonMateItem, [new ItemUpdate(item)], [])); // TODO - maybe update details
-        owner.SendPacket(new SCMateSpawnedPacket(mate));
-        Thread.Sleep(50);
-        mate.Spawn();
-
-        Logger.Debug($"Mount spawned. ownerObjId: {owner.ObjId}, tlId: {mate.TlId}, mateObjId: {mate.ObjId}");
+        if (TrySpawnTrackedMate(owner, mate, () =>
+            {
+                owner.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.UpdateSummonMateItem, [new ItemUpdate(item)], [])); // TODO - maybe update details
+                owner.SendPacket(new SCMateSpawnedPacket(mate));
+                Thread.Sleep(50);
+            }, mate.Spawn))
+            Logger.Debug($"Mount spawned. ownerObjId: {owner.ObjId}, tlId: {mate.TlId}, mateObjId: {mate.ObjId}");
     }
 
     /// <summary>
@@ -264,16 +294,31 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// </summary>
     public void AddTemporaryMateAndSpawn(Character owner, Mate mate)
     {
-        if (!_activeMates.TryGetValue(owner.Id, out var activeMateList))
+        var replacedMates = TrackTemporaryMate(owner.Id, mate);
+        try
         {
-            activeMateList = [];
-            _activeMates.Add(owner.Id, activeMateList);
-        }
+            if (!CanSpawnTrackedMate(owner.IsOnline, owner.Hp, mate.IsTemporarySummon, mate.DespawnOnCreatorDeath))
+            {
+                RemoveActiveMateAndDespawn(owner, mate);
+                return;
+            }
 
-        activeMateList.Add(mate);
-        owner.SendPacket(new SCMateSpawnedPacket(mate));
-        mate.Spawn();
-        Logger.Debug($"Temporary mate spawned. ownerObjId: {owner.ObjId}, tlId: {mate.TlId}, mateObjId: {mate.ObjId}");
+            if (TrySpawnTrackedMate(owner, mate,
+                    () => owner.SendPacket(new SCMateSpawnedPacket(mate)),
+                    () =>
+                    {
+                        mate.Spawn();
+                        var currentTarget = mate.CurrentTarget;
+                        if (currentTarget is not null)
+                            mate.BroadcastPacket(new SCTargetChangedPacket(mate.ObjId, currentTarget.ObjId), true);
+                    }))
+                Logger.Debug($"Temporary mate spawned. ownerObjId: {owner.ObjId}, tlId: {mate.TlId}, mateObjId: {mate.ObjId}");
+        }
+        finally
+        {
+            foreach (var replacedMate in replacedMates)
+                DespawnReservedMate(owner, replacedMate);
+        }
     }
 
     /// <summary>
@@ -283,28 +328,180 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// <param name="tlId"></param>
     public void RemoveActiveMateAndDespawn(Character owner, uint tlId)
     {
-        var mateInfo = GetActiveMateByTlId(tlId);
-        if (mateInfo == null)
-            return; // skip if invalid tlId
-
-        foreach (var ati in mateInfo.Passengers)
+        Mate mateInfo;
+        lock (_activeMatesLock)
         {
-            UnMountMate(WorldManager.Instance.GetCharacterByObjId(ati.Value._objId), mateInfo.TlId, ati.Key, AttachUnitReason.SlaveBinding);
+            mateInfo = _activeMates.GetValueOrDefault(owner.Id)?.FirstOrDefault(mate => mate.TlId == tlId);
         }
 
-        if (_activeMates.TryGetValue(owner.Id, out var activeMateList))
+        RemoveActiveMateAndDespawn(owner, mateInfo);
+    }
+
+    /// <summary>
+    /// Removes the exact tracked mate instance. Identity checking prevents a delayed temporary
+    /// summon task from acting on a different mate after its recyclable object IDs are reused.
+    /// </summary>
+    public void RemoveActiveMateAndDespawn(Character owner, Mate mateInfo)
+    {
+        if (owner is null || mateInfo is null || !TryBeginMateRemoval(owner.Id, mateInfo))
+            return;
+
+        DespawnReservedMate(owner, mateInfo);
+    }
+
+    private void DespawnReservedMate(Character owner, Mate mateInfo)
+    {
+        var removed = false;
+        try
         {
-            activeMateList.Remove(mateInfo);
-            if (activeMateList.Count == 0)
-                _activeMates.Remove(owner.Id);
+            removed = mateInfo.TryRunDespawnLifecycle(shouldDeleteWorldObject =>
+            {
+                try
+                {
+                    if (shouldDeleteWorldObject)
+                    {
+                        foreach (var ati in mateInfo.Passengers)
+                            UnMountMate(WorldManager.Instance.GetCharacterByObjId(ati.Value._objId), mateInfo, ati.Key, AttachUnitReason.SlaveBinding);
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        if (shouldDeleteWorldObject)
+                            mateInfo.Delete();
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            ObjectIdManager.Instance.ReleaseId(mateInfo.ObjId);
+                        }
+                        finally
+                        {
+                            TlIdManager.Instance.ReleaseId(mateInfo.TlId);
+                        }
+                    }
+                }
+            });
         }
-        
-        mateInfo.Delete();
+        finally
+        {
+            CompleteMateRemoval(mateInfo);
+        }
 
-        ObjectIdManager.Instance.ReleaseId(mateInfo.ObjId);
-        TlIdManager.Instance.ReleaseId(mateInfo.TlId);
+        if (removed)
+            Logger.Debug($"Mount removed. ownerObjId: {owner.ObjId}, tlId: {mateInfo.TlId}, mateObjId: {mateInfo.ObjId}");
+    }
 
-        Logger.Debug($"Mount removed. ownerObjId: {owner.ObjId}, tlId: {mateInfo.TlId}, mateObjId: {mateInfo.ObjId}");
+    private bool TrySpawnTrackedMate(Character owner, Mate mate, Action beforeWorldSpawnAction, Action worldSpawnAction)
+    {
+        try
+        {
+            return mate.TryRunSpawnLifecycle(beforeWorldSpawnAction, worldSpawnAction);
+        }
+        catch
+        {
+            // A concurrent replacement, death, or logout may already own the reservation.
+            // The mate lifecycle still guarantees that cleanup and ID release run only once.
+            TryBeginMateRemoval(owner.Id, mate);
+            DespawnReservedMate(owner, mate);
+            throw;
+        }
+    }
+
+    internal static bool CanSpawnTrackedMate(
+        bool ownerIsOnline,
+        int ownerHp,
+        bool isTemporarySummon,
+        bool despawnOnCreatorDeath)
+    {
+        return ownerIsOnline &&
+            ((isTemporarySummon && !despawnOnCreatorDeath) || ownerHp > 0);
+    }
+
+    internal List<Mate> TrackTemporaryMate(uint ownerId, Mate mate)
+    {
+        mate.IsTemporarySummon = true;
+        lock (_activeMatesLock)
+        {
+            var replacements = _activeMates.GetValueOrDefault(ownerId)?
+                .Where(active => active.IsTemporarySummon && active.TemplateId == mate.TemplateId)
+                .ToList() ?? [];
+            var reservedReplacements = new List<Mate>(replacements.Count);
+            foreach (var replacement in replacements)
+                if (TryBeginMateRemovalUnsafe(ownerId, replacement))
+                    reservedReplacements.Add(replacement);
+
+            TrackActiveMateUnsafe(ownerId, mate, prioritize: false);
+            return reservedReplacements;
+        }
+    }
+
+    internal void TrackActiveMate(uint ownerId, Mate mate, bool prioritize = false)
+    {
+        lock (_activeMatesLock)
+            TrackActiveMateUnsafe(ownerId, mate, prioritize);
+    }
+
+    private void TrackActiveMateUnsafe(uint ownerId, Mate mate, bool prioritize)
+    {
+        if (!_activeMates.TryGetValue(ownerId, out var mates))
+        {
+            mates = [];
+            _activeMates.Add(ownerId, mates);
+        }
+
+        if (prioritize)
+            mates.Insert(0, mate);
+        else
+            mates.Add(mate);
+    }
+
+    internal bool TryBeginMateRemoval(uint ownerId, Mate expectedMate)
+    {
+        lock (_activeMatesLock)
+            return TryBeginMateRemovalUnsafe(ownerId, expectedMate);
+    }
+
+    private bool TryBeginMateRemovalUnsafe(uint ownerId, Mate expectedMate)
+    {
+        if (_matesBeingRemoved.Contains(expectedMate) ||
+            !_activeMates.TryGetValue(ownerId, out var mates))
+            return false;
+
+        var mateIndex = mates.FindIndex(mate => ReferenceEquals(mate, expectedMate));
+        if (mateIndex < 0)
+            return false;
+
+        mates.RemoveAt(mateIndex);
+        _matesBeingRemoved.Add(expectedMate);
+        if (mates.Count == 0)
+            _activeMates.Remove(ownerId);
+        return true;
+    }
+
+    internal void CompleteMateRemoval(Mate mate)
+    {
+        lock (_activeMatesLock)
+            _matesBeingRemoved.Remove(mate);
+    }
+
+    internal List<Mate> GetMatesToRemoveOnOwnerDeath(uint ownerId)
+    {
+        lock (_activeMatesLock)
+            return _activeMates.GetValueOrDefault(ownerId)?
+                .Where(mate => !mate.IsTemporarySummon || mate.DespawnOnCreatorDeath)
+                .ToList() ?? [];
+    }
+
+    public void RemoveActiveMatesOnOwnerDeath(Character character)
+    {
+        if (character is null)
+            return;
+
+        foreach (var mate in GetMatesToRemoveOnOwnerDeath(character.Id))
+            character.Mates.DespawnMate(mate);
     }
 
     /// <summary>
@@ -314,23 +511,8 @@ public class MateManager(WorldInstance parentWorldInstance)
     public void RemoveAndDespawnAllActiveOwnedMates(Character character)
     {
         if (character == null) return;
-        var markForDeleteObj = new List<uint>();
         foreach (var mate in GetActiveMates(character.Id))
-        {
-            foreach (var ati in mate.Passengers)
-                UnMountMate(WorldManager.Instance.GetCharacterByObjId(ati.Value._objId), mate.TlId, ati.Key,
-                    AttachUnitReason.SlaveBinding);
-
-            if (mate.OwnerObjId > 0)
-                markForDeleteObj.Add(mate.OwnerObjId);
-            mate.Delete();
-            ObjectIdManager.Instance.ReleaseId(mate.ObjId);
-            if (mate.TlId > 0)
-                TlIdManager.Instance.ReleaseId(mate.TlId);
-        }
-
-        foreach (var u in markForDeleteObj)
-            _activeMates.Remove(u);
+            character.Mates.DespawnMate(mate);
     }
 
     /// <summary>
@@ -339,6 +521,10 @@ public class MateManager(WorldInstance parentWorldInstance)
     public void Load()
     {
         _nameRegex = new Regex(AppConfiguration.Instance.CharacterNameRegex, RegexOptions.Compiled);
-        _activeMates = [];
+        lock (_activeMatesLock)
+        {
+            _activeMates = [];
+            _matesBeingRemoved.Clear();
+        }
     }
 }

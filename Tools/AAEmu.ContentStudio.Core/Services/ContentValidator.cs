@@ -98,6 +98,7 @@ public sealed class ContentValidator
         {
             RequireRow(connection, record.Table, record.Id, report, record.Key);
             RequireValues(connection, record.Table, record.Id, record.Values, report, record.Key);
+            RequireLocalizations(connection, record, report);
             foreach (var child in record.Children)
             {
                 RequireRow(connection, child.Table, child.Id, report, record.Key);
@@ -528,6 +529,40 @@ public sealed class ContentValidator
             if (!ValuesEqual(expected, actual))
             {
                 report.AddError("artifact.valueMismatch", $"Expected {table} {id}.{column} to be '{FormatValue(expected)}', but the artifact contains '{FormatValue(actual)}'.", entity: entity);
+            }
+        }
+    }
+
+    private static void RequireLocalizations(SqliteConnection connection, RecordDefinition record, ValidationReport report)
+    {
+        foreach (var (field, languages) in record.Localizations)
+        {
+            foreach (var (requestedLanguage, expected) in languages)
+            {
+                var language = LocalizationCompiler.Languages.FirstOrDefault(candidate => candidate.Equals(requestedLanguage, StringComparison.OrdinalIgnoreCase));
+                if (language is null)
+                {
+                    report.AddError("artifact.localizationLanguage", $"Cannot verify unsupported localization language '{requestedLanguage}'.", entity: record.Key);
+                    continue;
+                }
+                using var command = connection.CreateCommand();
+                command.CommandText = $"SELECT COUNT(*), MAX({BaselineVerifier.QuoteIdentifier(language)}) FROM localized_texts WHERE tbl_name = @table COLLATE NOCASE AND tbl_column_name = @field COLLATE NOCASE AND idx = @id;";
+                command.Parameters.AddWithValue("@table", record.Table);
+                command.Parameters.AddWithValue("@field", field);
+                command.Parameters.AddWithValue("@id", record.Id);
+                using var reader = command.ExecuteReader();
+                reader.Read();
+                var count = Convert.ToInt32(reader.GetInt64(0));
+                if (count != 1)
+                {
+                    report.AddError("artifact.localizationCount", $"Expected one localization row for {record.Table} {record.Id}.{field}, but found {count}.", entity: record.Key);
+                    continue;
+                }
+                var actual = reader.IsDBNull(1) ? null : reader.GetValue(1);
+                if (!ValuesEqual(expected, actual))
+                {
+                    report.AddError("artifact.localizationMismatch", $"Expected {record.Table} {record.Id}.{field} [{language}] to be '{FormatValue(expected)}', but the artifact contains '{FormatValue(actual)}'.", entity: record.Key);
+                }
             }
         }
     }

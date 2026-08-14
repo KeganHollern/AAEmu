@@ -21,7 +21,7 @@
     <article class="metric">
         <small>Publish package</small>
         <strong>@(_result is null ? "Not prepared" : "Ready")</strong>
-        <span>@(_result is null ? "Created after all checks pass" : "Matched for the client and server")</span>
+        <span>@(_result is null ? "Created after all checks pass" : "Verified for the selected baseline")</span>
     </article>
     <article class="metric">
         <small>Saved changes</small>
@@ -133,7 +133,7 @@
     {
         if (_result is null) throw new ContentStudioException("Prepare the changes before publishing.");
         var configuration = Workspace.LoadConfiguration();
-        new DeploymentService().Deploy(_result.ArtifactPath, name, configuration.Targets[name], configuration.OutputDirectory);
+        new DeploymentService().Deploy(_result.ArtifactPath, _result.Manifest.ArtifactSha256, name, configuration.Targets[name], configuration.OutputDirectory);
         _message = $"Published successfully to {FriendlyTarget(name)}. A restore copy was created automatically.";
     }, null);
 

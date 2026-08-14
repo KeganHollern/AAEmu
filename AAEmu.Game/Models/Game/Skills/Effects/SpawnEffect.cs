@@ -135,6 +135,7 @@ public class SpawnEffect : EffectTemplate
                         Experience = ExperienceManager.Instance.GetExpForLevel(template.Level, true),
                         SpawnDelayTime = 0,
                         CurrentTarget = UseSummonerAggroTarget ? target : null,
+                        DespawnOnCreatorDeath = DespawnOnCreatorDeath,
                         DbInfo = new MateDb { Id = objId, Owner = player.Id, Level = template.Level }
                     };
 
@@ -153,10 +154,8 @@ public class SpawnEffect : EffectTemplate
                     mate.Hp = mate.MaxHp;
                     mate.Mp = mate.MaxMp;
                     player.ParentWorld.MateManager.AddTemporaryMateAndSpawn(player, mate);
-                    if (mate.CurrentTarget is not null)
-                        mate.BroadcastPacket(new AAEmu.Game.Core.Packets.G2C.SCTargetChangedPacket(mate.ObjId, mate.CurrentTarget.ObjId), true);
                     if (LifeTime > 0)
-                        TaskManager.Instance.Schedule(new AAEmu.Game.Models.Tasks.Mate.TemporaryMateDespawnTask(player.ParentWorld.MateManager, player, mate.TlId), TimeSpan.FromSeconds(LifeTime));
+                        TaskManager.Instance.Schedule(new AAEmu.Game.Models.Tasks.Mate.TemporaryMateDespawnTask(player.ParentWorld.MateManager, player, mate), TimeSpan.FromSeconds(LifeTime));
                     break;
                 }
         }

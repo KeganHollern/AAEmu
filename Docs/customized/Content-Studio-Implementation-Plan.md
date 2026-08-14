@@ -375,7 +375,7 @@ Acceptance: the same manifest reproducibly builds a validated compact artifact f
 - Harden the server crafting request and completion paths.
 - Add behavior tests for invalid IDs, distance, batch counts, permissions, materials, labor, and output capacity.
 - Build one custom recipe using existing items and an existing workbench.
-- Deploy identical compact artifacts to the client and server.
+- Build and deploy separate target-compatible compact artifacts from the client and server baselines while applying the same reviewed content intent.
 - Perform an in-game crafting test.
 
 Acceptance: the native client UI displays accurate recipe information and the server independently enforces it.
@@ -445,6 +445,6 @@ The Content Studio foundation is complete when:
 - Builds start from a verified pristine baseline and never mutate it.
 - Validation catches duplicate IDs, broken references, invalid function graphs, and client/server divergence.
 - Build reports clearly explain every entity and table change.
-- Server and client receive identical verified artifacts.
+- Server and client receive separately verified, schema-compatible artifacts containing the same intended shared-row changes.
 - Deployment is atomic and has a tested rollback path.
 - The first dedicated custom workbench and recipe work end to end with existing client assets.

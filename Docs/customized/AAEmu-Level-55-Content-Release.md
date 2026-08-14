@@ -12,7 +12,7 @@ This release enables the existing r208022 levels 51–55 and level-55 skill-tree
 - Build report: `.content-studio/build/content-build-report.md`
 - Audit queries: `.content-studio/build/content-build-audit.sql`
 
-There is no separate level-55 project, registry, configuration, or artifact. The ten level-55 `record` plans and seven `assertion` plans live beside recipes and all other custom work under `Content/projects/custom/`. Every build therefore contains the complete intended release and is the only artifact that should be published to either target.
+There is no separate level-55 project or registry. The ten level-55 `record` plans and seven `assertion` plans live with all other reviewed custom work under `Content/projects/custom/`. A build contains the complete intended change set for its selected baseline, but it is not portable across compact schemas. Client and server artifacts must be built and reviewed separately while preserving their target-only tables.
 
 The level-55 release contains ten sparse `record` manifests. Each manifest changes only `skills.show` from `f` to `t`; it does not copy or replace any skill row.
 
@@ -84,7 +84,7 @@ dotnet run --project .\Tools\AAEmu.ContentStudio.Cli\AAEmu.ContentStudio.Cli.csp
 dotnet run --project .\Tools\AAEmu.ContentStudio.Cli\AAEmu.ContentStudio.Cli.csproj -- diff --baseline .\.content-studio\baselines\r208022\compact.sqlite3 --artifact .\.content-studio\build\compact.custom.sqlite3
 ```
 
-Publishing is intentionally separate because it replaces the configured server or client compact after making a restore copy. Review the unified change list and release checks, stop the affected process, and then publish the same `compact.custom.sqlite3` artifact to both targets through Content Studio.
+Publishing is intentionally separate because it replaces a configured compact after making a restore copy. The checked-in r208022 descriptor identifies the 635-table client compact; it must not replace AAEmu's 679-table server compact. Content Studio now rejects a deployment whose schema differs from the artifact. Do not activate these plans in a shared server/client release until a server-superset artifact path can apply the same reviewed row changes while preserving server-only data, followed by a separately built client artifact.
 
 ## In-game acceptance checklist
 

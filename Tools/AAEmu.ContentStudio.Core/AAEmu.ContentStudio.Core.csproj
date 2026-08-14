@@ -7,4 +7,8 @@
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" />
   </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AAEmu.ContentStudio.Tests" />
+  </ItemGroup>
 </Project>

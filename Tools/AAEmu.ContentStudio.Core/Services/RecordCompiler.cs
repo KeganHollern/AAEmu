@@ -8,61 +8,69 @@ internal sealed class RecordCompiler
 {
     public IReadOnlyList<ContentChange> Compile(SqliteConnection connection, SqliteTransaction transaction, RecordDefinition definition)
     {
+        var table = RequireTable(connection, transaction, definition.Table);
         var changedValues = definition.Mode == RecordChangeMode.Modify
-            ? ReadChangedValues(connection, transaction, definition.Table, definition.Id, definition.Values)
+            ? ReadChangedValues(connection, transaction, table, definition.Id, definition.Values)
             : [];
-        var values = ConvertValues(connection, transaction, definition.Table, definition.Values);
+        var values = ConvertValues(connection, transaction, table, definition.Values);
         ApplyLinkedOverrides(definition, definition.Table, definition.SourceId, values);
         foreach (var linked in definition.LinkedClones)
         {
-            var linkedValues = ConvertValues(connection, transaction, linked.Table, linked.Values);
+            var linkedTable = RequireTable(connection, transaction, linked.Table);
+            var linkedValues = ConvertValues(connection, transaction, linkedTable, linked.Values);
             linkedValues["id"] = linked.Id;
             if (linked.SourceId == 0)
             {
-                SqliteRowService.Insert(connection, transaction, linked.Table, linkedValues);
+                SqliteRowService.Insert(connection, transaction, linkedTable, linkedValues);
             }
             else
             {
-                SqliteRowService.CloneById(connection, transaction, linked.Table, linked.SourceId, linkedValues);
+                SqliteRowService.CloneById(connection, transaction, linkedTable, linked.SourceId, linkedValues);
             }
         }
         if (definition.Mode == RecordChangeMode.Duplicate)
         {
             values["id"] = definition.Id;
-            SqliteRowService.CloneById(connection, transaction, definition.Table, definition.SourceId, values);
+            SqliteRowService.CloneById(connection, transaction, table, definition.SourceId, values);
             foreach (var child in definition.Children)
             {
-                var childValues = ConvertValues(connection, transaction, child.Table, child.Values);
+                var childTable = RequireTable(connection, transaction, child.Table);
+                var ownerColumn = RequireColumn(connection, transaction, childTable, child.OwnerColumn);
+                var childValues = ConvertValues(connection, transaction, childTable, child.Values);
                 ApplyLinkedOverrides(definition, child.Table, child.SourceId, childValues);
                 childValues["id"] = child.Id;
-                childValues[child.OwnerColumn] = definition.Id;
-                SqliteRowService.CloneById(connection, transaction, child.Table, child.SourceId, childValues);
+                childValues[ownerColumn] = definition.Id;
+                SqliteRowService.CloneById(connection, transaction, childTable, child.SourceId, childValues);
             }
         }
         else
         {
-            UpdateById(connection, transaction, definition.Table, definition.Id, values);
+            UpdateById(connection, transaction, table, definition.Id, values);
             foreach (var child in definition.Children)
             {
-                var childValues = ConvertValues(connection, transaction, child.Table, child.Values);
+                var childTable = RequireTable(connection, transaction, child.Table);
+                var childValues = ConvertValues(connection, transaction, childTable, child.Values);
                 ApplyLinkedOverrides(definition, child.Table, child.SourceId, childValues);
-                UpdateById(connection, transaction, child.Table, child.Id, childValues);
+                UpdateById(connection, transaction, childTable, child.Id, childValues);
             }
         }
 
         foreach (var (field, localizedValues) in definition.Localizations)
         {
-            if (definition.Mode == RecordChangeMode.Modify && LocalizationExists(connection, transaction, definition.Table, definition.Id, field))
+            _ = BaselineVerifier.QuoteIdentifier(field);
+            var localizationField = ResolveLocalizationField(connection, transaction, table, definition.SourceId, field);
+            if (definition.Mode == RecordChangeMode.Modify && LocalizationExists(connection, transaction, table, definition.Id, localizationField))
             {
-                LocalizationCompiler.Update(connection, transaction, definition.Table, field, definition.Id, localizedValues);
+                LocalizationCompiler.Update(connection, transaction, table, localizationField, definition.Id, localizedValues);
             }
             else
             {
-                if (!definition.LocalizationRowIds.TryGetValue(field, out var rowId))
+                var allocation = definition.LocalizationRowIds.FirstOrDefault(pair => pair.Key.Equals(field, StringComparison.OrdinalIgnoreCase));
+                if (allocation.Value == 0)
                 {
                     throw new ContentStudioException($"The translated field '{field}' is missing its reserved row ID.");
                 }
-                LocalizationCompiler.Insert(connection, transaction, rowId, definition.Table, field, definition.Id, localizedValues);
+                LocalizationCompiler.Insert(connection, transaction, allocation.Value, table, localizationField, definition.Id, localizedValues);
             }
         }
 
@@ -95,25 +103,27 @@ internal sealed class RecordCompiler
         var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var (name, value) in values)
         {
-            if (!types.TryGetValue(name, out var type) || name.Equals("id", StringComparison.OrdinalIgnoreCase)) continue;
+            var canonicalName = types.Keys.FirstOrDefault(column => column.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (canonicalName is null || canonicalName.Equals("id", StringComparison.OrdinalIgnoreCase)) continue;
+            var type = types[canonicalName];
             if (CatalogRecordService.IsCompactNull(value))
             {
-                result[name] = null;
+                result[canonicalName] = null;
             }
             else if (type.Contains("INT", StringComparison.OrdinalIgnoreCase))
             {
                 if (!long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer))
                     throw new ContentStudioException($"'{CatalogRecordService.FriendlyName(name)}' must be a whole number.");
-                result[name] = integer;
+                result[canonicalName] = integer;
             }
             else if (type.Equals("NUM", StringComparison.OrdinalIgnoreCase))
             {
                 if (CatalogRecordService.IsBooleanField(name, type, value))
-                    result[name] = ParseBoolean(value) ? "t" : "f";
+                    result[canonicalName] = ParseBoolean(value) ? "t" : "f";
                 else if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer))
-                    result[name] = integer;
+                    result[canonicalName] = integer;
                 else if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
-                    result[name] = number;
+                    result[canonicalName] = number;
                 else
                     throw new ContentStudioException($"'{CatalogRecordService.FriendlyName(name)}' must be a number or a Yes/No value.");
             }
@@ -121,11 +131,11 @@ internal sealed class RecordCompiler
             {
                 if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
                     throw new ContentStudioException($"'{CatalogRecordService.FriendlyName(name)}' must be a number.");
-                result[name] = number;
+                result[canonicalName] = number;
             }
             else
             {
-                result[name] = value;
+                result[canonicalName] = value;
             }
         }
         return result;
@@ -150,12 +160,13 @@ internal sealed class RecordCompiler
         var result = new List<(string Column, object? Before, string? After)>();
         foreach (var (column, after) in values)
         {
+            var canonicalColumn = RequireColumn(connection, transaction, table, column);
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = $"SELECT {BaselineVerifier.QuoteIdentifier(column)} FROM {BaselineVerifier.QuoteIdentifier(table)} WHERE id = @id;";
+            command.CommandText = $"SELECT {BaselineVerifier.QuoteIdentifier(canonicalColumn)} FROM {BaselineVerifier.QuoteIdentifier(table)} WHERE id = @id;";
             command.Parameters.AddWithValue("@id", id);
             var before = command.ExecuteScalar();
-            if (!Equivalent(before, after)) result.Add((column, before, after));
+            if (!Equivalent(before, after)) result.Add((canonicalColumn, before, after));
         }
         return result;
     }
@@ -194,14 +205,46 @@ internal sealed class RecordCompiler
             throw new ContentStudioException($"Could not change {table} row {id}; the source entry does not exist.");
     }
 
-    private static bool LocalizationExists(SqliteConnection connection, SqliteTransaction transaction, string table, uint id, string field)
+    private static string ResolveLocalizationField(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string table,
+        uint id,
+        string field)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT EXISTS(SELECT 1 FROM localized_texts WHERE tbl_name = @table AND tbl_column_name = @field AND idx = @id);";
+        command.CommandText = "SELECT tbl_column_name FROM localized_texts WHERE tbl_name = @table COLLATE NOCASE AND tbl_column_name = @field COLLATE NOCASE ORDER BY CASE WHEN idx = @id THEN 0 ELSE 1 END, id LIMIT 1;";
+        command.Parameters.AddWithValue("@table", table);
+        command.Parameters.AddWithValue("@field", field);
+        command.Parameters.AddWithValue("@id", id);
+        var value = command.ExecuteScalar();
+        if (value is not null and not DBNull) return Convert.ToString(value)!;
+        return SqliteRowService.ResolveColumnName(connection, transaction, table, field) ?? field.ToLowerInvariant();
+    }
+
+    private static bool LocalizationExists(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string table,
+        uint id,
+        string field)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM localized_texts WHERE tbl_name = @table COLLATE NOCASE AND tbl_column_name = @field COLLATE NOCASE AND idx = @id);";
         command.Parameters.AddWithValue("@table", table);
         command.Parameters.AddWithValue("@field", field);
         command.Parameters.AddWithValue("@id", id);
         return Convert.ToInt32(command.ExecuteScalar()) != 0;
     }
+
+    private static string RequireTable(SqliteConnection connection, SqliteTransaction transaction, string requestedTable) =>
+        SqliteRowService.ResolveTableName(connection, transaction, requestedTable)
+        ?? throw new ContentStudioException($"Table '{requestedTable}' does not exist in this compact database.");
+
+    private static string RequireColumn(SqliteConnection connection, SqliteTransaction transaction, string table, string requestedColumn) =>
+        SqliteRowService.ResolveColumnName(connection, transaction, table, requestedColumn)
+        ?? throw new ContentStudioException($"Column '{requestedColumn}' does not exist in table '{table}'.");
+
 }

@@ -165,7 +165,7 @@ Details: [`Docs/wiki/Working-with-the-Config.json-files-and-server-listings.md`]
 - `Content/content-studio.json` is the active local configuration; `Content/content-studio.example.json` is its portable template. Both point to the canonical custom project.
 - Do not create feature-specific Content Studio projects, registries, configurations, or build directories. Use namespaced plan keys and filenames inside the canonical project instead, such as `record.level55.*` and `assertion.level55.*`.
 - The identity registry at `Content/projects/custom/id-registry.json` is shared by all custom content. Preserve its allocations and tombstones when adding or removing plans.
-- A build from the canonical project is the complete release artifact. Publish that exact artifact to both the AAEmu server and the client export so recipes, skill visibility, progression data, and future changes stay matched.
+- The project is shared source intent, but every compact build is baseline-specific. The r208022 client and AAEmu server compacts have different schemas and server-only tables; never publish one database file to both targets. Build and review a target-compatible artifact for each side while applying the same intended content changes and preserving target-only data. Deployment must refuse a target whose schema differs from the artifact.
 
 ### SQL change workflow
 

@@ -112,6 +112,52 @@ public class ContentStudioPipelineTests
     }
 
     [Test]
+    public async Task Build_RejectsMidBuildRawSqlEditWithoutPromotingOutputs()
+    {
+        using var workspace = TestWorkspace.Create();
+        var rawSqlDirectory = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "raw-sql");
+        Directory.CreateDirectory(rawSqlDirectory);
+        var rawSqlPath = Path.Combine(rawSqlDirectory, "skill-balance.sql");
+        File.WriteAllText(rawSqlPath, "UPDATE skills SET mana_cost = 16 WHERE id = 200;");
+        Directory.CreateDirectory(workspace.OutputPath);
+        var artifactPath = Path.Combine(workspace.OutputPath, "compact.test.sqlite3");
+        var manifestPath = Path.Combine(workspace.OutputPath, "content-build-manifest.json");
+        File.WriteAllText(artifactPath, "previous artifact");
+        File.WriteAllText(manifestPath, "previous manifest");
+        var service = new BuildService(() => File.WriteAllText(rawSqlPath, "UPDATE skills SET mana_cost = 17 WHERE id = 200;"));
+
+        var exception = Assert.Throws<ContentStudioException>(() => service.Build(workspace.CreateBuildRequest()));
+
+        await Assert.That(exception!.Message).Contains("Project source changed");
+        await Assert.That(File.ReadAllText(artifactPath)).IsEqualTo("previous artifact");
+        await Assert.That(File.ReadAllText(manifestPath)).IsEqualTo("previous manifest");
+        await Assert.That(File.Exists(Path.Combine(workspace.OutputPath, "content-build-report.md"))).IsFalse();
+        await Assert.That(File.Exists(Path.Combine(workspace.OutputPath, "content-build-audit.sql"))).IsFalse();
+    }
+
+    [Test]
+    public async Task Build_RejectsStagedArtifactEditWithoutPromotingOutputs()
+    {
+        using var workspace = TestWorkspace.Create();
+        var service = new BuildService(() =>
+        {
+            var stagingPath = Directory.GetFiles(
+                Path.Combine(workspace.OutputPath, ".staging"),
+                "compact.sqlite3",
+                SearchOption.AllDirectories).Single();
+            File.AppendAllText(stagingPath, "concurrent artifact edit");
+        });
+
+        var exception = Assert.Throws<ContentStudioException>(() => service.Build(workspace.CreateBuildRequest()));
+
+        await Assert.That(exception!.Message).Contains("Build output changed");
+        await Assert.That(File.Exists(Path.Combine(workspace.OutputPath, "compact.test.sqlite3"))).IsFalse();
+        await Assert.That(File.Exists(Path.Combine(workspace.OutputPath, "content-build-manifest.json"))).IsFalse();
+        await Assert.That(File.Exists(Path.Combine(workspace.OutputPath, "content-build-report.md"))).IsFalse();
+        await Assert.That(File.Exists(Path.Combine(workspace.OutputPath, "content-build-audit.sql"))).IsFalse();
+    }
+
+    [Test]
     public async Task SearchEverything_FindsItemRecipeAndWorkbenchByOrdinaryName()
     {
         using var workspace = TestWorkspace.Create();
@@ -271,6 +317,156 @@ public class ContentStudioPipelineTests
     }
 
     [Test]
+    public async Task GearEditor_DisablingSavedPrivateStatProfileRemovesItsClone()
+    {
+        using var workspace = TestWorkspace.Create();
+        var catalog = new CatalogRecordService();
+        var record = catalog.GetRecord(workspace.BaselinePath, "items", 12)!;
+        var linked = record.LinkedRecords.Single();
+        var service = new RecordScaffoldService();
+        var linkedDraft = new RecordLinkedDraft
+        {
+            Table = linked.Table,
+            SourceId = linked.SourceId,
+            LinkTable = linked.LinkTable,
+            LinkSourceId = linked.LinkSourceId,
+            LinkColumn = linked.LinkColumn,
+            Values = linked.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.Value)
+        };
+        var initial = service.Save(CreateRecordRequest(workspace, record, [linkedDraft]));
+        var manifests = new ManifestService();
+        var snapshot = manifests.ReadSnapshot(initial.Path);
+        var definition = ContentStudioJson.Deserialize<RecordDefinition>(snapshot.Contents, initial.Path);
+        var privateProfileId = definition.LinkedClones.Single().Id;
+
+        service.Update(initial.Path, definition, CreateRecordRequest(workspace, record, []), snapshot.Version);
+        var disabledOnce = manifests.ReadSnapshot(initial.Path);
+        var disabledDefinition = ContentStudioJson.Deserialize<RecordDefinition>(disabledOnce.Contents, initial.Path);
+        service.Update(initial.Path, disabledDefinition, CreateRecordRequest(workspace, record, [linkedDraft]), disabledOnce.Version);
+        var enabledAgain = manifests.ReadSnapshot(initial.Path);
+        var enabledDefinition = ContentStudioJson.Deserialize<RecordDefinition>(enabledAgain.Contents, initial.Path);
+        var secondPrivateProfileId = enabledDefinition.LinkedClones.Single().Id;
+        service.Update(initial.Path, enabledDefinition, CreateRecordRequest(workspace, record, []), enabledAgain.Version);
+        var updated = ContentStudioJson.Deserialize<RecordDefinition>(File.ReadAllText(initial.Path), initial.Path);
+        var project = new ProjectRepository().LoadProject(workspace.ProjectPath);
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        using var connection = CompactConnectionFactory.OpenReadOnly(build.ArtifactPath);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT mod_set_id FROM item_weapons WHERE item_id = 12;";
+        var linkedProfileId = Convert.ToUInt32(command.ExecuteScalar());
+        command.CommandText = "SELECT COUNT(*) FROM equip_item_attr_modifiers WHERE id = @id;";
+        command.Parameters.AddWithValue("@id", privateProfileId);
+        var privateProfileRows = Convert.ToInt32(command.ExecuteScalar());
+
+        await Assert.That(updated.LinkedClones).IsEmpty();
+        await Assert.That(project.Registry.Allocations["equip_item_attr_modifiers"].Values.Contains(privateProfileId)).IsFalse();
+        await Assert.That(project.Registry.Tombstones["equip_item_attr_modifiers"].Values.Contains(privateProfileId)).IsTrue();
+        await Assert.That(secondPrivateProfileId).IsNotEqualTo(privateProfileId);
+        await Assert.That(project.Registry.Tombstones["equip_item_attr_modifiers"].Values.Contains(secondPrivateProfileId)).IsTrue();
+        await Assert.That(linkedProfileId).IsEqualTo(30u);
+        await Assert.That(privateProfileRows).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task RecordEditor_RestoresManifestAndRegistryWhenAtomicUpdateFails()
+    {
+        using var workspace = TestWorkspace.Create();
+        var record = new CatalogRecordService().GetRecord(workspace.BaselinePath, "items", 12)!;
+        var linked = record.LinkedRecords.Single();
+        var initial = new RecordScaffoldService().Save(CreateRecordRequest(workspace, record,
+        [
+            new RecordLinkedDraft
+            {
+                Table = linked.Table,
+                SourceId = linked.SourceId,
+                LinkTable = linked.LinkTable,
+                LinkSourceId = linked.LinkSourceId,
+                LinkColumn = linked.LinkColumn,
+                Values = linked.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.Value)
+            }
+        ]));
+        var manifests = new ManifestService();
+        var snapshot = manifests.ReadSnapshot(initial.Path);
+        var definition = ContentStudioJson.Deserialize<RecordDefinition>(snapshot.Contents, initial.Path);
+        var registryPath = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "id-registry.json");
+        var expectedManifest = File.ReadAllText(initial.Path);
+        var expectedRegistry = File.ReadAllText(registryPath);
+        var service = new RecordScaffoldService((index, _) =>
+        {
+            if (index == 1) throw new IOException("Simulated registry replacement failure.");
+        });
+
+        var exception = Assert.Throws<ContentStudioException>(() =>
+            service.Update(initial.Path, definition, CreateRecordRequest(workspace, record, []), snapshot.Version));
+
+        await Assert.That(exception!.Message).Contains("All project files were restored");
+        await Assert.That(File.ReadAllText(initial.Path)).IsEqualTo(expectedManifest);
+        await Assert.That(File.ReadAllText(registryPath)).IsEqualTo(expectedRegistry);
+    }
+
+    [Test]
+    public async Task RecordEditor_CanonicalizesCaseVariantTablesBeforeAllocatingIds()
+    {
+        using var workspace = TestWorkspace.Create();
+        var registryPath = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "id-registry.json");
+        var registry = ContentStudioJson.Deserialize<IdRegistry>(File.ReadAllText(registryPath), registryPath);
+        registry.Ranges["equip_item_attr_modifiers"] = new IdRange { Start = 8_000_000, End = 8_000_010 };
+        File.WriteAllText(registryPath, ContentStudioJson.Serialize(registry));
+        var record = new CatalogRecordService().GetRecord(workspace.BaselinePath, "items", 12)!;
+        var linked = record.LinkedRecords.Single();
+        var request = CreateRecordRequest(workspace, record,
+        [
+            new RecordLinkedDraft
+            {
+                Table = "EQUIP_ITEM_ATTR_MODIFIERS",
+                SourceId = linked.SourceId,
+                LinkTable = "ITEM_WEAPONS",
+                LinkSourceId = linked.LinkSourceId,
+                LinkColumn = "MOD_SET_ID",
+                Values = linked.Fields.Where(field => !field.IsIdentity && field.IsEditable)
+                    .ToDictionary(field => field.Name.ToUpperInvariant(), field => field.Value)
+            }
+        ]);
+        request.Table = "ITEMS";
+
+        var saved = new RecordScaffoldService().Save(request);
+        var definition = ContentStudioJson.Deserialize<RecordDefinition>(File.ReadAllText(saved.Path), saved.Path);
+        var storedRegistry = ContentStudioJson.Deserialize<IdRegistry>(File.ReadAllText(registryPath), registryPath);
+
+        await Assert.That(definition.Table).IsEqualTo("items");
+        await Assert.That(definition.LinkedClones.Single().Table).IsEqualTo("equip_item_attr_modifiers");
+        await Assert.That(definition.LinkedClones.Single().LinkTable).IsEqualTo("item_weapons");
+        await Assert.That(definition.LinkedClones.Single().LinkColumn).IsEqualTo("mod_set_id");
+        await Assert.That(storedRegistry.Ranges.Keys.Count(table => table.Equals("equip_item_attr_modifiers", StringComparison.OrdinalIgnoreCase))).IsEqualTo(1);
+        await Assert.That(storedRegistry.Ranges.Keys.Contains("equip_item_attr_modifiers")).IsTrue();
+        await Assert.That(storedRegistry.Allocations.Keys.Count(table => table.Equals("equip_item_attr_modifiers", StringComparison.OrdinalIgnoreCase))).IsEqualTo(1);
+        await Assert.That(storedRegistry.Allocations.Keys.Contains("equip_item_attr_modifiers")).IsTrue();
+    }
+
+    [Test]
+    public async Task RecordEditor_PreservesRegistryEditMadeWhileSaveIsPrepared()
+    {
+        using var workspace = TestWorkspace.Create();
+        var record = new CatalogRecordService().GetRecord(workspace.BaselinePath, "skills", 200)!;
+        var injected = false;
+        var service = new RecordScaffoldService((index, path) =>
+        {
+            if (index != -2 || injected) return;
+            injected = true;
+            var registry = ContentStudioJson.Deserialize<IdRegistry>(File.ReadAllText(path), path);
+            registry.Ranges["external_agent_table"] = new IdRange { Start = 7_000_000, End = 7_000_010 };
+            File.WriteAllText(path, ContentStudioJson.Serialize(registry));
+        });
+
+        service.Save(CreateRecordRequest(workspace, record, []));
+        var registryPath = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "id-registry.json");
+        var savedRegistry = ContentStudioJson.Deserialize<IdRegistry>(File.ReadAllText(registryPath), registryPath);
+
+        await Assert.That(savedRegistry.Ranges.ContainsKey("external_agent_table")).IsTrue();
+        await Assert.That(savedRegistry.Ranges.ContainsKey("skills")).IsTrue();
+    }
+
+    [Test]
     public async Task RecordEditor_ModifiesLegitimateZeroIdBalanceRow()
     {
         using var workspace = TestWorkspace.Create();
@@ -289,8 +485,12 @@ public class ContentStudioPipelineTests
         });
         var build = new BuildService().Build(workspace.CreateBuildRequest());
         var changed = new CatalogRecordService().GetRecord(build.ArtifactPath, "item_grades", 0)!;
+        var diff = new DatabaseDiffService().Compare(workspace.BaselinePath, build.ArtifactPath);
+        var gradeDiff = diff.Tables.Single(table => table.Table == "item_grades");
 
         await Assert.That(changed.Fields.Single(field => field.Name == "stat_multiplier").Value).IsEqualTo("125");
+        await Assert.That(gradeDiff.ModifiedRows).IsEqualTo(1);
+        await Assert.That(gradeDiff.ChangedCells.Any(cell => cell.Id == 0 && cell.Column == "stat_multiplier" && cell.ArtifactValue == "125")).IsTrue();
     }
 
     [Test]
@@ -302,7 +502,7 @@ public class ContentStudioPipelineTests
         var recipePath = manifests.FindByKey(workspace.ProjectPath, "recipe.test-recipe");
 
         var preview = deletion.Preview(workspace.ProjectPath, recipePath);
-        var result = deletion.Delete(workspace.ProjectPath, recipePath);
+        var result = deletion.Delete(workspace.ProjectPath, recipePath, preview.Version);
         var project = new ProjectRepository().LoadProject(workspace.ProjectPath);
 
         await Assert.That(preview.CanDelete).IsTrue();
@@ -325,7 +525,7 @@ public class ContentStudioPipelineTests
         var workbenchPath = manifests.FindByKey(workspace.ProjectPath, "workbench.test-workbench");
 
         var preview = deletion.Preview(workspace.ProjectPath, workbenchPath);
-        var result = deletion.Delete(workspace.ProjectPath, workbenchPath);
+        var result = deletion.Delete(workspace.ProjectPath, workbenchPath, preview.Version);
         var project = new ProjectRepository().LoadProject(workspace.ProjectPath);
 
         await Assert.That(preview.CanDelete).IsTrue();
@@ -333,6 +533,174 @@ public class ContentStudioPipelineTests
         await Assert.That(project.Recipes.Single().RequiredDoodadId).IsEqualTo(0u);
         await Assert.That(project.Registry.Tombstones["doodad_almighties"]["workbench.test-workbench:row"]).IsEqualTo(9_200_000u);
         await Assert.That(result.UpdatedChangeCount).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task DeleteRecreatedChange_PreservesEveryRetiredId()
+    {
+        using var workspace = TestWorkspace.Create();
+        var manifests = new ManifestService();
+        var deletion = new ChangeDeletionService();
+        var recipePath = manifests.FindByKey(workspace.ProjectPath, "recipe.test-recipe");
+        var originalRecipe = ContentStudioJson.Deserialize<RecipeDefinition>(File.ReadAllText(recipePath), recipePath);
+
+        var firstPreview = deletion.Preview(workspace.ProjectPath, recipePath);
+        deletion.Delete(workspace.ProjectPath, recipePath, firstPreview.Version);
+
+        const uint recreatedId = 9_100_001;
+        originalRecipe.Id = recreatedId;
+        File.WriteAllText(recipePath, ContentStudioJson.Serialize(originalRecipe) + Environment.NewLine);
+        var registryPath = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "id-registry.json");
+        var registry = ContentStudioJson.Deserialize<IdRegistry>(File.ReadAllText(registryPath), registryPath);
+        registry.Allocations["crafts"]["recipe.test-recipe:row"] = recreatedId;
+        File.WriteAllText(registryPath, ContentStudioJson.Serialize(registry) + Environment.NewLine);
+
+        var secondPreview = deletion.Preview(workspace.ProjectPath, recipePath);
+        deletion.Delete(workspace.ProjectPath, recipePath, secondPreview.Version);
+        var finalRegistry = new ProjectRepository().LoadProject(workspace.ProjectPath).Registry;
+        var retiredCraftIds = finalRegistry.Tombstones["crafts"].Values.ToHashSet();
+
+        await Assert.That(retiredCraftIds.Contains(9_100_000u)).IsTrue();
+        await Assert.That(retiredCraftIds.Contains(recreatedId)).IsTrue();
+    }
+
+    [Test]
+    public async Task DeleteChange_RejectsStalePreviewWithoutChangingRelatedFiles()
+    {
+        using var workspace = TestWorkspace.Create();
+        var manifests = new ManifestService();
+        var deletion = new ChangeDeletionService();
+        var recipePath = manifests.FindByKey(workspace.ProjectPath, "recipe.test-recipe");
+        var workbenchPath = manifests.FindByKey(workspace.ProjectPath, "workbench.test-workbench");
+        var registryPath = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "id-registry.json");
+        var preview = deletion.Preview(workspace.ProjectPath, recipePath);
+        var recipe = ContentStudioJson.Deserialize<RecipeDefinition>(manifests.Read(recipePath), recipePath);
+        recipe.Names["en_us"] = "Agent Updated Recipe";
+        manifests.Save(recipePath, ContentStudioJson.Serialize(recipe));
+        var expectedRecipe = File.ReadAllText(recipePath);
+        var expectedWorkbench = File.ReadAllText(workbenchPath);
+        var expectedRegistry = File.ReadAllText(registryPath);
+
+        var exception = Assert.Throws<ContentStudioException>(() => deletion.Delete(workspace.ProjectPath, recipePath, preview.Version));
+
+        await Assert.That(exception!.Message).Contains("updated outside this editor");
+        await Assert.That(File.ReadAllText(recipePath)).IsEqualTo(expectedRecipe);
+        await Assert.That(File.ReadAllText(workbenchPath)).IsEqualTo(expectedWorkbench);
+        await Assert.That(File.ReadAllText(registryPath)).IsEqualTo(expectedRegistry);
+    }
+
+    [Test]
+    public async Task DeleteChange_RejectsEditAfterPreviewWithoutDeletingNewContents()
+    {
+        using var workspace = TestWorkspace.Create();
+        var manifests = new ManifestService();
+        var recipePath = manifests.FindByKey(workspace.ProjectPath, "recipe.test-recipe");
+        var workbenchPath = manifests.FindByKey(workspace.ProjectPath, "workbench.test-workbench");
+        var registryPath = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "id-registry.json");
+        var expectedWorkbench = File.ReadAllText(workbenchPath);
+        var expectedRegistry = File.ReadAllText(registryPath);
+        var deletion = new ChangeDeletionService((index, path) =>
+        {
+            if (index != -1) return;
+            var current = manifests.ReadSnapshot(path);
+            var recipe = ContentStudioJson.Deserialize<RecipeDefinition>(current.Contents, path);
+            recipe.Names["en_us"] = "Concurrent Recipe Edit";
+            manifests.Save(path, ContentStudioJson.Serialize(recipe), current.Version);
+        });
+        var preview = deletion.Preview(workspace.ProjectPath, recipePath);
+
+        var exception = Assert.Throws<ContentStudioException>(() => deletion.Delete(workspace.ProjectPath, recipePath, preview.Version));
+
+        await Assert.That(exception!.Message).Contains("updated outside this editor");
+        await Assert.That(File.ReadAllText(recipePath)).Contains("Concurrent Recipe Edit");
+        await Assert.That(File.ReadAllText(workbenchPath)).IsEqualTo(expectedWorkbench);
+        await Assert.That(File.ReadAllText(registryPath)).IsEqualTo(expectedRegistry);
+    }
+
+    [Test]
+    public async Task DeleteChange_RejectsNewProjectSourceAddedDuringPromotion()
+    {
+        using var workspace = TestWorkspace.Create();
+        var manifests = new ManifestService();
+        var recipePath = manifests.FindByKey(workspace.ProjectPath, "recipe.test-recipe");
+        var workbenchPath = manifests.FindByKey(workspace.ProjectPath, "workbench.test-workbench");
+        var registryPath = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "id-registry.json");
+        var expectedRecipe = File.ReadAllText(recipePath);
+        var expectedWorkbench = File.ReadAllText(workbenchPath);
+        var expectedRegistry = File.ReadAllText(registryPath);
+        var addedPath = Path.Combine(Path.GetDirectoryName(workbenchPath)!, "concurrent.json");
+        var deletion = new ChangeDeletionService((index, _) =>
+        {
+            if (index != 2) return;
+            File.WriteAllText(addedPath, ContentStudioJson.Serialize(new WorkbenchDefinition
+            {
+                Key = "workbench.concurrent",
+                Id = 7_000_000,
+                CraftPack = new WorkbenchCraftPackDefinition { Id = 7_000_001 },
+                RecipeIds = [9_100_000]
+            }));
+        });
+        var preview = deletion.Preview(workspace.ProjectPath, recipePath);
+
+        var exception = Assert.Throws<ContentStudioException>(() => deletion.Delete(workspace.ProjectPath, recipePath, preview.Version));
+
+        await Assert.That(exception!.Message).Contains("All project files were restored");
+        await Assert.That(File.ReadAllText(recipePath)).IsEqualTo(expectedRecipe);
+        await Assert.That(File.ReadAllText(workbenchPath)).IsEqualTo(expectedWorkbench);
+        await Assert.That(File.ReadAllText(registryPath)).IsEqualTo(expectedRegistry);
+        await Assert.That(File.Exists(addedPath)).IsTrue();
+    }
+
+    [Test]
+    public async Task DeleteChange_RestoresEveryFileWhenTransactionFails()
+    {
+        using var workspace = TestWorkspace.Create();
+        var manifests = new ManifestService();
+        var recipePath = manifests.FindByKey(workspace.ProjectPath, "recipe.test-recipe");
+        var workbenchPath = manifests.FindByKey(workspace.ProjectPath, "workbench.test-workbench");
+        var registryPath = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "id-registry.json");
+        var expectedRecipe = File.ReadAllText(recipePath);
+        var expectedWorkbench = File.ReadAllText(workbenchPath);
+        var expectedRegistry = File.ReadAllText(registryPath);
+        var deletion = new ChangeDeletionService((index, _) =>
+        {
+            if (index == 1) throw new IOException("Simulated transaction failure.");
+        });
+        var preview = deletion.Preview(workspace.ProjectPath, recipePath);
+
+        var exception = Assert.Throws<ContentStudioException>(() => deletion.Delete(workspace.ProjectPath, recipePath, preview.Version));
+
+        await Assert.That(exception!.Message).Contains("All project files were restored");
+        await Assert.That(File.ReadAllText(recipePath)).IsEqualTo(expectedRecipe);
+        await Assert.That(File.ReadAllText(workbenchPath)).IsEqualTo(expectedWorkbench);
+        await Assert.That(File.ReadAllText(registryPath)).IsEqualTo(expectedRegistry);
+    }
+
+    [Test]
+    public async Task DeleteChange_DoesNotOverwriteExternalEditDuringRollback()
+    {
+        using var workspace = TestWorkspace.Create();
+        var manifests = new ManifestService();
+        var recipePath = manifests.FindByKey(workspace.ProjectPath, "recipe.test-recipe");
+        var workbenchPath = manifests.FindByKey(workspace.ProjectPath, "workbench.test-workbench");
+        var registryPath = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "id-registry.json");
+        var expectedRecipe = File.ReadAllText(recipePath);
+        var externalWorkbench = File.ReadAllText(workbenchPath) + Environment.NewLine;
+        var expectedRegistry = File.ReadAllText(registryPath);
+        var deletion = new ChangeDeletionService((index, _) =>
+        {
+            if (index != 1) return;
+            File.WriteAllText(workbenchPath, externalWorkbench);
+            throw new IOException("Simulated failure after an external edit.");
+        });
+        var preview = deletion.Preview(workspace.ProjectPath, recipePath);
+
+        var exception = Assert.Throws<ContentStudioException>(() => deletion.Delete(workspace.ProjectPath, recipePath, preview.Version));
+
+        await Assert.That(exception!.Message).Contains("could not be restored");
+        await Assert.That(File.ReadAllText(workbenchPath)).IsEqualTo(externalWorkbench);
+        await Assert.That(File.ReadAllText(recipePath)).IsEqualTo(expectedRecipe);
+        await Assert.That(File.ReadAllText(registryPath)).IsEqualTo(expectedRegistry);
     }
 
     [Test]
@@ -418,6 +786,323 @@ public class ContentStudioPipelineTests
     }
 
     [Test]
+    public async Task RecordEditor_SparseLocalizationChangePreservesOtherLanguages()
+    {
+        using var workspace = TestWorkspace.Create();
+        var record = new CatalogRecordService().GetRecord(workspace.BaselinePath, "skills", 200)!;
+        record.Localizations.Single(field => field.Field == "name").Values["en_us"] = "Customized Whirlwind Slash";
+
+        new RecordScaffoldService().Save(new RecordDraftRequest
+        {
+            ProjectPath = workspace.ProjectPath,
+            BaselinePath = workspace.BaselinePath,
+            Table = "skills",
+            SourceId = 200,
+            Mode = RecordChangeMode.Modify,
+            DisplayName = "Customized Whirlwind Slash",
+            Values = record.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.Value),
+            Localizations = record.Localizations.ToDictionary(field => field.Field, field => field.Values)
+        });
+
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        using var connection = CompactConnectionFactory.OpenReadOnly(build.ArtifactPath);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT ko, en_us, fr FROM localized_texts WHERE tbl_name = 'skills' AND tbl_column_name = 'name' AND idx = 200;";
+        using var reader = command.ExecuteReader();
+        await Assert.That(reader.Read()).IsTrue();
+        await Assert.That(reader.GetString(0)).IsEqualTo("소용돌이 베기");
+        await Assert.That(reader.GetString(1)).IsEqualTo("Customized Whirlwind Slash");
+        await Assert.That(reader.GetString(2)).IsEqualTo("Tourbillon tranchant");
+    }
+
+    [Test]
+    public async Task ArtifactValidation_RejectsMismatchedSuppliedLocalization()
+    {
+        using var workspace = TestWorkspace.Create();
+        var record = new CatalogRecordService().GetRecord(workspace.BaselinePath, "skills", 200)!;
+        record.Localizations.Single(field => field.Field == "name").Values["en_us"] = "Expected Whirlwind Slash";
+        new RecordScaffoldService().Save(new RecordDraftRequest
+        {
+            ProjectPath = workspace.ProjectPath,
+            BaselinePath = workspace.BaselinePath,
+            Table = "skills",
+            SourceId = 200,
+            Mode = RecordChangeMode.Modify,
+            DisplayName = "Expected Whirlwind Slash",
+            Values = record.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.Value),
+            Localizations = record.Localizations.ToDictionary(field => field.Field, field => field.Values)
+        });
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        using (var connection = new SqliteConnection($"Data Source={build.ArtifactPath};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE localized_texts SET en_us = 'Unexpected text' WHERE tbl_name = 'skills' AND tbl_column_name = 'name' AND idx = 200;";
+            command.ExecuteNonQuery();
+        }
+
+        var project = new ProjectRepository().LoadProject(workspace.ProjectPath);
+        var report = new ContentValidator().ValidateBuiltDatabase(build.ArtifactPath, project);
+
+        await Assert.That(report.Issues.Any(issue =>
+            issue.Code == "artifact.localizationMismatch" &&
+            issue.Entity == project.Records.Single().Key)).IsTrue();
+    }
+
+    [Test]
+    public async Task RecordEditor_RejectsConcurrentEditAtFinalSave()
+    {
+        using var workspace = TestWorkspace.Create();
+        var record = new CatalogRecordService().GetRecord(workspace.BaselinePath, "skills", 200)!;
+        var saved = new RecordScaffoldService().Save(CreateRecordRequest(workspace, record, []));
+        var manifests = new ManifestService();
+        var opened = manifests.ReadSnapshot(saved.Path);
+        var definition = ContentStudioJson.Deserialize<RecordDefinition>(opened.Contents, saved.Path);
+        var externallyEdited = ContentStudioJson.Deserialize<RecordDefinition>(opened.Contents, saved.Path);
+        externallyEdited.DisplayName = "Agent Updated Skill";
+        var externalJson = ContentStudioJson.Serialize(externallyEdited);
+        var service = new RecordScaffoldService((index, path) =>
+        {
+            if (index == 0) manifests.Save(path, externalJson, opened.Version);
+        });
+        var registryPath = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "id-registry.json");
+        var expectedRegistry = File.ReadAllText(registryPath);
+
+        var exception = Assert.Throws<ContentStudioException>(() =>
+            service.Update(saved.Path, definition, CreateRecordRequest(workspace, record, []), opened.Version));
+
+        await Assert.That(exception!.Message).Contains("updated outside this editor");
+        await Assert.That(File.ReadAllText(saved.Path)).Contains("Agent Updated Skill");
+        await Assert.That(File.ReadAllText(registryPath)).IsEqualTo(expectedRegistry);
+    }
+
+    [Test]
+    public async Task RecordEditor_IgnoresForgedImmutableDefinitionWithValidVersion()
+    {
+        using var workspace = TestWorkspace.Create();
+        var record = new CatalogRecordService().GetRecord(workspace.BaselinePath, "skills", 200)!;
+        var service = new RecordScaffoldService();
+        var saved = service.Save(CreateRecordRequest(workspace, record, []));
+        var manifests = new ManifestService();
+        var snapshot = manifests.ReadSnapshot(saved.Path);
+        var forged = ContentStudioJson.Deserialize<RecordDefinition>(snapshot.Contents, saved.Path);
+        forged.Key = "record.forged";
+        forged.Id = 999_999;
+        forged.Mode = RecordChangeMode.Duplicate;
+
+        service.Update(saved.Path, forged, CreateRecordRequest(workspace, record, []), snapshot.Version);
+        var updated = ContentStudioJson.Deserialize<RecordDefinition>(File.ReadAllText(saved.Path), saved.Path);
+
+        await Assert.That(updated.Key).IsEqualTo(saved.Key);
+        await Assert.That(updated.Id).IsEqualTo(200u);
+        await Assert.That(updated.Mode).IsEqualTo(RecordChangeMode.Modify);
+    }
+
+    [Test]
+    public async Task RecordCompiler_CanonicalizesTableFieldAndLocalizationCasing()
+    {
+        using var workspace = TestWorkspace.Create();
+        var recordsDirectory = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "records");
+        Directory.CreateDirectory(recordsDirectory);
+        File.WriteAllText(Path.Combine(recordsDirectory, "uppercase.json"), ContentStudioJson.Serialize(new RecordDefinition
+        {
+            Key = "record.test-uppercase",
+            DisplayName = "Case-safe Whirlwind Slash",
+            Mode = RecordChangeMode.Modify,
+            Table = "SKILLS",
+            SourceId = 200,
+            Id = 200,
+            Values = new Dictionary<string, string?> { ["SHOW"] = "0" },
+            Localizations = new Dictionary<string, Dictionary<string, string>>
+            {
+                ["NAME"] = new() { ["EN_US"] = "Case-safe Whirlwind Slash" }
+            }
+        }));
+
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        using var connection = CompactConnectionFactory.OpenReadOnly(build.ArtifactPath);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT show FROM skills WHERE id = 200;";
+        var show = Convert.ToString(command.ExecuteScalar());
+        command.CommandText = "SELECT COUNT(*), MAX(en_us) FROM localized_texts WHERE tbl_name = 'skills' AND tbl_column_name = 'name' AND idx = 200;";
+        using var reader = command.ExecuteReader();
+
+        await Assert.That(reader.Read()).IsTrue();
+        await Assert.That(show).IsEqualTo("f");
+        await Assert.That(reader.GetInt32(0)).IsEqualTo(1);
+        await Assert.That(reader.GetString(1)).IsEqualTo("Case-safe Whirlwind Slash");
+    }
+
+    [Test]
+    public async Task RecordCompiler_UpdatesConceptualLocalizationFieldWithoutPhysicalColumn()
+    {
+        using var workspace = TestWorkspace.Create();
+        var recordsDirectory = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "records");
+        Directory.CreateDirectory(recordsDirectory);
+        File.WriteAllText(Path.Combine(recordsDirectory, "conceptual-localization.json"), ContentStudioJson.Serialize(new RecordDefinition
+        {
+            Key = "record.test-conceptual-localization",
+            DisplayName = "Localized skill alias",
+            Mode = RecordChangeMode.Modify,
+            Table = "SKILLS",
+            SourceId = 200,
+            Id = 200,
+            Localizations = new Dictionary<string, Dictionary<string, string>>
+            {
+                ["ALIAS"] = new() { ["EN_US"] = "Spinning Slash" }
+            }
+        }));
+
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        using var connection = CompactConnectionFactory.OpenReadOnly(build.ArtifactPath);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT tbl_name, tbl_column_name, en_us, COUNT(*) FROM localized_texts WHERE tbl_name = 'skills' COLLATE NOCASE AND tbl_column_name = 'alias' COLLATE NOCASE AND idx = 200;";
+        using var reader = command.ExecuteReader();
+
+        await Assert.That(reader.Read()).IsTrue();
+        await Assert.That(reader.GetString(0)).IsEqualTo("skills");
+        await Assert.That(reader.GetString(1)).IsEqualTo("alias");
+        await Assert.That(reader.GetString(2)).IsEqualTo("Spinning Slash");
+        await Assert.That(reader.GetInt32(3)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RecordCompiler_CanonicalizesConceptualFieldFromAnotherRecord()
+    {
+        using var workspace = TestWorkspace.Create();
+        var saved = new RecordScaffoldService().Save(new RecordDraftRequest
+        {
+            ProjectPath = workspace.ProjectPath,
+            BaselinePath = workspace.BaselinePath,
+            Table = "GAME_RULE_SETS",
+            SourceId = 8,
+            Mode = RecordChangeMode.Modify,
+            DisplayName = "Rule Eight",
+            Values = new Dictionary<string, string?> { ["CODE"] = "eight" },
+            Localizations = new Dictionary<string, Dictionary<string, string>>
+            {
+                ["NAME"] = new() { ["EN_US"] = "Rule Eight" }
+            }
+        });
+        var definition = ContentStudioJson.Deserialize<RecordDefinition>(File.ReadAllText(saved.Path), saved.Path);
+
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        using var connection = CompactConnectionFactory.OpenReadOnly(build.ArtifactPath);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT tbl_column_name, en_us, COUNT(*) FROM localized_texts WHERE tbl_name = 'game_rule_sets' COLLATE NOCASE AND tbl_column_name = 'name' COLLATE NOCASE AND idx = 8;";
+        using var reader = command.ExecuteReader();
+
+        await Assert.That(reader.Read()).IsTrue();
+        await Assert.That(definition.Localizations.Keys.Single()).IsEqualTo("name");
+        await Assert.That(reader.GetString(0)).IsEqualTo("name");
+        await Assert.That(reader.GetString(1)).IsEqualTo("Rule Eight");
+        await Assert.That(reader.GetInt32(2)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Deployment_MatchingSchemaPublishesArtifactAndCreatesBackup()
+    {
+        using var workspace = TestWorkspace.Create();
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        var targetPath = Path.Combine(workspace.Root, "deploy", "compact.sqlite3");
+        var backupPath = Path.Combine(workspace.Root, "backups");
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        File.Copy(workspace.BaselinePath, targetPath);
+
+        var manifest = new DeploymentService().Deploy(build.ArtifactPath, build.Manifest.ArtifactSha256, "test", new DeploymentTarget
+        {
+            Path = targetPath,
+            BackupDirectory = backupPath
+        }, workspace.OutputPath);
+
+        await Assert.That(FileHashService.CalculateSha256(targetPath)).IsEqualTo(FileHashService.CalculateSha256(build.ArtifactPath));
+        await Assert.That(manifest.BackupPath).IsNotNull();
+        await Assert.That(File.Exists(manifest.BackupPath!)).IsTrue();
+    }
+
+    [Test]
+    public async Task Deployment_RejectsArtifactReplacedAfterBuildReview()
+    {
+        using var workspace = TestWorkspace.Create();
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        var targetPath = Path.Combine(workspace.Root, "deploy", "compact.sqlite3");
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        File.Copy(workspace.BaselinePath, targetPath);
+        var originalTargetHash = FileHashService.CalculateSha256(targetPath);
+        File.Copy(workspace.BaselinePath, build.ArtifactPath, true);
+        var target = new DeploymentTarget { Path = targetPath, BackupDirectory = Path.Combine(workspace.Root, "backups") };
+
+        var dryRunException = Assert.Throws<ContentStudioException>(() => new DeploymentService().ValidateReviewedArtifact(
+            build.ArtifactPath,
+            build.Manifest.ArtifactSha256,
+            target));
+
+        var exception = Assert.Throws<ContentStudioException>(() => new DeploymentService().Deploy(
+            build.ArtifactPath,
+            build.Manifest.ArtifactSha256,
+            "test",
+            target,
+            workspace.OutputPath));
+
+        await Assert.That(dryRunException!.Message).Contains("changed after it was reviewed");
+        await Assert.That(exception!.Message).Contains("changed after it was reviewed");
+        await Assert.That(FileHashService.CalculateSha256(targetPath)).IsEqualTo(originalTargetHash);
+    }
+
+    [Test]
+    public async Task Deployment_RestoresTargetWhenManifestPublicationFails()
+    {
+        using var workspace = TestWorkspace.Create();
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        var targetPath = Path.Combine(workspace.Root, "deploy", "compact.sqlite3");
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        File.Copy(workspace.BaselinePath, targetPath);
+        var originalTargetHash = FileHashService.CalculateSha256(targetPath);
+        var service = new DeploymentService((index, _) =>
+        {
+            if (index == 1) throw new IOException("Simulated deployment-manifest write failure.");
+        });
+
+        var exception = Assert.Throws<ContentStudioException>(() => service.Deploy(
+            build.ArtifactPath,
+            build.Manifest.ArtifactSha256,
+            "test",
+            new DeploymentTarget { Path = targetPath, BackupDirectory = Path.Combine(workspace.Root, "backups") },
+            workspace.OutputPath));
+
+        await Assert.That(exception!.Message).Contains("previous target state was restored");
+        await Assert.That(FileHashService.CalculateSha256(targetPath)).IsEqualTo(originalTargetHash);
+        await Assert.That(Directory.GetFiles(workspace.OutputPath, "deployment-test-*.json")).IsEmpty();
+    }
+
+    [Test]
+    public async Task Deployment_DifferentSchemaIsRejectedWithoutChangingTarget()
+    {
+        using var workspace = TestWorkspace.Create();
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        var targetPath = Path.Combine(workspace.Root, "deploy", "server-compact.sqlite3");
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        File.Copy(workspace.BaselinePath, targetPath);
+        using (var connection = new SqliteConnection($"Data Source={targetPath};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TABLE server_only_runtime_data (id INTEGER PRIMARY KEY);";
+            command.ExecuteNonQuery();
+        }
+        var originalHash = FileHashService.CalculateSha256(targetPath);
+
+        var exception = Assert.Throws<ContentStudioException>(() => new DeploymentService().Deploy(build.ArtifactPath, build.Manifest.ArtifactSha256, "server", new DeploymentTarget
+        {
+            Path = targetPath,
+            BackupDirectory = Path.Combine(workspace.Root, "backups")
+        }, workspace.OutputPath));
+
+        await Assert.That(exception!.Message).Contains("does not match the deployment target");
+        await Assert.That(FileHashService.CalculateSha256(targetPath)).IsEqualTo(originalHash);
+    }
+
+    [Test]
     public async Task Build_ExecutesArtifactAssertions()
     {
         using var workspace = TestWorkspace.Create();
@@ -438,6 +1123,38 @@ public class ContentStudioPipelineTests
     }
 
     [Test]
+    public async Task Build_AuditSqlKeepsAssertionTextInsideItsComment()
+    {
+        using var workspace = TestWorkspace.Create();
+        var assertionDirectory = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "assertions");
+        Directory.CreateDirectory(assertionDirectory);
+        File.WriteAllText(Path.Combine(assertionDirectory, "comment-safety.json"), ContentStudioJson.Serialize(new ContentAssertionDefinition
+        {
+            Key = "assertion.test.comment-safety",
+            Description = "Safe check\nDELETE FROM buffs;",
+            Query = "SELECT CAST(X'310A44524F50205441424C45206974656D733B202D2D' AS TEXT);",
+            Expected = "1\nDROP TABLE items; --"
+        }));
+
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        var auditSql = File.ReadAllText(build.AuditSqlPath);
+        using var connection = CompactConnectionFactory.OpenReadWrite(build.ArtifactPath);
+        using var command = connection.CreateCommand();
+        command.CommandText = auditSql;
+        command.ExecuteNonQuery();
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = @name);";
+        command.Parameters.AddWithValue("@name", "items");
+        var itemsExist = Convert.ToInt32(command.ExecuteScalar()) == 1;
+        command.Parameters["@name"].Value = "buffs";
+        var buffsExist = Convert.ToInt32(command.ExecuteScalar()) == 1;
+
+        await Assert.That(auditSql.Split('\n').Any(line => line.TrimStart().StartsWith("DROP TABLE", StringComparison.OrdinalIgnoreCase))).IsFalse();
+        await Assert.That(auditSql.Split('\n').Any(line => line.TrimStart().StartsWith("DELETE FROM", StringComparison.OrdinalIgnoreCase))).IsFalse();
+        await Assert.That(itemsExist).IsTrue();
+        await Assert.That(buffsExist).IsTrue();
+    }
+
+    [Test]
     public async Task DeleteAssertion_RemovesReleaseCheckWithoutRetiringIds()
     {
         using var workspace = TestWorkspace.Create();
@@ -453,7 +1170,7 @@ public class ContentStudioPipelineTests
         }));
 
         var preview = new ChangeDeletionService().Preview(workspace.ProjectPath, path);
-        var result = new ChangeDeletionService().Delete(workspace.ProjectPath, path);
+        var result = new ChangeDeletionService().Delete(workspace.ProjectPath, path, preview.Version);
 
         await Assert.That(preview.CanDelete).IsTrue();
         await Assert.That(result.Type).IsEqualTo("Release check");
@@ -534,6 +1251,30 @@ public class ContentStudioPipelineTests
         await Assert.That(workbench.Name).IsEqualTo("Custom Alchemy Workbench 2");
         await Assert.That(workbench.Key).IsEqualTo("workbench.custom-alchemy-workbench-2");
     }
+
+    private static RecordDraftRequest CreateRecordRequest(TestWorkspace workspace, CatalogRecord record, List<RecordLinkedDraft> linkedRecords) => new()
+    {
+        ProjectPath = workspace.ProjectPath,
+        BaselinePath = workspace.BaselinePath,
+        Table = record.Table,
+        SourceId = record.Id,
+        Mode = RecordChangeMode.Modify,
+        DisplayName = record.Name,
+        Values = record.Fields
+            .Where(field => !field.IsIdentity && field.IsEditable)
+            .ToDictionary(field => field.Name, field => field.Value),
+        Localizations = record.Localizations.ToDictionary(field => field.Field, field => field.Values),
+        Children = record.RelatedSections.SelectMany(section => section.Rows.Select(row => new RecordChildDraft
+        {
+            Table = section.Table,
+            OwnerColumn = section.OwnerColumn,
+            SourceId = row.Id,
+            Values = row.Fields
+                .Where(field => !field.IsIdentity && field.IsEditable)
+                .ToDictionary(field => field.Name, field => field.Value)
+        })).ToList(),
+        LinkedRecords = linkedRecords
+    };
 }
 
 internal sealed class TestWorkspace : IDisposable
@@ -599,6 +1340,7 @@ internal sealed class TestWorkspace : IDisposable
             CREATE TABLE wearables (id INTEGER, armor_type_id INTEGER, slot_type_id INTEGER, armor_bp INTEGER, magic_resistance_bp INTEGER);
             CREATE TABLE equip_item_attr_modifiers (id INTEGER, str_weight INTEGER, dex_weight INTEGER, sta_weight INTEGER, int_weight INTEGER, spi_weight INTEGER);
             CREATE TABLE item_grades (id INTEGER, name TEXT, grade_order INTEGER, stat_multiplier INTEGER);
+            CREATE TABLE game_rule_sets (id INTEGER, code TEXT);
             CREATE TABLE equip_item_sets (id INTEGER, name TEXT, description TEXT);
             CREATE TABLE equip_item_set_bonuses (id INTEGER, equip_item_set_id INTEGER, num_pieces INTEGER, buff_id INTEGER, proc_id INTEGER);
             CREATE TABLE item_procs (id INTEGER, name TEXT, description TEXT);
@@ -628,6 +1370,7 @@ internal sealed class TestWorkspace : IDisposable
             INSERT INTO holdables VALUES (20, 'Scepter', '1h_staff', 2, 1000, 100, 4000, 50);
             INSERT INTO equip_item_attr_modifiers VALUES (30, 0, 0, 0, 2, 1);
             INSERT INTO item_grades VALUES (0, 'Basic', 1, 100);
+            INSERT INTO game_rule_sets VALUES (7, 'seven'), (8, 'eight');
             INSERT INTO equip_item_sets VALUES (40, 'Wave Set', 'Equipment favored by Wave spellcasters.');
             INSERT INTO equip_item_set_bonuses VALUES (41, 40, 2, 4, 0);
             INSERT INTO item_procs VALUES (50, 'Wave Burst', 'Occasionally releases a burst of magic.');
@@ -646,13 +1389,16 @@ internal sealed class TestWorkspace : IDisposable
               (501, 'items', 'name', 11, 'Unstable Solution'),
               (502, 'crafts', 'title', 100, 'Archeum Tonic'),
               (503, 'doodad_almighties', 'name', 300, 'Alchemy Workbench');
+            INSERT INTO localized_texts (id, tbl_name, tbl_column_name, idx, ko, en_us, fr) VALUES
+              (504, 'skills', 'name', 200, '소용돌이 베기', 'Whirlwind Slash', 'Tourbillon tranchant');
             INSERT INTO localized_texts (id, tbl_name, tbl_column_name, idx, en_us) VALUES
-              (504, 'skills', 'name', 200, 'Whirlwind Slash'),
               (505, 'skills', 'web_desc', 200, 'Spin and attack nearby enemies.'),
               (506, 'buffs', 'name', 3, 'Protective Ward'),
               (507, 'items', 'name', 12, 'Delphinad Wave Scepter'),
               (508, 'buffs', 'name', 4, 'Wave Wisdom'),
-              (509, 'item_procs', 'name', 50, 'Wave Burst');
+              (509, 'item_procs', 'name', 50, 'Wave Burst'),
+              (510, 'skills', 'alias', 200, 'Whirling Cut'),
+              (511, 'game_rule_sets', 'name', 7, 'Rule Seven');
             """;
         command.ExecuteNonQuery();
     }
@@ -665,7 +1411,7 @@ internal sealed class TestWorkspace : IDisposable
             ClientBuild = "test",
             Length = new FileInfo(BaselinePath).Length,
             Sha256 = FileHashService.CalculateSha256(BaselinePath),
-            TableCount = 28,
+            TableCount = 29,
             RequiredTables = []
         };
         File.WriteAllText(DescriptorPath, ContentStudioJson.Serialize(descriptor));

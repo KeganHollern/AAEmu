@@ -9,16 +9,36 @@ public sealed class RecordScaffoldService
 {
     private readonly ProjectRepository _repository = new();
     private readonly IdRegistryService _ids = new();
+    private readonly ManifestService _manifests = new();
+    private readonly Action<int, string>? _beforeApply;
+
+    public RecordScaffoldService()
+    {
+    }
+
+    internal RecordScaffoldService(Action<int, string> beforeApply)
+    {
+        _beforeApply = beforeApply;
+    }
 
     public RecordDraftResult Save(RecordDraftRequest request)
+    {
+        lock (AtomicFile.SyncRoot)
+        {
+            return SaveCore(request);
+        }
+    }
+
+    private RecordDraftResult SaveCore(RecordDraftRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Table))
         {
             throw new ContentStudioException("Choose a valid entry before saving changes.");
         }
-        using (var connection = CompactConnectionFactory.OpenReadOnly(request.BaselinePath))
+        using (var baseline = CompactConnectionFactory.OpenReadOnly(request.BaselinePath))
         {
-            if (!SqliteRowService.Exists(connection, null, request.Table, request.SourceId))
+            CanonicalizeRequest(baseline, request);
+            if (!SqliteRowService.Exists(baseline, null, request.Table, request.SourceId))
                 throw new ContentStudioException($"The source {request.Table} entry {request.SourceId} does not exist.");
         }
         if (request.Mode == RecordChangeMode.Duplicate && request.Table is "crafts" or "doodad_almighties")
@@ -29,7 +49,12 @@ public sealed class RecordScaffoldService
         }
 
         var project = _repository.LoadProject(request.ProjectPath);
-        EnsureRange(project.Registry, request.Table);
+        var registryPath = Path.GetFullPath(Path.Combine(project.ProjectDirectory, project.Definition.IdRegistry));
+        _beforeApply?.Invoke(-2, registryPath);
+        var registryContents = File.ReadAllText(registryPath);
+        var registry = ContentStudioJson.Deserialize<IdRegistry>(registryContents, registryPath);
+        IdRegistryService.NormalizeComparers(registry);
+        EnsureRange(registry, request.Table);
         var baseSlug = Slugify(string.IsNullOrWhiteSpace(request.DisplayName) ? $"{request.Table}-{request.SourceId}" : request.DisplayName);
         var key = FindAvailableKey(project.ProjectDirectory, $"record.{baseSlug}");
         var definition = new RecordDefinition
@@ -54,18 +79,18 @@ public sealed class RecordScaffoldService
 
         if (request.Mode == RecordChangeMode.Duplicate)
         {
-            definition.Id = Allocate(project, request, key, request.Table, "row");
+            definition.Id = Allocate(registry, request, key, request.Table, "row");
             foreach (var field in definition.Localizations.Keys)
             {
-                definition.LocalizationRowIds[field] = Allocate(project, request, key, "localized_texts", $"localization:{field}");
+                definition.LocalizationRowIds[field] = Allocate(registry, request, key, "localized_texts", $"localization:{field}");
             }
             if (request.Table.Equals("skills", StringComparison.OrdinalIgnoreCase))
             {
-                AddOwnedSkillRows(project, request, definition);
+                AddOwnedSkillRows(registry, request, definition);
             }
             else
             {
-                AddOwnedRows(project, request, definition);
+                AddOwnedRows(registry, request, definition);
             }
         }
         else
@@ -73,7 +98,7 @@ public sealed class RecordScaffoldService
             using var connection = CompactConnectionFactory.OpenReadOnly(request.BaselinePath);
             foreach (var field in definition.Localizations.Keys.Where(field => !LocalizationExists(connection, request.Table, request.SourceId, field)))
             {
-                definition.LocalizationRowIds[field] = Allocate(project, request, key, "localized_texts", $"localization:{field}");
+                definition.LocalizationRowIds[field] = Allocate(registry, request, key, "localized_texts", $"localization:{field}");
             }
             definition.Children = request.Children.Select(child => new RecordChildClone
             {
@@ -87,12 +112,12 @@ public sealed class RecordScaffoldService
 
         foreach (var linked in request.LinkedRecords)
         {
-            EnsureRange(project.Registry, linked.Table);
+            EnsureRange(registry, linked.Table);
             definition.LinkedClones.Add(new RecordLinkedClone
             {
                 Table = linked.Table,
                 SourceId = linked.SourceId,
-                Id = Allocate(project, request, key, linked.Table, $"linked:{linked.Table}:{linked.SourceId}:{linked.LinkTable}:{linked.LinkSourceId}"),
+                Id = Allocate(registry, request, key, linked.Table, $"linked:{linked.Table}:{linked.SourceId}:{linked.LinkTable}:{linked.LinkSourceId}"),
                 LinkTable = linked.LinkTable,
                 LinkSourceId = linked.LinkSourceId,
                 LinkColumn = linked.LinkColumn,
@@ -103,31 +128,63 @@ public sealed class RecordScaffoldService
         var directory = Path.Combine(project.ProjectDirectory, "records");
         var path = Path.Combine(directory, key + ".json");
         Directory.CreateDirectory(directory);
-        AtomicFile.WriteAllText(path, ContentStudioJson.Serialize(definition) + Environment.NewLine);
-        _repository.SaveRegistry(request.ProjectPath, project.Registry);
+        var mutations = new List<FileMutation>
+        {
+            new(path, null, Normalize(ContentStudioJson.Serialize(definition)))
+        };
+        var updatedRegistry = Normalize(ContentStudioJson.Serialize(registry));
+        if (!updatedRegistry.Equals(registryContents, StringComparison.Ordinal))
+        {
+            mutations.Add(new FileMutation(registryPath, registryContents, updatedRegistry));
+        }
+        ApplyMutations(mutations);
         return new RecordDraftResult { Key = key, Id = definition.Id, Path = path, RelatedRowsCopied = definition.Children.Count };
     }
 
-    public RecordDraftResult Update(string path, RecordDefinition definition, RecordDraftRequest request, string? expectedVersion = null)
+    public RecordDraftResult Update(string path, RecordDefinition definition, RecordDraftRequest request, string expectedVersion)
     {
-        if (expectedVersion is not null && !new ManifestService().Version(path).Equals(expectedVersion, StringComparison.Ordinal))
+        lock (AtomicFile.SyncRoot)
+        {
+            return UpdateCore(path, definition, request, expectedVersion);
+        }
+    }
+
+    private RecordDraftResult UpdateCore(string path, RecordDefinition definition, RecordDraftRequest request, string expectedVersion)
+    {
+        var snapshot = _manifests.ReadSnapshot(path);
+        if (!snapshot.Version.Equals(expectedVersion, StringComparison.Ordinal))
         {
             throw new ContentStudioException("This saved change was updated outside this editor. Reload it to see the newest work before saving your changes.");
         }
+        definition = ContentStudioJson.Deserialize<RecordDefinition>(snapshot.Contents, snapshot.Path);
         var project = _repository.LoadProject(request.ProjectPath);
+        var registryPath = Path.GetFullPath(Path.Combine(project.ProjectDirectory, project.Definition.IdRegistry));
+        _beforeApply?.Invoke(-2, registryPath);
+        var registryContents = File.ReadAllText(registryPath);
+        var registry = ContentStudioJson.Deserialize<IdRegistry>(registryContents, registryPath);
+        IdRegistryService.NormalizeComparers(registry);
+        using var baseline = CompactConnectionFactory.OpenReadOnly(request.BaselinePath);
+        CanonicalizeRequest(baseline, request);
+        definition.Table = RequireTable(baseline, definition.Table);
+        if (!definition.Table.Equals(request.Table, StringComparison.OrdinalIgnoreCase) || definition.SourceId != request.SourceId)
+        {
+            throw new ContentStudioException("The saved entry no longer matches the entry being edited. Reload it before saving changes.");
+        }
+        CanonicalizeDefinitionGraph(baseline, definition);
         definition.DisplayName = request.DisplayName;
         definition.Values = new Dictionary<string, string?>(request.Values, StringComparer.OrdinalIgnoreCase);
         definition.Values.Remove("id");
         definition.Localizations = request.Localizations.ToDictionary(pair => pair.Key, pair => new Dictionary<string, string>(pair.Value, StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
-        using var baseline = CompactConnectionFactory.OpenReadOnly(request.BaselinePath);
         if (definition.Mode == RecordChangeMode.Modify)
         {
             definition.Values = KeepChangedValues(baseline, definition.Table, definition.SourceId, definition.Values);
             definition.Localizations = KeepChangedLocalizations(baseline, definition.Table, definition.SourceId, definition.Localizations);
         }
-        foreach (var field in definition.Localizations.Keys.Where(field => !LocalizationExists(baseline, definition.Table, definition.SourceId, field) && !definition.LocalizationRowIds.ContainsKey(field)))
+        foreach (var field in definition.Localizations.Keys.Where(field =>
+                     !LocalizationExists(baseline, definition.Table, definition.SourceId, field) &&
+                     !definition.LocalizationRowIds.Keys.Any(key => key.Equals(field, StringComparison.OrdinalIgnoreCase))))
         {
-            definition.LocalizationRowIds[field] = Allocate(project, request, definition.Key, "localized_texts", $"localization:{field}");
+            definition.LocalizationRowIds[field] = Allocate(registry, request, definition.Key, "localized_texts", $"localization:{field}");
         }
         foreach (var draft in request.Children)
         {
@@ -139,52 +196,173 @@ public sealed class RecordScaffoldService
                     child.Values = KeepChangedValues(baseline, child.Table, child.SourceId, child.Values);
             }
         }
+        var removedLinks = definition.LinkedClones
+            .Where(linked => !request.LinkedRecords.Any(draft => SameLink(linked, draft)))
+            .ToList();
+        definition.LinkedClones.RemoveAll(removedLinks.Contains);
+        foreach (var removedLink in removedLinks)
+        {
+            RetireLinkedAllocation(registry, definition.Key, removedLink);
+        }
         foreach (var draft in request.LinkedRecords)
         {
-            var linked = definition.LinkedClones.FirstOrDefault(value =>
-                value.Table.Equals(draft.Table, StringComparison.OrdinalIgnoreCase) &&
-                value.LinkTable.Equals(draft.LinkTable, StringComparison.OrdinalIgnoreCase) &&
-                value.LinkSourceId == draft.LinkSourceId &&
-                value.LinkColumn.Equals(draft.LinkColumn, StringComparison.OrdinalIgnoreCase));
+            var linked = definition.LinkedClones.FirstOrDefault(value => SameLink(value, draft));
             if (linked is not null)
             {
-                linked.Values = draft.Values;
+                linked.Values = new Dictionary<string, string?>(draft.Values, StringComparer.OrdinalIgnoreCase);
                 continue;
             }
-            EnsureRange(project.Registry, draft.Table);
+            EnsureRange(registry, draft.Table);
             definition.LinkedClones.Add(new RecordLinkedClone
             {
                 Table = draft.Table,
                 SourceId = draft.SourceId,
-                Id = Allocate(project, request, definition.Key, draft.Table, $"linked:{draft.Table}:{draft.SourceId}:{draft.LinkTable}:{draft.LinkSourceId}"),
+                Id = Allocate(registry, request, definition.Key, draft.Table, $"linked:{draft.Table}:{draft.SourceId}:{draft.LinkTable}:{draft.LinkSourceId}"),
                 LinkTable = draft.LinkTable,
                 LinkSourceId = draft.LinkSourceId,
                 LinkColumn = draft.LinkColumn,
-                Values = draft.Values
+                Values = new Dictionary<string, string?>(draft.Values, StringComparer.OrdinalIgnoreCase)
             });
         }
-        AtomicFile.WriteAllText(path, ContentStudioJson.Serialize(definition) + Environment.NewLine);
-        _repository.SaveRegistry(request.ProjectPath, project.Registry);
+        var mutations = new List<FileMutation>
+        {
+            new(snapshot.Path, snapshot.Contents, Normalize(ContentStudioJson.Serialize(definition)))
+        };
+        var updatedRegistry = Normalize(ContentStudioJson.Serialize(registry));
+        if (!updatedRegistry.Equals(registryContents, StringComparison.Ordinal))
+        {
+            mutations.Add(new FileMutation(registryPath, registryContents, updatedRegistry));
+        }
+        ApplyMutations(mutations);
         return new RecordDraftResult { Key = definition.Key, Id = definition.Id, Path = path, RelatedRowsCopied = definition.Children.Count };
     }
 
-    private void AddOwnedRows(LoadedContentProject project, RecordDraftRequest request, RecordDefinition definition)
+    private static bool SameLink(RecordLinkedClone linked, RecordLinkedDraft draft) =>
+        linked.Table.Equals(draft.Table, StringComparison.OrdinalIgnoreCase) &&
+        linked.LinkTable.Equals(draft.LinkTable, StringComparison.OrdinalIgnoreCase) &&
+        linked.LinkSourceId == draft.LinkSourceId &&
+        linked.LinkColumn.Equals(draft.LinkColumn, StringComparison.OrdinalIgnoreCase);
+
+    private static void CanonicalizeRequest(SqliteConnection connection, RecordDraftRequest request)
+    {
+        request.Table = RequireTable(connection, request.Table);
+        request.Values = CanonicalizeValues(connection, request.Table, request.Values);
+        request.Localizations = CanonicalizeLocalizations(connection, request.Table, request.SourceId, request.Localizations);
+        foreach (var child in request.Children)
+        {
+            child.Table = RequireTable(connection, child.Table);
+            child.OwnerColumn = RequireColumn(connection, child.Table, child.OwnerColumn);
+            child.Values = CanonicalizeValues(connection, child.Table, child.Values);
+        }
+        foreach (var linked in request.LinkedRecords)
+        {
+            linked.Table = RequireTable(connection, linked.Table);
+            linked.Values = CanonicalizeValues(connection, linked.Table, linked.Values);
+            linked.LinkTable = RequireTable(connection, linked.LinkTable);
+            linked.LinkColumn = RequireColumn(connection, linked.LinkTable, linked.LinkColumn);
+        }
+    }
+
+    private static void CanonicalizeDefinitionGraph(SqliteConnection connection, RecordDefinition definition)
+    {
+        foreach (var child in definition.Children)
+        {
+            child.Table = RequireTable(connection, child.Table);
+            child.OwnerColumn = RequireColumn(connection, child.Table, child.OwnerColumn);
+            child.Values = CanonicalizeValues(connection, child.Table, child.Values);
+        }
+        foreach (var linked in definition.LinkedClones)
+        {
+            linked.Table = RequireTable(connection, linked.Table);
+            linked.Values = CanonicalizeValues(connection, linked.Table, linked.Values);
+            linked.LinkTable = RequireTable(connection, linked.LinkTable);
+            linked.LinkColumn = RequireColumn(connection, linked.LinkTable, linked.LinkColumn);
+        }
+    }
+
+    private static Dictionary<string, string?> CanonicalizeValues(
+        SqliteConnection connection,
+        string table,
+        IReadOnlyDictionary<string, string?> values)
+    {
+        var result = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (requestedColumn, value) in values)
+        {
+            var column = RequireColumn(connection, table, requestedColumn);
+            if (!result.TryAdd(column, value))
+            {
+                throw new ContentStudioException($"Column '{column}' was provided more than once.");
+            }
+        }
+        return result;
+    }
+
+    private static Dictionary<string, Dictionary<string, string>> CanonicalizeLocalizations(
+        SqliteConnection connection,
+        string table,
+        uint id,
+        IReadOnlyDictionary<string, Dictionary<string, string>> localizations)
+    {
+        var result = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (requestedField, requestedLanguages) in localizations)
+        {
+            _ = BaselineVerifier.QuoteIdentifier(requestedField);
+            var field = ResolveLocalizationField(connection, table, id, requestedField);
+            var languages = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (requestedLanguage, value) in requestedLanguages)
+            {
+                var language = LocalizationCompiler.Languages.FirstOrDefault(candidate => candidate.Equals(requestedLanguage, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new ContentStudioException($"Unsupported localization language '{requestedLanguage}'.");
+                if (!languages.TryAdd(language, value))
+                {
+                    throw new ContentStudioException($"Localization language '{language}' was provided more than once.");
+                }
+            }
+            if (!result.TryAdd(field, languages))
+            {
+                throw new ContentStudioException($"Localized field '{field}' was provided more than once.");
+            }
+        }
+        return result;
+    }
+
+    private static string ResolveLocalizationField(SqliteConnection connection, string table, uint id, string requestedField)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT tbl_column_name FROM localized_texts WHERE tbl_name = @table COLLATE NOCASE AND tbl_column_name = @field COLLATE NOCASE ORDER BY CASE WHEN idx = @id THEN 0 ELSE 1 END, id LIMIT 1;";
+        command.Parameters.AddWithValue("@table", table);
+        command.Parameters.AddWithValue("@field", requestedField);
+        command.Parameters.AddWithValue("@id", id);
+        var existing = command.ExecuteScalar();
+        if (existing is not null and not DBNull) return Convert.ToString(existing)!;
+        return SqliteRowService.ResolveColumnName(connection, null, table, requestedField) ?? requestedField.ToLowerInvariant();
+    }
+
+    private static string RequireTable(SqliteConnection connection, string requestedTable) =>
+        SqliteRowService.ResolveTableName(connection, null, requestedTable)
+        ?? throw new ContentStudioException($"Table '{requestedTable}' does not exist in this compact database.");
+
+    private static string RequireColumn(SqliteConnection connection, string table, string requestedColumn) =>
+        SqliteRowService.ResolveColumnName(connection, null, table, requestedColumn)
+        ?? throw new ContentStudioException($"Column '{requestedColumn}' does not exist in table '{table}'.");
+
+    private void AddOwnedRows(IdRegistry registry, RecordDraftRequest request, RecordDefinition definition)
     {
         foreach (var child in request.Children)
         {
-            EnsureRange(project.Registry, child.Table);
+            EnsureRange(registry, child.Table);
             definition.Children.Add(new RecordChildClone
             {
                 Table = child.Table,
                 OwnerColumn = child.OwnerColumn,
                 SourceId = child.SourceId,
-                Id = Allocate(project, request, definition.Key, child.Table, $"child:{child.Table}:{child.SourceId}"),
+                Id = Allocate(registry, request, definition.Key, child.Table, $"child:{child.Table}:{child.SourceId}"),
                 Values = CleanChildValues(child)
             });
         }
     }
 
-    private void AddOwnedSkillRows(LoadedContentProject project, RecordDraftRequest request, RecordDefinition definition)
+    private void AddOwnedSkillRows(IdRegistry registry, RecordDraftRequest request, RecordDefinition definition)
     {
         if (!request.Table.Equals("skills", StringComparison.OrdinalIgnoreCase))
         {
@@ -195,13 +373,13 @@ public sealed class RecordScaffoldService
         {
             foreach (var child in request.Children)
             {
-                EnsureRange(project.Registry, child.Table);
+                EnsureRange(registry, child.Table);
                 definition.Children.Add(new RecordChildClone
                 {
                     Table = child.Table,
                     OwnerColumn = child.OwnerColumn,
                     SourceId = child.SourceId,
-                    Id = Allocate(project, request, definition.Key, child.Table, $"child:{child.Table}:{child.SourceId}"),
+                    Id = Allocate(registry, request, definition.Key, child.Table, $"child:{child.Table}:{child.SourceId}"),
                     Values = CleanChildValues(child)
                 });
             }
@@ -221,7 +399,7 @@ public sealed class RecordScaffoldService
         foreach (var relationship in relationships)
         {
             if (!TableExists(connection, relationship.Table)) continue;
-            EnsureRange(project.Registry, relationship.Table);
+            EnsureRange(registry, relationship.Table);
             using var command = connection.CreateCommand();
             command.CommandText = $"SELECT id FROM {BaselineVerifier.QuoteIdentifier(relationship.Table)} WHERE {BaselineVerifier.QuoteIdentifier(relationship.Owner)} = @id{relationship.Extra} ORDER BY id;";
             command.Parameters.AddWithValue("@id", request.SourceId);
@@ -234,7 +412,7 @@ public sealed class RecordScaffoldService
                     Table = relationship.Table,
                     OwnerColumn = relationship.Owner,
                     SourceId = sourceId,
-                    Id = Allocate(project, request, definition.Key, relationship.Table, $"child:{relationship.Table}:{sourceId}")
+                    Id = Allocate(registry, request, definition.Key, relationship.Table, $"child:{relationship.Table}:{sourceId}")
                 });
             }
         }
@@ -279,7 +457,7 @@ public sealed class RecordScaffoldService
             foreach (var (language, requested) in requestedLanguages)
             {
                 using var command = connection.CreateCommand();
-                command.CommandText = $"SELECT {BaselineVerifier.QuoteIdentifier(language)} FROM localized_texts WHERE tbl_name = @table AND tbl_column_name = @field AND idx = @id LIMIT 1;";
+                command.CommandText = $"SELECT {BaselineVerifier.QuoteIdentifier(language)} FROM localized_texts WHERE tbl_name = @table COLLATE NOCASE AND tbl_column_name = @field COLLATE NOCASE AND idx = @id LIMIT 1;";
                 command.Parameters.AddWithValue("@table", table);
                 command.Parameters.AddWithValue("@field", field);
                 command.Parameters.AddWithValue("@id", id);
@@ -316,21 +494,50 @@ public sealed class RecordScaffoldService
         return currentText.Equals(requestedText, StringComparison.Ordinal);
     }
 
-    private uint Allocate(LoadedContentProject project, RecordDraftRequest request, string key, string table, string suffix) =>
-        _ids.Allocate(project.Registry, request.BaselinePath, table, $"{key}:{suffix}").Id;
+    private uint Allocate(IdRegistry registry, RecordDraftRequest request, string key, string table, string suffix) =>
+        _ids.Allocate(registry, request.BaselinePath, table, $"{key}:{suffix}").Id;
 
     private static void EnsureRange(IdRegistry registry, string table)
     {
+        IdRegistryService.NormalizeComparers(registry);
+        IdRegistryService.CanonicalizeTableKeys(registry, table);
         if (!registry.Ranges.ContainsKey(table))
         {
             registry.Ranges[table] = new IdRange { Start = 8_000_000, End = 8_999_999 };
         }
     }
 
+    private static void RetireLinkedAllocation(IdRegistry registry, string definitionKey, RecordLinkedClone linked)
+    {
+        IdRegistryService.NormalizeComparers(registry);
+        IdRegistryService.CanonicalizeTableKeys(registry, linked.Table);
+        var expectedKey = $"{definitionKey}:linked:{linked.Table}:{linked.SourceId}:{linked.LinkTable}:{linked.LinkSourceId}";
+        var allocationKey = expectedKey;
+        if (registry.Allocations.TryGetValue(linked.Table, out var allocations))
+        {
+            var matches = allocations.Where(pair => pair.Value == linked.Id).ToList();
+            if (matches.Count > 1 || matches.Any(match => !IsOwned(match.Key, definitionKey)))
+            {
+                throw new ContentStudioException($"The ID registry does not uniquely own {linked.Table} ID {linked.Id} for '{definitionKey}'.");
+            }
+            if (matches.Count == 1)
+            {
+                allocationKey = matches[0].Key;
+                allocations.Remove(allocationKey);
+            }
+        }
+
+        IdRegistryService.AddTombstone(registry, linked.Table, allocationKey, linked.Id);
+    }
+
+    private static bool IsOwned(string allocationKey, string definitionKey) =>
+        allocationKey.Equals(definitionKey, StringComparison.OrdinalIgnoreCase) ||
+        allocationKey.StartsWith(definitionKey + ":", StringComparison.OrdinalIgnoreCase);
+
     private static bool LocalizationExists(SqliteConnection connection, string table, uint id, string field)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT EXISTS(SELECT 1 FROM localized_texts WHERE tbl_name = @table AND tbl_column_name = @field AND idx = @id);";
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM localized_texts WHERE tbl_name = @table COLLATE NOCASE AND tbl_column_name = @field COLLATE NOCASE AND idx = @id);";
         command.Parameters.AddWithValue("@table", table);
         command.Parameters.AddWithValue("@field", field);
         command.Parameters.AddWithValue("@id", id);
@@ -344,6 +551,117 @@ public sealed class RecordScaffoldService
         command.Parameters.AddWithValue("@name", table);
         return Convert.ToInt32(command.ExecuteScalar()) != 0;
     }
+
+    private void ApplyMutations(IReadOnlyList<FileMutation> mutations)
+    {
+        var stagedPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var mutation in mutations.Where(value => value.Replacement is not null))
+            {
+                var directory = Path.GetDirectoryName(mutation.Path)
+                    ?? throw new ContentStudioException($"Unable to determine the project directory for {mutation.Path}.");
+                var stagingPath = Path.Combine(directory, $".{Path.GetFileName(mutation.Path)}.{Guid.NewGuid():N}.tmp");
+                File.WriteAllText(stagingPath, mutation.Replacement!, new UTF8Encoding(false));
+                stagedPaths[mutation.Path] = stagingPath;
+            }
+
+            foreach (var mutation in mutations)
+            {
+                EnsureUnchanged(mutation);
+            }
+
+            var applied = new List<FileMutation>();
+            try
+            {
+                for (var index = 0; index < mutations.Count; index++)
+                {
+                    var mutation = mutations[index];
+                    _beforeApply?.Invoke(index, mutation.Path);
+                    EnsureUnchanged(mutation);
+                    if (mutation.Replacement is null)
+                    {
+                        File.Delete(mutation.Path);
+                    }
+                    else
+                    {
+                        File.Move(stagedPaths[mutation.Path], mutation.Path, true);
+                    }
+                    applied.Add(mutation);
+                }
+            }
+            catch (Exception exception)
+            {
+                if (applied.Count == 0 && exception is ContentStudioException)
+                {
+                    throw;
+                }
+                Exception? rollbackFailure = null;
+                foreach (var mutation in applied.AsEnumerable().Reverse())
+                {
+                    try
+                    {
+                        EnsureStillApplied(mutation);
+                        if (mutation.Original is null)
+                        {
+                            File.Delete(mutation.Path);
+                        }
+                        else
+                        {
+                            AtomicFile.WriteAllText(mutation.Path, mutation.Original);
+                        }
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        rollbackFailure ??= rollbackException;
+                    }
+                }
+
+                throw rollbackFailure is null
+                    ? new ContentStudioException("The entry could not be saved. All project files were restored.", exception)
+                    : new ContentStudioException("The entry save failed and at least one project file could not be restored. Stop editing and recover the project from version control.", new AggregateException(exception, rollbackFailure));
+            }
+        }
+        finally
+        {
+            foreach (var stagingPath in stagedPaths.Values)
+            {
+                if (File.Exists(stagingPath)) File.Delete(stagingPath);
+            }
+        }
+    }
+
+    private static void EnsureUnchanged(FileMutation mutation)
+    {
+        if (mutation.Original is null)
+        {
+            if (File.Exists(mutation.Path))
+            {
+                throw new ContentStudioException("A saved change was created while this entry was being prepared. Reload My changes before saving.");
+            }
+            return;
+        }
+        if (!File.Exists(mutation.Path) || !File.ReadAllText(mutation.Path).Equals(mutation.Original, StringComparison.Ordinal))
+        {
+            throw new ContentStudioException("This saved change or its ID registry was updated outside this editor. Reload it before saving your changes.");
+        }
+    }
+
+    private static void EnsureStillApplied(FileMutation mutation)
+    {
+        if (mutation.Replacement is null)
+        {
+            if (File.Exists(mutation.Path))
+                throw new ContentStudioException($"Cannot safely restore '{mutation.Path}' because another process recreated it after this save removed it.");
+            return;
+        }
+        if (!File.Exists(mutation.Path) || !File.ReadAllText(mutation.Path).Equals(mutation.Replacement, StringComparison.Ordinal))
+        {
+            throw new ContentStudioException($"Cannot safely restore '{mutation.Path}' because another process changed it after this save wrote it.");
+        }
+    }
+
+    private static string Normalize(string json) => json.TrimEnd() + Environment.NewLine;
 
     private static string FindAvailableKey(string projectDirectory, string proposed)
     {
@@ -375,4 +693,6 @@ public sealed class RecordScaffoldService
         }
         return builder.ToString().Trim('-');
     }
+
+    private sealed record FileMutation(string Path, string? Original, string? Replacement);
 }

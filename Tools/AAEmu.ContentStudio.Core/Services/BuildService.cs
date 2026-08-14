@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using AAEmu.ContentStudio.Core.Models;
 using Microsoft.Data.Sqlite;
@@ -10,19 +11,30 @@ public sealed class BuildService
     private readonly ProjectRepository _repository = new();
     private readonly BaselineVerifier _baselineVerifier = new();
     private readonly ContentValidator _validator = new();
+    private readonly Action? _beforePromotion;
+
+    public BuildService()
+    {
+    }
+
+    internal BuildService(Action beforePromotion)
+    {
+        _beforePromotion = beforePromotion;
+    }
 
     public ContentBuildResult Build(ContentBuildRequest request)
     {
         var baselinePath = Path.GetFullPath(request.BaselinePath);
         var descriptor = _repository.LoadBaseline(request.BaselineDescriptorPath);
-        var project = _repository.LoadProject(request.ProjectPath);
+        var discoveredProject = _repository.LoadProject(request.ProjectPath);
+        var sourceSnapshots = CaptureSources(discoveredProject.SourceFiles);
+        var sourceContents = sourceSnapshots.ToDictionary(snapshot => snapshot.Path, snapshot => snapshot.Contents, StringComparer.OrdinalIgnoreCase);
+        var project = _repository.LoadProject(request.ProjectPath, sourceContents);
+        EnsureSourceSet(project.SourceFiles, sourceSnapshots);
         if (!project.Definition.TargetBaseline.Equals(descriptor.Key, StringComparison.OrdinalIgnoreCase))
         {
             throw new ContentStudioException($"Project targets '{project.Definition.TargetBaseline}', not baseline '{descriptor.Key}'.");
         }
-
-        ThrowIfInvalid(_baselineVerifier.Verify(baselinePath, descriptor), "Baseline verification failed");
-        ThrowIfInvalid(_validator.ValidateProject(project, baselinePath), "Project validation failed");
 
         var outputDirectory = Path.GetFullPath(request.OutputDirectory);
         Directory.CreateDirectory(outputDirectory);
@@ -37,10 +49,11 @@ public sealed class BuildService
         try
         {
             File.Copy(baselinePath, stagingPath, true);
-            var changes = Compile(stagingPath, project);
+            ThrowIfInvalid(_baselineVerifier.Verify(stagingPath, descriptor), "Baseline verification failed");
+            ThrowIfInvalid(_validator.ValidateProject(project, stagingPath), "Project validation failed");
+            var changes = Compile(stagingPath, project, sourceContents);
             var validation = _validator.ValidateBuiltDatabase(stagingPath, project);
             ThrowIfInvalid(validation, "Compiled database validation failed");
-            AtomicFile.ReplaceFrom(stagingPath, artifactPath);
             validation.Issues = validation.Issues
                 .Select(issue => issue.Source?.Equals(stagingPath, StringComparison.OrdinalIgnoreCase) == true ? issue with { Source = artifactPath } : issue)
                 .ToList();
@@ -52,23 +65,31 @@ public sealed class BuildService
                 BaselineKey = descriptor.Key,
                 BaselineSha256 = descriptor.Sha256,
                 ProjectKey = project.Definition.Key,
-                SourceHashes = project.SourceFiles.ToDictionary(
-                    file => Path.GetRelativePath(project.ProjectDirectory, file).Replace('\\', '/'),
-                    FileHashService.CalculateSha256,
+                SourceHashes = sourceSnapshots.ToDictionary(
+                    snapshot => Path.GetRelativePath(project.ProjectDirectory, snapshot.Path).Replace('\\', '/'),
+                    snapshot => snapshot.Hash,
                     StringComparer.OrdinalIgnoreCase),
                 ArtifactPath = artifactPath,
-                ArtifactSha256 = FileHashService.CalculateSha256(artifactPath),
+                ArtifactSha256 = FileHashService.CalculateSha256(stagingPath),
                 AuditSqlPath = auditSqlPath,
-                ArtifactLength = new FileInfo(artifactPath).Length,
+                ArtifactLength = new FileInfo(stagingPath).Length,
                 RecipeCount = project.Recipes.Count,
                 WorkbenchCount = project.Workbenches.Count,
                 AssertionCount = project.Assertions.Count,
                 Validation = validation,
                 Changes = changes
             };
-            AtomicFile.WriteAllText(manifestPath, ContentStudioJson.Serialize(manifest) + Environment.NewLine);
-            AtomicFile.WriteAllText(reportPath, CreateReport(manifest));
-            AtomicFile.WriteAllText(auditSqlPath, CreateAuditSql(project));
+            var manifestContents = ContentStudioJson.Serialize(manifest) + Environment.NewLine;
+            var reportContents = CreateReport(manifest);
+            var auditSqlContents = CreateAuditSql(project);
+            _beforePromotion?.Invoke();
+            PublishBuildOutputs(
+            [
+                new BuildOutput(artifactPath, stagingPath, null, manifest.ArtifactSha256),
+                new BuildOutput(manifestPath, null, manifestContents, HashText(manifestContents)),
+                new BuildOutput(reportPath, null, reportContents, HashText(reportContents)),
+                new BuildOutput(auditSqlPath, null, auditSqlContents, HashText(auditSqlContents))
+            ], () => EnsureSourcesUnchanged(request.ProjectPath, sourceSnapshots));
             return new ContentBuildResult
             {
                 ArtifactPath = artifactPath,
@@ -87,7 +108,10 @@ public sealed class BuildService
         }
     }
 
-    private static List<ContentChange> Compile(string compactPath, LoadedContentProject project)
+    private static List<ContentChange> Compile(
+        string compactPath,
+        LoadedContentProject project,
+        IReadOnlyDictionary<string, string> sourceContents)
     {
         using var connection = CompactConnectionFactory.OpenReadWrite(compactPath);
         using var transaction = connection.BeginTransaction();
@@ -113,12 +137,148 @@ public sealed class BuildService
         {
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = File.ReadAllText(rawSqlPath);
+            command.CommandText = sourceContents[rawSqlPath];
             command.ExecuteNonQuery();
             changes.Add(new ContentChange("raw-sql", Path.GetFileName(rawSqlPath), 0, "execute", Path.GetFileName(rawSqlPath)));
         }
         transaction.Commit();
         return changes;
+    }
+
+    private static List<SourceSnapshot> CaptureSources(IEnumerable<string> paths)
+    {
+        var result = new List<SourceSnapshot>();
+        foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
+        {
+            var fullPath = Path.GetFullPath(path);
+            var bytes = File.ReadAllBytes(fullPath);
+            result.Add(new SourceSnapshot(fullPath, bytes, DecodeText(bytes), Convert.ToHexString(SHA256.HashData(bytes))));
+        }
+        return result;
+    }
+
+    private void EnsureSourcesUnchanged(string projectPath, IReadOnlyList<SourceSnapshot> snapshots)
+    {
+        LoadedContentProject current;
+        try
+        {
+            current = _repository.LoadProject(projectPath);
+        }
+        catch (Exception exception)
+        {
+            throw new ContentStudioException("Project sources changed while the build was running. Build again from the latest saved changes.", exception);
+        }
+        EnsureSourceSet(current.SourceFiles, snapshots);
+        foreach (var snapshot in snapshots)
+        {
+            if (!File.Exists(snapshot.Path) || !File.ReadAllBytes(snapshot.Path).AsSpan().SequenceEqual(snapshot.Bytes))
+            {
+                throw new ContentStudioException($"Project source changed while the build was running: {snapshot.Path}. Build again from the latest saved changes.");
+            }
+        }
+    }
+
+    private static void EnsureSourceSet(IEnumerable<string> paths, IReadOnlyList<SourceSnapshot> snapshots)
+    {
+        var current = paths.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var captured = snapshots.Select(snapshot => snapshot.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!current.SetEquals(captured))
+        {
+            throw new ContentStudioException("Project source files changed while the build snapshot was being prepared. Build again from the latest saved changes.");
+        }
+    }
+
+    private static string DecodeText(byte[] bytes)
+    {
+        using var stream = new MemoryStream(bytes, writable: false);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
+    private static void PublishBuildOutputs(IReadOnlyList<BuildOutput> outputs, Action verifySources)
+    {
+        lock (AtomicFile.SyncRoot)
+        {
+            var staged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var backups = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (var output in outputs)
+                {
+                    var directory = Path.GetDirectoryName(output.Path)
+                        ?? throw new ContentStudioException($"Unable to determine the build output directory for {output.Path}.");
+                    Directory.CreateDirectory(directory);
+                    var stagingPath = Path.Combine(directory, $".{Path.GetFileName(output.Path)}.{Guid.NewGuid():N}.tmp");
+                    if (output.SourcePath is not null)
+                    {
+                        File.Copy(output.SourcePath, stagingPath, true);
+                    }
+                    else
+                    {
+                        File.WriteAllText(stagingPath, output.Contents!, new UTF8Encoding(false));
+                    }
+                    staged[output.Path] = stagingPath;
+                    EnsureOutputHash(stagingPath, output);
+                }
+
+                verifySources();
+                foreach (var output in outputs.Where(output => File.Exists(output.Path)))
+                {
+                    var directory = Path.GetDirectoryName(output.Path)!;
+                    var backupPath = Path.Combine(directory, $".{Path.GetFileName(output.Path)}.{Guid.NewGuid():N}.bak");
+                    File.Copy(output.Path, backupPath, true);
+                    backups[output.Path] = backupPath;
+                }
+                verifySources();
+                foreach (var output in outputs) EnsureOutputHash(staged[output.Path], output);
+
+                var applied = new List<BuildOutput>();
+                try
+                {
+                    foreach (var output in outputs)
+                    {
+                        EnsureOutputHash(staged[output.Path], output);
+                        File.Move(staged[output.Path], output.Path, true);
+                        applied.Add(output);
+                        EnsureOutputHash(output.Path, output);
+                    }
+                    verifySources();
+                }
+                catch (Exception exception)
+                {
+                    Exception? rollbackFailure = null;
+                    foreach (var output in applied.AsEnumerable().Reverse())
+                    {
+                        try
+                        {
+                            EnsureOutputHash(output.Path, output);
+                            if (backups.TryGetValue(output.Path, out var backupPath))
+                            {
+                                File.Move(backupPath, output.Path, true);
+                            }
+                            else
+                            {
+                                File.Delete(output.Path);
+                            }
+                        }
+                        catch (Exception rollbackException)
+                        {
+                            rollbackFailure ??= rollbackException;
+                        }
+                    }
+                    throw rollbackFailure is null
+                        ? new ContentStudioException("Build publication failed. Previous build outputs were restored.", exception)
+                        : new ContentStudioException("Build publication failed and at least one previous output could not be restored. Recover the build directory before deploying.", new AggregateException(exception, rollbackFailure));
+                }
+            }
+            finally
+            {
+                foreach (var path in staged.Values.Concat(backups.Values))
+                {
+                    if (File.Exists(path)) File.Delete(path);
+                }
+            }
+        }
     }
 
     private static void ThrowIfInvalid(ValidationReport report, string heading)
@@ -189,10 +349,27 @@ public sealed class BuildService
             builder.AppendLine("-- Project assertions (each query should return its documented expected value)");
             foreach (var assertion in project.Assertions)
             {
-                builder.AppendLine($"-- {assertion.Key}: expected {assertion.Expected} — {assertion.Description}");
+                builder.AppendLine($"-- {SqlCommentText(assertion.Key)}: expected {SqlCommentText(assertion.Expected)} — {SqlCommentText(assertion.Description)}");
                 builder.AppendLine(assertion.Query.TrimEnd().TrimEnd(';') + ";");
             }
         }
         return builder.ToString();
     }
+
+    private static string SqlCommentText(string value) => new(value
+        .Select(character => char.IsControl(character) || character is '\u0085' or '\u2028' or '\u2029' ? ' ' : character)
+        .ToArray());
+
+    private static string HashText(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
+    private static void EnsureOutputHash(string path, BuildOutput output)
+    {
+        if (!File.Exists(path) || !FileHashService.CalculateSha256(path).Equals(output.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ContentStudioException($"Build output changed while it was being published: {output.Path}.");
+        }
+    }
+
+    private sealed record SourceSnapshot(string Path, byte[] Bytes, string Contents, string Hash);
+    private sealed record BuildOutput(string Path, string? SourcePath, string? Contents, string ExpectedSha256);
 }

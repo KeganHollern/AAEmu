@@ -56,67 +56,60 @@
     }
   },
   "allocations": {
-    "crafts": {
-      "recipe.custom-lumber:row": 9100001,
-      "recipe.custom-lumber-2:row": 9100002
-    },
-    "craft_materials": {
-      "recipe.custom-lumber:material:0": 9700003,
-      "recipe.custom-lumber-2:material:0": 9700004
-    },
-    "craft_products": {
-      "recipe.custom-lumber:product:0": 9750001,
-      "recipe.custom-lumber-2:product:0": 9750002,
-      "recipe.custom-lumber-2:product:1": 9750003,
-      "recipe.custom-lumber-2:product:2": 9750004
-    },
-    "localized_texts": {
-      "recipe.custom-lumber:title": 9600002,
-      "recipe.custom-lumber-2:title": 9600003
-    },
-    "skills": {
-      "recipe.custom-lumber:skill": 9400001,
-      "recipe.custom-lumber-2:skill": 9400002
-    },
-    "skill_effects": {
-      "recipe.custom-lumber:skill-effect:0": 9500001,
-      "recipe.custom-lumber-2:skill-effect:0": 9500002
-    },
+    "crafts": {},
+    "craft_materials": {},
+    "craft_products": {},
+    "localized_texts": {},
+    "skills": {},
+    "skill_effects": {},
     "doodad_almighties": {},
     "craft_packs": {},
     "doodad_func_groups": {},
     "doodad_funcs": {},
     "doodad_func_craft_packs": {},
     "doodad_phase_funcs": {},
-    "craft_pack_crafts": {
-      "recipe.custom-lumber:pack-link:0": 9800001,
-      "recipe.custom-lumber-2:pack-link:0": 9800002
-    }
+    "craft_pack_crafts": {}
   },
   "tombstones": {
     "crafts": {
-      "recipe.example-unstable-solution:row": 9100000
+      "recipe.example-unstable-solution:row": 9100000,
+      "recipe.custom-lumber:row": 9100001,
+      "recipe.custom-lumber-2:row": 9100002
     },
     "craft_materials": {
       "recipe.example-unstable-solution:material:0": 9700000,
       "recipe.example-unstable-solution:material:1": 9700001,
-      "recipe.example-unstable-solution:material:2": 9700002
+      "recipe.example-unstable-solution:material:2": 9700002,
+      "recipe.custom-lumber:material:0": 9700003,
+      "recipe.custom-lumber-2:material:0": 9700004
     },
     "craft_products": {
-      "recipe.example-unstable-solution:product:0": 9750000
+      "recipe.example-unstable-solution:product:0": 9750000,
+      "recipe.custom-lumber:product:0": 9750001,
+      "recipe.custom-lumber-2:product:0": 9750002,
+      "recipe.custom-lumber-2:product:1": 9750003,
+      "recipe.custom-lumber-2:product:2": 9750004
     },
     "localized_texts": {
       "recipe.example-unstable-solution:title": 9600000,
-      "workbench.example-alchemy-workbench:name": 9600001
+      "workbench.example-alchemy-workbench:name": 9600001,
+      "recipe.custom-lumber:title": 9600002,
+      "recipe.custom-lumber-2:title": 9600003
     },
     "skills": {
-      "recipe.example-unstable-solution:skill": 9400000
+      "recipe.example-unstable-solution:skill": 9400000,
+      "recipe.custom-lumber:skill": 9400001,
+      "recipe.custom-lumber-2:skill": 9400002
     },
     "skill_effects": {
-      "recipe.example-unstable-solution:skill-effect:0": 9500000
+      "recipe.example-unstable-solution:skill-effect:0": 9500000,
+      "recipe.custom-lumber:skill-effect:0": 9500001,
+      "recipe.custom-lumber-2:skill-effect:0": 9500002
     },
     "craft_pack_crafts": {
-      "workbench.example-alchemy-workbench:pack-link:0": 9800000
+      "workbench.example-alchemy-workbench:pack-link:0": 9800000,
+      "recipe.custom-lumber:pack-link:0": 9800001,
+      "recipe.custom-lumber-2:pack-link:0": 9800002
     },
     "doodad_almighties": {
       "workbench.example-alchemy-workbench:row": 9200000

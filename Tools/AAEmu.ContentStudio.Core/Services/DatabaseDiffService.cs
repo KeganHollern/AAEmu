@@ -6,12 +6,6 @@ namespace AAEmu.ContentStudio.Core.Services;
 
 public sealed class DatabaseDiffService
 {
-    private static readonly string[] ContentTables =
-    [
-        "crafts", "skills", "skill_effects", "craft_materials", "craft_products", "craft_packs", "craft_pack_crafts",
-        "doodad_almighties", "doodad_func_groups", "doodad_funcs", "doodad_phase_funcs", "doodad_func_craft_packs", "localized_texts"
-    ];
-
     public DatabaseDiffReport Compare(string baselinePath, string artifactPath)
     {
         var result = new DatabaseDiffReport
@@ -27,7 +21,11 @@ public sealed class DatabaseDiffService
             attach.Parameters.AddWithValue("@path", Path.GetFullPath(baselinePath));
             attach.ExecuteNonQuery();
         }
-        foreach (var table in ContentTables)
+        var baselineTables = ReadTableNames(baseline);
+        foreach (var table in ReadTableNames(artifact)
+                     .Where(table => baselineTables.Contains(table, StringComparer.OrdinalIgnoreCase))
+                     .Where(table => HasColumn(baseline, table, "id") && HasColumn(artifact, table, "id"))
+                     .Order(StringComparer.OrdinalIgnoreCase))
         {
             var baselineRows = Count(baseline, table);
             var artifactRows = Count(artifact, table);
@@ -40,6 +38,19 @@ public sealed class DatabaseDiffService
         }
         return result;
     }
+
+    private static List<string> ReadTableNames(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name COLLATE NOCASE;";
+        using var reader = command.ExecuteReader();
+        var result = new List<string>();
+        while (reader.Read()) result.Add(reader.GetString(0));
+        return result;
+    }
+
+    private static bool HasColumn(SqliteConnection connection, string table, string column) =>
+        ReadColumns(connection, "main", table).Contains(column, StringComparer.OrdinalIgnoreCase);
 
     private static long Count(Microsoft.Data.Sqlite.SqliteConnection connection, string table)
     {
