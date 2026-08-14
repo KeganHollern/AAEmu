@@ -287,15 +287,15 @@ public class BuffTemplate
                 as SkillControllerTemplate;
             if (scTemplate != null)
             {
-                // Bubbletrap-style buffs set Gliding=true but leave GlidingLiftHeight=0
-                // in the DB, which would make the controller resolve to pull mode.
-                // Default to 5m lift so the controller actually enters lift mode.
-                var effectiveLiftHeight = GlidingLiftHeight > 0f ? GlidingLiftHeight
-                    : (Gliding ? 5f : 0f);
-                Logger.Debug("BuffTemplate.Start: buff {0} creating SC sc_id={1} kind={2} for owner={3} caster={4} psychoSpeed={5} liftH={6}",
-                    Id, SkillControllerId, scTemplate.KindId, owner.ObjId, caster.ObjId, PsychokinesisSpeed, effectiveLiftHeight);
+                // Floating controller data carries lift distance and speed in millimetres.
+                // The gliding_lift_* columns are generic defaults on non-gliding buffs,
+                // and the source buff owns the lifetime before Dispel starts the fall.
+                var lift = SkillControllers.FloatingSkillController.ResolveBuffLiftParameters(scTemplate);
+                Logger.Debug("BuffTemplate.Start: buff {0} creating SC sc_id={1} kind={2} for owner={3} caster={4} psychoSpeed={5} liftH={6} liftSpeed={7}",
+                    Id, SkillControllerId, scTemplate.KindId, owner.ObjId, caster.ObjId, PsychokinesisSpeed,
+                    lift.Height, lift.Speed);
                 var sc = SkillControllers.SkillController.CreateSkillController(scTemplate, owner, caster,
-                    PsychokinesisSpeed, effectiveLiftHeight, GlidingLiftSpeed, GlidingLiftDuration);
+                    PsychokinesisSpeed, lift.Height, lift.Speed, lift.Duration);
 #pragma warning disable CA1508 // Factory can return null for unimplemented controller kinds
                 if (sc is not null)
 #pragma warning restore CA1508

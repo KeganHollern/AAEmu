@@ -25,6 +25,7 @@ public class FloatingSkillController : SkillController
     private readonly float _liftHeight;
     private readonly float _liftSpeed;
     private readonly float _liftDuration;
+    private readonly TickManager.TickEventHandler _ticks;
     private bool _isFalling;
     private float _fallSpeed;
     private const float Gravity = 9.81f;
@@ -34,10 +35,19 @@ public class FloatingSkillController : SkillController
 
     public FloatingSkillController(SkillControllerTemplate template, BaseUnit owner, BaseUnit target,
         float psychokinesisSpeed = 0f, float liftHeight = 0f, float liftSpeed = 0f, float liftDuration = 0f)
+        : this(template, owner, target, TickManager.Instance.OnTick,
+            psychokinesisSpeed, liftHeight, liftSpeed, liftDuration)
+    {
+    }
+
+    internal FloatingSkillController(SkillControllerTemplate template, BaseUnit owner, BaseUnit target,
+        TickManager.TickEventHandler ticks, float psychokinesisSpeed = 0f, float liftHeight = 0f,
+        float liftSpeed = 0f, float liftDuration = 0f)
     {
         Template = template;
         Owner = owner as Unit;
         Target = target as Unit;
+        _ticks = ticks;
 
         _liftHeight = liftHeight;
         _liftSpeed = liftSpeed > 0f ? liftSpeed : 3f;
@@ -97,7 +107,7 @@ public class FloatingSkillController : SkillController
             _liftStartTime = DateTime.UtcNow;
             Logger.Debug("FloatingSC.Execute [LIFT]: owner={0} startZ={1:F1} targetZ={2:F1}",
                 Owner.ObjId, _startZ, _startZ + _liftHeight);
-            TickManager.Instance.OnTick.Subscribe(Tick, TimeSpan.FromMilliseconds(100));
+            _ticks.Subscribe(Tick, TimeSpan.FromMilliseconds(100));
         }
         else
         {
@@ -110,7 +120,7 @@ public class FloatingSkillController : SkillController
 
             Logger.Debug("FloatingSC.Execute [PULL]: owner={0} pulling toward target={1}, dist={2:F1}m, speed={3:F1}",
                 Owner.ObjId, Target?.ObjId, _pullDistance, _speed);
-            TickManager.Instance.OnTick.Subscribe(Tick, TimeSpan.FromMilliseconds(100));
+            _ticks.Subscribe(Tick, TimeSpan.FromMilliseconds(100));
         }
     }
 
@@ -135,10 +145,10 @@ public class FloatingSkillController : SkillController
         }
 
         base.End(force);
-        TickManager.Instance.OnTick.UnSubscribe(Tick);
+        _ticks.UnSubscribe(Tick);
     }
 
-    private void Tick(TimeSpan delta)
+    internal void Tick(TimeSpan delta)
     {
         if (Owner == null)
         {
@@ -176,7 +186,20 @@ public class FloatingSkillController : SkillController
     private void FinalEnd()
     {
         base.End();
-        TickManager.Instance.OnTick.UnSubscribe(Tick);
+        _ticks.UnSubscribe(Tick);
+    }
+
+    internal static (float Height, float Speed, float Duration) ResolveBuffLiftParameters(
+        SkillControllerTemplate template)
+    {
+        if (template is null
+            || (SkillControllerKind)template.KindId != SkillControllerKind.Floating
+            || template.Value is not { Length: >= 2 })
+            return (0f, 0f, 0f);
+
+        var height = Math.Max(template.Value[0], 0) / 1000f;
+        var speed = template.Value[1] > 0 ? template.Value[1] / 1000f : 3f;
+        return (height, speed, 0f);
     }
 
     private void LiftTick(TimeSpan delta)
