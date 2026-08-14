@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "name": "archeage-r208022-register-fullscreen-window",
+  "description": "Register the dormant r_FullscreenWindow CryEngine CVar so the existing DX9 and DX10 borderless-window paths can be selected and persisted.",
+  "expectedBinaryName": "CrySystem.dll",
+  "expectedLength": 1355264,
+  "originalSha256": "C8A919CCA6669099E2151595E76DB9E63C288B72B1AA7B0C2E2A1CA369223AF0",
+  "patchedSha256": "6A94E2A1E1ADD15CC1D8FED9DBA9DB2F601AADAFAA859EE7081EBA64DAD5E13F",
+  "patches": [
+    {
+      "name": "map the executable section's existing raw padding",
+      "offset": 528,
+      "expectedHex": "3A611000",
+      "replacementHex": "00621000"
+    },
+    {
+      "name": "register the fullscreen-window CVar during renderer option setup",
+      "offset": 399571,
+      "expectedHex": "6A0068204B61368986D0180000",
+      "replacementHex": "E9684C0A009090909090909090"
+    },
+    {
+      "name": "fullscreen-window CVar registration stub",
+      "offset": 1074496,
+      "expectedHex": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "replacementHex": "8986D01800006A0068804B613668800100016A0083EC088BC4C70000000000C74004C07160368B0DB48163368B491C8B118B42188965F0FFD06A0068204B6136E95BB3F5FF"
+    },
+    {
+      "name": "fullscreen-window CVar name",
+      "offset": 1074624,
+      "expectedHex": "00000000000000000000000000000000000000",
+      "replacementHex": "725F46756C6C73637265656E57696E646F7700"
+    }
+  ]
+}

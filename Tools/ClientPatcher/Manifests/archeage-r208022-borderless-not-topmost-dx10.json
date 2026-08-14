@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "archeage-r208022-borderless-not-topmost-dx10",
+  "description": "Keep CryEngine's fullscreen-window mode borderless without forcing the game above every normal desktop application.",
+  "expectedBinaryName": "CryRenderD3D10.dll",
+  "expectedLength": 3918336,
+  "originalSha256": "EBF051BBA5D349A6B3BF6D4EB676908115B73BB22D35D5A0CC917C325426589D",
+  "patchedSha256": "5AB6DE02A4EEAAE8FA5EFF468870A02F7D48B2ADB3B3CE6857945D4B518C237D",
+  "patches": [
+    {
+      "name": "create the borderless game window without WS_EX_TOPMOST",
+      "offset": 994316,
+      "expectedHex": "C745FC08000000",
+      "replacementHex": "C745FC00000000"
+    }
+  ]
+}

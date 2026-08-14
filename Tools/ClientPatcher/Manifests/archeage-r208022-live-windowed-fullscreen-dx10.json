@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "name": "archeage-r208022-live-windowed-fullscreen-dx10",
+  "description": "Use r_FullscreenWindow when selecting the DX10 window style. Mode changes are persisted by the settings UI and applied after the required client restart.",
+  "expectedBinaryName": "CryRenderD3D10.dll",
+  "expectedLength": 3918336,
+  "originalSha256": "5AB6DE02A4EEAAE8FA5EFF468870A02F7D48B2ADB3B3CE6857945D4B518C237D",
+  "patchedSha256": "1A55A2FEED8A8E9E7E51F88CB5F96DF2B1465C4BD4931C700C2EA829F7887C0F",
+  "patches": [
+    {
+      "name": "map the executable section's existing raw padding",
+      "offset": 544,
+      "expectedHex": "311C2D00",
+      "replacementHex": "001E2D00"
+    },
+    {
+      "name": "capture the fullscreen-window state during resolution changes",
+      "offset": 1005934,
+      "expectedHex": "8B8B70FB0000",
+      "replacementHex": "E9CDC61D0090"
+    },
+    {
+      "name": "select the popup style for fullscreen-window mode",
+      "offset": 1006527,
+      "expectedHex": "80BB001D010000",
+      "replacementHex": "807DFE00909090"
+    },
+    {
+      "name": "fullscreen-window transition state stub",
+      "offset": 2957376,
+      "expectedHex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "replacementHex": "8A5518833DE0A93A380074158B0DE0A93A3883791C00740985C00F95C008D0EB028AC28845FE8B8B70FB0000E90339E2FF"
+    }
+  ]
+}

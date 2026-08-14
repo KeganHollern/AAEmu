@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "archeage-r208022-fullscreen-window-restart-required",
+  "description": "Mark r_FullscreenWindow as requiring an application restart so Windowed and Windowed Fullscreen changes are saved without modifying the live window.",
+  "expectedBinaryName": "CrySystem.dll",
+  "expectedLength": 1355264,
+  "originalSha256": "6A94E2A1E1ADD15CC1D8FED9DBA9DB2F601AADAFAA859EE7081EBA64DAD5E13F",
+  "patchedSha256": "4F365F1CB3817F5F3A2559FDA453C9041585E086BCA7CCFCFF39BC8953958990",
+  "patches": [
+    {
+      "name": "add VF_REQUIRE_APP_RESTART to r_FullscreenWindow",
+      "offset": 1074509,
+      "expectedHex": "6880010001",
+      "replacementHex": "6880210001"
+    }
+  ]
+}
