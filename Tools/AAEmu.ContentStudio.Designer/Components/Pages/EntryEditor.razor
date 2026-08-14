@@ -20,6 +20,7 @@ else
             <a class="back-link" href="@(_editingPath is null ? "/catalog" : "/manifests")">← Back to @(_editingPath is null ? "Game search" : "My changes")</a>
             <p class="eyebrow">@(_editingPath is not null ? "EDITING A SAVED CHANGE" : _mode is null ? "UNDERSTAND THIS ENTRY" : _mode == RecordChangeMode.Duplicate ? "MAKE A SAFE COPY" : "PLAN A CHANGE")</p>
             <h1>@_record.Name</h1>
+            <p class="entry-reference">Testing ID <code>@_record.Id</code></p>
             <p class="lede">@_record.KindLabel · @_record.Name</p>
         </div>
     </header>

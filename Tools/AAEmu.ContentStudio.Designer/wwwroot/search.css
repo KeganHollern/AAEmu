@@ -538,3 +538,21 @@
         flex-direction: column;
     }
 }
+
+.inspector > h2 {
+    margin-bottom: 4px;
+}
+
+.entry-reference {
+    margin: 0 0 9px;
+    color: var(--muted);
+    font: 700 10px/1.4 var(--mono);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.entry-reference code {
+    color: var(--ink);
+    font-size: 11px;
+    letter-spacing: 0;
+}

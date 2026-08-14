@@ -93,6 +93,7 @@ else
             {
                 <div class="inspector-title"><span class="kind-badge @_selected.Kind">@_selected.KindLabel</span></div>
                 <h2>@_selected.Name</h2>
+                <p class="entry-reference">Testing ID <code>@_selected.Id</code></p>
                 @if (_selected.Kind != "ability" && !string.IsNullOrWhiteSpace(_selected.Context)) { <p class="match-context">@_selected.Context</p> }
 
                 @if (_recipe is not null)
