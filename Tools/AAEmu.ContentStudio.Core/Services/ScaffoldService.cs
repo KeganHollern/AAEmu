@@ -9,6 +9,36 @@ public sealed class ScaffoldService
     private readonly IdRegistryService _ids = new();
     private readonly CompactCatalogService _catalog = new();
 
+    public RecipeDefinition CreateRecipeDraft(string baselinePath, uint sourceRecipeId)
+    {
+        var graph = _catalog.GetRecipe(baselinePath, sourceRecipeId)
+            ?? throw new ContentStudioException($"Source recipe {sourceRecipeId} does not exist.");
+        var recipe = ReadRecipeTemplate(baselinePath, sourceRecipeId);
+        recipe.Names = new Dictionary<string, string> { ["en_us"] = $"Custom {graph.Name}" };
+        if (!string.IsNullOrWhiteSpace(graph.Description))
+        {
+            recipe.Descriptions["en_us"] = graph.Description;
+        }
+        recipe.CraftPackIds = graph.CraftPackIds.ToArray();
+        recipe.Materials = graph.Materials.Select(material => new RecipeMaterialDefinition
+        {
+            ItemId = material.ItemId,
+            Amount = material.Amount,
+            MainGrade = material.MainGrade,
+            RequiredGrade = material.RequiredGrade
+        }).ToList();
+        recipe.Products = graph.Products.Select(product => new RecipeProductDefinition
+        {
+            ItemId = product.ItemId,
+            Amount = product.Amount,
+            Rate = product.Rate,
+            ShowLowerCrafts = product.ShowLowerCrafts,
+            UseGrade = product.UseGrade,
+            ItemGradeId = product.ItemGradeId
+        }).ToList();
+        return recipe;
+    }
+
     public ScaffoldResult CreateRecipe(RecipeScaffoldRequest request)
     {
         var key = NormalizeKey(request.Key, "recipe");
@@ -23,13 +53,20 @@ public sealed class ScaffoldService
             return allocation;
         }
 
-        var recipe = ReadRecipeTemplate(request.BaselinePath, request.SourceRecipeId);
+        var recipe = request.Draft ?? CreateRecipeDraft(request.BaselinePath, request.SourceRecipeId);
         recipe.Key = key;
         recipe.Id = Allocate("crafts", "row").Id;
-        recipe.Names = new Dictionary<string, string> { ["en_us"] = string.IsNullOrWhiteSpace(request.Name) ? $"Custom {graph.Name}" : request.Name };
-        recipe.Descriptions = [];
-        recipe.CraftPackIds = request.CraftPackIds ?? [];
-        recipe.Materials = graph.Materials.Select((material, index) => new RecipeMaterialDefinition
+        if (request.Draft is null)
+        {
+            recipe.Names["en_us"] = string.IsNullOrWhiteSpace(request.Name) ? $"Custom {graph.Name}" : request.Name;
+            recipe.CraftPackIds = request.CraftPackIds ?? [];
+        }
+        else if (string.IsNullOrWhiteSpace(recipe.Names.GetValueOrDefault("en_us")))
+        {
+            recipe.Names["en_us"] = string.IsNullOrWhiteSpace(request.Name) ? $"Custom {graph.Name}" : request.Name;
+        }
+        recipe.RowIds = new RecipeRowIds();
+        recipe.Materials = recipe.Materials.Select((material, index) => new RecipeMaterialDefinition
         {
             Id = Allocate("craft_materials", $"material:{index}").Id,
             ItemId = material.ItemId,
@@ -37,37 +74,48 @@ public sealed class ScaffoldService
             MainGrade = material.MainGrade,
             RequiredGrade = material.RequiredGrade
         }).ToList();
-        recipe.Products = graph.Products.Select((product, index) => new RecipeProductDefinition
+        recipe.Products = recipe.Products.Select((product, index) => new RecipeProductDefinition
         {
             Id = Allocate("craft_products", $"product:{index}").Id,
             ItemId = product.ItemId,
             Amount = product.Amount,
             Rate = product.Rate,
+            ShowLowerCrafts = product.ShowLowerCrafts,
             UseGrade = product.UseGrade,
             ItemGradeId = product.ItemGradeId
         }).ToList();
         recipe.RowIds.Localization["title"] = Allocate("localized_texts", "title").Id;
+        if (recipe.Descriptions.Count > 0)
+        {
+            recipe.RowIds.Localization["desc"] = Allocate("localized_texts", "desc").Id;
+        }
         recipe.RowIds.CraftPackLinks = recipe.CraftPackIds.Select((_, index) => Allocate("craft_pack_crafts", $"pack-link:{index}").Id).ToArray();
 
         if (request.CloneSkill)
         {
+            var requestedSkill = recipe.SkillClone;
             var effectIds = ReadIds(request.BaselinePath, "SELECT id FROM skill_effects WHERE skill_id = @id ORDER BY id;", graph.SkillId);
             recipe.SkillClone = new SkillCloneDefinition
             {
                 SourceId = graph.SkillId,
                 Id = Allocate("skills", "skill").Id,
-                LaborCost = graph.LaborCost,
-                CastingTime = graph.CastingTime,
+                LaborCost = requestedSkill?.LaborCost ?? graph.LaborCost,
+                CastingTime = requestedSkill?.CastingTime ?? graph.CastingTime,
                 SkillEffectRowIds = effectIds.Select((_, index) => Allocate("skill_effects", $"skill-effect:{index}").Id).ToArray()
             };
             recipe.SkillId = recipe.SkillClone.Id;
+        }
+        else
+        {
+            recipe.SkillClone = null;
+            recipe.SkillId = graph.SkillId;
         }
 
         var directory = Path.Combine(project.ProjectDirectory, "recipes");
         var path = Path.Combine(directory, SanitizeFileName(key) + ".json");
         if (File.Exists(path))
         {
-            throw new ContentStudioException($"Recipe file already exists: {path}");
+            throw new ContentStudioException("This recipe copy conflicts with another saved recipe. Choose a different name and try again.");
         }
         if (!request.DryRun)
         {
@@ -98,10 +146,11 @@ public sealed class ScaffoldService
             Id = Allocate("doodad_almighties", "row").Id,
             SourceDoodadId = request.SourceDoodadId,
             Names = new Dictionary<string, string> { ["en_us"] = string.IsNullOrWhiteSpace(request.Name) ? $"Custom {graph.Name}" : request.Name },
+            ModelOverride = string.IsNullOrWhiteSpace(request.ModelOverride) ? null : request.ModelOverride.Trim(),
             CraftPack = new WorkbenchCraftPackDefinition
             {
                 Id = Allocate("craft_packs", "craft-pack").Id,
-                Name = $"custom_{key.Replace('.', '_')}"
+                Name = string.IsNullOrWhiteSpace(request.CraftPackName) ? $"custom_{key.Replace('.', '_')}" : request.CraftPackName.Trim()
             },
             RecipeIds = request.RecipeIds,
             RowIds = new WorkbenchRowIds()
@@ -132,7 +181,7 @@ public sealed class ScaffoldService
         var path = Path.Combine(directory, SanitizeFileName(key) + ".json");
         if (File.Exists(path))
         {
-            throw new ContentStudioException($"Workbench file already exists: {path}");
+            throw new ContentStudioException("This workbench copy conflicts with another saved workbench. Choose a different name and try again.");
         }
         if (!request.DryRun)
         {
@@ -169,7 +218,7 @@ public sealed class ScaffoldService
     {
         using var connection = CompactConnectionFactory.OpenReadOnly(compactPath);
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT cast_delay, skill_id, wi_id, req_doodad_id, ac_id, actability_limit, recommend_level, visible_order FROM crafts WHERE id = @id;";
+        command.CommandText = "SELECT cast_delay, skill_id, wi_id, req_doodad_id, ac_id, actability_limit, recommend_level, visible_order, need_bind, show_upper_crafts FROM crafts WHERE id = @id;";
         command.Parameters.AddWithValue("@id", id);
         using var reader = command.ExecuteReader();
         if (!reader.Read())
@@ -185,7 +234,25 @@ public sealed class ScaffoldService
             ActabilityCategoryId = Convert.ToUInt32(reader.GetInt64(4)),
             ActabilityLimit = reader.GetInt32(5),
             RecommendLevel = reader.GetInt32(6),
-            VisibleOrder = reader.GetInt32(7)
+            VisibleOrder = reader.GetInt32(7),
+            NeedBind = ReadBoolean(reader, 8),
+            ShowUpperCrafts = ReadBoolean(reader, 9)
+        };
+    }
+
+    private static bool ReadBoolean(SqliteDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal))
+        {
+            return false;
+        }
+        var value = reader.GetValue(ordinal);
+        return value switch
+        {
+            bool boolean => boolean,
+            long number => number != 0,
+            string text => text.Equals("t", StringComparison.OrdinalIgnoreCase) || text == "1",
+            _ => Convert.ToBoolean(value)
         };
     }
 

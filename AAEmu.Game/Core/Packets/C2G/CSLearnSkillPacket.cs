@@ -9,6 +9,6 @@ public class CSLearnSkillPacket() : GamePacket(CSOffsets.CSLearnSkillPacket, 1)
     {
         var skillId = stream.ReadUInt32();
 
-        Connection.ActiveChar.Skills.AddSkill(skillId);
+        Connection.ActiveChar.Skills.LearnSkill(skillId);
     }
 }

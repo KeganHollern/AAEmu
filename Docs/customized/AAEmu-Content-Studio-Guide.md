@@ -2,7 +2,7 @@
 
 - Audience: content designers, server operators, developers, and automation agents
 - Target: ArcheAge 1.2.4.13 (`r208022`)
-- Status: implemented initial release
+- Status: implemented beginner-first release
 - Last updated: August 13, 2026
 
 ## What this adds
@@ -11,14 +11,19 @@ AAEmu Content Studio turns custom compact-database work into a repeatable conten
 
 - A local visual designer at `http://127.0.0.1:5188`.
 - A scriptable `aaemu-content` command-line tool.
-- Unified game search across localized names, descriptions, IDs, and related recipe/workbench graphs.
-- Stable custom ID allocation with tombstone support.
+- Plain-language game search across names, descriptions, abilities, and related content.
+- Ability/skillset browsing with every skill in the selected ability.
+- A complete entry viewer that exposes every main-record field, localization, and supported connected row.
+- Guided **Change this entry** and **Make a new copy** actions that save reviewable plans instead of editing the database immediately.
+- Automatic internal identity allocation with tombstone support; designers never need to see or enter database IDs.
 - Guided recipe and complete workbench-graph cloning.
 - Human-readable JSON manifests as the source of truth.
+- Sparse modification manifests that store only values which differ from the pristine baseline.
+- Read-only artifact assertions for release-wide requirements such as level progressions and complete skill chains.
 - Baseline hash and schema verification.
 - Transactional database compilation.
 - SQLite integrity and AAEmu relationship validation.
-- Entity change reports, build manifests, verification SQL, and database diffs.
+- Entity and field change reports, build manifests, verification SQL, and cell-level database diffs.
 - Backup-first deployment and explicit rollback.
 - Server-side crafting checks for recipe IDs, counts, workbench identity, craft-pack membership, range, skills, and material revalidation.
 
@@ -43,9 +48,9 @@ It is not the same database as AAEmu's MySQL databases:
 | `aaemu_game` MySQL | Characters, inventories, housing, mail, and other live state | Read/write |
 | `aaemu_login` MySQL | Accounts, bans, and login state | Read/write |
 
-The r208022 compact has 635 tables but no primary keys, foreign keys, views, triggers, or useful relational enforcement. An `id` column therefore looks like a key but SQLite does not protect it. Content Studio supplies the missing checks.
+The pristine r208022 client compact has 635 tables but no primary keys, foreign keys, views, triggers, or useful relational enforcement. An `id` column therefore looks like a key but SQLite does not protect it. Content Studio supplies the missing checks.
 
-The server and client must receive the same compiled compact artifact. A server-only recipe can be authoritative but will not display correctly in the unmodified client. Existing client assets can be reused; adding a completely new model, icon, or item asset still requires client asset work beyond the compact database.
+The server and client need matching content changes, but they do not use interchangeable database files. AAEmu's server compact contains additional runtime-only tables. Build each artifact from its own approved baseline, preserve target-only data, and verify that both artifacts express the same shared rows. Content Studio refuses to replace a target whose schema differs from the artifact. Existing client assets can be reused; adding a completely new model, icon, or item asset still requires client asset work beyond the compact database.
 
 ## Why a workbench is a graph
 
@@ -77,6 +82,8 @@ Content/
   projects/custom/
     project.json                      Project entry point
     id-registry.json                  Stable ID ownership
+    records/*.json                    General entry change/copy plans
+    assertions/*.json                 Read-only artifact requirements
     recipes/*.json                    Recipe source manifests
     workbenches/*.json                Workbench source manifests
     raw-sql/*.sql                     Expert-only escape hatch
@@ -95,6 +102,22 @@ Tools/
 ```
 
 Never commit compact databases, client assets, `.content-studio/`, or `Content/content-studio.json`.
+
+## Shared designer and agent workflow
+
+The files under `Content/projects/custom/` are the single source of truth for both the GUI and automation agents. The GUI does not keep a separate private database or browser-only draft. This makes handoff work in both directions:
+
+1. A designer saves a change in the guided GUI. The Studio writes the corresponding recipe, workbench, or record plan atomically under `Content/projects/custom/`.
+2. An agent reads and modifies that same plan, preferably through the Content Studio Core services or CLI so schema validation and identity ownership remain intact.
+3. **My changes** watches the project directory and refreshes automatically when an agent creates, changes, renames, or deletes a plan.
+4. If an agent updates a plan while a designer already has it open, the editor shows **Newer shared work is available** and offers to load it.
+5. Every guided save checks the version originally opened. If the file changed in the meantime, Content Studio refuses to overwrite the newer work and asks the designer to reload.
+
+Agents should treat display names as the collaboration language and internal numeric values as serialization details. Do not ask a designer for an ID. Resolve the entry by name and surrounding context, preserve its stable `key`, and use the existing identity registry for any new internal rows. Write complete JSON through an atomic replace; do not leave half-written project files for the watcher to read.
+
+Designers work only with display names, named enum choices, and contextual descriptions. Search results, relationship pickers, My Changes cards, and guided forms intentionally do not display database IDs. When a legacy relationship cannot yet be mapped to a verified name catalog, the GUI preserves it as **Kept from the source** instead of presenting a numeric input.
+
+This is also the repository's only Content Studio project. Feature areas such as levels 51–55, skill-tree enablement, gear balance, recipes, and workbenches are grouped by namespaced plan filenames inside `Content/projects/custom/`; they do not receive separate feature projects. A build represents the complete intended change set for one compatible baseline. Client and server publication requires separate target-compatible artifacts, never copying one compact across their different schemas.
 
 ## One-time setup
 
@@ -135,12 +158,12 @@ Then open [http://127.0.0.1:5188](http://127.0.0.1:5188). The designer binds onl
 
 The main screens are:
 
-- **Overview:** active configuration, project counts, and baseline/project preflight.
-- **Game search:** plain-language discovery across items, recipes, workbenches, NPCs, skills, buffs, quests, achievements, titles, and world content.
-- **Recipe maker:** clone a known-good recipe and optionally its skill/effects.
-- **Workbench maker:** clone a full workbench graph and attach custom recipes.
-- **Manifest editor:** validate and save the generated JSON source.
-- **Build & deploy:** compile, inspect changes, and deploy with backups.
+- **Overview:** a three-step Search, Change, Build introduction and current project status.
+- **Game search:** plain-language discovery across abilities/skillsets, items, recipes, workbenches, NPCs, skills, buffs, quests, achievements, titles, and world content.
+- **Recipe maker:** find a known-good recipe by name, clone it, and edit every supported recipe setting before saving.
+- **Workbench maker:** find a crafting workbench by name, clone its full behavior graph, and attach recipes through a name-based picker.
+- **My changes:** friendly cards for every saved change made by either a designer or an agent, refreshed automatically when project files change.
+- **Review & publish:** run safety checks, review the exact changes, and publish to the client or server with an automatic restore copy.
 
 If the first button click occurs while the interactive connection is still starting, wait a second and click again. The host log should show `Now listening on: http://127.0.0.1:5188`.
 
@@ -150,14 +173,18 @@ The safest approach is to clone the nearest known-good recipe and then change on
 
 In the designer:
 
-1. Open **Game search**, enter an ordinary name or concept, and inspect candidate recipe IDs.
-2. Open **Recipe maker**.
-3. Enter the source recipe ID.
-4. Use a stable key such as `recipe.moonlit-tonic`.
-5. Give it an English name.
-6. Enable skill cloning if labor or cast time will change.
-7. Create the manifest.
-8. Open **Manifest editor** and change material item IDs/amounts, product IDs/amounts, labor cost, casting time, actability requirements, or localization.
+1. Open **Recipe maker**.
+2. Type part of the existing recipe's ordinary in-game name and select the correct result.
+3. Review the complete editable copy that appears below the source search.
+4. Give it a clear English name. Content Studio creates the stable project key automatically.
+5. Add, remove, or rebalance ingredients and products. Type an ordinary item name in each item box and choose from the matching dropdown.
+6. Change workbench, crafting time, proficiency, level, grade, visibility, and advanced behavior only as needed.
+7. Enable independent labor and casting time when the custom recipe should clone its crafting skill.
+8. Save the custom recipe, then use **My changes** for later edits and review.
+
+Choosing a crafting workbench is one atomic operation in the Recipe Maker. The Studio updates both the recipe's workbench requirement and the craft-pack membership that controls which station menu lists it. A build is rejected if those connections disagree, including when an agent edits the recipe plan directly. This prevents a recipe labeled for one workbench from remaining visible at the source recipe's station.
+
+The same source recipe can be copied any number of times. Content Studio automatically proposes distinct names such as **Custom Lumber**, **Custom Lumber 2**, and **Custom Lumber 3**, while keeping the protected storage names unique as well. Workbench copies follow the same rule.
 
 CLI equivalent:
 
@@ -192,10 +219,11 @@ All material and product item IDs must already exist in the client baseline unle
 In the designer:
 
 1. Open **Workbench maker**.
-2. Enter a source doodad known to open the correct crafting UI. The included example uses `6387`.
-3. Use a stable key such as `workbench.moonlit-alchemy-bench`.
-4. Add the custom recipe IDs.
-5. Create the workbench manifest.
+2. Search for an existing crafting object by its in-game name and select it. The search only returns objects with crafting behavior.
+3. Review the copied name and safe model choice. Content Studio creates the internal project key automatically.
+4. Search for recipes by name. Both baseline recipes and recipes already saved in **My changes** can be attached.
+5. Review the complete scrollable attached-recipe list and remove anything that does not belong.
+6. Save the workbench manifest.
 
 CLI equivalent:
 
@@ -286,15 +314,109 @@ Successful CLI reads emit JSON. Validation commands use exit code `0` for pass a
 
 ### How Game search works
 
-You do not need to know a table name, exact spelling, or entity type before searching. Enter a full name, part of a name, a descriptive word such as `alchemy`, or an exact numeric ID. Search reads every localized table/field pair in the compact database, ranks the most useful matches, and groups them into approachable types. Small spelling mistakes are recovered automatically; for example, `archemu` still finds Archeum content.
+You do not need to know a table name, numeric identity, exact spelling, or entity type before searching. Enter a full name, part of a name, or a descriptive word such as `alchemy`. Search reads every localized table/field pair in the compact database, ranks the most useful matches, and groups them into approachable types. Small spelling mistakes are recovered automatically; for example, `archemu` still finds Archeum content.
 
-Selecting a result opens a contextual inspector. Items show recipes that consume or produce them, recipes show materials, products, labor, casting time, and compatible workbenches, and workbenches show their function graph and available recipes. These relationships also appear directly in the results, so searching for an ingredient can lead to a recipe and then to the workbench that offers it. Use the type pills to narrow a broad result set. Exact numeric searches stay exact to avoid unrelated descriptions that merely contain the same digits.
+Selecting a result opens a contextual inspector. Items load a dedicated scrollable list containing **every recipe that directly consumes the selected item**; this list is independent of the general search-result limit. Recipes show materials, products, labor, casting time, and compatible workbenches, while workbenches show their function graph and available recipes. These relationships also appear directly in the general results for discovery, but the selected item's direct-recipe list is authoritative and complete. Use the type pills to narrow a broad result set. Exact numeric searches stay exact to avoid unrelated descriptions that merely contain the same digits.
 
-The **Advanced schema search** section remains available at the bottom of the page when a developer needs raw table names, columns, and row counts.
+Equipment items also load an **Equipment stats** panel. It follows the item into its weapon, armor, or accessory template and shows item level, required level, equipment type, primary-stat allocation, grading/enchanting/repair flags, directly linked buffs or procs, and the complete equipment set. Set panels list every member and every piece threshold, with links to the underlying buff or proc data. Final numeric combat values can vary by grade and tempering, so the panel distinguishes the stable template allocation from values calculated on a particular in-game item instance.
 
-## Deploy to server and client
+### Edit one gear item or rebalance a whole gear category
 
-Stop AAEmu.Game and close the ArcheAge client before replacing either database.
+Open any weapon, armor piece, or accessory and choose **Change this entry**. The dedicated **Gear power & balance** step separates the controls by scope:
+
+- **Overall power and requirements** changes only the selected item. Item power drives its calculated attributes, damage, or defense; required level only controls who can equip it.
+- **Primary attributes** shows the item's Strength, Agility, Stamina, Intelligence, and Spirit proportions. Turn on **Give this item its own primary-stat mix** to copy the shared profile to a safe custom ID and relink only this item. This prevents an apparently small edit from silently changing hundreds of other items.
+- **Item-specific template** exposes the selected weapon, armor, or accessory row, including enchanting, repair, durability, type, slot, equipment-set, proc, and recharge-buff settings.
+- **Shared balance** identifies every broader rule that includes the item and states approximately how many items it affects.
+
+Use **Gear balance** in the main navigation when the intended change is broad. Its sections deliberately expose the game's reusable balance layers:
+
+| Scope | What it controls |
+| --- | --- |
+| Global gear constants | Primary-stat and durability scaling for every equipment item |
+| Item grade | Quality multipliers for damage, defense, attributes, durability, enchanting, and refunds |
+| Weapon type | Shared attack speed, range, damage/healing formulas, durability, and stat scaling |
+| Armor class | Physical-defense, magic-defense, damage-type, and durability ratios |
+| Equipment slot | The share of total stats, defense, and durability assigned to each body slot |
+| Armor formula | Server-wide level-and-grade defense curves |
+
+Each shared rule shows its blast radius before offering **Plan broad change**. The rule then opens in the same friendly, fully explained editor as every other entry, and the saved plan remains visible and editable in **My changes**. This makes changes such as “increase every scepter,” “reduce all plate defense,” or “flatten the gap between quality grades” explicit instead of requiring hand-edited SQL.
+
+The final values players see are composed at runtime from the item's power level, its primary-stat proportions, grade multipliers, its weapon type or armor class, its equipment-slot coverage, and global constants. Build target-compatible artifacts after saving; restart the server and client so both load the matching intended changes from their respective compact schemas.
+
+Raw schema inspection remains available through the command-line tooling for agents and developers, outside the designer workflow.
+
+### Abilities and skills
+
+In ArcheAge, an **ability** is a skillset such as Battlerage, Sorcery, or Vitalism. It is not a single attack. Content Studio translates the compact database's numeric `ability_id` values into those familiar names, so a designer can search for `abilities`, `skillsets`, `Battlerage`, or the name of an individual skill.
+
+Selecting an ability opens a simple ability page. It shows the skills players normally see first and also provides an **All skill rows** view so hidden, passive, and supporting records are not silently omitted. Select any skill to open its complete entry.
+
+### View, change, or copy an entry
+
+Every normal search result has **View all data · change · copy**. The entry page is arranged for people who have never used a game database:
+
+1. **What this page does** explains whether the page is read-only, changing the existing entry, or creating a new entry.
+2. **Player-facing text** shows translated names and descriptions without database terminology.
+3. **Important fields** puts commonly changed values first and explains what each value controls.
+4. **What happens when used** follows a skill through its generic effect into the actual damage, healing, movement, or buff entry. Buff cards summarize application chance, level ranges, shield capacity, duration, stacks, and known character-stat changes.
+5. **Connected rules** shows rows that belong to the entry. Skills include effect links, reagents, products, tags, tooltip effects, and use requirements. Buffs include attribute modifiers, dynamic modifiers, repeated effects, and tags when present.
+
+Whenever a field points to another entry—such as an item, skill, buff, workbench, equipment set, recipe group, or proficiency—the editor presents a searchable name picker. The selected card shows the display name and a useful description, and links to the connected entry. Dropdowns search both the baseline and custom entries already saved in **My changes**. Enum-like values such as target type, relationship, damage type, character attribute, and item quality use named choices. Internal relationships without a verified name catalog are preserved safely instead of exposing a numeric box.
+6. **More settings** keeps less-common behavior available in the same guided format without exposing the raw storage layout.
+
+The two change choices have deliberately different safety rules:
+
+| Choice | Result |
+| --- | --- |
+| **Change this entry** | Changes the selected existing content in the built custom database. Use it when that content should behave differently everywhere. |
+| **Make a new copy** | Creates a safely separate entry and preserves the original. Use it for new content based on an existing entry. |
+
+Saving does not edit `compact.sqlite3`. It creates a reviewable plan under `Content/projects/custom/records/`. Open **My changes** to see the friendly summary, then use **Build & deploy** to validate and compile it. The untouched baseline remains the input to every build.
+
+When a skill is copied, Content Studio also copies the directly owned connected rows listed on its entry page and allocates safe IDs for them. References to existing effects, icons, models, animations, and other client assets remain linked to their existing IDs. This avoids accidentally duplicating shared game systems and does not create missing client assets.
+
+Recipes and workbenches offer their purpose-built makers in addition to the complete data view. Prefer those makers when changing crafting behavior because they understand and validate the full recipe/workbench graph.
+
+### Edit something already in My changes
+
+Every editable card in **My changes** has **Open and edit**. The card describes the meaningful differences from the original instead of counting every preserved storage field.
+
+- Saved skills, buffs, items, NPCs, and other normal entries reopen in their semantic entry editor with the saved values already applied.
+- Saved recipes reopen with separate sections for player text, crafting rules, ingredients, products, labor, and timing.
+- Saved workbenches reopen with sections for name/appearance and attached recipes; their reserved function-graph IDs remain protected.
+- Internal JSON remains an agent/developer implementation detail and is not exposed in the designer GUI.
+
+Updating a saved change preserves its key, internal identity, translations, and connected rows. It does not create a second plan.
+
+### Delete something from My changes
+
+Choose **Delete this change** on its card and review the confirmation before proceeding. Content Studio explains affected links before enabling permanent deletion:
+
+- Deleting a recipe removes it from any saved custom workbench that offers it.
+- Deleting a workbench keeps its saved recipes but changes them to require no workbench, ready for reassignment.
+- Deleting a change to an existing entry restores the untouched baseline behavior on the next build.
+- Deleting a custom copy permanently retires every ID allocated to it. Tombstoned IDs are never reused.
+- Deleting a generic custom copy is blocked while another saved change still references it; the confirmation names the dependency to fix first.
+
+Deletion removes the saved plan, not the already deployed database. Run **Build & deploy** again when the deployed game should stop using that change.
+
+### Example: change Insulating Lens strength
+
+Search for **Insulating Lens**, open the skill, and look under **What happens when used**. Each rank shows its exact buff, level range, shield capacity, physical-defense bonus, and stealth-detection bonus. Choose **Change its gameplay values** for the rank you want to adjust.
+
+The buff editor puts these controls near the top:
+
+- **Initial minimum/maximum charge:** shield damage capacity.
+- **Duration / level duration:** fixed lifetime when the buff uses one.
+- **Maximum stacks:** how many copies may coexist.
+- **Attribute changes:** plainly labeled rows such as `Physical defense +700` and `Stealth detection range +50`; expand a row to change its value or choose flat amount versus percentage.
+
+The skill and its buff are separate game entries. Save each intended change as its own clearly named plan so **My changes** can show exactly what will be altered.
+
+## Deploy a target-compatible artifact
+
+Stop the process that owns the target before replacing its database. The checked-in r208022 baseline descriptor is for the client compact. Do not use that artifact as the AAEmu server compact; the server has additional runtime-only tables. A server deployment remains gated until the same plans can be compiled against and validated on the server-superset baseline.
 
 First preview deployment:
 
@@ -302,32 +424,29 @@ First preview deployment:
 dotnet run --project Tools/AAEmu.ContentStudio.Cli -- `
   deploy --config Content/content-studio.json `
   --artifact .content-studio/build/compact.custom.sqlite3 `
-  --target server --dry-run
+  --sha256 <artifactSha256-from-content-build-manifest> `
+  --target client --dry-run
 ```
 
-Deploy the exact same artifact to both targets:
+Deploy only to the compatible configured target:
 
 ```powershell
 dotnet run --project Tools/AAEmu.ContentStudio.Cli -- `
   deploy --config Content/content-studio.json `
   --artifact .content-studio/build/compact.custom.sqlite3 `
-  --target server
-
-dotnet run --project Tools/AAEmu.ContentStudio.Cli -- `
-  deploy --config Content/content-studio.json `
-  --artifact .content-studio/build/compact.custom.sqlite3 `
+  --sha256 <artifactSha256-from-content-build-manifest> `
   --target client
 ```
 
 Deployment performs these steps:
 
-1. Integrity-check the artifact.
-2. Integrity-check the existing target when present.
-3. Copy the existing target to a timestamped backup.
-4. Stage the new database next to the target.
-5. Compare the staged SHA-256 with the artifact.
+1. Stage the artifact and verify it still matches the reviewed build SHA-256.
+2. Integrity-check the immutable staged artifact.
+3. Integrity-check the existing target when present.
+4. Verify that the staged artifact and target schemas match exactly.
+5. Copy the existing target to a timestamped backup.
 6. Atomically replace the target.
-7. Integrity-check the deployed target.
+7. Integrity-check the deployed target and verify its reviewed SHA-256.
 8. Write a deployment manifest.
 
 Rollback uses the exact backup path printed in the deployment manifest:
@@ -341,15 +460,13 @@ dotnet run --project Tools/AAEmu.ContentStudio.Cli -- `
 
 ## Test in game
 
-1. Confirm both server and client received the same artifact hash.
-2. Start Login and Game. Craft and doodad managers load the new rows at startup, so a server restart is required after deployment.
+1. Confirm the separately built server and client artifacts contain the same intended shared-row changes while retaining their target-specific schemas.
+2. Start Login and Game. Craft and doodad managers load new server rows at startup, so a server restart is required after deployment.
 3. Log in with a GM-capable character.
-4. Spawn the example with `/doodad spawn 9200000`.
-5. Approach the workbench and open it.
-6. Confirm recipe `9100000` appears with the expected name, materials, product, labor, and cast time.
-7. Craft one item and verify material consumption and result creation.
-8. Move farther than five meters and confirm a forged or stale craft request is rejected.
-9. Confirm another workbench cannot execute the custom recipe.
+4. Exercise each named change from the reviewed build manifest; the canonical project intentionally contains no production test recipe or test workbench.
+5. For a reviewed recipe, confirm its expected workbench, materials, products, labor, and cast time, then craft one result.
+6. Move farther than five meters and confirm a forged or stale craft request is rejected.
+7. Confirm an unrelated workbench cannot execute the recipe.
 
 The server now rejects:
 
@@ -405,7 +522,7 @@ Scripts\StartContentStudio.ps1 -Url http://127.0.0.1:5190
 
 ### The recipe does not appear
 
-Inspect both graphs in the built artifact. The recipe must point to the custom `requiredDoodadId`, and `craft_pack_crafts` must connect the workbench's custom pack to the recipe. Confirm the client received the same artifact and was fully closed during replacement.
+Inspect both graphs in each target-compatible artifact. The recipe must point to the custom `requiredDoodadId`, and `craft_pack_crafts` must connect the workbench's custom pack to the recipe. Confirm the client received its compatible artifact and was fully closed during replacement.
 
 ### The workbench appears but has the wrong visual
 
@@ -415,6 +532,10 @@ The clone reuses the source doodad's client model and phase models. Set `modelOv
 
 Do not change the database directly. Find the conflicting key in `id-registry.json`, choose the appropriate table-specific custom range, and scaffold again. Preserve already released IDs as tombstones.
 
+### A numeric field reports `--- :null` or “must be a whole number”
+
+Some r208022 rows use the legacy text marker `--- :null` for an empty numeric value. Content Studio normalizes that marker to **Leave empty / use the game default** in the GUI and to a real null during compilation. Existing saved plans containing the marker are also accepted; designers should never type or repair it manually.
+
 ### A deployment fails
 
 The target may be open by AAEmu.Game or the ArcheAge client. Close the process and retry. The deployment stages and verifies before replacement; a failed attempt does not intentionally modify the pristine baseline.
@@ -423,8 +544,8 @@ The target may be open by AAEmu.Game or the ArcheAge client. Close the process a
 
 - Baseline SHA-256 and all 635 tables verified against the actual r208022 compact.
 - The local designer compiled and rendered successfully.
-- Interactive designer preflight, unified name/ID search, typo recovery, relationship discovery, and editor handoff exercised against the real baseline.
-- Six synthetic end-to-end compiler and search tests passed.
+- Interactive designer preflight, ability browsing, saved-plan editing, skill-to-buff tracing, semantic buff/recipe/workbench forms, legacy-null handling, typo recovery, relationship discovery, and My Changes review exercised against the real baseline.
+- Twenty-one automated compiler, search, friendly-reference, repeated-copy naming, and shared-edit safety tests passed.
 - AAEmu.Game compiled with the craft request hardening.
 - The included custom recipe/workbench graph compiled from the real 126 MB baseline.
 - SQLite integrity and semantic graph validation passed.

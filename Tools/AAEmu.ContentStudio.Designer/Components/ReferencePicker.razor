@@ -1,0 +1,130 @@
+@inject DesignerWorkspace Workspace
+
+<div class="item-reference-picker @(Disabled ? "read-only" : null)">
+    @if (!Disabled)
+    {
+        <div class="item-picker-input">
+            <input role="combobox" aria-label="@AriaLabel" aria-autocomplete="list" aria-expanded="@_showMatches"
+                   aria-controls="@_listId" autocomplete="off" value="@_searchText" @onfocus="ShowCurrentMatches"
+                   @oninput="SearchChanged" @onkeydown="HandleKey" placeholder="@Placeholder" />
+            @if (_busy) { <span class="item-picker-status">Searching...</span> }
+        </div>
+    }
+
+    @if (_selected is not null)
+    {
+        <div class="item-picker-selected">
+            <span class="selected-check">&#10003;</span>
+            <span><small>@(_selected.IsCustom ? "FROM MY CHANGES" : $"SELECTED {FriendlyType.ToUpperInvariant()}")</small><strong>@_selected.Name</strong><em>@_selected.Context</em></span>
+            <a href="@($"/entry?table={Uri.EscapeDataString(Table)}&id={_selected.Value}")">Open details</a>
+        </div>
+    }
+    else if (Disabled)
+    {
+        <div class="item-picker-selected empty"><span>@EmptyLabel</span></div>
+    }
+
+    @if (_showMatches && !Disabled)
+    {
+        <div class="item-picker-results" id="@_listId" role="listbox" aria-label="Matching choices">
+            @if (_matches.Count == 0 && !_busy)
+            {
+                <p class="item-picker-empty">No matching choices. Try fewer words or another familiar name.</p>
+            }
+            else
+            {
+                @foreach (var option in _matches)
+                {
+                    <button type="button" role="option" aria-selected="@(option.Value == Value)" class="item-picker-option @(option.Value == HighlightedValue ? "is-highlighted" : null)" @onmouseenter="() => Highlight(option)" @onclick="() => Select(option)">
+                        <span><strong>@option.Name</strong><small>@option.Context</small></span>
+                        <span class="result-action">Choose</span>
+                    </button>
+                }
+            }
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_error)) { <p class="item-picker-error">@_error</p> }
+</div>
+
+@code {
+    private readonly string _listId = $"reference-options-{Guid.NewGuid():N}";
+    private List<DesignerReferenceOption> _matches = [];
+    private DesignerReferenceOption? _selected;
+    private string _searchText = string.Empty;
+    private string? _error;
+    private uint _loadedValue = uint.MaxValue;
+    private int _searchRevision;
+    private int _highlightedIndex;
+    private bool _busy;
+    private bool _showMatches;
+
+    [Parameter, EditorRequired] public string Table { get; set; } = string.Empty;
+    [Parameter] public uint Value { get; set; }
+    [Parameter] public EventCallback<uint> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string AriaLabel { get; set; } = "Find a linked entry";
+    [Parameter] public string Placeholder { get; set; } = "Type a name you recognize...";
+    [Parameter] public string EmptyLabel { get; set; } = "No linked entry";
+
+    private string FriendlyType => CatalogRecordService.FriendlyTableName(Table);
+    private uint HighlightedValue => _matches.Count == 0 ? 0 : _matches[Math.Clamp(_highlightedIndex, 0, _matches.Count - 1)].Value;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedValue == Value) return;
+        _loadedValue = Value;
+        if (Value == 0) { _selected = null; _searchText = string.Empty; return; }
+        try
+        {
+            var configuration = Workspace.LoadConfiguration();
+            _selected = await Task.Run(() => new DesignerReferenceService().Resolve(configuration.BaselinePath, configuration.ProjectPath, Table, Value));
+            _searchText = _selected?.Name ?? string.Empty;
+        }
+        catch (Exception exception) { _error = DesignerMessage.ForUser(exception); }
+    }
+
+    private async Task SearchChanged(ChangeEventArgs args)
+    {
+        _searchText = Convert.ToString(args.Value) ?? string.Empty;
+        _error = null;
+        var revision = ++_searchRevision;
+        if (_searchText.Trim().Length < 2) { _matches.Clear(); _showMatches = false; return; }
+        _busy = true;
+        _showMatches = true;
+        await Task.Delay(180);
+        if (revision != _searchRevision) return;
+        try
+        {
+            var configuration = Workspace.LoadConfiguration();
+            _matches = (await Task.Run(() => new DesignerReferenceService().Search(configuration.BaselinePath, configuration.ProjectPath, Table, _searchText))).ToList();
+            _highlightedIndex = 0;
+        }
+        catch (Exception exception) { _matches.Clear(); _error = DesignerMessage.ForUser(exception); }
+        finally { if (revision == _searchRevision) _busy = false; }
+    }
+
+    private void ShowCurrentMatches() { if (_matches.Count > 0) _showMatches = true; }
+
+    private async Task HandleKey(KeyboardEventArgs args)
+    {
+        if (!_showMatches || _matches.Count == 0) return;
+        if (args.Key == "ArrowDown") _highlightedIndex = Math.Min(_highlightedIndex + 1, _matches.Count - 1);
+        else if (args.Key == "ArrowUp") _highlightedIndex = Math.Max(_highlightedIndex - 1, 0);
+        else if (args.Key == "Enter") await Select(_matches[_highlightedIndex]);
+        else if (args.Key == "Escape") _showMatches = false;
+    }
+
+    private void Highlight(DesignerReferenceOption option) => _highlightedIndex = _matches.IndexOf(option);
+
+    private async Task Select(DesignerReferenceOption option)
+    {
+        _selected = option;
+        _loadedValue = option.Value;
+        _searchText = option.Name;
+        _showMatches = false;
+        _matches.Clear();
+        _error = null;
+        await ValueChanged.InvokeAsync(option.Value);
+    }
+}

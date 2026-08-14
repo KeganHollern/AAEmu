@@ -19,8 +19,22 @@ public class MatePassengerInfo
     public AttachUnitReason _reason;
 }
 
+internal enum MateLifecycleState
+{
+    Created,
+    Spawning,
+    Spawned,
+    SpawnFailed,
+    Removing,
+    Removed
+}
+
 public sealed class Mate : Unit
 {
+    private readonly object _lifecycleLock = new();
+    private MateLifecycleState _lifecycleState = MateLifecycleState.Created;
+    private bool _worldSpawnAttempted;
+
     public override UnitTypeFlag TypeFlag { get => UnitTypeFlag.Mate; }
     public override BaseUnitType BaseUnitType => BaseUnitType.Mate;
     public NpcTemplate Template { get; set; }
@@ -35,6 +49,8 @@ public sealed class Mate : Unit
     public int Experience { get; set; }
     public int Mileage { get; set; }
     public uint SpawnDelayTime { get; set; }
+    public bool IsTemporarySummon { get; set; }
+    public bool DespawnOnCreatorDeath { get; set; }
     public List<uint> Skills { get; set; }
     public MateDb DbInfo { get; set; }
     public Task MateXpUpdateTask { get; set; }
@@ -509,6 +525,74 @@ public sealed class Mate : Unit
         // 2 seats by default
         Passengers.Add(AttachPointKind.Driver, new MatePassengerInfo { _objId = 0, _reason = 0 });
         Passengers.Add(AttachPointKind.Passenger0, new MatePassengerInfo { _objId = 0, _reason = 0 });
+    }
+
+    internal MateLifecycleState LifecycleState
+    {
+        get
+        {
+            lock (_lifecycleLock)
+                return _lifecycleState;
+        }
+    }
+
+    /// <summary>
+    /// Runs the externally visible spawn sequence while excluding removal for this exact mate.
+    /// A removal reserved before this method starts wins and prevents a late spawn with released IDs.
+    /// </summary>
+    internal bool TryRunSpawnLifecycle(Action beforeWorldSpawnAction, Action worldSpawnAction)
+    {
+        lock (_lifecycleLock)
+        {
+            if (_lifecycleState != MateLifecycleState.Created)
+                return false;
+
+            _lifecycleState = MateLifecycleState.Spawning;
+            try
+            {
+                beforeWorldSpawnAction();
+                _worldSpawnAttempted = true;
+                worldSpawnAction();
+                if (_lifecycleState != MateLifecycleState.Spawning)
+                    return false;
+
+                _lifecycleState = MateLifecycleState.Spawned;
+                return true;
+            }
+            catch
+            {
+                if (_lifecycleState != MateLifecycleState.Removed)
+                    _lifecycleState = MateLifecycleState.SpawnFailed;
+                throw;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Runs cleanup once for this exact mate and waits for an in-progress spawn to finish first.
+    /// </summary>
+    internal bool TryRunDespawnLifecycle(Action<bool> despawnAction)
+    {
+        lock (_lifecycleLock)
+        {
+            if (_lifecycleState is MateLifecycleState.Removing or MateLifecycleState.Removed)
+                return false;
+
+            // A packet-send failure happens before the object enters the world and must not
+            // call Delete(). A failure inside Spawn() may have partially registered the object,
+            // so cleanup must attempt Delete() in that case.
+            var shouldDeleteWorldObject = _worldSpawnAttempted;
+            _lifecycleState = MateLifecycleState.Removing;
+            try
+            {
+                despawnAction(shouldDeleteWorldObject);
+                return true;
+            }
+            finally
+            {
+                _lifecycleState = MateLifecycleState.Removed;
+            }
+        }
     }
 
     /// <summary>

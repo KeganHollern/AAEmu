@@ -170,10 +170,12 @@ internal static class ContentStudioCli
         if (options.HasFlag("dry-run"))
         {
             var artifact = Path.GetFullPath(options.Require("artifact"));
-            PrintJson(new { dryRun = true, target = targetName, targetPath = target.Path, artifactPath = artifact, artifactSha256 = FileHashService.CalculateSha256(artifact), willBackup = File.Exists(target.Path) });
+            var expectedHash = options.Require("sha256");
+            var artifactHash = new DeploymentService().ValidateReviewedArtifact(artifact, expectedHash, target);
+            PrintJson(new { dryRun = true, target = targetName, targetPath = target.Path, artifactPath = artifact, artifactSha256 = artifactHash, reviewedSha256 = expectedHash, hashMatchesReviewed = true, willBackup = File.Exists(target.Path) });
             return 0;
         }
-        var manifest = new DeploymentService().Deploy(options.Require("artifact"), targetName, target, configuration.OutputDirectory);
+        var manifest = new DeploymentService().Deploy(options.Require("artifact"), options.Require("sha256"), targetName, target, configuration.OutputDirectory);
         PrintJson(manifest);
         return 0;
     }
@@ -222,7 +224,7 @@ internal static class ContentStudioCli
               validate --config <file>
               build --config <file> [--keep-staging]
               diff --baseline <db> --artifact <db>
-              deploy --config <file> --artifact <db> --target <name> [--dry-run]
+              deploy --config <file> --artifact <db> --sha256 <reviewed-hash> --target <name> [--dry-run]
               rollback --config <file> --target <name> --backup <db> [--dry-run]
 
             Inspect:

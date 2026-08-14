@@ -1,0 +1,8 @@
+{
+    "$schema": "../../../schemas/content-assertion.schema.json",
+    "schemaVersion": 1,
+    "key": "assertion.level55.hidden-gods-whip-stages",
+    "description": "The four internal Gods' Whip follow-up stages remain hidden and cannot be learned directly.",
+    "query": "SELECT COUNT(*) FROM skills WHERE id IN (23646, 23647, 23648, 23649) AND ability_id = 7 AND ability_level = 55 AND show = 'f' AND need_learn = 'f' AND auto_learn = 'f';",
+    "expected": "4"
+}

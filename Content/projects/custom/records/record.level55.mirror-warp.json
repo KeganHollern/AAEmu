@@ -1,0 +1,11 @@
+{
+    "$schema": "../../../schemas/record.schema.json",
+    "schemaVersion": 1,
+    "key": "record.level55.mirror-warp",
+    "displayName": "Mirror Warp",
+    "mode": "modify",
+    "table": "skills",
+    "sourceId": 23934,
+    "id": 23934,
+    "values": { "show": "t" }
+}

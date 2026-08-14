@@ -56,15 +56,14 @@ public class CharacterMates(Character owner)
 
     public void SpawnMount(SkillItem skillData)
     {
-        var despawnedOldPets = false;
-        // Check if we had already spawned something
-        foreach(var oldMate in Owner.ParentWorld.MateManager.GetActiveMates(Owner.Id).ToList())
+        // Persistent mounts toggle independently from temporary skill summons.
+        var oldMate = Owner.ParentWorld.MateManager.GetActiveMates(Owner.Id)
+            .FirstOrDefault(mate => !mate.IsTemporarySummon);
+        if (oldMate is not null)
         {
             DespawnMate(oldMate.TlId);
-            despawnedOldPets = true;
-        }
-        if (despawnedOldPets)
             return;
+        }
 
         var item = Owner.Inventory.GetItemById(skillData.ItemId);
         if (item == null) return;
@@ -130,23 +129,31 @@ public class CharacterMates(Character owner)
 
     public void DespawnMate(uint tlId)
     {
-        var mateInfo = Owner.ParentWorld.MateManager.GetActiveMateByTlId(tlId);
-        if (mateInfo != null)
-        {
-            var mateDbInfo = GetMateInfo(mateInfo.ItemId);
-            if (mateDbInfo != null)
-            {
-                mateDbInfo.Hp = mateInfo.Hp;
-                mateDbInfo.Mp = mateInfo.Mp;
-                mateDbInfo.Level = mateInfo.Level;
-                mateDbInfo.Xp = mateInfo.Experience;
-                mateDbInfo.Mileage = mateInfo.Mileage;
-                mateDbInfo.Name = mateInfo.Name;
-                mateDbInfo.UpdatedAt = DateTime.UtcNow;
-            }
-        }
+        var mateInfo = Owner.ParentWorld.MateManager.GetActiveMateByTlId(Owner.Id, tlId);
+        DespawnMate(mateInfo);
+    }
 
-        Owner.ParentWorld.MateManager.RemoveActiveMateAndDespawn(Owner, tlId);
+    public void DespawnMate(Units.Mate mateInfo)
+    {
+        if (mateInfo is null)
+            return;
+
+        var mateDbInfo = GetMateInfo(mateInfo.ItemId);
+        if (mateDbInfo != null)
+            CopyPersistentMateState(mateDbInfo, mateInfo, DateTime.UtcNow);
+
+        Owner.ParentWorld.MateManager.RemoveActiveMateAndDespawn(Owner, mateInfo);
+    }
+
+    internal static void CopyPersistentMateState(MateDb target, Units.Mate source, DateTime updatedAt)
+    {
+        target.Hp = source.Hp;
+        target.Mp = source.Mp;
+        target.Level = source.Level;
+        target.Xp = source.Experience;
+        target.Mileage = source.Mileage;
+        target.Name = source.Name;
+        target.UpdatedAt = updatedAt;
     }
 
     /// <summary>

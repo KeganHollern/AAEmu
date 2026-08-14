@@ -2,11 +2,13 @@
     "$schema": "../../schemas/content-project.schema.json",
     "schemaVersion": 1,
     "key": "custom",
-    "name": "AAEmu Custom Content",
+    "name": "AAEmu Unified Content",
     "targetBaseline": "r208022",
     "defaultLanguage": "en_us",
     "idRegistry": "id-registry.json",
     "recipes": ["recipes/*.json"],
     "workbenches": ["workbenches/*.json"],
+    "records": ["records/*.json"],
+    "assertions": ["assertions/*.json"],
     "rawSql": ["raw-sql/*.sql"]
 }

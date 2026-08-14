@@ -1,0 +1,104 @@
+@using AAEmu.ContentStudio.Core.Models
+
+@if (!Field.IsIdentity)
+{
+<article class="friendly-field">
+    <div class="field-label"><label>@Field.Label</label>@if (!string.IsNullOrWhiteSpace(Field.Help)){<span title="@Field.Help">?</span>}</div>
+    @if (!Field.IsEditable)
+    {
+        <div class="read-value"><span>@Field.Value</span><small>@(Field.Type.Contains("BLOB", StringComparison.OrdinalIgnoreCase) ? "Binary data is preserved automatically" : "Managed automatically by this guided editor")</small></div>
+    }
+    else if (!string.IsNullOrWhiteSpace(Field.ReferenceTable))
+    {
+        <ReferencePicker Table="@Field.ReferenceTable" Value="@ReferenceValue" ValueChanged="SetReference" Disabled="@(!Editing || Field.IsNull)" AriaLabel="@($"Find a choice for {Field.Label}")" />
+        @if (Editing) { <label class="null-toggle"><input type="checkbox" checked="@Field.IsNull" @onchange="SetNull" /> Leave empty / use the game default</label> }
+    }
+    else if (Field.IsBoolean)
+    {
+        <label class="plain-toggle"><input type="checkbox" checked="@IsTrue(Field.Value)" disabled="@(!Editing)" @onchange="SetBoolean" /><span>@(IsTrue(Field.Value) ? "Yes" : "No")</span></label>
+    }
+    else if (Field.Name.Equals("ability_id", StringComparison.OrdinalIgnoreCase))
+    {
+        <select value="@Field.Value" disabled="@(!Editing || Field.IsNull)" @onchange="args => Field.Value = Convert.ToString(args.Value)">
+            <option value="0">No combat skillset</option>
+            @foreach (var ability in CatalogRecordService.Abilities) { <option value="@ability.Key">@ability.Value.Name</option> }
+        </select>
+        @if (Editing) { <label class="null-toggle"><input type="checkbox" checked="@Field.IsNull" @onchange="SetNull" /> Leave empty</label> }
+    }
+    else if (Field.Name.Equals("unit_modifier_type_id", StringComparison.OrdinalIgnoreCase))
+    {
+        <select value="@Field.Value" disabled="@(!Editing || Field.IsNull)" @onchange="args => Field.Value = Convert.ToString(args.Value)"><option value="0">Flat amount</option><option value="1">Percentage</option></select>
+        @if (Editing) { <label class="null-toggle"><input type="checkbox" checked="@Field.IsNull" @onchange="SetNull" /> Leave empty</label> }
+    }
+    else if (Field.Name.Equals("fixed_grade", StringComparison.OrdinalIgnoreCase))
+    {
+        <select value="@Field.Value" disabled="@(!Editing || Field.IsNull)" @onchange="args => Field.Value = Convert.ToString(args.Value)">
+            <option value="-1">Not forced</option>
+            <option value="1">Crude</option>
+            <option value="0">Basic</option>
+            <option value="2">Grand</option>
+            <option value="3">Rare</option>
+            <option value="4">Arcane</option>
+            <option value="5">Heroic</option>
+            <option value="6">Unique</option>
+            <option value="7">Celestial</option>
+            <option value="8">Divine</option>
+            <option value="9">Epic</option>
+            <option value="10">Legendary</option>
+            <option value="11">Mythic</option>
+        </select>
+        @if (Editing) { <label class="null-toggle"><input type="checkbox" checked="@Field.IsNull" @onchange="SetNull" /> Leave empty / use the game default</label> }
+    }
+    else if (DesignerValueCatalog.TryGet(Field.Name, out var choices))
+    {
+        <select value="@Field.Value" disabled="@(!Editing || Field.IsNull)" @onchange="args => Field.Value = Convert.ToString(args.Value)">
+            @if (!choices.Any(choice => choice.Value == Field.Value)) { <option value="@Field.Value">Current legacy setting</option> }
+            @foreach (var choice in choices) { <option value="@choice.Value">@choice.Name</option> }
+        </select>
+        @if (Editing) { <label class="null-toggle"><input type="checkbox" checked="@Field.IsNull" @onchange="SetNull" /> Leave empty / use the game default</label> }
+    }
+    else if (Field.Name.EndsWith("_id", StringComparison.OrdinalIgnoreCase))
+    {
+        <div class="read-value"><strong>Kept from the source</strong><small>This connected setting does not yet have a safe name picker, so Content Studio preserves it automatically.</small></div>
+    }
+    else if (IsNumber(Field.Type))
+    {
+        <input type="number" step="@(Field.Type.Contains("INT", StringComparison.OrdinalIgnoreCase) ? "1" : "any")" value="@Field.Value" disabled="@(!Editing || Field.IsNull)" @oninput="args => Field.Value = Convert.ToString(args.Value)" />
+        @if (Editing) { <label class="null-toggle"><input type="checkbox" checked="@Field.IsNull" @onchange="SetNull" /> Leave empty / use the game default</label> }
+    }
+    else if (Field.Name.Contains("desc", StringComparison.OrdinalIgnoreCase) || (Field.Value?.Length ?? 0) > 100)
+    {
+        <textarea value="@Field.Value" disabled="@(!Editing || Field.IsNull)" @oninput="args => Field.Value = Convert.ToString(args.Value)"></textarea>
+        @if (Editing) { <label class="null-toggle"><input type="checkbox" checked="@Field.IsNull" @onchange="SetNull" /> Leave empty</label> }
+    }
+    else
+    {
+        <input value="@Field.Value" disabled="@(!Editing || Field.IsNull)" @oninput="args => Field.Value = Convert.ToString(args.Value)" />
+        @if (Editing)
+        {
+            <label class="null-toggle"><input type="checkbox" checked="@Field.IsNull" @onchange="SetNull" /> No value</label>
+        }
+    }
+    @if (!string.IsNullOrWhiteSpace(Field.Help)){<p>@Field.Help</p>}
+    else { <p>Change this only when it supports the gameplay behavior you intend.</p> }
+    @if (TryGetLinkedTable(Field.ReferenceTable, Field.Value, out var linkedTable, out var linkedId)) { <a class="field-link" href="@($"/entry?table={linkedTable}&id={linkedId}")">Open the connected @CatalogRecordService.FriendlyTableName(linkedTable).ToLowerInvariant() →</a> }
+</article>
+}
+
+@code {
+    [Parameter, EditorRequired] public CatalogRecordField Field { get; set; } = null!;
+    [Parameter] public bool Editing { get; set; }
+
+    private uint ReferenceValue => Field.IsNull ? 0 : uint.TryParse(Field.Value, out var value) ? value : 0;
+    private static bool IsTrue(string? value) => value is "1" or "t" or "T" or "true" or "True";
+    private static bool IsNumber(string type) => type.Contains("INT", StringComparison.OrdinalIgnoreCase) || type.Equals("NUM", StringComparison.OrdinalIgnoreCase) || type.Contains("REAL", StringComparison.OrdinalIgnoreCase) || type.Contains("FLOA", StringComparison.OrdinalIgnoreCase) || type.Contains("DOUB", StringComparison.OrdinalIgnoreCase);
+    private static bool TryGetLinkedTable(string? referenceTable, string? value, out string table, out uint id)
+    {
+        id = 0;
+        table = referenceTable ?? string.Empty;
+        return table.Length > 0 && uint.TryParse(value, out id) && id > 0;
+    }
+    private void SetReference(uint value) { Field.IsNull = false; Field.Value = value.ToString(System.Globalization.CultureInfo.InvariantCulture); }
+    private void SetBoolean(ChangeEventArgs args) { Field.IsNull = false; Field.Value = args.Value is true ? "t" : "f"; }
+    private void SetNull(ChangeEventArgs args) => Field.IsNull = args.Value is true;
+}

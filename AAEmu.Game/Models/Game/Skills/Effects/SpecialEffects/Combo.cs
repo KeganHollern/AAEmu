@@ -18,6 +18,10 @@ public class Combo : SpecialEffectAction
         int value3,
         int value4)
     {
-        if (caster is Character) { Logger.Debug("Special effects: Combo comboSkillId {0}, timeFromNow {1}, value3 {2}, value4 {3}", comboSkillId, timeFromNow, value3, value4); }
+        if (caster is Character character)
+        {
+            character.Skills.ComboState.Arm((uint)Math.Max(comboSkillId, 0), timeFromNow);
+            Logger.Debug("Special effects: Combo armed skill {0} for {1}ms", comboSkillId, timeFromNow);
+        }
     }
 }

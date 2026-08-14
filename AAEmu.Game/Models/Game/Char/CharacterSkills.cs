@@ -17,7 +17,61 @@ public class CharacterSkills(Character owner)
     private readonly List<uint> _removed = [];
     public Dictionary<uint, Skill> Skills { get; } = [];
     public Dictionary<uint, PassiveBuff> PassiveBuffs { get; } = [];
+    public SkillComboState ComboState { get; } = new();
     private Character Owner { get; } = owner;
+
+    /// <summary>
+    /// Learns a player-selected skill after validating all compact and character requirements.
+    /// Persisted or server-granted skills continue to use AddSkill directly.
+    /// </summary>
+    public void LearnSkill(uint skillId)
+    {
+        var template = SkillManager.Instance.GetSkillTemplate(skillId);
+        if (template is null ||
+            !IsSelectedPlayerAbility(template.AbilityId, Owner.Ability1, Owner.Ability2, Owner.Ability3))
+            return;
+
+        var points = ExperienceManager.Instance.GetSkillPointsForLevel(Owner.Level) - GetUsedSkillPoints(AbilityType.General);
+        if (!CanLearnPlayerSelectedSkill(
+                template,
+                Owner.Ability1,
+                Owner.Ability2,
+                Owner.Ability3,
+                Owner.GetAbLevel(template.AbilityId),
+                points))
+            return;
+
+        if (Skills.TryGetValue(skillId, out var skill))
+            Owner.SendPacket(new SCSkillLearnedPacket(skill));
+        else
+            AddSkill(template, 1, true);
+    }
+
+    internal static bool CanLearnPlayerSelectedSkill(
+        SkillTemplate template,
+        AbilityType ability1,
+        AbilityType ability2,
+        AbilityType ability3,
+        int abilityLevel,
+        int availableSkillPoints)
+    {
+        return template is not null &&
+            template.Show &&
+            template.NeedLearn &&
+            IsSelectedPlayerAbility(template.AbilityId, ability1, ability2, ability3) &&
+            abilityLevel >= template.AbilityLevel &&
+            availableSkillPoints >= template.SkillPoints;
+    }
+
+    internal static bool IsSelectedPlayerAbility(
+        AbilityType skillAbility,
+        AbilityType ability1,
+        AbilityType ability2,
+        AbilityType ability3)
+    {
+        return skillAbility is not AbilityType.General and not AbilityType.None &&
+            (skillAbility == ability1 || skillAbility == ability2 || skillAbility == ability3);
+    }
 
     /// <summary>
     /// Try to learn a new Skill
@@ -27,6 +81,8 @@ public class CharacterSkills(Character owner)
     {
         // Check if what we want to learn is part of an active skill tree (or not part of one)
         var template = SkillManager.Instance.GetSkillTemplate(skillId);
+        if (template is null)
+            return;
         if (template.AbilityId > 0 &&
             template.AbilityId != Owner.Ability1 &&
             template.AbilityId != Owner.Ability2 &&
@@ -162,6 +218,9 @@ public class CharacterSkills(Character owner)
     public bool IsVariantOfSkill(uint skillId)
     {
         var skillTemplate = SkillManager.Instance.GetSkillTemplate(skillId);
+
+        if (skillTemplate is null || SkillManager.Instance.IsComboFollowupSkill(skillId))
+            return false;
 
         return Skills.Values.Any(skill =>
             skill.Template.AbilityId == skillTemplate.AbilityId &&

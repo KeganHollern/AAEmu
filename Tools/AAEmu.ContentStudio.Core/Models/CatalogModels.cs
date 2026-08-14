@@ -3,6 +3,84 @@ namespace AAEmu.ContentStudio.Core.Models;
 public sealed record TableColumn(string Name, string Type, bool NotNull, string? DefaultValue, int PrimaryKeyOrder);
 public sealed record TableSchema(string Name, long RowCount, IReadOnlyList<TableColumn> Columns);
 public sealed record ItemSearchResult(uint Id, string Name, uint CategoryId, int Price);
+public sealed record RecipeLookupResult(uint Id, string Name, int MaterialCount, int ProductCount, uint RequiredDoodadId);
+public sealed record WorkbenchLookupResult(uint Id, string Name, string Model, int GroupCount, int FunctionCount, int RecipeCount);
+public sealed record ItemRecipeRelationship(uint RecipeId, string RecipeName, int Amount, uint RequiredDoodadId);
+public sealed record DesignerReferenceOption(uint Value, string Name, string Context, string Table, bool IsCustom = false);
+public sealed record DesignerValueOption(string Value, string Name);
+
+public sealed class ItemGameplayProfile
+{
+    public uint Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public int ItemLevel { get; set; }
+    public int RequiredLevel { get; set; }
+    public bool Gradable { get; set; }
+    public int FixedGrade { get; set; }
+    public string? GearKind { get; set; }
+    public string? EquipmentType { get; set; }
+    public uint SlotTypeId { get; set; }
+    public bool Enchantable { get; set; }
+    public bool Repairable { get; set; }
+    public int DurabilityMultiplier { get; set; }
+    public int AttackSpeed { get; set; }
+    public int DamageScale { get; set; }
+    public int MaximumRange { get; set; }
+    public int ArmorBasisPoints { get; set; }
+    public int MagicResistanceBasisPoints { get; set; }
+    public uint AttributeModifierSetId { get; set; }
+    public int AttributeModifierReferenceCount { get; set; }
+    public string? EquipmentTemplateTable { get; set; }
+    public uint EquipmentTemplateRowId { get; set; }
+    public IReadOnlyList<GearBalanceSource> BalanceSources { get; set; } = [];
+    public IReadOnlyList<ItemStatWeight> StatWeights { get; set; } = [];
+    public IReadOnlyList<ItemLinkedEffect> Effects { get; set; } = [];
+    public ItemEquipmentSet? EquipmentSet { get; set; }
+    public bool IsEquipment => !string.IsNullOrWhiteSpace(GearKind);
+}
+
+public sealed record ItemStatWeight(string Name, int Weight, int Percentage);
+public sealed record GearBalanceSource(string Title, string Description, string Table, uint Id, int AffectedItems);
+public sealed record EquipmentSetPiece(uint Id, string Name, string GearKind);
+
+public sealed class GearBalanceDashboard
+{
+    public List<GearBalanceEntry> GlobalConstants { get; set; } = [];
+    public List<GearBalanceEntry> Grades { get; set; } = [];
+    public List<GearBalanceEntry> WeaponTypes { get; set; } = [];
+    public List<GearBalanceEntry> ArmorClasses { get; set; } = [];
+    public List<GearBalanceEntry> EquipmentSlots { get; set; } = [];
+    public List<GearBalanceEntry> ArmorFormulas { get; set; } = [];
+}
+
+public sealed record GearBalanceEntry(string Name, string Description, string Table, uint Id, int AffectedItems);
+
+public sealed class ItemLinkedEffect
+{
+    public string Source { get; set; } = string.Empty;
+    public string TargetTable { get; set; } = string.Empty;
+    public uint Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public IReadOnlyList<string> Facts { get; set; } = [];
+}
+
+public sealed class ItemEquipmentSet
+{
+    public uint Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public IReadOnlyList<EquipmentSetPiece> Pieces { get; set; } = [];
+    public IReadOnlyList<ItemEquipmentSetBonus> Bonuses { get; set; } = [];
+}
+
+public sealed class ItemEquipmentSetBonus
+{
+    public int RequiredPieces { get; set; }
+    public ItemLinkedEffect? Buff { get; set; }
+    public ItemLinkedEffect? Proc { get; set; }
+}
 
 public sealed class CatalogSearchResponse
 {
@@ -27,12 +105,13 @@ public sealed class CatalogSearchResult
 }
 
 public sealed record RecipeMaterial(uint RowId, uint ItemId, string ItemName, int Amount, bool MainGrade, int RequiredGrade);
-public sealed record RecipeProduct(uint RowId, uint ItemId, string ItemName, int Amount, int Rate, bool UseGrade, uint ItemGradeId);
+public sealed record RecipeProduct(uint RowId, uint ItemId, string ItemName, int Amount, int Rate, bool ShowLowerCrafts, bool UseGrade, uint ItemGradeId);
 
 public sealed class RecipeGraph
 {
     public uint Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
     public uint SkillId { get; set; }
     public int LaborCost { get; set; }
     public int CastingTime { get; set; }

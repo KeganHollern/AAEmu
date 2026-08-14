@@ -1,0 +1,8 @@
+{
+    "$schema": "../../../schemas/content-assertion.schema.json",
+    "schemaVersion": 1,
+    "key": "assertion.level55.passive-trees",
+    "description": "All ten original skillsets retain their complete seven-passive progression.",
+    "query": "SELECT COUNT(*) FROM (SELECT ability_id FROM passive_buffs WHERE ability_id BETWEEN 1 AND 10 GROUP BY ability_id HAVING COUNT(*) = 7);",
+    "expected": "10"
+}

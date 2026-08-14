@@ -301,6 +301,51 @@ public class ExperienceManagerTests
         await Assert.That(_cut.MaxMateLevel).IsEqualTo(expectedMaxMateLevel);
     }
 
+    [Test]
+    public async Task Load_Level55Progression_EnablesLevelsAndSkillPointsWhileMatesRemainLevel50()
+    {
+        var level55Progression = new Dictionary<int, (int TotalExp, int SkillPoints)>
+        {
+            [51] = (8_082_000, 24),
+            [52] = (16_698_960, 25),
+            [53] = (36_282_960, 26),
+            [54] = (80_346_960, 27),
+            [55] = (179_307_360, 28)
+        };
+        var templates = Enumerable.Range(1, 55)
+            .Select(level => new ExperienceLevelTemplate
+            {
+                Level = (byte)level,
+                TotalExp = level55Progression.TryGetValue(level, out var progression)
+                    ? progression.TotalExp
+                    : (level - 1) * 100_000,
+                TotalMateExp = (level - 1) * 10_000,
+                SkillPoints = level55Progression.TryGetValue(level, out progression)
+                    ? progression.SkillPoints
+                    : Math.Min(level, 23)
+            })
+            .ToArray();
+        var mockLoader = Mock.Of<IExperienceLevelTemplateLoader>();
+        mockLoader.Load().Returns(templates);
+
+        _cut.Load(mockLoader.Object, 55, 50);
+
+        await Assert.That(_cut.MaxPlayerLevel).IsEqualTo((byte)55);
+        await Assert.That(_cut.MaxMateLevel).IsEqualTo((byte)50);
+
+        foreach (var (level, progression) in level55Progression)
+        {
+            var resolvedLevel = _cut.GetLevelFromExp(progression.TotalExp, out var overflow);
+            var previousLevel = _cut.GetLevelFromExp(progression.TotalExp - 1, out _);
+
+            await Assert.That(_cut.GetExpForLevel((byte)level)).IsEqualTo(progression.TotalExp);
+            await Assert.That(_cut.GetSkillPointsForLevel((byte)level)).IsEqualTo(progression.SkillPoints);
+            await Assert.That(resolvedLevel).IsEqualTo((byte)level);
+            await Assert.That(previousLevel).IsEqualTo((byte)(level - 1));
+            await Assert.That(overflow).IsEqualTo(0);
+        }
+    }
+
     private void SetupExperienceManager(ExperienceLevelTemplate[] levelTemplates)
     {
         var mockLoader = Mock.Of<IExperienceLevelTemplateLoader>();

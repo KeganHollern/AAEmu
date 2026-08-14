@@ -24,6 +24,7 @@ public sealed class ContentBuildManifest
     public long ArtifactLength { get; set; }
     public int RecipeCount { get; set; }
     public int WorkbenchCount { get; set; }
+    public int AssertionCount { get; set; }
     public ValidationReport Validation { get; set; } = new();
     public List<ContentChange> Changes { get; set; } = [];
 }

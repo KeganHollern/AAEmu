@@ -33,24 +33,38 @@ public sealed class ProjectRepository
         return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(directory, path));
     }
 
-    public LoadedContentProject LoadProject(string projectPath)
+    public LoadedContentProject LoadProject(string projectPath) => LoadProject(projectPath, File.ReadAllText);
+
+    internal LoadedContentProject LoadProject(string projectPath, IReadOnlyDictionary<string, string> sourceContents) =>
+        LoadProject(projectPath, path => sourceContents.TryGetValue(Path.GetFullPath(path), out var contents)
+            ? contents
+            : throw new ContentStudioException($"Project source changed while the build snapshot was being prepared: {path}"));
+
+    private LoadedContentProject LoadProject(string projectPath, Func<string, string> readAllText)
     {
         var fullProjectPath = RequireFile(projectPath, "Content project");
         var projectDirectory = Path.GetDirectoryName(fullProjectPath)
             ?? throw new ContentStudioException($"Unable to determine the project directory for {fullProjectPath}.");
-        var definition = ContentStudioJson.Deserialize<ContentProjectDefinition>(File.ReadAllText(fullProjectPath), fullProjectPath);
+        var definition = ContentStudioJson.Deserialize<ContentProjectDefinition>(readAllText(fullProjectPath), fullProjectPath);
         var registryPath = RequireFile(Path.Combine(projectDirectory, definition.IdRegistry), "ID registry");
-        var registry = ContentStudioJson.Deserialize<IdRegistry>(File.ReadAllText(registryPath), registryPath);
+        var registry = ContentStudioJson.Deserialize<IdRegistry>(readAllText(registryPath), registryPath);
+        IdRegistryService.NormalizeComparers(registry);
 
         var recipeFiles = ExpandPatterns(projectDirectory, definition.Recipes);
         var workbenchFiles = ExpandPatterns(projectDirectory, definition.Workbenches);
+        var recordFiles = ExpandPatterns(projectDirectory, definition.Records);
+        var assertionFiles = ExpandPatterns(projectDirectory, definition.Assertions);
         var rawSqlFiles = ExpandPatterns(projectDirectory, definition.RawSql);
-        var recipes = recipeFiles.Select(path => ContentStudioJson.Deserialize<RecipeDefinition>(File.ReadAllText(path), path)).ToList();
-        var workbenches = workbenchFiles.Select(path => ContentStudioJson.Deserialize<WorkbenchDefinition>(File.ReadAllText(path), path)).ToList();
+        var recipes = recipeFiles.Select(path => ContentStudioJson.Deserialize<RecipeDefinition>(readAllText(path), path)).ToList();
+        var workbenches = workbenchFiles.Select(path => ContentStudioJson.Deserialize<WorkbenchDefinition>(readAllText(path), path)).ToList();
+        var records = recordFiles.Select(path => ContentStudioJson.Deserialize<RecordDefinition>(readAllText(path), path)).ToList();
+        var assertions = assertionFiles.Select(path => ContentStudioJson.Deserialize<ContentAssertionDefinition>(readAllText(path), path)).ToList();
 
         var sourceFiles = new[] { fullProjectPath, registryPath }
             .Concat(recipeFiles)
             .Concat(workbenchFiles)
+            .Concat(recordFiles)
+            .Concat(assertionFiles)
             .Concat(rawSqlFiles)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
@@ -63,6 +77,8 @@ public sealed class ProjectRepository
             Registry = registry,
             Recipes = recipes,
             Workbenches = workbenches,
+            Records = records,
+            Assertions = assertions,
             RawSqlFiles = rawSqlFiles,
             SourceFiles = sourceFiles
         };

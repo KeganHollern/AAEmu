@@ -42,6 +42,7 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
     private Dictionary<uint, LinearFuncTemplate> _linearFuncs;
     private Dictionary<uint, SkillReagent> _skillReagents;
     private Dictionary<uint, SkillProduct> _skillProducts;
+    private HashSet<uint> _comboFollowupSkills;
     // private HashSet<ushort> _skillIds = new();
     // private ushort _skillIdIndex = 1;
 
@@ -92,6 +93,11 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
     public bool IsCommonSkill(uint id)
     {
         return _commonSkills.Contains(id);
+    }
+
+    public bool IsComboFollowupSkill(uint id)
+    {
+        return _comboFollowupSkills.Contains(id);
     }
 
     public List<SkillTemplate> GetStartAbilitySkills(AbilityType ability)
@@ -248,6 +254,7 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
         _skills = [];
         _defaultSkills = [];
         _commonSkills = [];
+        _comboFollowupSkills = [];
         _startAbilitySkills = [];
         _passiveBuffs = [];
         _types = [];
@@ -1601,6 +1608,8 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
                         var type = _types[effectId];
                         if (_effects.TryGetValue(type.Type, out var effect))
                             template.Template = effect[type.ActualId];
+                        if (template.Template is SpecialEffect { SpecialEffectTypeId: SpecialType.Combo, Value1: > 0 } combo)
+                            _comboFollowupSkills.Add((uint)combo.Value1);
                         template.Weight = reader.GetInt32("weight");
                         template.StartLevel = reader.GetByte("start_level");
                         template.EndLevel = reader.GetByte("end_level");
@@ -1912,5 +1921,5 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
 
         return null;
     }
-    
+
 }

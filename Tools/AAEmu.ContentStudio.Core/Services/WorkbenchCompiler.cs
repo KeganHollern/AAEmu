@@ -62,7 +62,7 @@ internal sealed class WorkbenchCompiler
             });
         }
 
-        return [new ContentChange("workbench", workbench.Key, workbench.Id, "clone", $"Cloned doodad {workbench.SourceDoodadId} with craft pack {workbench.CraftPack.Id}.")];
+        return [new ContentChange("workbench", workbench.Key, workbench.Id, "clone", "Created a custom workbench from a proven crafting object and preserved its complete behavior graph.")];
     }
 
     private static void CloneFunctions(SqliteConnection connection, SqliteTransaction transaction, WorkbenchDefinition workbench, uint sourceGroupId)

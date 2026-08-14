@@ -1,0 +1,11 @@
+{
+    "$schema": "../../../schemas/record.schema.json",
+    "schemaVersion": 1,
+    "key": "record.level55.gods-whip",
+    "displayName": "Gods' Whip",
+    "mode": "modify",
+    "table": "skills",
+    "sourceId": 23593,
+    "id": 23593,
+    "values": { "show": "t" }
+}

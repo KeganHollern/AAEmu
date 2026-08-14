@@ -1,0 +1,11 @@
+{
+    "$schema": "../../../schemas/record.schema.json",
+    "schemaVersion": 1,
+    "key": "record.level55.snipe",
+    "displayName": "Snipe",
+    "mode": "modify",
+    "table": "skills",
+    "sourceId": 23592,
+    "id": 23592,
+    "values": { "show": "t" }
+}

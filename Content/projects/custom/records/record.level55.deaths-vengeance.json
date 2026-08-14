@@ -1,0 +1,11 @@
+{
+    "$schema": "../../../schemas/record.schema.json",
+    "schemaVersion": 1,
+    "key": "record.level55.deaths-vengeance",
+    "displayName": "Death's Vengeance",
+    "mode": "modify",
+    "table": "skills",
+    "sourceId": 23591,
+    "id": 23591,
+    "values": { "show": "t" }
+}

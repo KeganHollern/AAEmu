@@ -4,7 +4,17 @@ namespace AAEmu.ContentStudio.Core.Services;
 
 public static class AtomicFile
 {
+    internal static object SyncRoot { get; } = new();
+
     public static void WriteAllText(string path, string contents)
+    {
+        lock (SyncRoot)
+        {
+            WriteAllTextCore(path, contents);
+        }
+    }
+
+    private static void WriteAllTextCore(string path, string contents)
     {
         var fullPath = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(fullPath)
@@ -26,6 +36,14 @@ public static class AtomicFile
     }
 
     public static void ReplaceFrom(string sourcePath, string destinationPath)
+    {
+        lock (SyncRoot)
+        {
+            ReplaceFromCore(sourcePath, destinationPath);
+        }
+    }
+
+    private static void ReplaceFromCore(string sourcePath, string destinationPath)
     {
         var fullDestinationPath = Path.GetFullPath(destinationPath);
         var directory = Path.GetDirectoryName(fullDestinationPath)

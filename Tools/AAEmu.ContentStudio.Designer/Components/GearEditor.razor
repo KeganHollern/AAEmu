@@ -1,0 +1,147 @@
+@using AAEmu.ContentStudio.Core.Models
+
+<section class="entry-section panel gear-editor">
+    <div class="section-intro">
+        <span>2</span>
+        <div>
+            <p class="eyebrow">GEAR POWER & BALANCE</p>
+            <h2>Everything that controls this equipment</h2>
+            <p>Item power sets the budget, the primary-attribute profile divides it, and shared grade/type formulas turn it into the numbers players see.</p>
+        </div>
+    </div>
+
+    <div class="gear-editor-summary">
+        <span><small>Gear kind</small><strong>@Profile.GearKind</strong></span>
+        <span><small>Equipment type</small><strong>@Profile.EquipmentType</strong></span>
+        <span><small>Primary stat mix</small><strong>@(Profile.StatWeights.Count == 0 ? "None" : string.Join(" / ", Profile.StatWeights.Where(stat => stat.Percentage > 0).Select(stat => stat.Name)))</strong></span>
+    </div>
+
+    <article class="gear-control-group">
+        <div class="gear-control-heading">
+            <div><p class="eyebrow">ONE ITEM</p><h3>Overall power and requirements</h3></div>
+            <p>Raising item power increases calculated primary stats and damage or defense. Required level only controls who may equip it.</p>
+        </div>
+        <div class="friendly-field-grid">
+            @foreach (var field in ManagedItemFields())
+            {
+                <RecordFieldEditor Field="field" Editing="Editing" />
+            }
+        </div>
+    </article>
+
+    @foreach (var linked in Record.LinkedRecords)
+    {
+        <article class="gear-control-group primary-mix">
+            <div class="gear-control-heading">
+                <div><p class="eyebrow">PRIMARY ATTRIBUTES</p><h3>@linked.Title</h3></div>
+                <span class="impact-badge">Used by @linked.ReferenceCount item@(linked.ReferenceCount == 1 ? "" : "s")</span>
+            </div>
+            <p class="gear-explanation">@linked.Description</p>
+            @if (Editing)
+            {
+                <label class="scope-choice">
+                    <input type="checkbox" checked="@linked.Enabled" @onchange="args => linked.Enabled = args.Value is true" />
+                    <span><strong>Give this item its own primary-stat mix</strong><small>Content Studio safely copies the shared profile and links only this item to it.</small></span>
+                </label>
+            }
+            else if (Profile.StatWeights.Count > 0)
+            {
+                <div class="stat-weight-list gear-current-weights">
+                    @foreach (var stat in Profile.StatWeights)
+                    {
+                        <div><span><strong>@stat.Name</strong><small>@stat.Percentage% of the allocation</small></span><span class="stat-weight-track"><i style="width: @stat.Percentage%"></i></span><code>@stat.Weight</code></div>
+                    }
+                </div>
+            }
+            @if (Editing && linked.Enabled)
+            {
+                <div class="weight-guidance"><strong>Weights are proportions, not final stat points.</strong><span>For example, 2 Intelligence and 1 Spirit means roughly 67% Intelligence and 33% Spirit. Set an unwanted attribute to 0.</span></div>
+                <div class="friendly-field-grid stat-input-grid">
+                    @foreach (var field in linked.Fields.Where(field => IsWeight(field.Name)))
+                    {
+                        <RecordFieldEditor Field="field" Editing="true" />
+                    }
+                </div>
+                @foreach (var field in linked.Fields.Where(field => !field.IsIdentity && !IsWeight(field.Name)))
+                {
+                    <details class="gear-advanced-row"><summary>More profile settings</summary><RecordFieldEditor Field="field" Editing="true" /></details>
+                }
+            }
+            @if (Profile.AttributeModifierSetId > 0)
+            {
+                <div class="shared-scope-action">
+                    <div><strong>Want a broad rebalance instead?</strong><span>Changing the shared primary-stat profile updates all @Profile.AttributeModifierReferenceCount linked gear items together.</span></div>
+                    <a class="button" href="@($"/entry?table=equip_item_attr_modifiers&id={Profile.AttributeModifierSetId}&action=modify")">Change shared profile</a>
+                </div>
+            }
+        </article>
+    }
+
+    @foreach (var section in EquipmentSections())
+    {
+        <article class="gear-control-group">
+            <div class="gear-control-heading"><div><p class="eyebrow">ITEM-SPECIFIC TEMPLATE</p><h3>@section.Title</h3></div><span class="impact-badge">Only this item</span></div>
+            <p class="gear-explanation">@section.Description</p>
+            @foreach (var row in section.Rows)
+            {
+                <div class="friendly-field-grid">
+                    @foreach (var field in row.Fields.Where(field => !field.IsIdentity && IsCommonTemplateField(field.Name)))
+                    {
+                        <RecordFieldEditor Field="field" Editing="Editing" />
+                    }
+                </div>
+                @if (row.Fields.Any(field => !field.IsIdentity && !IsCommonTemplateField(field.Name)))
+                {
+                    <details class="gear-template-advanced">
+                        <summary>More equipment settings</summary>
+                        <div class="friendly-field-grid">
+                            @foreach (var field in row.Fields.Where(field => !field.IsIdentity && !IsCommonTemplateField(field.Name)))
+                            {
+                                <RecordFieldEditor Field="field" Editing="Editing" />
+                            }
+                        </div>
+                    </details>
+                }
+            }
+        </article>
+    }
+
+    <article class="gear-control-group broad-balance">
+        <div class="gear-control-heading"><div><p class="eyebrow">SHARED BALANCE</p><h3>Broader changes that include this item</h3></div><a class="button" href="/gear-balance">Open all gear balance systems</a></div>
+        <p class="gear-explanation">These rows are intentionally shared. Use them when you want a clean category-wide or server-wide rebalance, and review the estimated impact before saving.</p>
+        <div class="balance-source-grid">
+            @foreach (var source in Profile.BalanceSources)
+            {
+                <article>
+                    <div><strong>@source.Title</strong><span>@source.AffectedItems item@(source.AffectedItems == 1 ? "" : "s") affected</span></div>
+                    <p>@source.Description</p>
+                    <a href="@($"/entry?table={source.Table}&id={source.Id}")">Inspect</a>
+                    <a class="change-link" href="@($"/entry?table={source.Table}&id={source.Id}&action=modify")">Change broadly</a>
+                </article>
+            }
+        </div>
+    </article>
+</section>
+
+@code {
+    private static readonly HashSet<string> s_managedItemFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "level", "level_requirement", "gradable", "fixed_grade", "grade_enchantable"
+    };
+
+    private static readonly HashSet<string> s_commonTemplateFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "holdable_id", "type_id", "slot_type_id", "base_enchantable", "repairable", "durability_multiplier",
+        "base_equipment", "eiset_id", "recharge_buff_id", "charge_lifetime", "charge_count", "mod_set_id"
+    };
+
+    [Parameter, EditorRequired] public CatalogRecord Record { get; set; } = null!;
+    [Parameter, EditorRequired] public ItemGameplayProfile Profile { get; set; } = null!;
+    [Parameter] public bool Editing { get; set; }
+
+    public static bool IsManagedItemField(string name) => s_managedItemFields.Contains(name);
+    private IEnumerable<CatalogRecordField> ManagedItemFields() => Record.Fields.Where(field => s_managedItemFields.Contains(field.Name));
+    private IEnumerable<CatalogRelatedSection> EquipmentSections() => Record.RelatedSections.Where(section => section.IsEquipmentTemplate);
+    private static bool IsCommonTemplateField(string name) => s_commonTemplateFields.Contains(name);
+    private static bool IsWeight(string name) => name is "str_weight" or "dex_weight" or "sta_weight" or "int_weight" or "spi_weight";
+}

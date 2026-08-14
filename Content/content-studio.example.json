@@ -6,10 +6,6 @@
     "projectPath": "projects/custom/project.json",
     "outputDirectory": "../.content-studio/build",
     "targets": {
-        "server": {
-            "path": "../AAEmu.Game/Data/compact.sqlite3",
-            "backupDirectory": "../.content-studio/backups/server"
-        },
         "client": {
             "path": "D:/path/to/client/game/db/compact.sqlite3",
             "backupDirectory": "../.content-studio/backups/client"

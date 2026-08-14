@@ -1,0 +1,16 @@
+<article class="gear-effect-card">
+    <div><small>@Effect.Source</small><strong>@Effect.Name</strong></div>
+    @if (!string.IsNullOrWhiteSpace(Effect.Description))
+    {
+        <p>@Effect.Description</p>
+    }
+    @if (Effect.Facts.Count > 0)
+    {
+        <ul>@foreach (var fact in Effect.Facts) { <li>@fact</li> }</ul>
+    }
+    <a href="@($"/entry?table={Uri.EscapeDataString(Effect.TargetTable)}&id={Effect.Id}")">Open effect details</a>
+</article>
+
+@code {
+    [Parameter, EditorRequired] public ItemLinkedEffect Effect { get; set; } = null!;
+}

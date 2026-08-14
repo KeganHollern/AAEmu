@@ -9,6 +9,7 @@ public sealed class RecipeScaffoldRequest
     public string Name { get; init; } = string.Empty;
     public uint[]? CraftPackIds { get; init; }
     public bool CloneSkill { get; init; }
+    public RecipeDefinition? Draft { get; init; }
     public bool DryRun { get; init; }
 }
 
@@ -20,6 +21,8 @@ public sealed class WorkbenchScaffoldRequest
     public required uint SourceDoodadId { get; init; }
     public string Name { get; init; } = string.Empty;
     public uint[] RecipeIds { get; init; } = [];
+    public string? ModelOverride { get; init; }
+    public string? CraftPackName { get; init; }
     public bool DryRun { get; init; }
 }
 
@@ -29,7 +32,13 @@ public sealed record ScaffoldResult(string Path, string Key, uint Id, IReadOnlyL
     public bool DryRun { get; init; }
 }
 
-public sealed record DatabaseTableDiff(string Table, long BaselineRows, long ArtifactRows, long AddedRows);
+public sealed record DatabaseTableDiff(string Table, long BaselineRows, long ArtifactRows, long AddedRows)
+{
+    public long ModifiedRows { get; init; }
+    public List<DatabaseCellDiff> ChangedCells { get; init; } = [];
+}
+
+public sealed record DatabaseCellDiff(uint Id, string Column, string? BaselineValue, string? ArtifactValue);
 
 public sealed class DatabaseDiffReport
 {

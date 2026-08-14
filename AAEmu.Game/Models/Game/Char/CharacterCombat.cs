@@ -102,6 +102,7 @@ public partial class Character
         }
 
         base.DoDie(killer, killReason);
+        ParentWorld?.MateManager.RemoveActiveMatesOnOwnerDeath(this);
 
         if (LastDurabilityLoss > 0)
         {

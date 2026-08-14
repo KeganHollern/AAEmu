@@ -1,0 +1,331 @@
+@page "/entry"
+@implements IDisposable
+@inject DesignerWorkspace Workspace
+@inject NavigationManager Navigation
+
+<PageTitle>@(_record is null ? "Entry details" : _record.Name)</PageTitle>
+
+@if (_loading)
+{
+    <section class="panel entry-loading"><h1>Opening this entry…</h1><p>Reading its fields and translated text from the original game data.</p></section>
+}
+else if (_record is null)
+{
+    <section class="panel empty-search"><h1>Entry not found</h1><p>@_message</p><a class="button primary" href="/catalog">Return to Game search</a></section>
+}
+else
+{
+    <header class="page-head entry-heading">
+        <div>
+            <a class="back-link" href="@(_editingPath is null ? "/catalog" : "/manifests")">← Back to @(_editingPath is null ? "Game search" : "My changes")</a>
+            <p class="eyebrow">@(_editingPath is not null ? "EDITING A SAVED CHANGE" : _mode is null ? "UNDERSTAND THIS ENTRY" : _mode == RecordChangeMode.Duplicate ? "MAKE A SAFE COPY" : "PLAN A CHANGE")</p>
+            <h1>@_record.Name</h1>
+            <p class="entry-reference">Testing ID <code>@_record.Id</code></p>
+            <p class="lede">@_record.KindLabel · @_record.Name</p>
+        </div>
+    </header>
+
+    <section class="entry-help panel">
+        <span class="help-icon">?</span>
+        <div>
+            <strong>@(_mode is null ? "You are looking at the original game data." : "Nothing here changes the live game immediately.")</strong>
+            <p>@(_mode is null ? "Every setting and translation available on the main record is shown below. Plain-language notes explain the most important fields." : "Saving creates a reviewable change in your custom project. It only reaches the server and client after Build & deploy succeeds.")</p>
+        </div>
+    </section>
+
+    @if (_externalUpdate)
+    {
+        <section class="entry-help panel shared-update"><span class="help-icon">↻</span><div><strong>Newer shared work is available.</strong><p>An agent or another designer updated this saved change after you opened it.</p><button class="button" @onclick="ReloadSharedChange">Load their latest changes</button></div></section>
+    }
+
+    @if (_mode is null)
+    {
+        <section class="entry-actions panel">
+            <div><p class="eyebrow">WHAT WOULD YOU LIKE TO DO?</p><h2>Choose a safe next step</h2></div>
+            <div class="entry-action-buttons">
+                <button class="button primary" @onclick="() => Begin(RecordChangeMode.Modify)"><span>Change this entry</span><small>Update this exact game entry in your custom build</small></button>
+                @if (_record.Table == "crafts")
+                {
+                    <a class="button" href="@($"/recipes?source={_record.Id}")"><span>Make a new recipe from this</span><small>Copies ingredients, products, and crafting links safely</small></a>
+                }
+                else if (_record.Table == "doodad_almighties")
+                {
+                    <a class="button" href="@($"/workbenches?source={_record.Id}")"><span>Make a new workbench from this</span><small>Copies its complete function graph safely</small></a>
+                }
+                else
+                {
+                    <button class="button" @onclick="() => Begin(RecordChangeMode.Duplicate)"><span>Make a new copy</span><small>Creates a safely separate entry and keeps the original untouched</small></button>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_record.DuplicateNote)) { <p class="copy-note">@_record.DuplicateNote</p> }
+        </section>
+    }
+    else
+    {
+        <section class="mode-banner @(_mode == RecordChangeMode.Duplicate ? "copy" : "modify")">
+            <div><strong>@(_editingPath is not null ? "Updating your saved plan" : _mode == RecordChangeMode.Duplicate ? "Creating a new entry" : "Changing the existing entry")</strong><span>@(_editingPath is not null ? "All connections already reserved for this plan will be kept." : _mode == RecordChangeMode.Duplicate ? "Content Studio will create all connections automatically." : "Your custom build will update this entry; the pristine source stays untouched.")</span></div>
+            <button @onclick="CancelEdit">Cancel</button>
+        </section>
+    }
+
+    <section class="entry-section panel">
+        <div class="section-intro"><span>1</span><div><p class="eyebrow">PLAYER-FACING TEXT</p><h2>Names and descriptions</h2><p>This is the text players see. English is shown first; other languages are optional.</p></div></div>
+        @if (_record.Localizations.Count == 0)
+        {
+            <p class="empty-related">This entry has no separate translated text rows. Its main fields are shown in the next section.</p>
+        }
+        else
+        {
+            <div class="translation-stack">
+                @foreach (var localization in _record.Localizations)
+                {
+                    <RecordTranslationEditor Field="localization" Editing="@(_mode is not null)" />
+                }
+            </div>
+        }
+    </section>
+
+    @if (_itemProfile?.IsEquipment == true)
+    {
+        <GearEditor Record="_record" Profile="_itemProfile" Editing="@(_mode is not null)" />
+    }
+
+    <section class="entry-section panel">
+        <div class="section-intro"><span>@(_itemProfile?.IsEquipment == true ? "3" : "2")</span><div><p class="eyebrow">MOST USEFUL SETTINGS</p><h2>Important details</h2><p>These are the settings people most commonly need. Units and links are explained where known.</p></div></div>
+        <div class="friendly-field-grid">
+            @foreach (var field in ImportantFields())
+            {
+                <RecordFieldEditor Field="field" Editing="@(_mode is not null)" />
+            }
+        </div>
+    </section>
+
+    @if (_record.GameplayLinks.Count > 0)
+    {
+        <section class="entry-section panel gameplay-path">
+            <div class="section-intro"><span>@(_itemProfile?.IsEquipment == true ? "4" : "3")</span><div><p class="eyebrow">WHAT HAPPENS WHEN USED</p><h2>Gameplay effects</h2><p>Follow the skill into the damage, healing, movement, or buff entries that actually control its strength and behavior.</p></div></div>
+            <div class="gameplay-card-list">
+                @foreach (var link in _record.GameplayLinks)
+                {
+                    <article class="gameplay-card">
+                        <div class="gameplay-card-head"><div><h3>@link.Title</h3><p>@link.Summary</p></div><span class="impact-badge">Connected behavior</span></div>
+                        <dl>@foreach (var fact in link.Facts) { <div><dt>@fact.Label</dt><dd>@fact.Value</dd>@if (!string.IsNullOrWhiteSpace(fact.Help)) { <small>@fact.Help</small> }</div> }</dl>
+                        <div class="gameplay-actions"><a class="button" href="@($"/entry?table={Uri.EscapeDataString(link.TargetTable)}&id={link.TargetId}")">Understand this entry</a><a class="button primary" href="@($"/entry?table={Uri.EscapeDataString(link.TargetTable)}&id={link.TargetId}&action=modify")">Change its gameplay values</a></div>
+                    </article>
+                }
+            </div>
+            @if (_mode is not null) { <p class="editing-warning"><strong>Save this skill first.</strong> A connected buff or effect is a separate game entry, so changing it creates another clear plan in My changes.</p> }
+        </section>
+    }
+
+    @if (GeneralRelatedSections().Count > 0)
+    {
+        <section class="entry-section panel connected-data">
+            <div class="section-intro"><span>@(3 + (_itemProfile?.IsEquipment == true ? 1 : 0) + (_record.GameplayLinks.Count > 0 ? 1 : 0))</span><div><p class="eyebrow">CONNECTED RULES</p><h2>Links, modifiers, tags, and requirements</h2><p>These rows belong directly to this entry. They are included when making a copy, and every value can be reviewed here.</p></div></div>
+            @foreach (var section in GeneralRelatedSections())
+            {
+                <details class="related-table">
+                    <summary><span><strong>@section.Title</strong><small>@section.Rows.Count connected part@(section.Rows.Count == 1 ? "" : "s")</small></span><p>@section.Description</p></summary>
+                    <div class="related-rows">
+                        @foreach (var row in section.Rows)
+                        {
+                            <article class="related-row"><h3>@row.Label</h3><div class="friendly-field-grid">@foreach(var field in row.Fields.Where(field => !field.IsIdentity)){<RecordFieldEditor Field="field" Editing="@(_mode is not null)" />}</div></article>
+                        }
+                    </div>
+                </details>
+            }
+        </section>
+    }
+
+    <details class="entry-section panel all-data" open="@(_record.Fields.Count <= 24)">
+        <summary><span><strong>More settings</strong><small>Less commonly changed behavior, shown with the same guided controls</small></span></summary>
+        <p class="advanced-explanation">These settings are intentionally kept out of the normal workflow. Open them only when the gameplay sections above do not contain the value you need.</p>
+        @foreach (var group in _record.Fields.Where(field => !field.IsEssential).GroupBy(field => field.Group))
+        {
+            <section class="field-group"><h3>@group.Key</h3><div class="friendly-field-grid">@foreach (var field in group){<RecordFieldEditor Field="field" Editing="@(_mode is not null)" />}</div></section>
+        }
+    </details>
+
+    @if (_mode is not null)
+    {
+        <section class="save-dock panel">
+            <div><strong>Ready to save this plan?</strong><span>You can inspect it before building. No live files are replaced now.</span></div>
+            <button class="button primary" @onclick="Save" disabled="@_saving">@(_saving ? "Saving…" : _editingPath is not null ? "Update saved change" : _mode == RecordChangeMode.Duplicate ? "Save new copy" : "Save changes")</button>
+        </section>
+    }
+
+    @if (_saved is not null)
+    {
+        <section class="success-panel panel saved-entry"><p class="eyebrow">@(_editingDefinition is null ? "SAVED TO YOUR CUSTOM PROJECT" : "SAVED CHANGE UPDATED")</p><h2>@_record.Name</h2><p>@(_mode == RecordChangeMode.Duplicate ? "A safely separate game entry was created. " : "")@_saved.RelatedRowsCopied connected parts are included.</p><div><a class="button" href="/manifests">Back to My changes</a><a class="button primary" href="/build">Review and publish</a></div></section>
+    }
+}
+
+@if (!string.IsNullOrWhiteSpace(_message) && _record is not null && _saved is null) { <div class="toast error">@_message</div> }
+
+@code {
+    [SupplyParameterFromQuery] public string? Table { get; set; }
+    [SupplyParameterFromQuery] public int? Id { get; set; }
+    [SupplyParameterFromQuery(Name = "action")] public string? RequestedAction { get; set; }
+    [SupplyParameterFromQuery(Name = "plan")] public string? Plan { get; set; }
+
+    private CatalogRecord? _record;
+    private RecordChangeMode? _mode;
+    private bool _loading = true;
+    private bool _saving;
+    private string? _message;
+    private RecordDraftResult? _saved;
+    private string? _editingPath;
+    private string? _editingVersion;
+    private bool _externalUpdate;
+    private RecordDefinition? _editingDefinition;
+    private ItemGameplayProfile? _itemProfile;
+
+    protected override void OnInitialized() => Workspace.Changed += WorkspaceChanged;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true; _message = null; _saved = null; _itemProfile = null; _externalUpdate = false;
+        try
+        {
+            var config = Workspace.LoadConfiguration();
+            _editingPath = null; _editingDefinition = null; _editingVersion = null;
+            if (!string.IsNullOrWhiteSpace(Plan))
+            {
+                var manifests = new ManifestService();
+                _editingPath = manifests.FindByKey(config.ProjectPath, Plan);
+                if (!_editingPath.Contains($"{Path.DirectorySeparatorChar}records{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+                    throw new ContentStudioException("This saved change uses a different guided editor.");
+                var snapshot = manifests.ReadSnapshot(_editingPath);
+                _editingVersion = snapshot.Version;
+                _editingDefinition = ContentStudioJson.Deserialize<RecordDefinition>(snapshot.Contents, _editingPath);
+                _record = await Task.Run(() => new CatalogRecordService().GetRecord(config.BaselinePath, _editingDefinition.Table, _editingDefinition.SourceId));
+                if (_record is null) throw new ContentStudioException("The original game entry for this saved change is no longer available.");
+                ApplySavedDefinition(_record, _editingDefinition);
+                _mode = _editingDefinition.Mode;
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(Table) || Id is null or < 0) throw new ContentStudioException("Return to Game search and choose an entry first.");
+                _record = await Task.Run(() => new CatalogRecordService().GetRecord(config.BaselinePath, Table, (uint)Id.Value));
+                if (_record is null) throw new ContentStudioException("That game entry is no longer available in the original data. Return to Game search and choose it again.");
+                _mode = RequestedAction?.ToLowerInvariant() switch { "modify" => RecordChangeMode.Modify, "duplicate" => RecordChangeMode.Duplicate, _ => null };
+            }
+            if (_record.Table.Equals("items", StringComparison.OrdinalIgnoreCase))
+                _itemProfile = await Task.Run(() => new ItemGameplayService().GetProfile(config.BaselinePath, _record.Id));
+        }
+        catch (Exception exception) { _record = null; _message = DesignerMessage.ForUser(exception); }
+        finally { _loading = false; }
+    }
+
+    private void Begin(RecordChangeMode mode) => Navigation.NavigateTo($"/entry?table={Uri.EscapeDataString(_record!.Table)}&id={_record.Id}&action={mode.ToString().ToLowerInvariant()}");
+    private void CancelEdit() => Navigation.NavigateTo(_editingPath is null ? $"/entry?table={Uri.EscapeDataString(_record!.Table)}&id={_record.Id}" : "/manifests");
+    private async Task Save()
+    {
+        if (_record is null || _mode is null) return;
+        try
+        {
+            _saving = true; _message = null;
+            var config = Workspace.LoadConfiguration();
+            var request = new RecordDraftRequest
+            {
+                ProjectPath = config.ProjectPath,
+                BaselinePath = config.BaselinePath,
+                Table = _record.Table,
+                SourceId = _record.Id,
+                Mode = _mode.Value,
+                DisplayName = _record.Localizations.FirstOrDefault(field => field.Field is "name" or "title")?.Values.GetValueOrDefault("en_us") ?? _record.Name,
+                Values = _record.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.IsNull ? null : field.Value, StringComparer.OrdinalIgnoreCase),
+                Localizations = _record.Localizations.ToDictionary(field => field.Field, field => field.Values, StringComparer.OrdinalIgnoreCase),
+                Children = _record.RelatedSections.SelectMany(section => section.Rows.Select(row => new RecordChildDraft
+                {
+                    Table = section.Table,
+                    OwnerColumn = section.OwnerColumn,
+                    SourceId = row.Id,
+                    Values = row.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.IsNull ? null : field.Value, StringComparer.OrdinalIgnoreCase)
+                })).ToList(),
+                LinkedRecords = _record.LinkedRecords.Where(linked => linked.Enabled).Select(linked => new RecordLinkedDraft
+                {
+                    Table = linked.Table,
+                    SourceId = linked.SourceId,
+                    LinkTable = linked.LinkTable,
+                    LinkSourceId = linked.LinkSourceId,
+                    LinkColumn = linked.LinkColumn,
+                    Values = linked.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.IsNull ? null : field.Value, StringComparer.OrdinalIgnoreCase)
+                }).ToList()
+            };
+            if (_editingDefinition is null || _editingPath is null)
+            {
+                _saved = await Task.Run(() => new RecordScaffoldService().Save(request));
+            }
+            else
+            {
+                _saved = await Task.Run(() => new RecordScaffoldService().Update(_editingPath, _editingDefinition, request, _editingVersion));
+                _editingVersion = new ManifestService().Version(_editingPath);
+            }
+        }
+        catch (Exception exception) { _message = DesignerMessage.ForUser(exception); }
+        finally { _saving = false; }
+    }
+
+    private static void ApplySavedDefinition(CatalogRecord record, RecordDefinition definition)
+    {
+        foreach (var field in record.Fields)
+        {
+            if (!definition.Values.TryGetValue(field.Name, out var value)) continue;
+            field.IsNull = CatalogRecordService.IsCompactNull(value);
+            field.Value = field.IsNull ? null : value;
+        }
+        foreach (var localization in record.Localizations)
+        {
+            if (definition.Localizations.TryGetValue(localization.Field, out var values))
+                localization.Values = new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
+        }
+        foreach (var section in record.RelatedSections)
+        foreach (var row in section.Rows)
+        {
+            var saved = definition.Children.FirstOrDefault(child => child.Table.Equals(section.Table, StringComparison.OrdinalIgnoreCase) && child.SourceId == row.Id);
+            if (saved is null) continue;
+            foreach (var field in row.Fields)
+            {
+                if (!saved.Values.TryGetValue(field.Name, out var value)) continue;
+                field.IsNull = CatalogRecordService.IsCompactNull(value);
+                field.Value = field.IsNull ? null : value;
+            }
+        }
+        foreach (var linkedRecord in record.LinkedRecords)
+        {
+            var saved = definition.LinkedClones.FirstOrDefault(linked =>
+                linked.Table.Equals(linkedRecord.Table, StringComparison.OrdinalIgnoreCase) &&
+                linked.LinkTable.Equals(linkedRecord.LinkTable, StringComparison.OrdinalIgnoreCase) &&
+                linked.LinkSourceId == linkedRecord.LinkSourceId &&
+                linked.LinkColumn.Equals(linkedRecord.LinkColumn, StringComparison.OrdinalIgnoreCase));
+            if (saved is null) continue;
+            linkedRecord.Enabled = true;
+            foreach (var field in linkedRecord.Fields)
+            {
+                if (!saved.Values.TryGetValue(field.Name, out var value)) continue;
+                field.IsNull = CatalogRecordService.IsCompactNull(value);
+                field.Value = field.IsNull ? null : value;
+            }
+        }
+    }
+
+    private IEnumerable<CatalogRecordField> ImportantFields() => _itemProfile?.IsEquipment == true
+        ? _record!.Fields.Where(field => field.IsEssential && !field.IsIdentity && !GearEditor.IsManagedItemField(field.Name))
+        : _record!.Fields.Where(field => field.IsEssential && !field.IsIdentity);
+
+    private List<CatalogRelatedSection> GeneralRelatedSections() => _record?.RelatedSections.Where(section => !section.IsEquipmentTemplate).ToList() ?? [];
+
+    private async Task ReloadSharedChange() => await OnParametersSetAsync();
+    private void WorkspaceChanged(object? sender, WorkspaceChangedEventArgs args)
+    {
+        if (_editingPath is null || !Path.GetFullPath(args.Path).Equals(Path.GetFullPath(_editingPath), StringComparison.OrdinalIgnoreCase)) return;
+        _ = InvokeAsync(() =>
+        {
+            try { _externalUpdate = !new ManifestService().Version(_editingPath).Equals(_editingVersion, StringComparison.Ordinal); }
+            catch (ContentStudioException) { _externalUpdate = true; }
+            StateHasChanged();
+        });
+    }
+    public void Dispose() => Workspace.Changed -= WorkspaceChanged;
+}
