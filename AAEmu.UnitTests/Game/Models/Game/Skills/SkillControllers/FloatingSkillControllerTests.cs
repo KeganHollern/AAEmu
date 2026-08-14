@@ -145,7 +145,7 @@ public class FloatingSkillControllerTests
         template.Cells[0, 0] = cell;
         template.GeoData = new AiGeoDataManager(template);
 
-        var owner = new TestUnit { ObjId = 1, Name = "owner", DisabledSetPosition = true };
+        var owner = new TestUnit { ObjId = 1, Name = "owner", Hp = 1, DisabledSetPosition = true };
         var world = new WorldInstance(template, 1, true, 1);
         SetPrivateMember(owner, "_parentWorld", world, typeof(GameObject));
         owner.Transform.Local.SetPosition(new Vector3(0.5f, 0.5f, groundZ));
