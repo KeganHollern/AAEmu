@@ -72,6 +72,7 @@ public sealed class ContentValidator
                 RequireRow(connection, "craft_packs", packId, report, recipe.Key);
                 RequireRelationshipCount(connection, "SELECT COUNT(*) FROM craft_pack_crafts WHERE craft_pack_id = @left AND craft_id = @right;", packId, recipe.Id, "recipe craft-pack link", report, recipe.Key);
             }
+            ValidateRecipeWorkbenchMenu(connection, recipe, report);
             if (recipe.Names.Count > 0)
             {
                 RequireRelationshipCount(connection, "SELECT COUNT(*) FROM localized_texts WHERE tbl_name = 'crafts' AND tbl_column_name = 'title' AND idx = @right;", 0, recipe.Id, "recipe title localization", report, recipe.Key);
@@ -121,6 +122,52 @@ public sealed class ContentValidator
         }
 
         return report;
+    }
+
+    private static void ValidateRecipeWorkbenchMenu(SqliteConnection connection, RecipeDefinition recipe, ValidationReport report)
+    {
+        if (recipe.RequiredDoodadId == 0)
+        {
+            return;
+        }
+
+        var workbenchPacks = SqliteRowService.ReadIds(
+            connection,
+            null,
+            """
+            SELECT DISTINCT payload.craft_pack_id
+              FROM doodad_func_groups groups
+              JOIN doodad_funcs funcs
+                ON funcs.doodad_func_group_id = groups.id
+               AND funcs.actual_func_type = 'DoodadFuncCraftPack'
+              JOIN doodad_func_craft_packs payload ON payload.id = funcs.actual_func_id
+             WHERE groups.doodad_almighty_id = @id
+             ORDER BY payload.craft_pack_id;
+            """,
+            "@id",
+            recipe.RequiredDoodadId).ToHashSet();
+        if (workbenchPacks.Count == 0)
+        {
+            report.AddError(
+                "recipe.workbenchMenuMissing",
+                "The selected crafting object does not expose a crafting menu. Choose a workbench from the Recipe Maker.",
+                entity: recipe.Key);
+            return;
+        }
+
+        var recipePacks = SqliteRowService.ReadIds(
+            connection,
+            null,
+            "SELECT DISTINCT craft_pack_id FROM craft_pack_crafts WHERE craft_id = @id ORDER BY craft_pack_id;",
+            "@id",
+            recipe.Id).ToHashSet();
+        if (!recipePacks.SetEquals(workbenchPacks))
+        {
+            report.AddError(
+                "recipe.workbenchMenuMismatch",
+                "The recipe is attached to a different crafting menu than its selected workbench. Open and save it in the Recipe Maker to repair both connections together.",
+                entity: recipe.Key);
+        }
     }
 
     private static void ValidateRecipe(SqliteConnection connection, RecipeDefinition recipe, ValidationReport report)

@@ -84,7 +84,7 @@
     <section class="entry-section panel">
         <div class="section-intro"><span>@(_isExisting ? "2" : "3")</span><div><p class="eyebrow">CRAFTING RULES</p><h2>Where, when, and who can craft it</h2><p>These values are copied from the source and can be changed deliberately.</p></div></div>
         <div class="friendly-field-grid">
-            <article class="friendly-field"><div class="field-label"><label>Required workbench</label></div><ReferencePicker Table="doodad_almighties" Value="@_recipe.RequiredDoodadId" ValueChanged="value => _recipe.RequiredDoodadId = value" EmptyLabel="Craftable without a specific workbench" Placeholder="Type a workbench name..." /><label class="null-toggle"><input type="checkbox" checked="@(_recipe.RequiredDoodadId == 0)" @onchange="SetNoRequiredWorkbench" /> Craftable without a specific workbench</label><p>Choose an existing crafting object by name, or leave this unrestricted.</p></article>
+            <article class="friendly-field"><div class="field-label"><label>Crafting workbench</label></div><ReferencePicker Table="doodad_almighties" Value="@_recipe.RequiredDoodadId" ValueChanged="SetRequiredWorkbench" EmptyLabel="Keep the copied crafting menu without an extra requirement" Placeholder="Type a workbench name..." /><label class="null-toggle"><input type="checkbox" checked="@(_recipe.RequiredDoodadId == 0)" @onchange="SetNoRequiredWorkbench" /> No additional workbench requirement</label><p>@WorkbenchHelp()</p></article>
             <article class="friendly-field"><div class="field-label"><label>Crafting time</label></div><input type="number" min="0" @bind="_recipe.CastDelay" /><p>Delay stored on the recipe, in milliseconds.</p></article>
             <article class="friendly-field"><div class="field-label"><label>Crafting proficiency</label></div><ReferencePicker Table="actability_categories" Value="@_recipe.ActabilityCategoryId" ValueChanged="value => _recipe.ActabilityCategoryId = value" Placeholder="Type a proficiency name..." /><p>The vocation used for proficiency checks, such as Alchemy or Cooking.</p></article>
             <article class="friendly-field"><div class="field-label"><label>Required proficiency</label></div><input type="number" @bind="_recipe.ActabilityLimit" /><p>The minimum proficiency needed to craft it.</p></article>
@@ -362,6 +362,10 @@ else if (!_busy)
         _recipe.Names["en_us"] = _name.Trim();
         if (string.IsNullOrWhiteSpace(_description)) _recipe.Descriptions.Remove("en_us"); else _recipe.Descriptions["en_us"] = _description.Trim();
         _recipe.CraftPackIds = ParseIds(_packs) ?? [];
+        if (_recipe.RequiredDoodadId != 0)
+        {
+            AssignWorkbench(_recipe.RequiredDoodadId);
+        }
     }
 
     private void AddMaterial() => _recipe?.Materials.Add(new RecipeMaterialDefinition { Amount = 1, RequiredGrade = -1 });
@@ -371,7 +375,24 @@ else if (!_busy)
 
     private void SetMaterialItem(RecipeMaterialDefinition material, uint id) => material.ItemId = id;
     private void SetProductItem(RecipeProductDefinition product, uint id) => product.ItemId = id;
-    private void SetNoRequiredWorkbench(ChangeEventArgs args) { if (args.Value is true) _recipe!.RequiredDoodadId = 0; }
+    private void SetRequiredWorkbench(uint doodadId) => Try(() => AssignWorkbench(doodadId), null);
+    private void SetNoRequiredWorkbench(ChangeEventArgs args)
+    {
+        if (args.Value is true)
+        {
+            AssignWorkbench(0);
+        }
+    }
+    private void AssignWorkbench(uint doodadId)
+    {
+        if (_recipe is null) return;
+        var config = Workspace.LoadConfiguration();
+        new RecipeWorkbenchService().Assign(_recipe, config.BaselinePath, config.ProjectPath, doodadId);
+        _packs = string.Join(", ", _recipe.CraftPackIds);
+    }
+    private string WorkbenchHelp() => _recipe?.RequiredDoodadId > 0
+        ? "This choice also moves the recipe into that workbench's crafting menu automatically."
+        : "The copied crafting-menu membership is kept, but no additional workbench requirement is enforced.";
     private void RememberItem(ItemSearchResult item) => _itemNames[item.Id] = item.Name;
 
     private string ItemName(uint id) => id == 0 ? "Choose an item" : _itemNames.GetValueOrDefault(id, "Unavailable item");

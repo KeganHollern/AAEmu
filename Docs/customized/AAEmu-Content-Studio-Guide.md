@@ -182,6 +182,8 @@ In the designer:
 7. Enable independent labor and casting time when the custom recipe should clone its crafting skill.
 8. Save the custom recipe, then use **My changes** for later edits and review.
 
+Choosing a crafting workbench is one atomic operation in the Recipe Maker. The Studio updates both the recipe's workbench requirement and the craft-pack membership that controls which station menu lists it. A build is rejected if those connections disagree, including when an agent edits the recipe plan directly. This prevents a recipe labeled for one workbench from remaining visible at the source recipe's station.
+
 The same source recipe can be copied any number of times. Content Studio automatically proposes distinct names such as **Custom Lumber**, **Custom Lumber 2**, and **Custom Lumber 3**, while keeping the protected storage names unique as well. Workbench copies follow the same rule.
 
 CLI equivalent:

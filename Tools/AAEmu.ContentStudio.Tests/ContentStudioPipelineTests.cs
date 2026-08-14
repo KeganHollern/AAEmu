@@ -27,6 +27,49 @@ public class ContentStudioPipelineTests
     }
 
     [Test]
+    public async Task RecipeWorkbenchAssignment_MovesRecipeToSelectedWorkbenchMenu()
+    {
+        using var workspace = TestWorkspace.Create();
+        var recipe = new RecipeDefinition
+        {
+            CraftPackIds = [19],
+            RequiredDoodadId = 558
+        };
+        var service = new RecipeWorkbenchService();
+
+        var existing = service.Assign(recipe, workspace.BaselinePath, workspace.ProjectPath, 300);
+
+        await Assert.That(existing.WorkbenchName).IsEqualTo("Alchemy Workbench");
+        await Assert.That(recipe.RequiredDoodadId).IsEqualTo(300u);
+        await Assert.That(recipe.CraftPackIds).IsEquivalentTo(new uint[] { 90 });
+
+        var custom = service.Assign(recipe, workspace.BaselinePath, workspace.ProjectPath, 9_200_000);
+
+        await Assert.That(custom.WorkbenchName).IsEqualTo("Test Workbench");
+        await Assert.That(recipe.RequiredDoodadId).IsEqualTo(9_200_000u);
+        await Assert.That(recipe.CraftPackIds).IsEquivalentTo(new uint[] { 9_300_000 });
+    }
+
+    [Test]
+    public async Task BuiltDatabaseValidation_RejectsRecipeListedAtWrongWorkbenchMenu()
+    {
+        using var workspace = TestWorkspace.Create();
+        var result = new BuildService().Build(workspace.CreateBuildRequest());
+        using (var connection = new SqliteConnection($"Data Source={result.ArtifactPath};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "INSERT INTO craft_pack_crafts VALUES (9999999, 90, 9100000);";
+            command.ExecuteNonQuery();
+        }
+        var project = new ProjectRepository().LoadProject(workspace.ProjectPath);
+
+        var report = new ContentValidator().ValidateBuiltDatabase(result.ArtifactPath, project);
+
+        await Assert.That(report.Issues.Any(issue => issue.Code == "recipe.workbenchMenuMismatch")).IsTrue();
+    }
+
+    [Test]
     public async Task BaselineVerifier_RejectsChangedDatabase()
     {
         using var workspace = TestWorkspace.Create();
