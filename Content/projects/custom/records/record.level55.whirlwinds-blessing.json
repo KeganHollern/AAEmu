@@ -1,0 +1,11 @@
+{
+    "$schema": "../../../schemas/record.schema.json",
+    "schemaVersion": 1,
+    "key": "record.level55.whirlwinds-blessing",
+    "displayName": "Whirlwind's Blessing",
+    "mode": "modify",
+    "table": "skills",
+    "sourceId": 23596,
+    "id": 23596,
+    "values": { "show": "t" }
+}

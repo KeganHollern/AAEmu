@@ -42,6 +42,7 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
     private Dictionary<uint, LinearFuncTemplate> _linearFuncs;
     private Dictionary<uint, SkillReagent> _skillReagents;
     private Dictionary<uint, SkillProduct> _skillProducts;
+    private HashSet<uint> _comboFollowupSkills;
     // private HashSet<ushort> _skillIds = new();
     // private ushort _skillIdIndex = 1;
 
@@ -92,6 +93,11 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
     public bool IsCommonSkill(uint id)
     {
         return _commonSkills.Contains(id);
+    }
+
+    public bool IsComboFollowupSkill(uint id)
+    {
+        return _comboFollowupSkills.Contains(id);
     }
 
     public List<SkillTemplate> GetStartAbilitySkills(AbilityType ability)
@@ -248,6 +254,7 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
         _skills = [];
         _defaultSkills = [];
         _commonSkills = [];
+        _comboFollowupSkills = [];
         _startAbilitySkills = [];
         _passiveBuffs = [];
         _types = [];
@@ -1601,6 +1608,8 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
                         var type = _types[effectId];
                         if (_effects.TryGetValue(type.Type, out var effect))
                             template.Template = effect[type.ActualId];
+                        if (template.Template is SpecialEffect { SpecialEffectTypeId: SpecialType.Combo, Value1: > 0 } combo)
+                            _comboFollowupSkills.Add((uint)combo.Value1);
                         template.Weight = reader.GetInt32("weight");
                         template.StartLevel = reader.GetByte("start_level");
                         template.EndLevel = reader.GetByte("end_level");
@@ -1700,32 +1709,39 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
                 }
             }
 
-            using (var command = connection.CreateCommand())
+            if (TableExists(connection, "combat_buffs"))
             {
-                command.CommandText = "SELECT * FROM combat_buffs";
-                command.Prepare();
-                using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+                using (var command = connection.CreateCommand())
                 {
-                    while (reader.Read())
+                    command.CommandText = "SELECT * FROM combat_buffs";
+                    command.Prepare();
+                    using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
                     {
-                        var combatBuffTemplate = new CombatBuffTemplate
+                        while (reader.Read())
                         {
-                            Id = reader.GetUInt32("id"),
-                            HitSkillId = reader.GetUInt32("hit_skill_id", 0),
-                            HitType = (SkillHitType)reader.GetUInt32("hit_type_id"),
-                            BuffId = reader.GetUInt32("buff_id"),
-                            BuffFromSource = reader.GetBoolean("buff_from_source", true),
-                            BuffToSource = reader.GetBoolean("buff_to_source", true),
-                            ReqSkillId = reader.GetUInt32("req_skill_id", 0),
-                            ReqBuffId = reader.GetUInt32("req_buff_id"),
-                            IsHealSpell = reader.GetBoolean("is_heal_spell", true)
-                        };
+                            var combatBuffTemplate = new CombatBuffTemplate
+                            {
+                                Id = reader.GetUInt32("id"),
+                                HitSkillId = reader.GetUInt32("hit_skill_id", 0),
+                                HitType = (SkillHitType)reader.GetUInt32("hit_type_id"),
+                                BuffId = reader.GetUInt32("buff_id"),
+                                BuffFromSource = reader.GetBoolean("buff_from_source", true),
+                                BuffToSource = reader.GetBoolean("buff_to_source", true),
+                                ReqSkillId = reader.GetUInt32("req_skill_id", 0),
+                                ReqBuffId = reader.GetUInt32("req_buff_id"),
+                                IsHealSpell = reader.GetBoolean("is_heal_spell", true)
+                            };
 
-                        if (!_combatBuffs.ContainsKey(combatBuffTemplate.ReqBuffId))
-                            _combatBuffs.Add(combatBuffTemplate.ReqBuffId, []);
-                        _combatBuffs[combatBuffTemplate.ReqBuffId].Add(combatBuffTemplate);
+                            if (!_combatBuffs.ContainsKey(combatBuffTemplate.ReqBuffId))
+                                _combatBuffs.Add(combatBuffTemplate.ReqBuffId, []);
+                            _combatBuffs[combatBuffTemplate.ReqBuffId].Add(combatBuffTemplate);
+                        }
                     }
                 }
+            }
+            else
+            {
+                Logger.Info("The selected compact has no combat_buffs table; continuing with the r208022-compatible empty combat-buff graph.");
             }
 
             Logger.Info("Skill effects loaded");
@@ -1911,6 +1927,14 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
         }
 
         return null;
+    }
+
+    private static bool TableExists(Microsoft.Data.Sqlite.SqliteConnection connection, string table)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = @name);";
+        command.Parameters.AddWithValue("@name", table);
+        return Convert.ToInt32(command.ExecuteScalar()) != 0;
     }
     
 }

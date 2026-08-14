@@ -3,24 +3,26 @@
 
 <PageTitle>AAEmu Content Studio</PageTitle>
 <header class="page-head">
-    <div><p class="eyebrow">CUSTOM CONTENT WORKSHOP</p><h1>Change ArcheAge without database expertise.</h1><p class="lede">Search familiar game names, understand every setting, make guided changes or copies, then create one verified file for the server and client.</p></div>
-    <button class="button primary" @onclick="RunDoctor">Run preflight</button>
+    <div><p class="eyebrow">CUSTOM CONTENT WORKSHOP</p><h1>Change ArcheAge using names you already know.</h1><p class="lede">Find familiar game content, make guided changes or copies, and review the same shared work whether it came from a designer or an agent.</p></div>
+    <a class="button primary" href="/catalog">Start with game search</a>
 </header>
 
 <section class="metric-grid">
-    <article class="metric"><small>Baseline</small><strong>@(_configuration?.BaselinePath is null ? "Not loaded" : "r208022")</strong><span>Immutable source</span></article>
-    <article class="metric"><small>Project</small><strong>@(_project?.Definition.Name ?? "Not loaded")</strong><span>@(_project is null ? "—" : $"{_project.Recipes.Count + _project.Workbenches.Count + _project.Records.Count} saved changes")</span></article>
-    <article class="metric"><small>Preflight</small><strong class="@(_report?.IsValid == true ? "good" : "")">@Status</strong><span>@(_report is null ? "Run before authoring" : $"{_report.ErrorCount} errors · {_report.WarningCount} warnings")</span></article>
+    <article class="metric"><small>Original game data</small><strong>@(_configuration?.BaselinePath is null ? "Not ready" : "Ready")</strong><span>Always kept unchanged</span></article>
+    <article class="metric"><small>Shared project</small><strong>@(_project?.Definition.Name ?? "Not loaded")</strong><span>@(_project is null ? "—" : $"{_project.Recipes.Count + _project.Workbenches.Count + _project.Records.Count} changes · {_project.Assertions.Count} release checks")</span></article>
+    <article class="metric"><small>Safety check</small><strong class="@(_report?.IsValid == true ? "good" : "")">@Status</strong><span>@(_report is null ? "Runs automatically when building" : $"{_report.ErrorCount} blockers · {_report.WarningCount} warnings")</span></article>
 </section>
 
 <section class="two-column">
-    <article class="panel"><p class="eyebrow">THREE SIMPLE STEPS</p><h2>Search, change, build</h2><ol class="steps"><li><span>01</span><div><strong>Search by a name you know</strong><p>Abilities, skills, items, recipes, NPCs, workbenches, quests, and more are all in one place.</p></div></li><li><span>02</span><div><strong>Change it or make a copy</strong><p>The Studio explains important fields and handles custom IDs and connected rows.</p></div></li><li><span>03</span><div><strong>Review and build</strong><p>Automatic checks stop broken relationships before anything is deployed.</p></div></li></ol></article>
-    <article class="panel"><p class="eyebrow">CONFIGURATION</p><h2>Active workspace</h2><label>Configuration file</label><input @bind="Workspace.ConfigurationPath" @bind:event="oninput" /><button class="button" @onclick="Load">Reload</button><p class="path">@Workspace.ConfigurationPath</p></article>
+    <article class="panel"><p class="eyebrow">THREE SIMPLE STEPS</p><h2>Search, change, publish</h2><ol class="steps"><li><span>01</span><div><strong>Search by a name you know</strong><p>Abilities, skills, items, recipes, NPCs, workbenches, quests, and more are all in one place.</p></div></li><li><span>02</span><div><strong>Change it or make a copy</strong><p>The Studio explains important choices and manages connections automatically.</p></div></li><li><span>03</span><div><strong>Review and publish</strong><p>Automatic checks stop broken connections before anything reaches the game.</p></div></li></ol></article>
+    <article class="panel shared-work"><p class="eyebrow">DESIGNERS + AGENTS</p><h2>One shared source of truth</h2><p>All work is stored as readable change plans in the custom project. An agent can add or update a plan, and it appears in <strong>My changes</strong> automatically. A designer can open the same plan in the guided editor, adjust it, and save it back for the agent.</p><div class="shared-flow"><span>Agent</span><i>↔</i><strong>Shared project</strong><i>↔</i><span>Designer GUI</span></div><a class="button" href="/manifests">Open shared changes</a></article>
 </section>
+
+<section class="panel preflight-card"><div><p class="eyebrow">OPTIONAL EARLY CHECK</p><h2>Check the workspace now</h2><p>You can run the same safety inspection used before a build whenever you want extra reassurance.</p></div><button class="button" @onclick="RunDoctor">Run safety check</button></section>
 
 @if (_report is not null)
 {
-    <section class="panel"><h2>Preflight report</h2><div class="issue-list">@foreach (var issue in _report.Issues){<div class="issue @issue.Severity.ToString().ToLowerInvariant()"><strong>@issue.Code</strong><span>@issue.Message</span></div>}</div></section>
+    <section class="panel"><h2>Safety-check report</h2><div class="issue-list">@foreach (var issue in _report.Issues){<div class="issue @issue.Severity.ToString().ToLowerInvariant()"><strong>@FriendlySeverity(issue.Severity)</strong><span>@DesignerMessage.ForUser(issue.Message)</span></div>}</div></section>
 }
 @if (!string.IsNullOrEmpty(_error)) { <div class="toast error">@_error</div> }
 
@@ -29,13 +31,11 @@
     private LoadedContentProject? _project;
     private ValidationReport? _report;
     private string? _error;
-    private string Status => _report is null ? "Not run" : _report.IsValid ? "Ready" : "Blocked";
+    private string Status => _report is null ? "Not run yet" : _report.IsValid ? "Ready" : "Needs attention";
 
     protected override void OnInitialized() => Load();
-    private void Load()
-    {
-        Try(() => { _configuration = Workspace.LoadConfiguration(); _project = new ProjectRepository().LoadProject(_configuration.ProjectPath); });
-    }
+    private void Load() => Try(() => { _configuration = Workspace.LoadConfiguration(); _project = new ProjectRepository().LoadProject(_configuration.ProjectPath); });
     private void RunDoctor() => Try(() => { _configuration = Workspace.LoadConfiguration(); _report = new DoctorService().Diagnose(_configuration); _project = new ProjectRepository().LoadProject(_configuration.ProjectPath); });
-    private void Try(Action action) { try { _error = null; action(); } catch (Exception exception) { _error = exception.Message; } }
+    private void Try(Action action) { try { _error = null; action(); } catch (Exception exception) { _error = DesignerMessage.ForUser(exception); } }
+    private static string FriendlySeverity(ValidationSeverity severity) => severity switch { ValidationSeverity.Error => "Needs attention", ValidationSeverity.Warning => "Worth reviewing", _ => "Information" };
 }

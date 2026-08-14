@@ -158,6 +158,15 @@ Details: [`Docs/wiki/Working-with-the-Config.json-files-and-server-listings.md`]
 | **Client files** | `game_pak` / extracted client | Read-only | Models, geodata, assets via `ClientFileManager` |
 | **JSON configs** | `Config*.json`, `Configurations/`, `Data/**/*.json` | Config-time | Server params, worlds, spawns-related data |
 
+### Content Studio single-project policy
+
+- The repository has one canonical Content Studio project: `Content/projects/custom/project.json`.
+- Designers and agents always work in that same project. Recipes, workbenches, ordinary entry changes, level-cap/skill-tree work, balance changes, and release assertions all belong under `Content/projects/custom/`.
+- `Content/content-studio.json` is the active local configuration; `Content/content-studio.example.json` is its portable template. Both point to the canonical custom project.
+- Do not create feature-specific Content Studio projects, registries, configurations, or build directories. Use namespaced plan keys and filenames inside the canonical project instead, such as `record.level55.*` and `assertion.level55.*`.
+- The identity registry at `Content/projects/custom/id-registry.json` is shared by all custom content. Preserve its allocations and tombstones when adding or removing plans.
+- A build from the canonical project is the complete release artifact. Publish that exact artifact to both the AAEmu server and the client export so recipes, skill visibility, progression data, and future changes stay matched.
+
 ### SQL change workflow
 
 When code needs a schema change:

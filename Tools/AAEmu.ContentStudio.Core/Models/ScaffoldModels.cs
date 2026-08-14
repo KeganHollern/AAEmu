@@ -32,7 +32,13 @@ public sealed record ScaffoldResult(string Path, string Key, uint Id, IReadOnlyL
     public bool DryRun { get; init; }
 }
 
-public sealed record DatabaseTableDiff(string Table, long BaselineRows, long ArtifactRows, long AddedRows);
+public sealed record DatabaseTableDiff(string Table, long BaselineRows, long ArtifactRows, long AddedRows)
+{
+    public long ModifiedRows { get; init; }
+    public List<DatabaseCellDiff> ChangedCells { get; init; } = [];
+}
+
+public sealed record DatabaseCellDiff(uint Id, string Column, string? BaselineValue, string? ArtifactValue);
 
 public sealed class DatabaseDiffReport
 {

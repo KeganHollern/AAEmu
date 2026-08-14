@@ -12,7 +12,7 @@ public sealed class CatalogSearchService
         ["items"] = ("item", "Item", "item"),
         ["item_categories"] = ("item", "Item category", "generic"),
         ["crafts"] = ("recipe", "Recipe", "recipe"),
-        ["doodad_almighties"] = ("doodad", "Doodad", "generic"),
+        ["doodad_almighties"] = ("doodad", "World object", "generic"),
         ["npcs"] = ("npc", "NPC", "generic"),
         ["skills"] = ("skill", "Skill", "generic"),
         ["buffs"] = ("buff", "Buff", "generic"),
@@ -266,7 +266,7 @@ public sealed class CatalogSearchService
             var amount = reader.GetInt32(2);
             var relation = reader.GetString(3);
             var itemResult = itemResults.First(result => result.Id == itemId);
-            var recipeName = labels.GetValueOrDefault(("crafts", recipeId))?.Text ?? $"Recipe {recipeId}";
+            var recipeName = labels.GetValueOrDefault(("crafts", recipeId))?.Text ?? "Unnamed recipe";
             var verb = relation == "material" ? "Uses" : "Produces";
             var result = CreateResult("crafts", recipeId, recipeName, relation, $"{verb} {amount} × {itemNames[itemId]}", itemResult.Score - 35);
             result.RelatedTable = "items";
@@ -307,7 +307,7 @@ public sealed class CatalogSearchService
             var doodadId = Convert.ToUInt32(reader.GetInt64(0));
             var recipeId = Convert.ToUInt32(reader.GetInt64(1));
             var recipeResult = recipeResults.First(result => result.Id == recipeId);
-            var workbenchName = labels.GetValueOrDefault(("doodad_almighties", doodadId))?.Text ?? $"Workbench {doodadId}";
+            var workbenchName = labels.GetValueOrDefault(("doodad_almighties", doodadId))?.Text ?? "Unnamed workbench";
             var result = CreateResult("doodad_almighties", doodadId, workbenchName, "craft_pack", $"Offers recipe: {recipeNames[recipeId]}", recipeResult.Score - 70);
             result.Kind = "workbench";
             result.KindLabel = "Workbench";

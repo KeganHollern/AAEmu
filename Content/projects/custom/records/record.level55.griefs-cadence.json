@@ -1,0 +1,11 @@
+{
+    "$schema": "../../../schemas/record.schema.json",
+    "schemaVersion": 1,
+    "key": "record.level55.griefs-cadence",
+    "displayName": "[Perform] Grief's Cadence",
+    "mode": "modify",
+    "table": "skills",
+    "sourceId": 23595,
+    "id": 23595,
+    "values": { "show": "t" }
+}

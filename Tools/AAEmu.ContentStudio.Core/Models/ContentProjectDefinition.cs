@@ -11,6 +11,7 @@ public sealed class ContentProjectDefinition
     public string[] Recipes { get; set; } = ["recipes/*.json"];
     public string[] Workbenches { get; set; } = ["workbenches/*.json"];
     public string[] Records { get; set; } = ["records/*.json"];
+    public string[] Assertions { get; set; } = ["assertions/*.json"];
     public string[] RawSql { get; set; } = ["raw-sql/*.sql"];
 }
 
@@ -22,6 +23,7 @@ public sealed class LoadedContentProject
     public IReadOnlyList<RecipeDefinition> Recipes { get; init; } = [];
     public IReadOnlyList<WorkbenchDefinition> Workbenches { get; init; } = [];
     public IReadOnlyList<RecordDefinition> Records { get; init; } = [];
+    public IReadOnlyList<ContentAssertionDefinition> Assertions { get; init; } = [];
     public IReadOnlyList<string> RawSqlFiles { get; init; } = [];
     public IReadOnlyList<string> SourceFiles { get; init; } = [];
 }

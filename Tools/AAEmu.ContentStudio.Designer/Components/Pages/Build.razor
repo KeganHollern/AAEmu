@@ -1,23 +1,150 @@
 @page "/build"
 @inject DesignerWorkspace Workspace
 
-<PageTitle>Build & Deploy</PageTitle>
-<header class="page-head compact"><div><p class="eyebrow">REPRODUCIBLE OUTPUT</p><h1>Build & deploy</h1><p class="lede">Compile from the pristine baseline. Nothing touches a live database until you explicitly deploy.</p></div><button class="button primary" @onclick="BuildArtifact" disabled="@_busy">@(_busy?"Building…":"Build verified compact")</button></header>
+<PageTitle>Review & Publish</PageTitle>
+
+<header class="page-head compact">
+    <div>
+        <p class="eyebrow">FINAL REVIEW</p>
+        <h1>Review and publish</h1>
+        <p class="lede">Content Studio checks every saved change, prepares a matched game-data package, and publishes only when you choose a destination.</p>
+    </div>
+    <button class="button primary" @onclick="BuildArtifact" disabled="@_busy">@(_busy ? "Preparing…" : "Check and prepare")</button>
+</header>
+
 <section class="metric-grid">
-    <article class="metric"><small>Source validation</small><strong class="@(_validation?.IsValid==true?"good":"")">@(_validation is null?"Not run":_validation.IsValid?"Passed":"Blocked")</strong><button class="text-button" @onclick="Validate">Run validation</button></article>
-    <article class="metric"><small>Artifact</small><strong>@(_result is null?"Not built":FormatBytes(_result.Manifest.ArtifactLength))</strong><span>@(_result?.Manifest.ArtifactSha256[..Math.Min(16,_result.Manifest.ArtifactSha256.Length)])</span></article>
-    <article class="metric"><small>Changes</small><strong>@(_result?.Manifest.Changes.Count??0)</strong><span>@(_result is null?"Build to preview":$"{_result.Manifest.RecipeCount} recipes · {_result.Manifest.WorkbenchCount} workbenches · {_result.Manifest.Changes.Count(change => change.EntityType == "record")} other entries")</span></article>
+    <article class="metric">
+        <small>Safety checks</small>
+        <strong class="@(_validation?.IsValid == true ? "good" : "")">@ValidationStatus</strong>
+        <button class="text-button" @onclick="Validate" disabled="@_busy">Check now</button>
+    </article>
+    <article class="metric">
+        <small>Publish package</small>
+        <strong>@(_result is null ? "Not prepared" : "Ready")</strong>
+        <span>@(_result is null ? "Created after all checks pass" : "Matched for the client and server")</span>
+    </article>
+    <article class="metric">
+        <small>Saved changes</small>
+        <strong>@_savedChangeCount</strong>
+        <span>@(_result is null ? "Prepare to review the final list" : ChangeCountSummary())</span>
+    </article>
 </section>
-@if(_result is not null){<section class="two-column"><article class="panel"><h2>Build artifact</h2><p class="path">@_result.ArtifactPath</p><div class="issue-list">@foreach(var change in _result.Manifest.Changes){<div class="issue information"><strong>@change.EntityType · @change.Id</strong><span>@change.Summary</span></div>}</div></article><article class="panel"><h2>Deployment targets</h2><p>Each deployment preserves the current database in a timestamped backup first.</p>@foreach(var target in _targets){<div class="deploy-row"><div><strong>@target.Key</strong><span>@target.Value.Path</span></div><button class="button danger" @onclick="()=>Deploy(target.Key)">Deploy</button></div>}</article></section>}
-@if(_validation is not null&&!_validation.IsValid){<section class="panel"><h2>Blocking issues</h2>@foreach(var issue in _validation.Issues.Where(i=>i.Severity==ValidationSeverity.Error)){<p><code>@issue.Code</code> @issue.Message</p>}</section>}
-@if (!string.IsNullOrEmpty(_message)) { <div class="toast @(_isError?"error":"success")">@_message</div> }
+
+@if (_result is not null)
+{
+    <section class="two-column">
+        <article class="panel">
+            <p class="eyebrow">READY FOR REVIEW</p>
+            <h2>What will change</h2>
+            <p>This is the exact saved work included in the prepared package.</p>
+            <div class="issue-list">
+                @foreach (var change in _result.Manifest.Changes)
+                {
+                    <div class="issue information"><strong>@FriendlyChangeType(change.EntityType)</strong><span>@DesignerMessage.ForUser(change.Summary)</span></div>
+                }
+            </div>
+        </article>
+        <article class="panel">
+            <p class="eyebrow">CHOOSE A DESTINATION</p>
+            <h2>Publish prepared changes</h2>
+            <p>Content Studio saves a restore copy of the current game data before every publish.</p>
+            @foreach (var target in _targets)
+            {
+                <div class="deploy-row">
+                    <div><strong>@FriendlyTarget(target.Key)</strong><span>@TargetExplanation(target.Key)</span></div>
+                    <button class="button danger" @onclick="() => Deploy(target.Key)" disabled="@_busy">Publish here</button>
+                </div>
+            }
+        </article>
+    </section>
+}
+
+@if (_validation is not null && !_validation.IsValid)
+{
+    <section class="panel">
+        <p class="eyebrow">NEEDS ATTENTION</p>
+        <h2>Fix these before publishing</h2>
+        <div class="issue-list">
+            @foreach (var issue in _validation.Issues.Where(issue => issue.Severity == ValidationSeverity.Error))
+            {
+                <div class="issue error"><strong>Action needed</strong><span>@DesignerMessage.ForUser(issue.Message)</span></div>
+            }
+        </div>
+    </section>
+}
+
+@if (!string.IsNullOrEmpty(_message)) { <div class="toast @(_isError ? "error" : "success")">@_message</div> }
 
 @code {
-    private ValidationReport? _validation; private ContentBuildResult? _result; private Dictionary<string,DeploymentTarget> _targets=[]; private bool _busy; private string? _message; private bool _isError;
-    protected override void OnInitialized(){try{_targets=Workspace.LoadConfiguration().Targets;}catch(Exception e){_message=e.Message;_isError=true;}}
-    private void Validate()=>Try(()=>{var c=Workspace.LoadConfiguration();var p=new ProjectRepository().LoadProject(c.ProjectPath);_validation=new ContentValidator().ValidateProject(p,c.BaselinePath);},_validation?.IsValid==true?"Validation passed.":null);
-    private void BuildArtifact(){_busy=true;Try(()=>{var c=Workspace.LoadConfiguration();_result=new BuildService().Build(new ContentBuildRequest{BaselinePath=c.BaselinePath,BaselineDescriptorPath=c.BaselineDescriptorPath,ProjectPath=c.ProjectPath,OutputDirectory=c.OutputDirectory});_validation=_result.Manifest.Validation;_targets=c.Targets;},"Verified artifact built.");_busy=false;}
-    private void Deploy(string name)=>Try(()=>{if(_result is null)throw new ContentStudioException("Build an artifact first.");var c=Workspace.LoadConfiguration();var m=new DeploymentService().Deploy(_result.ArtifactPath,name,c.Targets[name],c.OutputDirectory);_message=$"Deployed to {m.TargetPath}. Backup: {m.BackupPath??"none"}";},null);
-    private void Try(Action action,string? success){try{action();_isError=false;if(success is not null)_message=success;}catch(Exception e){_isError=true;_message=e.Message;}}
-    private static string FormatBytes(long value)=>$"{value/1024d/1024d:N1} MB";
+    private ValidationReport? _validation;
+    private ContentBuildResult? _result;
+    private Dictionary<string, DeploymentTarget> _targets = [];
+    private bool _busy;
+    private int _savedChangeCount;
+    private string? _message;
+    private bool _isError;
+
+    private string ValidationStatus => _validation is null ? "Not run yet" : _validation.IsValid ? "Passed" : "Needs attention";
+
+    protected override void OnInitialized()
+    {
+        try
+        {
+            var configuration = Workspace.LoadConfiguration();
+            _targets = configuration.Targets;
+            var project = new ProjectRepository().LoadProject(configuration.ProjectPath);
+            _savedChangeCount = project.Recipes.Count + project.Workbenches.Count + project.Records.Count + project.Assertions.Count;
+        }
+        catch (Exception exception) { _message = DesignerMessage.ForUser(exception); _isError = true; }
+    }
+
+    private void Validate()
+    {
+        Try(() =>
+        {
+            var configuration = Workspace.LoadConfiguration();
+            var project = new ProjectRepository().LoadProject(configuration.ProjectPath);
+            _validation = new ContentValidator().ValidateProject(project, configuration.BaselinePath);
+            _message = _validation.IsValid ? "All saved changes passed the safety checks." : "Some saved changes need attention before publishing.";
+        }, null);
+    }
+
+    private void BuildArtifact()
+    {
+        _busy = true;
+        Try(() =>
+        {
+            var configuration = Workspace.LoadConfiguration();
+            _result = new BuildService().Build(new ContentBuildRequest
+            {
+                BaselinePath = configuration.BaselinePath,
+                BaselineDescriptorPath = configuration.BaselineDescriptorPath,
+                ProjectPath = configuration.ProjectPath,
+                OutputDirectory = configuration.OutputDirectory
+            });
+            _validation = _result.Manifest.Validation;
+            _targets = configuration.Targets;
+            _savedChangeCount = _result.Manifest.Changes.Count + _result.Manifest.AssertionCount;
+        }, "The publish package is ready. Review the changes, then choose where to publish it.");
+        _busy = false;
+    }
+
+    private void Deploy(string name) => Try(() =>
+    {
+        if (_result is null) throw new ContentStudioException("Prepare the changes before publishing.");
+        var configuration = Workspace.LoadConfiguration();
+        new DeploymentService().Deploy(_result.ArtifactPath, name, configuration.Targets[name], configuration.OutputDirectory);
+        _message = $"Published successfully to {FriendlyTarget(name)}. A restore copy was created automatically.";
+    }, null);
+
+    private void Try(Action action, string? success)
+    {
+        try { action(); _isError = false; if (success is not null) _message = success; }
+        catch (Exception exception) { _isError = true; _message = DesignerMessage.ForUser(exception); }
+    }
+
+    private string ChangeCountSummary() => $"{_result!.Manifest.RecipeCount} recipes · {_result.Manifest.Changes.Count(change => change.EntityType == "record")} other entries · {_result.Manifest.AssertionCount} release checks";
+    private static string FriendlyChangeType(string value) => value.ToLowerInvariant() switch { "recipe" => "Recipe", "workbench" => "Workbench", "record" => "Game entry", _ => CatalogRecordService.FriendlyName(value) };
+    private static string FriendlyTarget(string value) => value.Contains("client", StringComparison.OrdinalIgnoreCase) ? "Client game data" : value.Contains("server", StringComparison.OrdinalIgnoreCase) ? "Server game data" : CatalogRecordService.FriendlyName(value);
+    private static string TargetExplanation(string value) => value.Contains("client", StringComparison.OrdinalIgnoreCase) ? "What players' games use for names, recipes, and matching content" : value.Contains("server", StringComparison.OrdinalIgnoreCase) ? "What the running AAEmu world uses for gameplay rules" : "A configured publishing destination";
 }

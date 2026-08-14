@@ -8,7 +8,24 @@ internal sealed class RecordCompiler
 {
     public IReadOnlyList<ContentChange> Compile(SqliteConnection connection, SqliteTransaction transaction, RecordDefinition definition)
     {
+        var changedValues = definition.Mode == RecordChangeMode.Modify
+            ? ReadChangedValues(connection, transaction, definition.Table, definition.Id, definition.Values)
+            : [];
         var values = ConvertValues(connection, transaction, definition.Table, definition.Values);
+        ApplyLinkedOverrides(definition, definition.Table, definition.SourceId, values);
+        foreach (var linked in definition.LinkedClones)
+        {
+            var linkedValues = ConvertValues(connection, transaction, linked.Table, linked.Values);
+            linkedValues["id"] = linked.Id;
+            if (linked.SourceId == 0)
+            {
+                SqliteRowService.Insert(connection, transaction, linked.Table, linkedValues);
+            }
+            else
+            {
+                SqliteRowService.CloneById(connection, transaction, linked.Table, linked.SourceId, linkedValues);
+            }
+        }
         if (definition.Mode == RecordChangeMode.Duplicate)
         {
             values["id"] = definition.Id;
@@ -16,6 +33,7 @@ internal sealed class RecordCompiler
             foreach (var child in definition.Children)
             {
                 var childValues = ConvertValues(connection, transaction, child.Table, child.Values);
+                ApplyLinkedOverrides(definition, child.Table, child.SourceId, childValues);
                 childValues["id"] = child.Id;
                 childValues[child.OwnerColumn] = definition.Id;
                 SqliteRowService.CloneById(connection, transaction, child.Table, child.SourceId, childValues);
@@ -26,7 +44,9 @@ internal sealed class RecordCompiler
             UpdateById(connection, transaction, definition.Table, definition.Id, values);
             foreach (var child in definition.Children)
             {
-                UpdateById(connection, transaction, child.Table, child.Id, ConvertValues(connection, transaction, child.Table, child.Values));
+                var childValues = ConvertValues(connection, transaction, child.Table, child.Values);
+                ApplyLinkedOverrides(definition, child.Table, child.SourceId, childValues);
+                UpdateById(connection, transaction, child.Table, child.Id, childValues);
             }
         }
 
@@ -48,9 +68,19 @@ internal sealed class RecordCompiler
 
         var action = definition.Mode == RecordChangeMode.Duplicate ? "duplicate" : "modify";
         var summary = definition.Mode == RecordChangeMode.Duplicate
-            ? $"Copied {definition.Table} {definition.SourceId} to {definition.Id}, including {definition.Children.Count} directly owned rows."
-            : $"Changed {definition.Table} {definition.Id} while preserving the pristine baseline.";
+            ? $"Created a separate {CatalogRecordService.FriendlyTableName(definition.Table).ToLowerInvariant()}, including {definition.Children.Count} connected rows and {definition.LinkedClones.Count} private linked rows."
+            : changedValues.Count == 0
+                ? $"Verified {CatalogRecordService.FriendlyTableName(definition.Table).ToLowerInvariant()}; its saved values already matched the original."
+                : $"Changed {CatalogRecordService.FriendlyTableName(definition.Table).ToLowerInvariant()}: {string.Join(", ", changedValues.Select(change => $"{CatalogRecordService.FriendlyName(change.Column)} {Format(change.Before)} → {Format(change.After)}"))}.";
         return [new ContentChange("record", definition.Key, definition.Id, action, summary)];
+    }
+
+    private static void ApplyLinkedOverrides(RecordDefinition definition, string table, uint sourceId, Dictionary<string, object?> values)
+    {
+        foreach (var linked in definition.LinkedClones.Where(linked => linked.LinkTable.Equals(table, StringComparison.OrdinalIgnoreCase) && linked.LinkSourceId == sourceId))
+        {
+            values[linked.LinkColumn] = linked.Id;
+        }
     }
 
     private static Dictionary<string, object?> ConvertValues(SqliteConnection connection, SqliteTransaction transaction, string table, IReadOnlyDictionary<string, string?> values)
@@ -78,8 +108,8 @@ internal sealed class RecordCompiler
             }
             else if (type.Equals("NUM", StringComparison.OrdinalIgnoreCase))
             {
-                if (value is "t" or "f" or "true" or "false" or "T" or "F" or "True" or "False")
-                    result[name] = value;
+                if (CatalogRecordService.IsBooleanField(name, type, value))
+                    result[name] = ParseBoolean(value) ? "t" : "f";
                 else if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer))
                     result[name] = integer;
                 else if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
@@ -100,6 +130,50 @@ internal sealed class RecordCompiler
         }
         return result;
     }
+
+    private static bool ParseBoolean(string? value)
+    {
+        if (value is not null && (value.Equals("t", StringComparison.OrdinalIgnoreCase) || value.Equals("true", StringComparison.OrdinalIgnoreCase) || value == "1"))
+            return true;
+        if (value is not null && (value.Equals("f", StringComparison.OrdinalIgnoreCase) || value.Equals("false", StringComparison.OrdinalIgnoreCase) || value == "0"))
+            return false;
+        throw new ContentStudioException($"'{value}' is not a valid Yes/No value.");
+    }
+
+    private static List<(string Column, object? Before, string? After)> ReadChangedValues(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string table,
+        uint id,
+        IReadOnlyDictionary<string, string?> values)
+    {
+        var result = new List<(string Column, object? Before, string? After)>();
+        foreach (var (column, after) in values)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = $"SELECT {BaselineVerifier.QuoteIdentifier(column)} FROM {BaselineVerifier.QuoteIdentifier(table)} WHERE id = @id;";
+            command.Parameters.AddWithValue("@id", id);
+            var before = command.ExecuteScalar();
+            if (!Equivalent(before, after)) result.Add((column, before, after));
+        }
+        return result;
+    }
+
+    private static bool Equivalent(object? before, string? after)
+    {
+        if (CatalogRecordService.IsCompactNull(before) || CatalogRecordService.IsCompactNull(after))
+            return CatalogRecordService.IsCompactNull(before) && CatalogRecordService.IsCompactNull(after);
+        var beforeText = Convert.ToString(before, CultureInfo.InvariantCulture)?.Trim() ?? string.Empty;
+        var afterText = after?.Trim() ?? string.Empty;
+        if ((beforeText is "t" or "f") && (afterText is "1" or "0" or "t" or "f"))
+            return (beforeText == "t") == (afterText is "1" or "t");
+        return beforeText.Equals(afterText, StringComparison.Ordinal);
+    }
+
+    private static string Format(object? value) => CatalogRecordService.IsCompactNull(value)
+        ? "null"
+        : $"'{Convert.ToString(value, CultureInfo.InvariantCulture)}'";
 
     private static void UpdateById(SqliteConnection connection, SqliteTransaction transaction, string table, uint id, Dictionary<string, object?> values)
     {

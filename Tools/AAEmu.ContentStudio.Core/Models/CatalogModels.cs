@@ -6,6 +6,8 @@ public sealed record ItemSearchResult(uint Id, string Name, uint CategoryId, int
 public sealed record RecipeLookupResult(uint Id, string Name, int MaterialCount, int ProductCount, uint RequiredDoodadId);
 public sealed record WorkbenchLookupResult(uint Id, string Name, string Model, int GroupCount, int FunctionCount, int RecipeCount);
 public sealed record ItemRecipeRelationship(uint RecipeId, string RecipeName, int Amount, uint RequiredDoodadId);
+public sealed record DesignerReferenceOption(uint Value, string Name, string Context, string Table, bool IsCustom = false);
+public sealed record DesignerValueOption(string Value, string Name);
 
 public sealed class ItemGameplayProfile
 {
@@ -28,6 +30,10 @@ public sealed class ItemGameplayProfile
     public int ArmorBasisPoints { get; set; }
     public int MagicResistanceBasisPoints { get; set; }
     public uint AttributeModifierSetId { get; set; }
+    public int AttributeModifierReferenceCount { get; set; }
+    public string? EquipmentTemplateTable { get; set; }
+    public uint EquipmentTemplateRowId { get; set; }
+    public IReadOnlyList<GearBalanceSource> BalanceSources { get; set; } = [];
     public IReadOnlyList<ItemStatWeight> StatWeights { get; set; } = [];
     public IReadOnlyList<ItemLinkedEffect> Effects { get; set; } = [];
     public ItemEquipmentSet? EquipmentSet { get; set; }
@@ -35,7 +41,20 @@ public sealed class ItemGameplayProfile
 }
 
 public sealed record ItemStatWeight(string Name, int Weight, int Percentage);
+public sealed record GearBalanceSource(string Title, string Description, string Table, uint Id, int AffectedItems);
 public sealed record EquipmentSetPiece(uint Id, string Name, string GearKind);
+
+public sealed class GearBalanceDashboard
+{
+    public List<GearBalanceEntry> GlobalConstants { get; set; } = [];
+    public List<GearBalanceEntry> Grades { get; set; } = [];
+    public List<GearBalanceEntry> WeaponTypes { get; set; } = [];
+    public List<GearBalanceEntry> ArmorClasses { get; set; } = [];
+    public List<GearBalanceEntry> EquipmentSlots { get; set; } = [];
+    public List<GearBalanceEntry> ArmorFormulas { get; set; } = [];
+}
+
+public sealed record GearBalanceEntry(string Name, string Description, string Table, uint Id, int AffectedItems);
 
 public sealed class ItemLinkedEffect
 {

@@ -1,0 +1,8 @@
+{
+    "$schema": "../../../schemas/content-assertion.schema.json",
+    "schemaVersion": 1,
+    "key": "assertion.level55.visible-root-skills",
+    "description": "Exactly one learnable level-55 root skill is enabled for each of the ten original skillsets.",
+    "query": "SELECT COUNT(*) FROM skills WHERE ability_level = 55 AND show = 't' AND need_learn = 't' AND auto_learn = 't' AND ((id = 23587 AND ability_id = 1) OR (id = 23588 AND ability_id = 2) OR (id = 23589 AND ability_id = 3) OR (id = 23934 AND ability_id = 4) OR (id = 23591 AND ability_id = 5) OR (id = 23592 AND ability_id = 6) OR (id = 23593 AND ability_id = 7) OR (id = 23594 AND ability_id = 8) OR (id = 23595 AND ability_id = 9) OR (id = 23596 AND ability_id = 10));",
+    "expected": "10"
+}

@@ -330,7 +330,7 @@
 
 .item-picker-selected {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.25rem 0.75rem;
     padding: 0.65rem 0.75rem;
@@ -353,6 +353,15 @@
 
 .item-picker-selected strong {
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.item-picker-selected em {
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-style: normal;
     text-overflow: ellipsis;
     white-space: nowrap;
 }

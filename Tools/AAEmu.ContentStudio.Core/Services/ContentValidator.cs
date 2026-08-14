@@ -1,5 +1,7 @@
 using AAEmu.ContentStudio.Core.Models;
 using Microsoft.Data.Sqlite;
+using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace AAEmu.ContentStudio.Core.Services;
 
@@ -16,6 +18,7 @@ public sealed class ContentValidator
         ValidateUnique(project.Recipes.Select(recipe => (recipe.Key, recipe.Id)), "recipe", report);
         ValidateUnique(project.Workbenches.Select(workbench => (workbench.Key, workbench.Id)), "workbench", report);
         ValidateUnique(project.Records.Select(record => (record.Key, record.Id)), "entry", report);
+        ValidateUnique(project.Assertions.Select(assertion => (assertion.Key, 0u)), "assertion", report);
 
         using var connection = CompactConnectionFactory.OpenReadOnly(compactPath);
         foreach (var recipe in project.Recipes)
@@ -31,6 +34,11 @@ public sealed class ContentValidator
         foreach (var record in project.Records)
         {
             ValidateRecord(connection, record, report);
+        }
+
+        foreach (var assertion in project.Assertions)
+        {
+            ValidateAssertion(connection, assertion, report);
         }
 
         ValidateAllocatedIds(project, report);
@@ -88,10 +96,22 @@ public sealed class ContentValidator
         foreach (var record in project.Records)
         {
             RequireRow(connection, record.Table, record.Id, report, record.Key);
+            RequireValues(connection, record.Table, record.Id, record.Values, report, record.Key);
             foreach (var child in record.Children)
             {
                 RequireRow(connection, child.Table, child.Id, report, record.Key);
+                RequireValues(connection, child.Table, child.Id, child.Values, report, record.Key);
             }
+            foreach (var linked in record.LinkedClones)
+            {
+                RequireRow(connection, linked.Table, linked.Id, report, record.Key);
+                RequireValues(connection, linked.Table, linked.Id, linked.Values, report, record.Key);
+            }
+        }
+
+        foreach (var assertion in project.Assertions)
+        {
+            RequireAssertion(connection, assertion, report);
         }
 
         AddDuplicateChecks(connection, report, project);
@@ -213,13 +233,60 @@ public sealed class ContentValidator
         var entity = string.IsNullOrWhiteSpace(record.Key) ? $"{record.Table}/{record.Id}" : record.Key;
         if (!record.Key.StartsWith("record.", StringComparison.Ordinal) || !IsValidKey(record.Key))
             report.AddError("record.key", "Changed-entry keys must begin with 'record.' and contain only lowercase letters, numbers, dots, underscores, or hyphens.", entity: entity);
-        if (string.IsNullOrWhiteSpace(record.Table) || record.SourceId == 0 || record.Id == 0)
-            report.AddError("record.identity", "A changed entry needs a source table, source ID, and output ID.", entity: entity);
+        if (string.IsNullOrWhiteSpace(record.Table))
+            report.AddError("record.identity", "A changed entry needs a source table and output identity.", entity: entity);
         else if (!SqliteRowService.Exists(connection, null, record.Table, record.SourceId))
             report.AddError("record.source", $"Source {record.Table} entry {record.SourceId} does not exist.", entity: entity);
+        if (record.Mode == RecordChangeMode.Duplicate && record.Id == 0)
+            report.AddError("record.duplicateId", "A copied entry needs a non-zero custom output ID.", entity: entity);
         if (record.Mode == RecordChangeMode.Modify && record.Id != record.SourceId)
             report.AddError("record.modifyId", "A modification must retain the source entry ID.", entity: entity);
+        foreach (var linked in record.LinkedClones)
+        {
+            if (linked.Id == 0 || string.IsNullOrWhiteSpace(linked.Table) || string.IsNullOrWhiteSpace(linked.LinkTable) || string.IsNullOrWhiteSpace(linked.LinkColumn))
+                report.AddError("record.linkedIdentity", "A private linked row needs a table, output ID, and target link.", entity: entity);
+            if (linked.SourceId > 0 && !SqliteRowService.Exists(connection, null, linked.Table, linked.SourceId))
+                report.AddError("record.linkedSource", $"Source {linked.Table} entry {linked.SourceId} does not exist.", entity: entity);
+            if (!record.Children.Any(child => child.Table.Equals(linked.LinkTable, StringComparison.OrdinalIgnoreCase) && child.SourceId == linked.LinkSourceId) &&
+                !(record.Table.Equals(linked.LinkTable, StringComparison.OrdinalIgnoreCase) && record.SourceId == linked.LinkSourceId))
+                report.AddError("record.linkTarget", $"The private {linked.Table} row cannot find its {linked.LinkTable} link target.", entity: entity);
+        }
         ValidateLanguages(record.Localizations.Values.SelectMany(values => values.Keys), report, entity);
+    }
+
+    private static void ValidateAssertion(SqliteConnection connection, ContentAssertionDefinition assertion, ValidationReport report)
+    {
+        var entity = string.IsNullOrWhiteSpace(assertion.Key) ? "assertion" : assertion.Key;
+        if (!assertion.Key.StartsWith("assertion.", StringComparison.Ordinal) || !IsValidKey(assertion.Key))
+            report.AddError("assertion.key", "Assertion keys must begin with 'assertion.' and contain only lowercase letters, numbers, dots, underscores, or hyphens.", entity: entity);
+        if (string.IsNullOrWhiteSpace(assertion.Description))
+            report.AddError("assertion.description", "An assertion needs a human-readable description.", entity: entity);
+        if (!IsReadOnlyScalarQuery(assertion.Query))
+        {
+            report.AddError("assertion.query", "Assertions must contain one read-only SELECT or WITH query.", entity: entity);
+            return;
+        }
+
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = assertion.Query;
+            _ = command.ExecuteScalar();
+        }
+        catch (SqliteException exception)
+        {
+            report.AddError("assertion.query", $"Assertion query is not valid for this baseline: {exception.Message}", entity: entity);
+        }
+    }
+
+    private static bool IsReadOnlyScalarQuery(string query)
+    {
+        var trimmed = query.Trim();
+        if (trimmed.EndsWith(';')) trimmed = trimmed[..^1].TrimEnd();
+        if (trimmed.Contains(';')) return false;
+        if (!trimmed.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) && !trimmed.StartsWith("WITH", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return !Regex.IsMatch(trimmed, @"\b(ATTACH|ALTER|CREATE|DELETE|DETACH|DROP|INSERT|PRAGMA|REINDEX|REPLACE|UPDATE|VACUUM)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static List<uint> ReadCraftPackPayloadIds(SqliteConnection connection, IEnumerable<uint> groups)
@@ -308,6 +375,10 @@ public sealed class ContentValidator
             expected.AddRange(record.LocalizationRowIds.Values.Select(id => ("localized_texts", id, record.Key)));
             expected.AddRange(record.Children.Select(child => (child.Table, child.Id, record.Key)));
         }
+        foreach (var record in project.Records)
+        {
+            expected.AddRange(record.LinkedClones.Select(linked => (linked.Table, linked.Id, record.Key)));
+        }
         foreach (var duplicate in expected.GroupBy(row => (row.Table, row.Id)).Where(group => group.Key.Id != 0 && group.Count() > 1))
         {
             report.AddError("project.rowIdCollision", $"Target ID {duplicate.Key.Id} is used more than once in table '{duplicate.Key.Table}'.");
@@ -353,6 +424,7 @@ public sealed class ContentValidator
         var tables = new[] { "crafts", "skills", "skill_effects", "craft_materials", "craft_products", "craft_packs", "craft_pack_crafts", "doodad_almighties", "doodad_func_groups", "doodad_funcs", "doodad_phase_funcs", "doodad_func_craft_packs", "localized_texts" }
             .Concat(project.Records.Where(record => record.Mode == RecordChangeMode.Duplicate).Select(record => record.Table))
             .Concat(project.Records.SelectMany(record => record.Children).Select(child => child.Table))
+            .Concat(project.Records.SelectMany(record => record.LinkedClones).Select(linked => linked.Table))
             .Distinct(StringComparer.OrdinalIgnoreCase);
         foreach (var table in tables)
         {
@@ -387,6 +459,81 @@ public sealed class ContentValidator
             report.AddError("artifact.rowMissing", $"Expected {table} row {id} is missing.", entity: entity);
         }
     }
+
+    private static void RequireValues(SqliteConnection connection, string table, uint id, IReadOnlyDictionary<string, string?> values, ValidationReport report, string entity)
+    {
+        foreach (var (column, expected) in values)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = $"SELECT {BaselineVerifier.QuoteIdentifier(column)} FROM {BaselineVerifier.QuoteIdentifier(table)} WHERE id = @id;";
+            command.Parameters.AddWithValue("@id", id);
+            object? actual;
+            try
+            {
+                actual = command.ExecuteScalar();
+            }
+            catch (SqliteException exception)
+            {
+                report.AddError("artifact.valueColumn", $"Could not verify {table} {id}.{column}: {exception.Message}", entity: entity);
+                continue;
+            }
+
+            if (!ValuesEqual(expected, actual))
+            {
+                report.AddError("artifact.valueMismatch", $"Expected {table} {id}.{column} to be '{FormatValue(expected)}', but the artifact contains '{FormatValue(actual)}'.", entity: entity);
+            }
+        }
+    }
+
+    private static void RequireAssertion(SqliteConnection connection, ContentAssertionDefinition assertion, ValidationReport report)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = assertion.Query;
+        var actual = command.ExecuteScalar();
+        if (!ValuesEqual(assertion.Expected, actual))
+        {
+            report.AddError("artifact.assertion", $"{assertion.Description} Expected '{assertion.Expected}', but the query returned '{FormatValue(actual)}'.", entity: assertion.Key);
+        }
+        else
+        {
+            report.AddInformation("artifact.assertion", assertion.Description, entity: assertion.Key);
+        }
+    }
+
+    private static bool ValuesEqual(object? expected, object? actual)
+    {
+        if (CatalogRecordService.IsCompactNull(expected) || CatalogRecordService.IsCompactNull(actual))
+            return CatalogRecordService.IsCompactNull(expected) && CatalogRecordService.IsCompactNull(actual);
+
+        var expectedText = Convert.ToString(expected, CultureInfo.InvariantCulture)?.Trim() ?? string.Empty;
+        var actualText = Convert.ToString(actual, CultureInfo.InvariantCulture)?.Trim() ?? string.Empty;
+        if (TryBoolean(expectedText, out var expectedBoolean) && TryBoolean(actualText, out var actualBoolean))
+            return expectedBoolean == actualBoolean;
+        if (decimal.TryParse(expectedText, NumberStyles.Float, CultureInfo.InvariantCulture, out var expectedNumber) &&
+            decimal.TryParse(actualText, NumberStyles.Float, CultureInfo.InvariantCulture, out var actualNumber))
+            return expectedNumber == actualNumber;
+        return expectedText.Equals(actualText, StringComparison.Ordinal);
+    }
+
+    private static bool TryBoolean(string value, out bool result)
+    {
+        if (value.Equals("t", StringComparison.OrdinalIgnoreCase) || value.Equals("true", StringComparison.OrdinalIgnoreCase) || value == "1")
+        {
+            result = true;
+            return true;
+        }
+        if (value.Equals("f", StringComparison.OrdinalIgnoreCase) || value.Equals("false", StringComparison.OrdinalIgnoreCase) || value == "0")
+        {
+            result = false;
+            return true;
+        }
+        result = false;
+        return false;
+    }
+
+    private static string FormatValue(object? value) => CatalogRecordService.IsCompactNull(value)
+        ? "null"
+        : Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
 
     private static void RequireReference(SqliteConnection connection, string rowTable, uint rowId, string referenceTable, uint referenceId, ValidationReport report, string entity)
     {

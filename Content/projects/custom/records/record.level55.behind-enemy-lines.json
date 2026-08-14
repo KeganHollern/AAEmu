@@ -1,0 +1,11 @@
+{
+    "$schema": "../../../schemas/record.schema.json",
+    "schemaVersion": 1,
+    "key": "record.level55.behind-enemy-lines",
+    "displayName": "Behind Enemy Lines",
+    "mode": "modify",
+    "table": "skills",
+    "sourceId": 23587,
+    "id": 23587,
+    "values": { "show": "t" }
+}

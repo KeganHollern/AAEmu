@@ -14,7 +14,7 @@
 <section class="search-hero panel">
     <div class="search-box">
         <span class="search-icon" aria-hidden="true">⌕</span>
-        <input aria-label="Search everything" @bind="_query" @bind:event="oninput" @onkeydown="HandleKey" placeholder="Try “archeum”, “alchemy workbench”, an NPC name, quest, skill, or ID…" autofocus />
+        <input aria-label="Search everything" @bind="_query" @bind:event="oninput" @onkeydown="HandleKey" placeholder="Try “archeum”, “alchemy workbench”, an NPC name, quest, or skill…" autofocus />
         <button class="button primary" @onclick="Search" disabled="@_busy">@(_busy ? "Searching…" : "Search")</button>
     </div>
     <div class="search-examples">
@@ -29,7 +29,7 @@
 @if (_response is null)
 {
     <section class="discovery-grid">
-        <article class="discovery-card"><span>01</span><h2>Search normal names</h2><p>No table name or ID required. Partial words and small spelling mistakes are okay.</p></article>
+        <article class="discovery-card"><span>01</span><h2>Search normal names</h2><p>Use the words players and designers already know. Partial words and small spelling mistakes are okay.</p></article>
         <article class="discovery-card"><span>02</span><h2>Follow relationships</h2><p>An item search also finds recipes that use or produce it, then the workbenches offering those recipes.</p></article>
         <article class="discovery-card"><span>03</span><h2>Change or copy anything</h2><p>Open an entry to see every field with explanations, then plan a change or make a safe custom copy.</p></article>
     </section>
@@ -47,7 +47,7 @@ else if (_response.Results.Count == 0)
 {
     <section class="panel empty-search">
         <h2>No results for “@_response.Query”</h2>
-        <p>Try a shorter phrase, one distinctive word, or an ID. Searching <button class="inline-action" @onclick='() => SearchFor("archeum")'>archeum</button> is a useful example.</p>
+        <p>Try a shorter phrase or one distinctive word. Searching <button class="inline-action" @onclick='() => SearchFor("archeum")'>archeum</button> is a useful example.</p>
     </section>
 }
 else
@@ -79,7 +79,6 @@ else
                             <small>@result.Context</small>
                         }
                     </span>
-                    <code>@result.Id</code>
                     <span class="result-arrow">›</span>
                 </button>
             }
@@ -92,17 +91,17 @@ else
             }
             else
             {
-                <div class="inspector-title"><span class="kind-badge @_selected.Kind">@_selected.KindLabel</span><code>ID @_selected.Id</code></div>
+                <div class="inspector-title"><span class="kind-badge @_selected.Kind">@_selected.KindLabel</span></div>
                 <h2>@_selected.Name</h2>
                 @if (_selected.Kind != "ability" && !string.IsNullOrWhiteSpace(_selected.Context)) { <p class="match-context">@_selected.Context</p> }
 
                 @if (_recipe is not null)
                 {
-                    <div class="detail-stats"><span><small>Labor</small><strong>@_recipe.LaborCost</strong></span><span><small>Cast</small><strong>@(_recipe.CastingTime / 1000d) sec</strong></span><span><small>Workbench</small><strong>@(_recipe.RequiredDoodadId == 0 ? "Any" : _recipe.RequiredDoodadId)</strong></span></div>
+                    <div class="detail-stats"><span><small>Labor</small><strong>@_recipe.LaborCost</strong></span><span><small>Cast</small><strong>@(_recipe.CastingTime / 1000d) sec</strong></span><span><small>Workbench</small><strong>@_recipeWorkbenchName</strong></span></div>
                     <h3>Materials</h3>
-                    <ul class="ingredient-list">@foreach (var material in _recipe.Materials){<li><span>@material.ItemName</span><strong>× @material.Amount</strong><code>@material.ItemId</code></li>}</ul>
+                    <ul class="ingredient-list">@foreach (var material in _recipe.Materials){<li><span>@material.ItemName</span><strong>× @material.Amount</strong></li>}</ul>
                     <h3>Products</h3>
-                    <ul class="ingredient-list">@foreach (var product in _recipe.Products){<li><span>@product.ItemName</span><strong>× @product.Amount</strong><code>@product.ItemId</code></li>}</ul>
+                    <ul class="ingredient-list">@foreach (var product in _recipe.Products){<li><span>@product.ItemName</span><strong>× @product.Amount</strong></li>}</ul>
                     <a class="button primary inspector-action" href="@($"/recipes?source={_recipe.Id}")">Use as recipe source</a>
                     <a class="button inspector-action secondary-action" href="@DetailsUrl(_selected)">View every field</a>
                 }
@@ -111,16 +110,16 @@ else
                     <div class="detail-stats"><span><small>Groups</small><strong>@_workbench.Groups.Count</strong></span><span><small>Functions</small><strong>@_workbench.Groups.Sum(group => group.Functions.Count)</strong></span><span><small>Recipes</small><strong>@_workbench.RecipeIds.Count</strong></span></div>
                     <h3>Recipes available here</h3>
                     @if (_workbenchRecipes.Count == 0) { <p class="muted-copy">No recipes were resolved for this workbench.</p> }
-                    else { <ul class="linked-list">@foreach(var recipe in _workbenchRecipes){<li><button @onclick="() => SearchFor(recipe.Name)"><span>@recipe.Name</span><code>@recipe.Id</code></button></li>}</ul> }
+                    else { <ul class="linked-list">@foreach(var recipe in _workbenchRecipes){<li><button @onclick="() => SearchFor(recipe.Name)"><span>@recipe.Name</span><span class="result-action">Open</span></button></li>}</ul> }
                     <a class="button primary inspector-action" href="@($"/workbenches?source={_workbench.Id}")">Use as workbench source</a>
                     <a class="button inspector-action secondary-action" href="@DetailsUrl(_selected)">View every field</a>
                 }
                 else if (_ability is not null)
                 {
                     <p class="muted-copy">@_ability.Description</p>
-                    <div class="detail-stats"><span><small>Visible skills</small><strong>@_ability.Skills.Count(skill => skill.Visible)</strong></span><span><small>All skill rows</small><strong>@_ability.Skills.Count</strong></span><span><small>Ability ID</small><strong>@_ability.Id</strong></span></div>
+                    <div class="detail-stats"><span><small>Visible skills</small><strong>@_ability.Skills.Count(skill => skill.Visible)</strong></span><span><small>All skill entries</small><strong>@_ability.Skills.Count</strong></span><span><small>Skillset</small><strong>@_ability.Name</strong></span></div>
                     <h3>Skills in this ability</h3>
-                    <ul class="linked-list ability-skills">@foreach(var skill in _ability.Skills.Where(skill => skill.Visible).Take(80)){<li><a href="@($"/entry?table=skills&id={skill.Id}")"><span><strong>@skill.Name</strong><small>Available at ability level @skill.RequiredAbilityLevel</small></span><code>@skill.Id</code></a></li>}</ul>
+                    <ul class="linked-list ability-skills">@foreach(var skill in _ability.Skills.Where(skill => skill.Visible).Take(80)){<li><a href="@($"/entry?table=skills&id={skill.Id}")"><span><strong>@skill.Name</strong><small>Available at ability level @skill.RequiredAbilityLevel</small></span><span class="result-action">Open</span></a></li>}</ul>
                 }
                 else if (_selected.Kind == "item" && _selected.Table == "items")
                 {
@@ -165,7 +164,7 @@ else
                                     <div class="relationship-heading"><h3>@equipmentSet.Name</h3><span>@equipmentSet.Pieces.Count pieces</span></div>
                                     @if (!string.IsNullOrWhiteSpace(equipmentSet.Description)) { <p class="muted-copy">@equipmentSet.Description</p> }
                                     <h4>Items in this set</h4>
-                                    <ul class="linked-list set-piece-list">@foreach (var piece in equipmentSet.Pieces) { <li><a href="@($"/entry?table=items&id={piece.Id}")"><span><strong>@piece.Name</strong><small>@piece.GearKind</small></span><code>@piece.Id</code></a></li> }</ul>
+                                    <ul class="linked-list set-piece-list">@foreach (var piece in equipmentSet.Pieces) { <li><a href="@($"/entry?table=items&id={piece.Id}")"><span><strong>@piece.Name</strong><small>@piece.GearKind</small></span><span class="result-action">Open</span></a></li> }</ul>
                                     <h4>Set bonuses</h4>
                                     @if (equipmentSet.Bonuses.Count == 0) { <p class="empty-related">No set bonuses are defined.</p> }
                                     else
@@ -185,7 +184,7 @@ else
                     @if (_itemRecipes.Count > 0)
                     {
                         <div class="relationship-heading"><h3>Direct recipes</h3><span>@_itemRecipes.Count total</span></div>
-                        <ul class="linked-list item-recipe-scroll">@foreach(var recipe in _itemRecipes){<li><button @onclick="() => InspectDirectRecipe(recipe)"><span>@recipe.RecipeName<small>Consumes @recipe.Amount × @_selected.Name</small></span><code>@recipe.RecipeId</code></button></li>}</ul>
+                        <ul class="linked-list item-recipe-scroll">@foreach(var recipe in _itemRecipes){<li><button @onclick="() => InspectDirectRecipe(recipe)"><span>@recipe.RecipeName<small>Consumes @recipe.Amount × @_selected.Name</small></span><span class="result-action">Open</span></button></li>}</ul>
                     }
                     else
                     {
@@ -195,22 +194,13 @@ else
                 }
                 else
                 {
-                    <p class="muted-copy">Open the full entry to see every available setting and translation. Important fields include plain-language explanations; technical names are kept under the advanced details.</p>
+                    <p class="muted-copy">Open the full entry to see every available setting and translation. Important choices include plain-language explanations, while less-common behavior is grouped under More settings.</p>
                     <a class="button primary inspector-action" href="@DetailsUrl(_selected)">View all data · change · copy</a>
                 }
             }
         </aside>
     </section>
 }
-
-<details class="advanced-search panel">
-    <summary>Advanced: inspect database table schemas</summary>
-    <div class="advanced-row"><input @bind="_schemaQuery" @bind:event="oninput" placeholder="Table name, for example quest or doodad" /><button class="button" @onclick="InspectSchema">Find tables</button></div>
-    @if (_schemas is not null)
-    {
-        <div class="schema-list">@foreach(var schema in _schemas.Take(40)){<span><strong>@schema.Name</strong><small>@schema.RowCount.ToString("N0") rows · @schema.Columns.Count columns</small></span>}</div>
-    }
-</details>
 
 @if (!string.IsNullOrWhiteSpace(_error)) { <div class="toast error">@_error</div> }
 
@@ -221,7 +211,6 @@ else
 
     private string _query = "";
     private string _activeKind = "all";
-    private string _schemaQuery = "";
     private bool _busy;
     private string? _error;
     private CatalogSearchResponse? _response;
@@ -232,7 +221,7 @@ else
     private ItemGameplayProfile? _itemProfile;
     private IReadOnlyList<RecipeGraph> _workbenchRecipes = [];
     private IReadOnlyList<ItemRecipeRelationship> _itemRecipes = [];
-    private IReadOnlyList<TableSchema>? _schemas;
+    private string _recipeWorkbenchName = "Any compatible workbench";
 
     private async Task HandleKey(KeyboardEventArgs args) { if (args.Key == "Enter") await Search(); }
     private async Task SearchFor(string query) { _query = query; await Search(); }
@@ -247,7 +236,7 @@ else
             _response = await Task.Run(() => new CatalogSearchService().SearchEverything(config.BaselinePath, _query, limit: 60));
             _activeKind = "all";
         }
-        catch (Exception exception) { _error = exception.Message; }
+        catch (Exception exception) { _error = DesignerMessage.ForUser(exception); }
         finally { _busy = false; }
     }
 
@@ -261,6 +250,9 @@ else
             if (result.Kind == "recipe")
             {
                 _recipe = await Task.Run(() => catalog.GetRecipe(config.BaselinePath, result.Id));
+                _recipeWorkbenchName = _recipe?.RequiredDoodadId > 0
+                    ? (await Task.Run(() => catalog.GetWorkbench(config.BaselinePath, _recipe.RequiredDoodadId)))?.Name ?? "Specific existing workbench"
+                    : "Any compatible workbench";
             }
             else if (result.Kind == "workbench")
             {
@@ -283,7 +275,7 @@ else
                 _itemRecipes = await recipeTask;
             }
         }
-        catch (Exception exception) { _error = exception.Message; }
+        catch (Exception exception) { _error = DesignerMessage.ForUser(exception); }
     }
 
     private IEnumerable<CatalogSearchResult> VisibleResults() => _response?.Results.Where(MatchesActiveFilter) ?? [];
@@ -305,9 +297,4 @@ else
     private static string DetailsUrl(CatalogSearchResult result) => $"/entry?table={Uri.EscapeDataString(result.Table)}&id={result.Id}";
     private static string YesNo(bool value) => value ? "Yes" : "No";
 
-    private void InspectSchema()
-    {
-        try { var config = Workspace.LoadConfiguration(); _schemas = new CompactCatalogService().ListSchema(config.BaselinePath, _schemaQuery); _error = null; }
-        catch (Exception exception) { _error = exception.Message; }
-    }
 }

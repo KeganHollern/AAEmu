@@ -17,7 +17,37 @@ public class CharacterSkills(Character owner)
     private readonly List<uint> _removed = [];
     public Dictionary<uint, Skill> Skills { get; } = [];
     public Dictionary<uint, PassiveBuff> PassiveBuffs { get; } = [];
+    public SkillComboState ComboState { get; } = new();
     private Character Owner { get; } = owner;
+
+    /// <summary>
+    /// Learns a player-selected skill after validating all compact and character requirements.
+    /// Persisted or server-granted skills continue to use AddSkill directly.
+    /// </summary>
+    public void LearnSkill(uint skillId)
+    {
+        var template = SkillManager.Instance.GetSkillTemplate(skillId);
+        if (template is null || !template.Show || !template.NeedLearn)
+            return;
+
+        if (template.AbilityId > 0 &&
+            template.AbilityId != Owner.Ability1 &&
+            template.AbilityId != Owner.Ability2 &&
+            template.AbilityId != Owner.Ability3)
+            return;
+
+        if (template.AbilityId > 0 && Owner.GetAbLevel(template.AbilityId) < template.AbilityLevel)
+            return;
+
+        var points = ExperienceManager.Instance.GetSkillPointsForLevel(Owner.Level) - GetUsedSkillPoints(AbilityType.General);
+        if (template.SkillPoints > points)
+            return;
+
+        if (Skills.TryGetValue(skillId, out var skill))
+            Owner.SendPacket(new SCSkillLearnedPacket(skill));
+        else
+            AddSkill(template, 1, true);
+    }
 
     /// <summary>
     /// Try to learn a new Skill
@@ -27,6 +57,8 @@ public class CharacterSkills(Character owner)
     {
         // Check if what we want to learn is part of an active skill tree (or not part of one)
         var template = SkillManager.Instance.GetSkillTemplate(skillId);
+        if (template is null)
+            return;
         if (template.AbilityId > 0 &&
             template.AbilityId != Owner.Ability1 &&
             template.AbilityId != Owner.Ability2 &&
@@ -162,6 +194,9 @@ public class CharacterSkills(Character owner)
     public bool IsVariantOfSkill(uint skillId)
     {
         var skillTemplate = SkillManager.Instance.GetSkillTemplate(skillId);
+
+        if (skillTemplate is null || SkillManager.Instance.IsComboFollowupSkill(skillId))
+            return false;
 
         return Skills.Values.Any(skill =>
             skill.Template.AbilityId == skillTemplate.AbilityId &&

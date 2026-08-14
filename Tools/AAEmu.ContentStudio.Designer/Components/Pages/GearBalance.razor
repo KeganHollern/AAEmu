@@ -1,0 +1,68 @@
+@page "/gear-balance"
+@inject DesignerWorkspace Workspace
+
+<PageTitle>Gear balance systems</PageTitle>
+
+<header class="page-head gear-balance-heading">
+    <div><p class="eyebrow">BROAD BALANCE WORKSPACE</p><h1>Rebalance whole gear systems cleanly.</h1><p class="lede">Choose the scope you intend: one quality grade, one weapon type, one armor class, one equipment slot, or every gear item on the server.</p></div>
+    <a class="button" href="/catalog">Find one item instead</a>
+</header>
+
+<section class="entry-help panel balance-warning">
+    <span class="help-icon">!</span>
+    <div><strong>These are shared rules by design.</strong><p>The affected-item count shows the size of each change before you start. Content Studio saves every edit as a reviewable plan and changes nothing live until Review & publish.</p></div>
+</section>
+
+@if (_loading)
+{
+    <section class="panel entry-loading"><h2>Mapping the gear system…</h2><p>Counting every weapon, armor piece, accessory, grade, and shared calculation source.</p></section>
+}
+else if (_dashboard is not null)
+{
+    @foreach (var section in Sections())
+    {
+        <section class="panel balance-section">
+            <div class="balance-section-head"><div><p class="eyebrow">@section.Eyebrow</p><h2>@section.Title</h2><p>@section.Description</p></div><span>@section.Entries.Count @(section.Entries.Count == 1 ? "entry" : "entries")</span></div>
+            <div class="balance-entry-grid">
+                @foreach (var entry in section.Entries)
+                {
+                    <article class="balance-entry">
+                        <div><h3>@entry.Name</h3><span>@entry.AffectedItems item@(entry.AffectedItems == 1 ? "" : "s") affected</span></div>
+                        <p>@entry.Description</p>
+                        <div><a class="button" href="@($"/entry?table={entry.Table}&id={entry.Id}")">Inspect</a><a class="button primary" href="@($"/entry?table={entry.Table}&id={entry.Id}&action=modify")">Plan broad change</a></div>
+                    </article>
+                }
+            </div>
+        </section>
+    }
+}
+
+@if (!string.IsNullOrWhiteSpace(_error)) { <div class="toast error">@_error</div> }
+
+@code {
+    private GearBalanceDashboard? _dashboard;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var configuration = Workspace.LoadConfiguration();
+            _dashboard = await Task.Run(() => new GearBalanceService().GetDashboard(configuration.BaselinePath));
+        }
+        catch (Exception exception) { _error = DesignerMessage.ForUser(exception); }
+        finally { _loading = false; }
+    }
+
+    private IEnumerable<(string Eyebrow, string Title, string Description, List<GearBalanceEntry> Entries)> Sections()
+    {
+        if (_dashboard is null) yield break;
+        yield return ("SERVER-WIDE", "Global gear constants", "Base primary-stat and durability scaling. This is the widest possible balance scope.", _dashboard.GlobalConstants);
+        yield return ("QUALITY TIERS", "Item grades", "How Crude through Mythic quality multiplies damage, defense, attributes, durability, and enchanting behavior.", _dashboard.Grades);
+        yield return ("WEAPON CATEGORIES", "Weapon types", "Shared attack timing, damage spread, formulas, and handling for scepters, swords, bows, shields, instruments, and other holdables.", _dashboard.WeaponTypes);
+        yield return ("ARMOR CATEGORIES", "Armor classes", "Shared physical defense, magic defense, damage-type response, and durability for cloth, leather, plate, and related classes.", _dashboard.ArmorClasses);
+        yield return ("BODY-SLOT BUDGET", "Equipment slot coverage", "How much of the total stat and defense budget belongs to head, chest, hands, feet, and other slots.", _dashboard.EquipmentSlots);
+        yield return ("DEFENSE CURVES", "Armor formulas", "Server-wide level-and-grade formulas applied before armor-class and equipment-slot scaling.", _dashboard.ArmorFormulas);
+    }
+}

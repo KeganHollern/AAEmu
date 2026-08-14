@@ -1,0 +1,22 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AAEmu Content Studio changed entry",
+    "type": "object",
+    "required": ["schemaVersion", "key", "displayName", "mode", "table", "sourceId", "id", "values"],
+    "properties": {
+        "$schema": { "type": "string" },
+        "schemaVersion": { "const": 1 },
+        "key": { "type": "string", "pattern": "^record\\.[a-z0-9][a-z0-9._-]*$" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "mode": { "enum": ["modify", "duplicate"] },
+        "table": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+        "sourceId": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "id": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "values": { "type": "object", "additionalProperties": { "type": ["string", "null"] } },
+        "localizations": { "type": "object" },
+        "localizationRowIds": { "type": "object" },
+        "children": { "type": "array" },
+        "linkedClones": { "type": "array" }
+    },
+    "additionalProperties": false
+}

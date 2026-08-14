@@ -49,6 +49,10 @@ public sealed class ChangeDeletionService
                 preview.Blockers.AddRange(FindReferences(project, identity.Record));
             }
         }
+        else if (identity.Assertion is not null)
+        {
+            preview.Consequences.Add("The build will no longer enforce this release requirement.");
+        }
 
         if (preview.RetiredIdCount > 0)
         {
@@ -136,7 +140,7 @@ public sealed class ChangeDeletionService
         var match = _manifests.List(projectPath).FirstOrDefault(path => Path.GetFullPath(path).Equals(requested, StringComparison.OrdinalIgnoreCase));
         if (match is null || Path.GetFileName(match).Equals("project.json", StringComparison.OrdinalIgnoreCase))
         {
-            throw new ContentStudioException("Only a saved recipe, workbench, or entry change can be deleted here.");
+            throw new ContentStudioException("Only a saved recipe, workbench, entry, or release check can be deleted here.");
         }
         return Path.GetFullPath(match);
     }
@@ -158,6 +162,11 @@ public sealed class ChangeDeletionService
         {
             var value = ContentStudioJson.Deserialize<RecordDefinition>(json, path);
             return new ChangeIdentity(value.Key, value.DisplayName, CatalogRecordService.FriendlyName(value.Table.TrimEnd('s'))) { Record = value };
+        }
+        if (IsInFolder(path, "assertions"))
+        {
+            var value = ContentStudioJson.Deserialize<ContentAssertionDefinition>(json, path);
+            return new ChangeIdentity(value.Key, value.Description, "Release check") { Assertion = value };
         }
         throw new ContentStudioException("This file is not a supported saved change.");
     }
@@ -241,7 +250,8 @@ public sealed class ChangeDeletionService
         foreach (var record in project.Records.Where(record => !record.Key.Equals(excludedKey, StringComparison.OrdinalIgnoreCase)))
         {
             var found = record.Values.Any(field => IsReference(field.Key, field.Value, targetTable, targetId)) ||
-                        record.Children.Any(child => child.Values.Any(field => IsReference(field.Key, field.Value, targetTable, targetId)));
+                        record.Children.Any(child => child.Values.Any(field => IsReference(field.Key, field.Value, targetTable, targetId))) ||
+                        record.LinkedClones.Any(linked => linked.Values.Any(field => IsReference(field.Key, field.Value, targetTable, targetId)));
             if (found) yield return $"'{record.DisplayName}' still links to this entry.";
         }
     }
@@ -254,5 +264,6 @@ public sealed class ChangeDeletionService
         public RecipeDefinition? Recipe { get; init; }
         public WorkbenchDefinition? Workbench { get; init; }
         public RecordDefinition? Record { get; init; }
+        public ContentAssertionDefinition? Assertion { get; init; }
     }
 }

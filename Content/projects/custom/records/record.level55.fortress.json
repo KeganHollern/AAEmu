@@ -1,0 +1,11 @@
+{
+    "$schema": "../../../schemas/record.schema.json",
+    "schemaVersion": 1,
+    "key": "record.level55.fortress",
+    "displayName": "Fortress",
+    "mode": "modify",
+    "table": "skills",
+    "sourceId": 23589,
+    "id": 23589,
+    "values": { "show": "t" }
+}

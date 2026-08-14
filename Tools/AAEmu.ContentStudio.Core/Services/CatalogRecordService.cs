@@ -27,12 +27,13 @@ public sealed class CatalogRecordService
         "show", "visible", "enabled", "friendly", "non_friendly", "auto_learn", "need_learn",
         "target_alive", "target_dead", "source_alive", "source_dead", "default_gcd", "ignore_global_cooldown",
         "casting_cancelable", "casting_delayable", "channeling_cancelable", "use_anim_time", "keep_stealth",
-        "target_siege", "target_water", "target_only_water", "source_mount", "source_mount_mate", "unmount"
+        "target_siege", "target_water", "target_only_water", "source_mount", "source_mount_mate", "unmount",
+        "gradable", "grade_enchantable", "base_enchantable", "repairable", "base_equipment", "or_unit_reqs"
     };
 
     private static readonly Dictionary<string, string> s_help = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["id"] = "The number the client and server use to identify this entry.",
+        ["id"] = "Managed automatically by Content Studio.",
         ["name"] = "The internal fallback name. Player-facing text normally comes from Translations.",
         ["title"] = "The internal fallback title. Player-facing text normally comes from Translations.",
         ["desc"] = "The internal fallback description.",
@@ -61,11 +62,49 @@ public sealed class CatalogRecordService
         ["damage_absorption_per_hit"] = "Maximum damage absorbed from one hit. Zero normally means no per-hit cap.",
         ["chance"] = "Percentage chance that this effect is applied.",
         ["stack"] = "Number of buff stacks applied at once.",
-        ["unit_attribute_id"] = "The character statistic changed by this modifier. The gameplay summary translates known IDs into names.",
+        ["unit_attribute_id"] = "The character statistic changed by this modifier. The gameplay summary translates known values into names.",
         ["unit_modifier_type_id"] = "Zero adds a flat amount; one applies a percentage.",
         ["value"] = "Base amount added to the selected character statistic.",
         ["linear_level_bonus"] = "Extra amount added for each applicable level.",
-        ["req_doodad_id"] = "The workbench or world object required to perform this action. Zero means none."
+        ["req_doodad_id"] = "The workbench or world object required to perform this action. Zero means none.",
+        ["level"] = "The item's internal power level. Gear damage, defense, primary attributes, and several other values scale from this number.",
+        ["level_requirement"] = "The character level required to equip or use this item. This does not set the item's combat power.",
+        ["gradable"] = "Whether the item can use quality grades such as Arcane, Heroic, or Celestial. Grades multiply several gear stats.",
+        ["fixed_grade"] = "For items that always use one quality, this chooses that grade. Minus one means the grade is not forced.",
+        ["grade_enchantable"] = "Whether players can improve this item's quality grade through grade enchanting.",
+        ["base_enchantable"] = "Whether this equipment template supports its normal enchanting or tempering behavior.",
+        ["repairable"] = "Whether lost durability can be repaired.",
+        ["durability_multiplier"] = "Item-specific durability scaling. 100 means the normal durability for this equipment type.",
+        ["mod_set_id"] = "The primary-stat allocation profile. Content Studio manages this link when you give one item its own stat mix.",
+        ["str_weight"] = "Strength's share of the primary-stat budget. Only its proportion relative to the other positive weights matters.",
+        ["dex_weight"] = "Agility's share of the primary-stat budget. Only its proportion relative to the other positive weights matters.",
+        ["sta_weight"] = "Stamina's share of the primary-stat budget. Only its proportion relative to the other positive weights matters.",
+        ["int_weight"] = "Intelligence's share of the primary-stat budget. Only its proportion relative to the other positive weights matters.",
+        ["spi_weight"] = "Spirit's share of the primary-stat budget. Only its proportion relative to the other positive weights matters.",
+        ["stat_multiplier"] = "Percentage scaling applied to primary attributes for this grade or weapon type. 100 means normal strength.",
+        ["item_stat_const"] = "Global primary-stat scaling used by every equipment item. Changing this rebalances the entire gear system.",
+        ["holdable_stat_const"] = "Global primary-stat scaling for all weapons and shields.",
+        ["wearable_stat_const"] = "Global primary-stat scaling for all armor and accessories.",
+        ["stat_value_const"] = "Controls the bonus awarded when a gear profile concentrates its budget into fewer primary attributes.",
+        ["speed"] = "Auto-attack delay in milliseconds for this weapon type. A lower number attacks faster.",
+        ["damage_scale"] = "Random damage spread around the variable part of a hit. A value of 5 allows roughly 5% below or above that portion; it is not a flat DPS multiplier.",
+        ["formula_dps"] = "Formula used to calculate physical weapon DPS from item level and grade. This affects every weapon of this type.",
+        ["formula_mdps"] = "Formula used to calculate magic weapon DPS from item level and grade. This affects every weapon of this type.",
+        ["formula_hdps"] = "Formula used to calculate healing power from item level and grade. This affects every weapon of this type.",
+        ["formula_armor"] = "Formula used to calculate a shield or holdable's armor from item level and grade.",
+        ["armor_ratio"] = "Physical-defense percentage for this armor class. 100 means the formula's normal result.",
+        ["magic_resistance_ratio"] = "Magic-defense percentage for this armor class. 100 means the formula's normal result.",
+        ["coverage"] = "The percentage of a full equipment budget assigned to this body slot. Chest pieces are normally higher than small slots.",
+        ["armor_bp"] = "Base physical-defense weighting for this armor class and slot combination.",
+        ["magic_resistance_bp"] = "Base magic-defense weighting for this armor class and slot combination.",
+        ["var_holdable_dps"] = "This grade's input to physical weapon DPS formulas.",
+        ["var_holdable_magic_dps"] = "This grade's input to magic weapon DPS formulas.",
+        ["var_holdable_heal_dps"] = "This grade's input to healing-power formulas.",
+        ["var_wearable_armor"] = "This grade's input to armor-defense formulas.",
+        ["var_wearable_magic_resistance"] = "This grade's input to magic-defense formulas.",
+        ["durability_value"] = "This grade's durability multiplier.",
+        ["durability_ratio"] = "Shared durability multiplier for this weapon type or armor class. A value of 1 means its normal durability contribution.",
+        ["formula"] = "The defense calculation using item_level and item_grade. Keep those variable names and the existing math structure unless you intentionally want to redesign the full curve."
     };
 
     public CatalogRecord? GetRecord(string compactPath, string table, uint id, string language = "en_us")
@@ -98,7 +137,7 @@ public sealed class CatalogRecordService
             fields.Add(new CatalogRecordField
             {
                 Name = name,
-                Label = FriendlyName(name),
+                Label = FriendlyName(table, name),
                 Type = type,
                 Group = ClassifyGroup(table, name),
                 Help = Describe(name),
@@ -107,7 +146,7 @@ public sealed class CatalogRecordService
                 IsBoolean = IsBoolean(name, type, value),
                 IsEssential = IsEssential(table, name),
                 IsIdentity = name.Equals("id", StringComparison.OrdinalIgnoreCase),
-                IsEditable = !type.Contains("BLOB", StringComparison.OrdinalIgnoreCase),
+                IsEditable = !type.Contains("BLOB", StringComparison.OrdinalIgnoreCase) && !IsStructuralBalanceKey(table, name),
                 ReferenceTable = ReferenceTableFor(name)
             });
         }
@@ -121,11 +160,12 @@ public sealed class CatalogRecordService
         nameValue ??= fields.FirstOrDefault(field => field.Name is "name" or "title")?.Value;
 
         var (kind, kindLabel) = ClassifyTable(table);
+        nameValue = FriendlyRecordName(table, id, fields, nameValue);
         return new CatalogRecord
         {
             Table = table,
             Id = id,
-            Name = string.IsNullOrWhiteSpace(nameValue) ? $"{kindLabel} {id}" : nameValue,
+            Name = string.IsNullOrWhiteSpace(nameValue) ? $"Unnamed {kindLabel.ToLowerInvariant()}" : nameValue,
             Kind = kind,
             KindLabel = kindLabel,
             CanChange = true,
@@ -134,6 +174,7 @@ public sealed class CatalogRecordService
             Fields = fields,
             Localizations = localizations,
             RelatedSections = ReadRelatedSections(connection, table, id),
+            LinkedRecords = table.Equals("items", StringComparison.OrdinalIgnoreCase) ? ReadItemLinkedRecords(connection, id) : [],
             GameplayLinks = table.Equals("skills", StringComparison.OrdinalIgnoreCase) ? ReadSkillGameplayLinks(connection, id, language) : []
         };
     }
@@ -249,6 +290,12 @@ public sealed class CatalogRecordService
                 ("tagged_buffs", "buff_id", "Buff tags", "Tags used by immunity, combos, and removal rules to recognize this buff.", string.Empty),
                 ("buff_unit_modifiers", "owner_id", "Buff links", "Other buffs enabled or modified by this buff.", " AND owner_type = 'Buff'")
             ],
+            "items" =>
+            [
+                ("item_weapons", "item_id", "Weapon template", "Weapon type, durability, enchanting, set membership, recharge effects, and other rules owned by this item.", string.Empty),
+                ("item_armors", "item_id", "Armor template", "Armor class, equipment slot, durability, enchanting, set membership, and other rules owned by this item.", string.Empty),
+                ("item_accessories", "item_id", "Accessory template", "Accessory type, equipment slot, durability, set membership, and other rules owned by this item.", string.Empty)
+            ],
             _ => []
         };
 
@@ -272,6 +319,7 @@ public sealed class CatalogRecordService
                     var rawValue = reader.IsDBNull(index) ? null : reader.GetValue(index);
                     var isNull = IsCompactNull(rawValue);
                     var value = isNull ? null : FormatValue(rawValue!);
+                    var modifierLink = table.Equals("items", StringComparison.OrdinalIgnoreCase) && name.Equals("mod_set_id", StringComparison.OrdinalIgnoreCase);
                     fields.Add(new CatalogRecordField
                     {
                         Name = name,
@@ -284,7 +332,7 @@ public sealed class CatalogRecordService
                         IsBoolean = IsBoolean(name, type, value),
                         IsEssential = true,
                         IsIdentity = name.Equals("id", StringComparison.OrdinalIgnoreCase) || name.Equals(definition.Owner, StringComparison.OrdinalIgnoreCase),
-                        IsEditable = !type.Contains("BLOB", StringComparison.OrdinalIgnoreCase),
+                        IsEditable = !type.Contains("BLOB", StringComparison.OrdinalIgnoreCase) && !modifierLink,
                         ReferenceTable = ReferenceTableFor(name)
                     });
                 }
@@ -292,10 +340,98 @@ public sealed class CatalogRecordService
                 rows.Add(new CatalogRelatedRow { Id = rowId, Label = BuildRelatedRowLabel(definition.Table, rowId, fields), Fields = fields });
             }
             if (rows.Count > 0)
-                sections.Add(new CatalogRelatedSection { Table = definition.Table, OwnerColumn = definition.Owner, Title = definition.Title, Description = definition.Description, Rows = rows });
+                sections.Add(new CatalogRelatedSection { Table = definition.Table, OwnerColumn = definition.Owner, Title = definition.Title, Description = definition.Description, IsEquipmentTemplate = table.Equals("items", StringComparison.OrdinalIgnoreCase), Rows = rows });
         }
         return sections;
     }
+
+    private static List<CatalogLinkedRecord> ReadItemLinkedRecords(SqliteConnection connection, uint itemId)
+    {
+        foreach (var gearTable in new[] { "item_weapons", "item_armors", "item_accessories" })
+        {
+            if (ReadColumns(connection, gearTable).Count == 0) continue;
+            using var gearCommand = connection.CreateCommand();
+            gearCommand.CommandText = $"SELECT id, COALESCE(mod_set_id, 0) FROM {BaselineVerifier.QuoteIdentifier(gearTable)} WHERE item_id = @id LIMIT 1;";
+            gearCommand.Parameters.AddWithValue("@id", itemId);
+            using var gearReader = gearCommand.ExecuteReader();
+            if (!gearReader.Read()) continue;
+            var linkRowId = Convert.ToUInt32(gearReader.GetValue(0), CultureInfo.InvariantCulture);
+            var modifierId = Convert.ToUInt32(gearReader.GetValue(1), CultureInfo.InvariantCulture);
+            gearReader.Close();
+
+            var columns = ReadColumns(connection, "equip_item_attr_modifiers");
+            if (columns.Count == 0) return [];
+            var fields = new List<CatalogRecordField>();
+            if (modifierId > 0)
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT * FROM equip_item_attr_modifiers WHERE id = @id LIMIT 1;";
+                command.Parameters.AddWithValue("@id", modifierId);
+                using var reader = command.ExecuteReader();
+                if (reader.Read())
+                {
+                    for (var index = 0; index < reader.FieldCount; index++)
+                    {
+                        var name = reader.GetName(index);
+                        var type = columns.First(column => column.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).Type;
+                        var rawValue = reader.IsDBNull(index) ? null : reader.GetValue(index);
+                        var isNull = IsCompactNull(rawValue);
+                        fields.Add(CreateLinkedField(name, type, isNull ? null : FormatValue(rawValue!), isNull));
+                    }
+                }
+            }
+            else
+            {
+                foreach (var column in columns)
+                {
+                    var value = column.Name.Equals("id", StringComparison.OrdinalIgnoreCase) ? "Assigned when saved" : column.Name.Equals("alias", StringComparison.OrdinalIgnoreCase) ? $"custom_item_{itemId}" : "0";
+                    fields.Add(CreateLinkedField(column.Name, column.Type, value, false));
+                }
+            }
+
+            using var countCommand = connection.CreateCommand();
+            countCommand.CommandText = """
+                SELECT COUNT(*) FROM (
+                    SELECT item_id FROM item_weapons WHERE mod_set_id = @id
+                    UNION ALL SELECT item_id FROM item_armors WHERE mod_set_id = @id
+                    UNION ALL SELECT item_id FROM item_accessories WHERE mod_set_id = @id
+                );
+                """;
+            countCommand.Parameters.AddWithValue("@id", modifierId);
+            var referenceCount = modifierId == 0 ? 0 : Convert.ToInt32(countCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
+            return
+            [
+                new CatalogLinkedRecord
+                {
+                    Table = "equip_item_attr_modifiers",
+                    SourceId = modifierId,
+                    Title = "Primary attribute mix",
+                    Description = "Strength, Agility, Stamina, Intelligence, and Spirit divide one calculated stat budget. A private copy changes this item without silently changing other gear.",
+                    LinkTable = gearTable,
+                    LinkSourceId = linkRowId,
+                    LinkColumn = "mod_set_id",
+                    ReferenceCount = referenceCount,
+                    Fields = fields
+                }
+            ];
+        }
+        return [];
+    }
+
+    private static CatalogRecordField CreateLinkedField(string name, string type, string? value, bool isNull) => new()
+    {
+        Name = name,
+        Label = FriendlyName(name),
+        Type = type,
+        Group = "Primary attribute mix",
+        Help = Describe(name),
+        Value = value,
+        IsNull = isNull,
+        IsBoolean = false,
+        IsEssential = true,
+        IsIdentity = name.Equals("id", StringComparison.OrdinalIgnoreCase),
+        IsEditable = !name.Equals("id", StringComparison.OrdinalIgnoreCase)
+    };
 
     private static string BuildRelatedRowLabel(string table, uint rowId, IReadOnlyList<CatalogRecordField> fields)
     {
@@ -310,8 +446,16 @@ public sealed class CatalogRecordService
         {
             return $"Changing {FriendlyAttribute(attribute).ToLowerInvariant()}";
         }
-        var useful = fields.FirstOrDefault(field => field.Name is "effect_id" or "item_id" or "tag_id" or "kind_id" or "buff_id")?.Value;
-        return string.IsNullOrWhiteSpace(useful) ? $"Row {rowId}" : $"Reference {useful}";
+        return table.ToLowerInvariant() switch
+        {
+            "skill_effects" or "tooltip_skill_effects" or "buff_tick_effects" => "Effect behavior",
+            "skill_reagents" => "Consumed item",
+            "skill_products" => "Created item",
+            "tagged_skills" or "tagged_buffs" => "Gameplay tag",
+            "unit_reqs" => "Use requirement",
+            "buff_unit_modifiers" => "Connected buff",
+            _ => $"Connected {FriendlyName(table.TrimEnd('s')).ToLowerInvariant()}"
+        };
     }
 
     private static List<CatalogGameplayLink> ReadSkillGameplayLinks(SqliteConnection connection, uint skillId, string language)
@@ -357,7 +501,7 @@ public sealed class CatalogRecordService
         var stack = ReadNullableInteger(effectReader.GetValue(2));
         effectReader.Close();
 
-        var name = ReadLocalizedName(connection, "buffs", buffId, language) ?? $"Buff {buffId}";
+        var name = ReadLocalizedName(connection, "buffs", buffId, language) ?? "Unnamed buff";
         var link = new CatalogGameplayLink
         {
             Title = $"Applies {name}",
@@ -421,7 +565,7 @@ public sealed class CatalogRecordService
             Facts =
             [
                 new CatalogGameplayFact { Label = "Application chance", Value = $"{chance ?? 100}%" },
-                new CatalogGameplayFact { Label = "Effect definition", Value = $"{effectId} → {actualType} {actualId}", Help = "The generic effect ID points to this specific type of gameplay effect." }
+                new CatalogGameplayFact { Label = "Behavior type", Value = FriendlyName(effectName), Help = "This is the specific gameplay behavior run by the effect step." }
             ]
         };
     }
@@ -474,7 +618,7 @@ public sealed class CatalogRecordService
         74 => "Global cooldown",
         94 => "Stealth detection range",
         120 => "Healing power",
-        _ => $"Character attribute {id}"
+        _ => "Other character attribute"
     };
 
     private static string FormatValue(object value) => value switch
@@ -496,19 +640,145 @@ public sealed class CatalogRecordService
 
     public static string FriendlyName(string value)
     {
+        var specialized = value.ToLowerInvariant() switch
+        {
+            "str_weight" => "Strength share",
+            "dex_weight" => "Agility share",
+            "sta_weight" => "Stamina share",
+            "int_weight" => "Intelligence share",
+            "spi_weight" => "Spirit share",
+            "eiset_id" => "Equipment set",
+            "mod_set_id" => "Primary stat profile",
+            "holdable_id" => "Weapon type",
+            "type_id" => "Armor class",
+            "slot_type_id" => "Equipment slot",
+            "fixed_grade" => "Fixed quality grade",
+            "grade_order" => "Quality rank order",
+            "speed" => "Auto-attack delay (ms)",
+            "damage_scale" => "Random damage spread (%)",
+            "formula_dps" => "Physical DPS formula",
+            "formula_mdps" => "Magic DPS formula",
+            "formula_hdps" => "Healing power formula",
+            "formula_armor" => "Shield defense formula",
+            "armor_ratio" => "Physical defense (%)",
+            "magic_resistance_ratio" => "Magic defense (%)",
+            "coverage" => "Slot budget coverage (%)",
+            "armor_bp" => "Base physical defense",
+            "magic_resistance_bp" => "Base magic defense",
+            "var_holdable_dps" => "Physical DPS grade factor",
+            "var_holdable_magic_dps" => "Magic DPS grade factor",
+            "var_holdable_heal_dps" => "Healing grade factor",
+            "var_wearable_armor" => "Physical defense grade factor",
+            "var_wearable_magic_resistance" => "Magic defense grade factor",
+            "durability_value" => "Durability grade multiplier",
+            "stat_multiplier" => "Primary-stat multiplier (%)",
+            "item_stat_const" => "Global primary-stat scale (%)",
+            "holdable_stat_const" => "Weapon primary-stat scale (%)",
+            "wearable_stat_const" => "Armor primary-stat scale (%)",
+            "stat_value_const" => "Focused-stat bonus curve (%)",
+            _ => null
+        };
+        if (specialized is not null) return specialized;
         var builder = new StringBuilder();
         foreach (var part in value.Split('_', StringSplitOptions.RemoveEmptyEntries))
         {
+            if (part.Equals("id", StringComparison.OrdinalIgnoreCase)) continue;
             if (builder.Length > 0) builder.Append(' ');
-            builder.Append(part.Equals("id", StringComparison.OrdinalIgnoreCase) ? "ID" : char.ToUpperInvariant(part[0]) + part[1..]);
+            builder.Append(char.ToUpperInvariant(part[0]) + part[1..]);
         }
         return builder.ToString();
     }
 
+    public static string FriendlyTableName(string table) => table.ToLowerInvariant() switch
+    {
+        "items" => "Item",
+        "item_grades" => "Item quality",
+        "item_categories" => "Item category",
+        "crafts" => "Recipe",
+        "craft_packs" => "Recipe group",
+        "doodad_almighties" => "Workbench or world object",
+        "actability_categories" => "Crafting proficiency",
+        "skills" => "Skill",
+        "abilities" => "Skillset",
+        "buffs" => "Buff",
+        "effects" => "Effect",
+        "npcs" => "NPC",
+        "quest_contexts" or "quest_names" => "Quest",
+        "zones" => "Zone",
+        "equip_item_sets" => "Equipment set",
+        "equip_item_attr_modifiers" => "Primary stat profile",
+        "holdables" => "Weapon type",
+        "wearable_kinds" => "Armor class",
+        "wearable_slots" => "Equipment slot",
+        _ => FriendlyName(table.EndsWith('s') ? table[..^1] : table)
+    };
+
+    private static string FriendlyName(string table, string value)
+    {
+        return (table.ToLowerInvariant(), value.ToLowerInvariant()) switch
+        {
+            ("wearable_kinds", "armor_type_id") => "Armor class",
+            ("wearable_slots", "slot_type_id") => "Equipment slot",
+            ("wearables", "armor_type_id") => "Armor class",
+            ("wearables", "slot_type_id") => "Equipment slot",
+            ("wearable_formulas", "kind_id") => "Defense type",
+            ("wearable_formulas", "formula") => "Defense formula",
+            _ => FriendlyName(value)
+        };
+    }
+
+    private static bool IsStructuralBalanceKey(string table, string name) =>
+        (table.Equals("wearable_kinds", StringComparison.OrdinalIgnoreCase) && name.Equals("armor_type_id", StringComparison.OrdinalIgnoreCase)) ||
+        (table.Equals("wearable_slots", StringComparison.OrdinalIgnoreCase) && name.Equals("slot_type_id", StringComparison.OrdinalIgnoreCase)) ||
+        (table.Equals("wearables", StringComparison.OrdinalIgnoreCase) && name is "armor_type_id" or "slot_type_id") ||
+        (table.Equals("wearable_formulas", StringComparison.OrdinalIgnoreCase) && name.Equals("kind_id", StringComparison.OrdinalIgnoreCase));
+
+    private static string? FriendlyRecordName(string table, uint id, IReadOnlyList<CatalogRecordField> fields, string? currentName)
+    {
+        if (!string.IsNullOrWhiteSpace(currentName)) return currentName;
+        var armorType = FieldNumber(fields, "armor_type_id");
+        var slotType = FieldNumber(fields, "slot_type_id");
+        return table.ToLowerInvariant() switch
+        {
+            "item_configs" => "Global gear constants",
+            "equip_item_attr_modifiers" => "Primary attribute profile",
+            "wearable_kinds" => $"{ArmorTypeName(armorType)} balance",
+            "wearable_slots" => $"{EquipmentSlotName(slotType)} slot budget",
+            "wearables" => $"{ArmorTypeName(armorType)} · {EquipmentSlotName(slotType)} defense basis",
+            "wearable_formulas" => FieldNumber(fields, "kind_id") switch
+            {
+                0 => "Physical defense formula",
+                1 => "Magic defense formula",
+                var formulaKind => $"Defense formula {formulaKind}"
+            },
+            _ => currentName
+        };
+    }
+
+    private static uint FieldNumber(IEnumerable<CatalogRecordField> fields, string name) =>
+        uint.TryParse(fields.FirstOrDefault(field => field.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value, out var value) ? value : 0;
+
+    private static string ArmorTypeName(uint id) => id switch
+    {
+        1 => "Cloth armor",
+        2 => "Leather armor",
+        3 => "Plate armor",
+        4 => "Pet armor",
+        5 => "Other armor",
+        _ => "Other armor class"
+    };
+
+    private static string EquipmentSlotName(uint id) => id switch
+    {
+        1 => "Head", 2 => "Neck", 3 => "Chest", 4 => "Waist", 5 => "Legs", 6 => "Hands", 7 => "Feet",
+        8 => "Arms", 9 => "Back", 10 => "Ear", 11 => "Finger", 12 => "Undershirt", 13 => "Underpants", 31 => "Cosplay",
+        _ => "Other equipment slot"
+    };
+
     public static string? Describe(string name)
     {
         if (s_help.TryGetValue(name, out var help)) return help;
-        if (name.EndsWith("_id", StringComparison.OrdinalIgnoreCase)) return "Links to another game-data entry. Use Search to inspect that ID before changing it.";
+        if (name.EndsWith("_id", StringComparison.OrdinalIgnoreCase)) return "Links to another game-data entry. Choose it by name when Content Studio has a verified relationship for this setting.";
         if (name.EndsWith("_time", StringComparison.OrdinalIgnoreCase) || name.EndsWith("_delay", StringComparison.OrdinalIgnoreCase)) return "A timing value. This table commonly stores timing in milliseconds.";
         return null;
     }
@@ -520,6 +790,7 @@ public sealed class CatalogRecordService
         if (IsItemReferenceName(normalized)) return "items";
         return normalized switch
         {
+            "ability_id" => "abilities",
             "skill_id" or "end_skill_id" or "cooldown_skill_id" => "skills",
             "buff_id" or "toggle_buff_id" or "channeling_buff_id" or "require_buff_id" or "link_buff_id" or "transform_buff_id" or "crowd_buff_id" => "buffs",
             "effect_id" => "effects",
@@ -529,6 +800,10 @@ public sealed class CatalogRecordService
             "doodad_id" or "req_doodad_id" or "required_doodad_id" or "channeling_doodad_id" => "doodad_almighties",
             "zone_id" => "zones",
             "quest_id" => "quest_contexts",
+            "eiset_id" => "equip_item_sets",
+            "mod_set_id" => "equip_item_attr_modifiers",
+            "holdable_id" => "holdables",
+            "recharge_buff_id" => "buffs",
             _ => null
         };
     }
@@ -552,11 +827,21 @@ public sealed class CatalogRecordService
         (value is "t" or "f" or "T" or "F" or "true" or "false" or "True" or "False" || s_booleanNames.Contains(name) ||
          value is "0" or "1" && (name.StartsWith("is_") || name.StartsWith("use_") || name.StartsWith("can_") || name.StartsWith("need_") || name.StartsWith("target_") || name.StartsWith("source_")));
 
+    internal static bool IsBooleanField(string name, string type, string? value) => IsBoolean(name, type, value);
+
     private static bool IsEssential(string table, string name) =>
         name is "id" or "name" or "title" or "desc" or "web_desc" or "icon_id" or "model" ||
         table.Equals("skills", StringComparison.OrdinalIgnoreCase) && name is "show" or "ability_id" or "ability_level" or "mana_cost" or "cooldown_time" or "casting_time" or "min_range" or "max_range" or "target_type_id" or "target_relation_id" or "target_area_count" or "target_area_radius" or "consume_lp" ||
         table.Equals("buffs", StringComparison.OrdinalIgnoreCase) && name is "duration" or "level_duration" or "init_min_charge" or "init_max_charge" or "max_stack" or "damage_absorption_per_hit" or "damage_absorption_type_id" ||
-        table.Equals("items", StringComparison.OrdinalIgnoreCase) && name is "price" or "refund" or "max_stack_size" or "level" or "item_grade_id";
+        table.Equals("items", StringComparison.OrdinalIgnoreCase) && name is "price" or "refund" or "max_stack_size" or "level" or "level_requirement" or "gradable" or "fixed_grade" or "grade_enchantable" or "item_grade_id" ||
+        table.Equals("equip_item_attr_modifiers", StringComparison.OrdinalIgnoreCase) && name is "alias" or "str_weight" or "dex_weight" or "sta_weight" or "int_weight" or "spi_weight" ||
+        table.Equals("item_configs", StringComparison.OrdinalIgnoreCase) ||
+        table.Equals("item_grades", StringComparison.OrdinalIgnoreCase) && name is "name" or "grade_order" or "var_holdable_dps" or "var_holdable_magic_dps" or "var_holdable_heal_dps" or "var_wearable_armor" or "var_wearable_magic_resistance" or "durability_value" or "stat_multiplier" ||
+        table.Equals("holdables", StringComparison.OrdinalIgnoreCase) && name is "name" or "code" or "speed" or "damage_scale" or "min_range" or "max_range" or "durability_ratio" or "stat_multiplier" or "formula_dps" or "formula_mdps" or "formula_hdps" or "formula_armor" ||
+        table.Equals("wearable_kinds", StringComparison.OrdinalIgnoreCase) && name is "armor_type_id" or "armor_ratio" or "magic_resistance_ratio" or "durability_ratio" ||
+        table.Equals("wearable_slots", StringComparison.OrdinalIgnoreCase) && name is "slot_type_id" or "coverage" ||
+        table.Equals("wearables", StringComparison.OrdinalIgnoreCase) && name is "armor_type_id" or "slot_type_id" or "armor_bp" or "magic_resistance_bp" ||
+        table.Equals("wearable_formulas", StringComparison.OrdinalIgnoreCase) && name is "kind_id" or "formula";
 
     private static string ClassifyGroup(string table, string name)
     {
@@ -595,7 +880,7 @@ public sealed class CatalogRecordService
         "quest_contexts" or "quest_names" => ("quest", "Quest"),
         "achievements" => ("achievement", "Achievement"),
         "appellations" => ("achievement", "Title"),
-        _ => ("other", FriendlyName(table.TrimEnd('s')))
+        _ => ("other", FriendlyTableName(table))
     };
 
     private static string DuplicateNote(string table) => table switch

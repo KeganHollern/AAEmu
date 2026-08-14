@@ -24,7 +24,6 @@
         <div class="item-picker-selected">
             <span class="selected-check">&#10003;</span>
             <span><small>SELECTED ITEM</small><strong>@_selected.Name</strong></span>
-            <code>ID @_selected.Id</code>
             <a href="@($"/entry?table=items&id={_selected.Id}")">View item</a>
         </div>
     }
@@ -38,7 +37,7 @@
         <div class="item-picker-results" id="@_listId" role="listbox" aria-label="Matching items">
             @if (_matches.Count == 0 && !_busy)
             {
-                <p class="item-picker-empty">No matching items. Try fewer words or an exact ID.</p>
+                <p class="item-picker-empty">No matching items. Try fewer words or another familiar name.</p>
             }
             else
             {
@@ -47,8 +46,8 @@
                     var item = _matches[index];
                     var highlighted = index == _highlightedIndex;
                     <button type="button" role="option" aria-selected="@(item.Id == ItemId)" class="item-picker-option @(highlighted ? "is-highlighted" : null)" @onmouseenter="() => _highlightedIndex = _matches.IndexOf(item)" @onclick="() => Select(item)">
-                        <span><strong>@item.Name</strong><small>@(IsCustom(item) ? "Custom item from My changes" : $"Category {item.CategoryId}")</small></span>
-                        <code>@item.Id</code>
+                        <span><strong>@item.Name</strong><small>@(IsCustom(item) ? "Custom item from My changes" : "Game item")</small></span>
+                        <span class="result-action">Choose</span>
                     </button>
                 }
             }
@@ -80,7 +79,7 @@
     [Parameter] public EventCallback<ItemSearchResult> ItemSelected { get; set; }
     [Parameter] public bool Disabled { get; set; }
     [Parameter] public string AriaLabel { get; set; } = "Find an item";
-    [Parameter] public string Placeholder { get; set; } = "Type an item name or ID...";
+    [Parameter] public string Placeholder { get; set; } = "Type an item name...";
 
     protected override async Task OnParametersSetAsync()
     {
@@ -96,7 +95,7 @@
             return;
         }
         _selected = await ResolveById(ItemId);
-        _searchText = _selected?.Name ?? $"Item {ItemId}";
+        _searchText = _selected?.Name ?? "Unavailable item";
     }
 
     private async Task SearchChanged(ChangeEventArgs args)
@@ -125,7 +124,7 @@
         catch (Exception exception)
         {
             _matches.Clear();
-            _error = exception.Message;
+            _error = DesignerMessage.ForUser(exception);
         }
         finally
         {
@@ -199,12 +198,12 @@
             }
             var item = await Task.Run(() => new CompactCatalogService().SearchItems(config.BaselinePath, id.ToString(), limit: 1).FirstOrDefault());
             if (item is not null) Cache(item, config);
-            return item ?? new ItemSearchResult(id, $"Unknown item {id}", 0, 0);
+            return item ?? new ItemSearchResult(id, "Unavailable item", 0, 0);
         }
         catch (Exception exception)
         {
-            _error = exception.Message;
-            return new ItemSearchResult(id, $"Item {id}", 0, 0);
+            _error = DesignerMessage.ForUser(exception);
+            return new ItemSearchResult(id, "Unavailable item", 0, 0);
         }
     }
 

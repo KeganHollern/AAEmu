@@ -1,0 +1,8 @@
+{
+    "$schema": "../../../schemas/content-assertion.schema.json",
+    "schemaVersion": 1,
+    "key": "assertion.level55.combo-chains",
+    "description": "Fervent Healing and Gods' Whip each retain their exact four one-second combo transitions.",
+    "query": "SELECT COUNT(*) FROM skill_effects se JOIN effects e ON e.id = se.effect_id JOIN special_effects special ON special.id = e.actual_id WHERE e.actual_type = 'SpecialEffect' AND special.special_effect_type_id = 48 AND special.value2 = 1000 AND ((se.skill_id = 14929 AND special.value1 = 14930) OR (se.skill_id = 14930 AND special.value1 = 14931) OR (se.skill_id = 14931 AND special.value1 = 14932) OR (se.skill_id = 14932 AND special.value1 = 14933) OR (se.skill_id = 23593 AND special.value1 = 23646) OR (se.skill_id = 23646 AND special.value1 = 23647) OR (se.skill_id = 23647 AND special.value1 = 23648) OR (se.skill_id = 23648 AND special.value1 = 23649));",
+    "expected": "8"
+}

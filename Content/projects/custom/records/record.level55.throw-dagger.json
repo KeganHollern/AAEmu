@@ -1,0 +1,11 @@
+{
+    "$schema": "../../../schemas/record.schema.json",
+    "schemaVersion": 1,
+    "key": "record.level55.throw-dagger",
+    "displayName": "Throw Dagger",
+    "mode": "modify",
+    "table": "skills",
+    "sourceId": 23594,
+    "id": 23594,
+    "values": { "show": "t" }
+}

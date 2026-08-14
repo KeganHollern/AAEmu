@@ -1,0 +1,8 @@
+{
+    "$schema": "../../../schemas/content-assertion.schema.json",
+    "schemaVersion": 1,
+    "key": "assertion.level55.level-table",
+    "description": "Levels 51 through 55 retain the r208022 experience, mate experience, and skill-point progression.",
+    "query": "SELECT COUNT(*) FROM levels WHERE (id = 51 AND total_exp = 8082000 AND total_mate_exp = 2146250 AND skill_points = 24) OR (id = 52 AND total_exp = 16698960 AND total_mate_exp = 2276300 AND skill_points = 25) OR (id = 53 AND total_exp = 36282960 AND total_mate_exp = 2411500 AND skill_points = 26) OR (id = 54 AND total_exp = 80346960 AND total_mate_exp = 2551950 AND skill_points = 27) OR (id = 55 AND total_exp = 179307360 AND total_mate_exp = 2697750 AND skill_points = 28);",
+    "expected": "5"
+}

@@ -62,6 +62,7 @@ public sealed class BuildService
                 ArtifactLength = new FileInfo(artifactPath).Length,
                 RecipeCount = project.Recipes.Count,
                 WorkbenchCount = project.Workbenches.Count,
+                AssertionCount = project.Assertions.Count,
                 Validation = validation,
                 Changes = changes
             };
@@ -140,6 +141,7 @@ public sealed class BuildService
         builder.AppendLine($"- SHA-256: `{manifest.ArtifactSha256}`");
         builder.AppendLine($"- Recipes: {manifest.RecipeCount}");
         builder.AppendLine($"- Workbenches: {manifest.WorkbenchCount}").AppendLine();
+        builder.AppendLine($"- Artifact assertions: {manifest.AssertionCount}");
         builder.AppendLine($"- Other changed or copied entries: {manifest.Changes.Count(change => change.EntityType == "record")}").AppendLine();
         builder.AppendLine("## Changes").AppendLine();
         foreach (var change in manifest.Changes)
@@ -175,6 +177,21 @@ public sealed class BuildService
             builder.AppendLine($"SELECT * FROM doodad_almighties WHERE id IN ({doodadIds}) ORDER BY id;");
             builder.AppendLine($"SELECT * FROM doodad_func_groups WHERE doodad_almighty_id IN ({doodadIds}) ORDER BY doodad_almighty_id, id;");
             builder.AppendLine($"SELECT * FROM craft_pack_crafts WHERE craft_pack_id IN ({packIds}) ORDER BY craft_pack_id, craft_id;");
+        }
+        foreach (var group in project.Records.GroupBy(record => record.Table, StringComparer.OrdinalIgnoreCase))
+        {
+            var ids = IdList(group.Select(record => record.Id));
+            builder.AppendLine($"SELECT * FROM {BaselineVerifier.QuoteIdentifier(group.Key)} WHERE id IN ({ids}) ORDER BY id;");
+        }
+        if (project.Assertions.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("-- Project assertions (each query should return its documented expected value)");
+            foreach (var assertion in project.Assertions)
+            {
+                builder.AppendLine($"-- {assertion.Key}: expected {assertion.Expected} — {assertion.Description}");
+                builder.AppendLine(assertion.Query.TrimEnd().TrimEnd(';') + ";");
+            }
         }
         return builder.ToString();
     }

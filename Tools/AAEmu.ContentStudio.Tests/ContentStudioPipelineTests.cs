@@ -165,6 +165,92 @@ public class ContentStudioPipelineTests
     }
 
     [Test]
+    public async Task GearEditor_CreatesPrivateStatProfileAndKeepsSharedProfileUnchanged()
+    {
+        using var workspace = TestWorkspace.Create();
+        var record = new CatalogRecordService().GetRecord(workspace.BaselinePath, "items", 12)!;
+        var linked = record.LinkedRecords.Single();
+
+        await Assert.That(record.RelatedSections.Single(section => section.IsEquipmentTemplate).Table).IsEqualTo("item_weapons");
+        await Assert.That(linked.SourceId).IsEqualTo(30u);
+        await Assert.That(linked.ReferenceCount).IsEqualTo(1);
+
+        linked.Fields.Single(field => field.Name == "int_weight").Value = "1";
+        linked.Fields.Single(field => field.Name == "spi_weight").Value = "3";
+        var saved = new RecordScaffoldService().Save(new RecordDraftRequest
+        {
+            ProjectPath = workspace.ProjectPath,
+            BaselinePath = workspace.BaselinePath,
+            Table = record.Table,
+            SourceId = record.Id,
+            Mode = RecordChangeMode.Modify,
+            DisplayName = record.Name,
+            Values = record.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.Value),
+            Localizations = record.Localizations.ToDictionary(field => field.Field, field => field.Values),
+            Children = record.RelatedSections.SelectMany(section => section.Rows.Select(row => new RecordChildDraft
+            {
+                Table = section.Table,
+                OwnerColumn = section.OwnerColumn,
+                SourceId = row.Id,
+                Values = row.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.Value)
+            })).ToList(),
+            LinkedRecords =
+            [
+                new RecordLinkedDraft
+                {
+                    Table = linked.Table,
+                    SourceId = linked.SourceId,
+                    LinkTable = linked.LinkTable,
+                    LinkSourceId = linked.LinkSourceId,
+                    LinkColumn = linked.LinkColumn,
+                    Values = linked.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.Value)
+                }
+            ]
+        });
+
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        using var connection = new SqliteConnection($"Data Source={build.ArtifactPath};Pooling=False");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT mod_set_id FROM item_weapons WHERE item_id = 12;";
+        var privateProfileId = Convert.ToUInt32(command.ExecuteScalar());
+        command.CommandText = "SELECT int_weight || ':' || spi_weight FROM equip_item_attr_modifiers WHERE id = @id;";
+        command.Parameters.AddWithValue("@id", privateProfileId);
+        var privateWeights = Convert.ToString(command.ExecuteScalar());
+        command.Parameters.Clear();
+        command.CommandText = "SELECT int_weight || ':' || spi_weight FROM equip_item_attr_modifiers WHERE id = 30;";
+        var sharedWeights = Convert.ToString(command.ExecuteScalar());
+
+        await Assert.That(saved.Id).IsEqualTo(12u);
+        await Assert.That(privateProfileId).IsNotEqualTo(30u);
+        await Assert.That(privateWeights).IsEqualTo("1:3");
+        await Assert.That(sharedWeights).IsEqualTo("2:1");
+    }
+
+    [Test]
+    public async Task RecordEditor_ModifiesLegitimateZeroIdBalanceRow()
+    {
+        using var workspace = TestWorkspace.Create();
+        var record = new CatalogRecordService().GetRecord(workspace.BaselinePath, "item_grades", 0)!;
+        record.Fields.Single(field => field.Name == "stat_multiplier").Value = "125";
+
+        new RecordScaffoldService().Save(new RecordDraftRequest
+        {
+            ProjectPath = workspace.ProjectPath,
+            BaselinePath = workspace.BaselinePath,
+            Table = record.Table,
+            SourceId = record.Id,
+            Mode = RecordChangeMode.Modify,
+            DisplayName = "Basic grade",
+            Values = record.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.Value)
+        });
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        var changed = new CatalogRecordService().GetRecord(build.ArtifactPath, "item_grades", 0)!;
+
+        await Assert.That(changed.Fields.Single(field => field.Name == "stat_multiplier").Value).IsEqualTo("125");
+    }
+
+    [Test]
     public async Task DeleteRecipe_DetachesWorkbenchAndRetiresEveryOwnedId()
     {
         using var workspace = TestWorkspace.Create();
@@ -240,6 +326,155 @@ public class ContentStudioPipelineTests
         await Assert.That(duplicate.Name).IsEqualTo("Custom Whirlwind Slash");
         await Assert.That(duplicate.Fields.Single(field => field.Name == "skill_controller_id").IsNull).IsTrue();
     }
+
+    [Test]
+    public async Task RecordEditor_ModificationIsSparseAndDiffShowsChangedCell()
+    {
+        using var workspace = TestWorkspace.Create();
+        var record = new CatalogRecordService().GetRecord(workspace.BaselinePath, "skills", 200)!;
+        record.Fields.Single(field => field.Name == "show").Value = "0";
+
+        var saved = new RecordScaffoldService().Save(new RecordDraftRequest
+        {
+            ProjectPath = workspace.ProjectPath,
+            BaselinePath = workspace.BaselinePath,
+            Table = "skills",
+            SourceId = 200,
+            Mode = RecordChangeMode.Modify,
+            DisplayName = "Hidden Whirlwind Slash",
+            Values = record.Fields.Where(field => !field.IsIdentity && field.IsEditable).ToDictionary(field => field.Name, field => field.Value),
+            Localizations = record.Localizations.ToDictionary(field => field.Field, field => field.Values)
+        });
+
+        var definition = ContentStudioJson.Deserialize<RecordDefinition>(File.ReadAllText(saved.Path), saved.Path);
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+        var diff = new DatabaseDiffService().Compare(workspace.BaselinePath, build.ArtifactPath);
+        var skillDiff = diff.Tables.Single(table => table.Table == "skills");
+
+        await Assert.That(definition.Values.Count).IsEqualTo(1);
+        await Assert.That(definition.Values["show"]).IsEqualTo("0");
+        await Assert.That(definition.Localizations.Count).IsEqualTo(0);
+        await Assert.That(skillDiff.ModifiedRows).IsEqualTo(1);
+        await Assert.That(skillDiff.ChangedCells.Any(cell => cell.Id == 200 && cell.Column == "show" && cell.BaselineValue == "t" && cell.ArtifactValue == "f")).IsTrue();
+    }
+
+    [Test]
+    public async Task Build_ExecutesArtifactAssertions()
+    {
+        using var workspace = TestWorkspace.Create();
+        var assertionDirectory = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "assertions");
+        Directory.CreateDirectory(assertionDirectory);
+        File.WriteAllText(Path.Combine(assertionDirectory, "skill-count.json"), ContentStudioJson.Serialize(new ContentAssertionDefinition
+        {
+            Key = "assertion.test.skill-count",
+            Description = "The compiled artifact contains the source skill and its private recipe clone.",
+            Query = "SELECT COUNT(*) FROM skills WHERE id IN (200, 9400000);",
+            Expected = "2"
+        }));
+
+        var build = new BuildService().Build(workspace.CreateBuildRequest());
+
+        await Assert.That(build.Manifest.AssertionCount).IsEqualTo(1);
+        await Assert.That(build.Manifest.Validation.Issues.Any(issue => issue.Code == "artifact.assertion" && issue.Entity == "assertion.test.skill-count")).IsTrue();
+    }
+
+    [Test]
+    public async Task DeleteAssertion_RemovesReleaseCheckWithoutRetiringIds()
+    {
+        using var workspace = TestWorkspace.Create();
+        var assertionDirectory = Path.Combine(Path.GetDirectoryName(workspace.ProjectPath)!, "assertions");
+        Directory.CreateDirectory(assertionDirectory);
+        var path = Path.Combine(assertionDirectory, "temporary.json");
+        File.WriteAllText(path, ContentStudioJson.Serialize(new ContentAssertionDefinition
+        {
+            Key = "assertion.test.temporary",
+            Description = "Temporary release check.",
+            Query = "SELECT 1;",
+            Expected = "1"
+        }));
+
+        var preview = new ChangeDeletionService().Preview(workspace.ProjectPath, path);
+        var result = new ChangeDeletionService().Delete(workspace.ProjectPath, path);
+
+        await Assert.That(preview.CanDelete).IsTrue();
+        await Assert.That(result.Type).IsEqualTo("Release check");
+        await Assert.That(result.RetiredIdCount).IsEqualTo(0);
+        await Assert.That(File.Exists(path)).IsFalse();
+    }
+
+    [Test]
+    public async Task ManifestSave_RejectsSilentOverwriteAfterExternalEdit()
+    {
+        using var workspace = TestWorkspace.Create();
+        var manifests = new ManifestService();
+        var path = manifests.FindByKey(workspace.ProjectPath, "recipe.test-recipe");
+        var opened = manifests.ReadSnapshot(path);
+        var externallyEdited = opened.Contents.Replace("Test Recipe", "Agent Updated Recipe", StringComparison.Ordinal);
+        manifests.Save(path, externallyEdited);
+
+        var conflictDetected = false;
+        try
+        {
+            manifests.Save(path, opened.Contents, opened.Version);
+        }
+        catch (ContentStudioException exception)
+        {
+            conflictDetected = exception.Message.Contains("updated outside this editor", StringComparison.Ordinal);
+        }
+
+        await Assert.That(conflictDetected).IsTrue();
+        await Assert.That(manifests.Read(path)).Contains("Agent Updated Recipe");
+    }
+
+    [Test]
+    public async Task DesignerReferences_ResolveAndSearchByFriendlyNames()
+    {
+        using var workspace = TestWorkspace.Create();
+        var references = new DesignerReferenceService();
+
+        var item = references.Resolve(workspace.BaselinePath, workspace.ProjectPath, "items", 10);
+        var workbenches = references.Search(workspace.BaselinePath, workspace.ProjectPath, "doodad_almighties", "alchemy");
+        var ability = references.Resolve(workspace.BaselinePath, workspace.ProjectPath, "abilities", 1);
+
+        await Assert.That(item!.Name).IsEqualTo("Moonlight Archeum Dust");
+        await Assert.That(workbenches.Any(option => option.Name == "Alchemy Workbench")).IsTrue();
+        await Assert.That(ability!.Name).IsEqualTo("Battlerage");
+        await Assert.That(CatalogRecordService.FriendlyTableName("actability_categories")).IsEqualTo("Crafting proficiency");
+    }
+
+    [Test]
+    public async Task DesignerPlanNaming_RepeatedCopiesGetFriendlySequence()
+    {
+        using var workspace = TestWorkspace.Create();
+        var projectDirectory = Path.GetDirectoryName(workspace.ProjectPath)!;
+        var recipeDirectory = Path.Combine(projectDirectory, "recipes");
+        var workbenchDirectory = Path.Combine(projectDirectory, "workbenches");
+
+        File.WriteAllText(Path.Combine(recipeDirectory, "custom-lumber.json"), ContentStudioJson.Serialize(new RecipeDefinition
+        {
+            Key = "recipe.custom-lumber",
+            Names = new Dictionary<string, string> { ["en_us"] = "Custom Lumber" }
+        }));
+        File.WriteAllText(Path.Combine(recipeDirectory, "custom-lumber-2.json"), ContentStudioJson.Serialize(new RecipeDefinition
+        {
+            Key = "recipe.custom-lumber-2",
+            Names = new Dictionary<string, string> { ["en_us"] = "Custom Lumber 2" }
+        }));
+        File.WriteAllText(Path.Combine(workbenchDirectory, "custom-alchemy-workbench.json"), ContentStudioJson.Serialize(new WorkbenchDefinition
+        {
+            Key = "workbench.custom-alchemy-workbench",
+            Names = new Dictionary<string, string> { ["en_us"] = "Custom Alchemy Workbench" }
+        }));
+
+        var naming = new DesignerPlanNamingService();
+        var recipe = naming.SuggestRecipeCopy(workspace.ProjectPath, "Lumber");
+        var workbench = naming.SuggestWorkbenchCopy(workspace.ProjectPath, "Alchemy Workbench");
+
+        await Assert.That(recipe.Name).IsEqualTo("Custom Lumber 3");
+        await Assert.That(recipe.Key).IsEqualTo("recipe.custom-lumber-3");
+        await Assert.That(workbench.Name).IsEqualTo("Custom Alchemy Workbench 2");
+        await Assert.That(workbench.Key).IsEqualTo("workbench.custom-alchemy-workbench-2");
+    }
 }
 
 internal sealed class TestWorkspace : IDisposable
@@ -304,6 +539,7 @@ internal sealed class TestWorkspace : IDisposable
             CREATE TABLE holdables (id INTEGER, name TEXT, code TEXT, slot_type_id INTEGER, speed INTEGER, damage_scale INTEGER, max_range INTEGER, item_proc_id INTEGER);
             CREATE TABLE wearables (id INTEGER, armor_type_id INTEGER, slot_type_id INTEGER, armor_bp INTEGER, magic_resistance_bp INTEGER);
             CREATE TABLE equip_item_attr_modifiers (id INTEGER, str_weight INTEGER, dex_weight INTEGER, sta_weight INTEGER, int_weight INTEGER, spi_weight INTEGER);
+            CREATE TABLE item_grades (id INTEGER, name TEXT, grade_order INTEGER, stat_multiplier INTEGER);
             CREATE TABLE equip_item_sets (id INTEGER, name TEXT, description TEXT);
             CREATE TABLE equip_item_set_bonuses (id INTEGER, equip_item_set_id INTEGER, num_pieces INTEGER, buff_id INTEGER, proc_id INTEGER);
             CREATE TABLE item_procs (id INTEGER, name TEXT, description TEXT);
@@ -332,6 +568,7 @@ internal sealed class TestWorkspace : IDisposable
             INSERT INTO item_weapons VALUES (600, 12, 20, 30, 40, 1, 1, 100, 0);
             INSERT INTO holdables VALUES (20, 'Scepter', '1h_staff', 2, 1000, 100, 4000, 50);
             INSERT INTO equip_item_attr_modifiers VALUES (30, 0, 0, 0, 2, 1);
+            INSERT INTO item_grades VALUES (0, 'Basic', 1, 100);
             INSERT INTO equip_item_sets VALUES (40, 'Wave Set', 'Equipment favored by Wave spellcasters.');
             INSERT INTO equip_item_set_bonuses VALUES (41, 40, 2, 4, 0);
             INSERT INTO item_procs VALUES (50, 'Wave Burst', 'Occasionally releases a burst of magic.');
@@ -369,7 +606,7 @@ internal sealed class TestWorkspace : IDisposable
             ClientBuild = "test",
             Length = new FileInfo(BaselinePath).Length,
             Sha256 = FileHashService.CalculateSha256(BaselinePath),
-            TableCount = 27,
+            TableCount = 28,
             RequiredTables = []
         };
         File.WriteAllText(DescriptorPath, ContentStudioJson.Serialize(descriptor));

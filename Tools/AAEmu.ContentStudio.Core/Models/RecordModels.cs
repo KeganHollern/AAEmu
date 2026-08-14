@@ -13,7 +13,22 @@ public sealed class CatalogRecord
     public List<CatalogRecordField> Fields { get; set; } = [];
     public List<CatalogLocalizationField> Localizations { get; set; } = [];
     public List<CatalogRelatedSection> RelatedSections { get; set; } = [];
+    public List<CatalogLinkedRecord> LinkedRecords { get; set; } = [];
     public List<CatalogGameplayLink> GameplayLinks { get; set; } = [];
+}
+
+public sealed class CatalogLinkedRecord
+{
+    public string Table { get; set; } = string.Empty;
+    public uint SourceId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string LinkTable { get; set; } = string.Empty;
+    public uint LinkSourceId { get; set; }
+    public string LinkColumn { get; set; } = string.Empty;
+    public int ReferenceCount { get; set; }
+    public bool Enabled { get; set; }
+    public List<CatalogRecordField> Fields { get; set; } = [];
 }
 
 public sealed class CatalogGameplayLink
@@ -39,6 +54,7 @@ public sealed class CatalogRelatedSection
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string OwnerColumn { get; set; } = string.Empty;
+    public bool IsEquipmentTemplate { get; set; }
     public List<CatalogRelatedRow> Rows { get; set; } = [];
 }
 
@@ -111,6 +127,7 @@ public sealed class RecordDefinition
     public Dictionary<string, Dictionary<string, string>> Localizations { get; set; } = [];
     public Dictionary<string, uint> LocalizationRowIds { get; set; } = [];
     public List<RecordChildClone> Children { get; set; } = [];
+    public List<RecordLinkedClone> LinkedClones { get; set; } = [];
 }
 
 public sealed class RecordChildClone
@@ -119,6 +136,17 @@ public sealed class RecordChildClone
     public string OwnerColumn { get; set; } = string.Empty;
     public uint SourceId { get; set; }
     public uint Id { get; set; }
+    public Dictionary<string, string?> Values { get; set; } = [];
+}
+
+public sealed class RecordLinkedClone
+{
+    public string Table { get; set; } = string.Empty;
+    public uint SourceId { get; set; }
+    public uint Id { get; set; }
+    public string LinkTable { get; set; } = string.Empty;
+    public uint LinkSourceId { get; set; }
+    public string LinkColumn { get; set; } = string.Empty;
     public Dictionary<string, string?> Values { get; set; } = [];
 }
 
@@ -133,6 +161,7 @@ public sealed class RecordDraftRequest
     public Dictionary<string, string?> Values { get; set; } = [];
     public Dictionary<string, Dictionary<string, string>> Localizations { get; set; } = [];
     public List<RecordChildDraft> Children { get; set; } = [];
+    public List<RecordLinkedDraft> LinkedRecords { get; set; } = [];
 }
 
 public sealed class RecordChildDraft
@@ -140,6 +169,16 @@ public sealed class RecordChildDraft
     public string Table { get; set; } = string.Empty;
     public string OwnerColumn { get; set; } = string.Empty;
     public uint SourceId { get; set; }
+    public Dictionary<string, string?> Values { get; set; } = [];
+}
+
+public sealed class RecordLinkedDraft
+{
+    public string Table { get; set; } = string.Empty;
+    public uint SourceId { get; set; }
+    public string LinkTable { get; set; } = string.Empty;
+    public uint LinkSourceId { get; set; }
+    public string LinkColumn { get; set; } = string.Empty;
     public Dictionary<string, string?> Values { get; set; } = [];
 }
 

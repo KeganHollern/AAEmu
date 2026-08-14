@@ -1,0 +1,12 @@
+.live-sync { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 650; }
+.live-sync i { width: 8px; height: 8px; border-radius: 50%; background: #45a779; box-shadow: 0 0 0 4px #45a77922; }
+.shared-work > p:not(.eyebrow), .preflight-card p { color: var(--muted); line-height: 1.55; }
+.shared-flow { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 22px 0; padding: 14px; border: 1px solid #c9ddd3; background: #edf4ef; }
+.shared-flow i { color: var(--green); font-style: normal; font-weight: 800; }
+.preflight-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.preflight-card h2 { margin-bottom: 6px; }
+.preflight-card p { margin: 0; }
+.shared-update { border-color: #88ad9c; background: #f0f7f3; }
+.shared-update .button { margin-top: 10px; }
+.result-action { color: var(--green); font-size: 12px; font-weight: 750; white-space: nowrap; }
+@media (max-width: 650px) { .preflight-card, .shared-flow { align-items: stretch; flex-direction: column; } .shared-flow { text-align: center; } }

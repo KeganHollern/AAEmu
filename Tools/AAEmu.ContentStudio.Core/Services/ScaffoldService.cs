@@ -115,7 +115,7 @@ public sealed class ScaffoldService
         var path = Path.Combine(directory, SanitizeFileName(key) + ".json");
         if (File.Exists(path))
         {
-            throw new ContentStudioException($"Recipe file already exists: {path}");
+            throw new ContentStudioException("This recipe copy conflicts with another saved recipe. Choose a different name and try again.");
         }
         if (!request.DryRun)
         {
@@ -181,7 +181,7 @@ public sealed class ScaffoldService
         var path = Path.Combine(directory, SanitizeFileName(key) + ".json");
         if (File.Exists(path))
         {
-            throw new ContentStudioException($"Workbench file already exists: {path}");
+            throw new ContentStudioException("This workbench copy conflicts with another saved workbench. Choose a different name and try again.");
         }
         if (!request.DryRun)
         {

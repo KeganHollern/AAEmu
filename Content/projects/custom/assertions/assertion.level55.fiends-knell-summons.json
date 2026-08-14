@@ -1,0 +1,8 @@
+{
+    "$schema": "../../../schemas/content-assertion.schema.json",
+    "schemaVersion": 1,
+    "key": "assertion.level55.fiends-knell-summons",
+    "description": "Fiend's Knell retains both aggressive, faction-aligned, 30-second mate summons.",
+    "query": "SELECT COUNT(*) FROM skill_effects se JOIN effects e ON e.id = se.effect_id JOIN spawn_effects spawn ON spawn.id = e.actual_id WHERE se.skill_id = 23588 AND e.actual_type = 'SpawnEffect' AND spawn.owner_type_id = 5 AND spawn.sub_type IN (14165, 14166) AND spawn.life_time = 30 AND spawn.mate_state_id = 3 AND spawn.use_summoner_faction = 't' AND spawn.use_summoner_aggro_target = 't';",
+    "expected": "2"
+}

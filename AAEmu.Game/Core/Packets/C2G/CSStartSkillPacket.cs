@@ -9,6 +9,7 @@ using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Static;
+using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
 using AAEmu.Game.Physics.Debug;
 using AAEmu.Game.Models.Game.Units;
@@ -66,6 +67,7 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         var skillResult = SkillResult.Success;
         var skillResultErrorValue = 0u;
         Skill skill = null;
+        var isOwnUnitCast = skillCaster is SkillCasterUnit && skillCaster.ObjId == Connection.ActiveChar.ObjId;
 
         if (skillCaster is SkillCasterUnit scu)
         {
@@ -148,15 +150,33 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         else if (Connection.ActiveChar.Skills.Skills.ContainsKey(skillId))
         {
             // Is it one of our learned character skills?
+            Connection.ActiveChar.Skills.ComboState.Clear();
             var template = SkillManager.Instance.GetSkillTemplate(skillId);
             skill = new Skill(template, Connection.ActiveChar);
             skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
         }
+        else if (skillId > 0 && isOwnUnitCast && Connection.ActiveChar.Skills.ComboState.TryConsume(skillId))
+        {
+            // The client selects hidden combo stages, but the server authorizes each exact
+            // transition for the compact-defined time window before accepting the cast.
+            var template = SkillManager.Instance.GetSkillTemplate(skillId);
+            skill = new Skill(template, Connection.ActiveChar);
+            skillResult = template is null
+                ? SkillResult.InvalidSkill
+                : skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+        }
         else if (skillId > 0 && Connection.ActiveChar.Skills.IsVariantOfSkill(skillId))
         {
             // Variant of learned skill?
+            Connection.ActiveChar.Skills.ComboState.Clear();
             skill = new Skill(SkillManager.Instance.GetSkillTemplate(skillId));
             skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+        }
+        else if (isOwnUnitCast)
+        {
+            Logger.Warn($"StartSkill: Character {Connection.ActiveChar.ObjId} attempted unauthorized skill {skillId}");
+            skill = new Skill(new SkillTemplate { Id = skillId });
+            skillResult = SkillResult.InvalidSkill;
         }
         else
         {

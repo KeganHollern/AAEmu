@@ -1,12 +1,20 @@
 @page "/manifests"
+@implements IDisposable
 @inject DesignerWorkspace Workspace
 
 <PageTitle>My Changes</PageTitle>
-<header class="page-head compact"><div><p class="eyebrow">YOUR CUSTOM PROJECT</p><h1>My changes</h1><p class="lede">Everything you have changed or copied is collected here. These are plans only—the game is unchanged until you build and deploy.</p></div><div class="head-actions"><button class="button" @onclick="Refresh">Refresh</button><a class="button primary" href="/build">Review and build</a></div></header>
+<header class="page-head compact">
+    <div>
+        <p class="eyebrow">YOUR SHARED CUSTOM PROJECT</p>
+        <h1>My changes</h1>
+        <p class="lede">Everything changed here—or by an agent working in the same project—appears automatically. The game remains unchanged until you review and publish.</p>
+    </div>
+    <div class="head-actions"><span class="live-sync"><i></i>Watching for shared work</span><a class="button primary" href="/build">Review and publish</a></div>
+</header>
 
 <section class="change-summary metric-grid">
     <article class="metric"><small>Total plans</small><strong>@_changes.Count</strong><span>Saved and repeatable</span></article>
-    <article class="metric"><small>New copies</small><strong>@_changes.Count(change => change.Action == "New copy")</strong><span>Receive custom IDs</span></article>
+    <article class="metric"><small>New copies</small><strong>@_changes.Count(change => change.Action == "New copy")</strong><span>Connections managed automatically</span></article>
     <article class="metric"><small>Existing entries changed</small><strong>@_changes.Count(change => change.Action == "Change")</strong><span>Original source remains protected</span></article>
 </section>
 
@@ -21,19 +29,19 @@ else
         {
             <article class="change-card panel">
                 <div class="change-kind"><span class="kind-badge @change.Kind">@change.Type</span><span>@change.Action</span></div>
-                <h2>@change.Name</h2><p>@change.Explanation</p>
-                <div class="change-meta"><span><small>Game ID</small><code>@change.Id</code></span><span><small>Status</small><strong>Saved plan</strong></span></div>
+                <h2>@change.Name</h2>
+                <p>@change.Explanation</p>
+                <div class="change-meta"><span><small>Status</small><strong>Saved and editable</strong></span><span><small>Shared project</small><strong>Up to date</strong></span></div>
                 <ul class="change-highlights">@foreach (var detail in change.Details) { <li>@detail</li> }</ul>
-                <div class="change-actions"><a class="button primary" href="@change.EditHref">Edit this change</a><button class="button danger" @onclick="() => AskDelete(change)">Delete this change</button><button class="text-button" @onclick="() => Select(change.Path)">Advanced: view JSON</button></div>
+                <div class="change-actions">
+                    @if (!string.IsNullOrEmpty(change.EditHref)) { <a class="button primary" href="@change.EditHref">Open and edit</a> }
+                    <button class="button danger" @onclick="() => AskDelete(change)">Delete</button>
+                </div>
             </article>
         }
     </section>
 }
 
-@if (_selected is not null)
-{
-    <details class="advanced-manifest panel" open><summary>Advanced technical editor</summary><p>Most people never need this. It exposes the exact repeatable plan used by the build system.</p><div class="editor-bar"><code>@_selected</code><button class="button primary" @onclick="Save">Validate & save JSON</button></div><textarea class="code-editor" @bind="_text" @bind:event="oninput" spellcheck="false"></textarea></details>
-}
 @if (_deletePreview is not null)
 {
     <div class="delete-backdrop" @onclick="CancelDelete">
@@ -41,7 +49,7 @@ else
             <p class="eyebrow">CONFIRM DELETION</p>
             <h2 id="delete-title">Delete @_deletePreview.Name?</h2>
             <p>This removes the saved @_deletePreview.Type.ToLowerInvariant() plan from <strong>My changes</strong>. It cannot be undone from this screen.</p>
-            <ul class="delete-consequences">@foreach (var consequence in _deletePreview.Consequences) { <li>@consequence</li> }</ul>
+            <ul class="delete-consequences">@foreach (var consequence in FriendlyConsequences(_deletePreview)) { <li>@consequence</li> }</ul>
             @if (_deletePreview.Blockers.Count > 0)
             {
                 <div class="delete-blockers"><strong>Delete this dependency first or remove its link:</strong><ul>@foreach (var blocker in _deletePreview.Blockers) { <li>@blocker</li> }</ul></div>
@@ -50,23 +58,63 @@ else
         </section>
     </div>
 }
-@if (!string.IsNullOrEmpty(_message)) { <div class="toast @(_isError?"error":"success")">@_message</div> }
+
+@if (!string.IsNullOrEmpty(_message)) { <div class="toast @(_isError ? "error" : "success")">@_message</div> }
 
 @code {
-    private readonly ManifestService _service = new(); private readonly ChangeDeletionService _deletion = new(); private List<ChangeCard> _changes = []; private string? _selected; private string _text = ""; private string? _message; private bool _isError; private bool _deleting; private string _baselinePath = ""; private ChangeDeletionPreview? _deletePreview;
-    protected override void OnInitialized() => Refresh();
-    private void Refresh() => Try(() => { var configuration = Workspace.LoadConfiguration(); _baselinePath = configuration.BaselinePath; _changes = _service.List(configuration.ProjectPath).Where(path => !Path.GetFileName(path).Equals("project.json", StringComparison.OrdinalIgnoreCase)).Select(ReadCard).OrderBy(card => card.Type).ThenBy(card => card.Name).ToList(); if (_selected is not null && !_changes.Any(change => change.Path == _selected)) _selected = null; }, null);
+    private readonly ManifestService _service = new();
+    private readonly ChangeDeletionService _deletion = new();
+    private List<ChangeCard> _changes = [];
+    private string? _message;
+    private bool _isError;
+    private bool _deleting;
+    private string _baselinePath = string.Empty;
+    private ChangeDeletionPreview? _deletePreview;
+
+    protected override void OnInitialized()
+    {
+        Workspace.Changed += WorkspaceChanged;
+        Refresh();
+    }
+
+    private void Refresh() => Try(() =>
+    {
+        var configuration = Workspace.LoadConfiguration();
+        _baselinePath = configuration.BaselinePath;
+        _changes = _service.List(configuration.ProjectPath)
+            .Where(path => !Path.GetFileName(path).Equals("project.json", StringComparison.OrdinalIgnoreCase))
+            .Select(ReadCard)
+            .OrderBy(card => card.Type)
+            .ThenBy(card => card.Name)
+            .ToList();
+    }, null);
+
     private ChangeCard ReadCard(string path)
     {
         var json = _service.Read(path);
-        if (path.Contains("recipes", StringComparison.OrdinalIgnoreCase)) { var value = ContentStudioJson.Deserialize<RecipeDefinition>(json, path); return new(path, "recipe", "Recipe", "New copy", value.Names.GetValueOrDefault("en_us", value.Key), value.Id, "A complete custom recipe with its ingredients and products.", $"/recipes?plan={Uri.EscapeDataString(value.Key)}", [$"{value.Materials.Count} ingredients", $"{value.Products.Count} products", $"{value.CastDelay} ms crafting time"]); }
-        if (path.Contains("workbenches", StringComparison.OrdinalIgnoreCase)) { var value = ContentStudioJson.Deserialize<WorkbenchDefinition>(json, path); return new(path, "workbench", "Workbench", "New copy", value.Names.GetValueOrDefault("en_us", value.Key), value.Id, $"A custom workbench offering {value.RecipeIds.Length} recipe(s).", $"/workbenches?plan={Uri.EscapeDataString(value.Key)}", [$"{value.RecipeIds.Length} attached recipes", $"Based on world object {value.SourceDoodadId}", $"Craft pack {value.CraftPack.Id}"]); }
+        if (path.Contains("recipes", StringComparison.OrdinalIgnoreCase))
+        {
+            var value = ContentStudioJson.Deserialize<RecipeDefinition>(json, path);
+            return new(path, "recipe", "Recipe", "New copy", value.Names.GetValueOrDefault("en_us", value.Key), "A complete custom recipe with its ingredients and products.", $"/recipes?plan={Uri.EscapeDataString(value.Key)}", [$"{value.Materials.Count} ingredients", $"{value.Products.Count} products", $"{value.CastDelay} ms crafting time"]);
+        }
+        if (path.Contains("workbenches", StringComparison.OrdinalIgnoreCase))
+        {
+            var value = ContentStudioJson.Deserialize<WorkbenchDefinition>(json, path);
+            return new(path, "workbench", "Workbench", "New copy", value.Names.GetValueOrDefault("en_us", value.Key), $"A custom workbench offering {value.RecipeIds.Length} recipe(s).", $"/workbenches?plan={Uri.EscapeDataString(value.Key)}", [$"{value.RecipeIds.Length} attached recipes", "Copied from a proven crafting object", "Complete behavior graph preserved"]);
+        }
+        if (path.Contains("assertions", StringComparison.OrdinalIgnoreCase))
+        {
+            var value = ContentStudioJson.Deserialize<ContentAssertionDefinition>(json, path);
+            return new(path, "assertion", "Release check", "Verification", value.Description, "A safety requirement which must pass before Content Studio produces the build.", string.Empty, ["Runs automatically during validation", "Protects the intended release rules"]);
+        }
+
         var record = ContentStudioJson.Deserialize<RecordDefinition>(json, path);
-        return new(path, record.Table == "skills" ? "skill" : "other", CatalogRecordService.FriendlyName(record.Table.TrimEnd('s')), record.Mode == RecordChangeMode.Duplicate ? "New copy" : "Change", record.DisplayName, record.Id, record.Mode == RecordChangeMode.Duplicate ? $"A new entry based on game ID {record.SourceId}." : $"A planned change to existing game ID {record.SourceId}.", $"/entry?plan={Uri.EscapeDataString(record.Key)}", DescribeRecordChanges(record));
+        return new(path, record.Table == "skills" ? "skill" : "other", CatalogRecordService.FriendlyTableName(record.Table), record.Mode == RecordChangeMode.Duplicate ? "New copy" : "Change", record.DisplayName, record.Mode == RecordChangeMode.Duplicate ? "A new entry copied safely from existing game data." : "A planned update to this existing game entry.", $"/entry?plan={Uri.EscapeDataString(record.Key)}", DescribeRecordChanges(record));
     }
+
     private IReadOnlyList<string> DescribeRecordChanges(RecordDefinition definition)
     {
-        if (definition.Mode == RecordChangeMode.Duplicate) return [$"Safe custom ID {definition.Id}", $"Based on original ID {definition.SourceId}", $"{definition.Children.Count} connected rows copied"];
+        if (definition.Mode == RecordChangeMode.Duplicate) return ["Stored safely as a separate entry", "Based on a proven original entry", $"{definition.Children.Count} connected parts copied"];
         var source = new CatalogRecordService().GetRecord(_baselinePath, definition.Table, definition.SourceId);
         if (source is null) return ["Original entry is unavailable", $"{definition.Children.Count} connected rows included"];
         var changed = new List<string>();
@@ -95,16 +143,24 @@ else
             }
         }
         var distinct = changed.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (distinct.Count == 0) return ["No gameplay or text values currently differ from the original", "Open Edit this change to make an adjustment"];
+        if (distinct.Count == 0) return ["No gameplay or text values currently differ from the original", "Open this change to make an adjustment"];
         var details = distinct.Take(3).Select(value => $"Changed: {value}").ToList();
         if (distinct.Count > 3) details.Add($"And {distinct.Count - 3} more changed settings");
         return details;
     }
+
+    private static IReadOnlyList<string> FriendlyConsequences(ChangeDeletionPreview preview)
+    {
+        var result = new List<string> { "The saved plan will be removed from the shared project." };
+        if (preview.RetiredIdCount > 0) result.Add("Its reserved connections will be retired safely and will not be reused.");
+        if (preview.Consequences.Any(value => value.Contains("linked", StringComparison.OrdinalIgnoreCase))) result.Add("Any connected plans are checked before deletion.");
+        return result;
+    }
+
     private static string FriendlyLanguage(string language) => language.ToLowerInvariant() switch { "en_us" => "English", "ko" => "Korean", "de" => "German", "fr" => "French", "ja" => "Japanese", "ru" => "Russian", "zh_cn" => "Simplified Chinese", "zh_tw" => "Traditional Chinese", _ => language };
-    private void Select(string path) => Try(() => { _selected = path; _text = _service.Read(path); }, null);
-    private void Save() => Try(() => _service.Save(_selected ?? throw new ContentStudioException("Choose a change first."), _text), "Technical plan validated and saved.");
     private void AskDelete(ChangeCard change) => Try(() => _deletePreview = _deletion.Preview(Workspace.LoadConfiguration().ProjectPath, change.Path), null);
     private void CancelDelete() { if (!_deleting) _deletePreview = null; }
+
     private void ConfirmDelete()
     {
         if (_deletePreview is null || !_deletePreview.CanDelete) return;
@@ -112,15 +168,18 @@ else
         {
             _deleting = true;
             var result = _deletion.Delete(Workspace.LoadConfiguration().ProjectPath, _deletePreview.Path);
-            if (string.Equals(_selected, _deletePreview.Path, StringComparison.OrdinalIgnoreCase)) { _selected = null; _text = ""; }
             _deletePreview = null;
             Refresh();
             _isError = false;
-            _message = $"Deleted {result.Name}. {result.RetiredIdCount} ID(s) retired; {result.UpdatedChangeCount} linked change(s) updated.";
+            _message = $"Deleted {result.Name}. Its reserved connections were retired safely and {result.UpdatedChangeCount} linked change(s) were updated.";
         }
-        catch (Exception exception) { _isError = true; _message = exception.Message; }
+        catch (Exception exception) { _isError = true; _message = DesignerMessage.ForUser(exception); }
         finally { _deleting = false; }
     }
-    private void Try(Action action, string? success) { try { action(); _isError = false; _message = success; } catch (Exception exception) { _isError = true; _message = exception.Message; } }
-    private sealed record ChangeCard(string Path, string Kind, string Type, string Action, string Name, uint Id, string Explanation, string EditHref, IReadOnlyList<string> Details);
+
+    private void WorkspaceChanged(object? sender, WorkspaceChangedEventArgs args) => _ = InvokeAsync(() => { Refresh(); StateHasChanged(); });
+    private void Try(Action action, string? success) { try { action(); _isError = false; _message = success; } catch (Exception exception) { _isError = true; _message = DesignerMessage.ForUser(exception); } }
+    public void Dispose() => Workspace.Changed -= WorkspaceChanged;
+
+    private sealed record ChangeCard(string Path, string Kind, string Type, string Action, string Name, string Explanation, string EditHref, IReadOnlyList<string> Details);
 }

@@ -8,7 +8,7 @@
     {
         <ul>@foreach (var fact in Effect.Facts) { <li>@fact</li> }</ul>
     }
-    <a href="@($"/entry?table={Uri.EscapeDataString(Effect.TargetTable)}&id={Effect.Id}")">View effect data <code>@Effect.Id</code></a>
+    <a href="@($"/entry?table={Uri.EscapeDataString(Effect.TargetTable)}&id={Effect.Id}")">Open effect details</a>
 </article>
 
 @code {

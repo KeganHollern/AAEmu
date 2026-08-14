@@ -35,7 +35,11 @@ public sealed class ItemGameplayService
         profile.ArmorBasisPoints = equipment.ArmorBasisPoints;
         profile.MagicResistanceBasisPoints = equipment.MagicResistanceBasisPoints;
         profile.AttributeModifierSetId = equipment.ModifierSetId;
+        profile.AttributeModifierReferenceCount = CountModifierReferences(connection, equipment.ModifierSetId);
+        profile.EquipmentTemplateTable = equipment.TemplateTable;
+        profile.EquipmentTemplateRowId = equipment.TemplateRowId;
         profile.StatWeights = ReadStatWeights(connection, equipment.ModifierSetId);
+        profile.BalanceSources = ReadBalanceSources(connection, equipment, profile.AttributeModifierReferenceCount);
         profile.Effects = ReadEffects(compactPath, language, profile, equipment);
         if (equipment.EquipmentSetId > 0)
         {
@@ -95,7 +99,7 @@ public sealed class ItemGameplayService
                        COALESCE(iw.repairable, 0), COALESCE(iw.durability_multiplier, 0),
                        COALESCE(h.name, ''), COALESCE(h.code, ''), COALESCE(h.slot_type_id, 0), COALESCE(h.speed, 0),
                        COALESCE(h.damage_scale, 0), COALESCE(h.max_range, 0), COALESCE(h.item_proc_id, 0),
-                       COALESCE(iw.recharge_buff_id, 0)
+                       COALESCE(iw.recharge_buff_id, 0), COALESCE(iw.id, 0), COALESCE(iw.holdable_id, 0)
                   FROM item_weapons iw
                   LEFT JOIN holdables h ON h.id = iw.holdable_id
                  WHERE iw.item_id = @id
@@ -112,7 +116,8 @@ public sealed class ItemGameplayService
                     ModifierSetId = ReadUInt(reader, 0), EquipmentSetId = ReadUInt(reader, 1),
                     Enchantable = ReadBool(reader, 2), Repairable = ReadBool(reader, 3), DurabilityMultiplier = ReadInt(reader, 4),
                     SlotTypeId = ReadUInt(reader, 7), AttackSpeed = ReadInt(reader, 8), DamageScale = ReadInt(reader, 9),
-                    MaximumRange = ReadInt(reader, 10), ProcId = ReadUInt(reader, 11), RechargeBuffId = ReadUInt(reader, 12)
+                    MaximumRange = ReadInt(reader, 10), ProcId = ReadUInt(reader, 11), RechargeBuffId = ReadUInt(reader, 12),
+                    TemplateTable = "item_weapons", TemplateRowId = ReadUInt(reader, 13), HoldableId = ReadUInt(reader, 14)
                 };
             }
         }
@@ -123,7 +128,7 @@ public sealed class ItemGameplayService
                 SELECT COALESCE(ia.mod_set_id, 0), COALESCE(ia.eiset_id, 0), COALESCE(ia.base_enchantable, 0),
                        COALESCE(ia.repairable, 0), COALESCE(ia.durability_multiplier, 0),
                        COALESCE(ia.type_id, 0), COALESCE(ia.slot_type_id, 0), COALESCE(w.armor_bp, 0),
-                       COALESCE(w.magic_resistance_bp, 0), COALESCE(ia.recharge_buff_id, 0)
+                       COALESCE(w.magic_resistance_bp, 0), COALESCE(ia.recharge_buff_id, 0), COALESCE(ia.id, 0)
                   FROM item_armors ia
                   LEFT JOIN wearables w ON w.armor_type_id = ia.type_id AND w.slot_type_id = ia.slot_type_id
                  WHERE ia.item_id = @id
@@ -138,7 +143,8 @@ public sealed class ItemGameplayService
                     Kind = "Armor", Type = ArmorTypeName(ReadUInt(reader, 5)), ModifierSetId = ReadUInt(reader, 0),
                     EquipmentSetId = ReadUInt(reader, 1), Enchantable = ReadBool(reader, 2), Repairable = ReadBool(reader, 3),
                     DurabilityMultiplier = ReadInt(reader, 4), SlotTypeId = ReadUInt(reader, 6), ArmorBasisPoints = ReadInt(reader, 7),
-                    MagicResistanceBasisPoints = ReadInt(reader, 8), RechargeBuffId = ReadUInt(reader, 9)
+                    MagicResistanceBasisPoints = ReadInt(reader, 8), RechargeBuffId = ReadUInt(reader, 9),
+                    TemplateTable = "item_armors", TemplateRowId = ReadUInt(reader, 10), TypeId = ReadUInt(reader, 5)
                 };
             }
         }
@@ -148,7 +154,7 @@ public sealed class ItemGameplayService
             command.CommandText = """
                 SELECT COALESCE(ia.mod_set_id, 0), COALESCE(ia.eiset_id, 0), COALESCE(ia.repairable, 0),
                        COALESCE(ia.durability_multiplier, 0), COALESCE(ia.type_id, 0), COALESCE(ia.slot_type_id, 0),
-                       COALESCE(ia.recharge_buff_id, 0)
+                       COALESCE(ia.recharge_buff_id, 0), COALESCE(ia.id, 0)
                   FROM item_accessories ia
                  WHERE ia.item_id = @id
                  LIMIT 1;
@@ -161,7 +167,8 @@ public sealed class ItemGameplayService
                 {
                     Kind = "Accessory", Type = $"Accessory type {ReadUInt(reader, 4)}", ModifierSetId = ReadUInt(reader, 0),
                     EquipmentSetId = ReadUInt(reader, 1), Enchantable = false, Repairable = ReadBool(reader, 2),
-                    DurabilityMultiplier = ReadInt(reader, 3), SlotTypeId = ReadUInt(reader, 5), RechargeBuffId = ReadUInt(reader, 6)
+                    DurabilityMultiplier = ReadInt(reader, 3), SlotTypeId = ReadUInt(reader, 5), RechargeBuffId = ReadUInt(reader, 6),
+                    TemplateTable = "item_accessories", TemplateRowId = ReadUInt(reader, 7), TypeId = ReadUInt(reader, 4)
                 };
             }
         }
@@ -188,6 +195,114 @@ public sealed class ItemGameplayService
             .ToList();
     }
 
+    private static int CountModifierReferences(SqliteConnection connection, uint modifierSetId)
+    {
+        if (modifierSetId == 0) return 0;
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*) FROM (
+                SELECT item_id FROM item_weapons WHERE mod_set_id = @id
+                UNION ALL SELECT item_id FROM item_armors WHERE mod_set_id = @id
+                UNION ALL SELECT item_id FROM item_accessories WHERE mod_set_id = @id
+            );
+            """;
+        command.Parameters.AddWithValue("@id", modifierSetId);
+        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    private static List<GearBalanceSource> ReadBalanceSources(SqliteConnection connection, EquipmentData equipment, int modifierReferences)
+    {
+        var result = new List<GearBalanceSource>();
+        if (equipment.ModifierSetId > 0)
+        {
+            result.Add(new GearBalanceSource(
+                "Shared primary attribute profile",
+                "Changes the Strength, Agility, Stamina, Intelligence, and Spirit mix for every item still using this profile.",
+                "equip_item_attr_modifiers", equipment.ModifierSetId, modifierReferences));
+        }
+
+        if (equipment.HoldableId > 0)
+        {
+            result.Add(new GearBalanceSource(
+                "Weapon type calculations",
+                "Controls this weapon type's physical, magic, healing, and shield formulas, attack speed, range, and stat multiplier.",
+                "holdables", equipment.HoldableId,
+                Count(connection, "SELECT COUNT(*) FROM item_weapons WHERE holdable_id = @id;", equipment.HoldableId)));
+        }
+        else if (equipment.TypeId > 0)
+        {
+            var kindId = ReadId(connection, "SELECT id FROM wearable_kinds WHERE armor_type_id = @id LIMIT 1;", equipment.TypeId);
+            if (kindId > 0)
+            {
+                result.Add(new GearBalanceSource(
+                    "Armor class balance",
+                    "Controls the physical-defense, magic-defense, damage-type, and durability ratios for this armor class.",
+                    "wearable_kinds", kindId,
+                    Count(connection, "SELECT (SELECT COUNT(*) FROM item_armors WHERE type_id = @id) + (SELECT COUNT(*) FROM item_accessories WHERE type_id = @id);", equipment.TypeId)));
+            }
+
+            var wearableId = ReadId(connection, "SELECT id FROM wearables WHERE armor_type_id = @type AND slot_type_id = @slot LIMIT 1;", equipment.TypeId, equipment.SlotTypeId);
+            if (wearableId > 0)
+            {
+                result.Add(new GearBalanceSource(
+                    "Armor class and slot basis",
+                    "Controls the base physical and magic defense weighting for this armor class in this equipment slot.",
+                    "wearables", wearableId,
+                    Count(connection, "SELECT (SELECT COUNT(*) FROM item_armors WHERE type_id = @type AND slot_type_id = @slot) + (SELECT COUNT(*) FROM item_accessories WHERE type_id = @type AND slot_type_id = @slot);", equipment.TypeId, equipment.SlotTypeId)));
+            }
+        }
+
+        if (equipment.SlotTypeId > 0 && equipment.HoldableId == 0)
+        {
+            var slotId = ReadId(connection, "SELECT id FROM wearable_slots WHERE slot_type_id = @id LIMIT 1;", equipment.SlotTypeId);
+            if (slotId > 0)
+            {
+                result.Add(new GearBalanceSource(
+                    "Equipment slot coverage",
+                    "Controls how much of the full stat, defense, and durability budget this body slot receives.",
+                    "wearable_slots", slotId,
+                    Count(connection, "SELECT (SELECT COUNT(*) FROM item_armors WHERE slot_type_id = @id) + (SELECT COUNT(*) FROM item_accessories WHERE slot_type_id = @id);", equipment.SlotTypeId)));
+            }
+        }
+        return result;
+    }
+
+    private static int Count(SqliteConnection connection, string sql, uint id)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("@id", id);
+        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    private static int Count(SqliteConnection connection, string sql, uint typeId, uint slotId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("@type", typeId);
+        command.Parameters.AddWithValue("@slot", slotId);
+        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    private static uint ReadId(SqliteConnection connection, string sql, uint id)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("@id", id);
+        var value = command.ExecuteScalar();
+        return value is null or DBNull ? 0 : Convert.ToUInt32(value, CultureInfo.InvariantCulture);
+    }
+
+    private static uint ReadId(SqliteConnection connection, string sql, uint typeId, uint slotId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("@type", typeId);
+        command.Parameters.AddWithValue("@slot", slotId);
+        var value = command.ExecuteScalar();
+        return value is null or DBNull ? 0 : Convert.ToUInt32(value, CultureInfo.InvariantCulture);
+    }
+
     private static List<ItemLinkedEffect> ReadEffects(string compactPath, string language, ItemGameplayProfile profile, EquipmentData? equipment)
     {
         var requested = profile.Effects.Where(effect => effect.Id > 0).ToList();
@@ -201,7 +316,7 @@ public sealed class ItemGameplayService
 
     private static ItemEquipmentSet ReadEquipmentSet(SqliteConnection connection, string compactPath, uint setId, string language)
     {
-        var set = new ItemEquipmentSet { Id = setId, Name = $"Equipment set {setId}" };
+        var set = new ItemEquipmentSet { Id = setId, Name = "Unnamed equipment set" };
         using (var command = connection.CreateCommand())
         {
             var languageColumn = BaselineVerifier.QuoteIdentifier(language);
@@ -266,7 +381,7 @@ public sealed class ItemGameplayService
         var record = new CatalogRecordService().GetRecord(compactPath, table, id, language);
         if (record is null)
         {
-            return new ItemLinkedEffect { Source = source, TargetTable = table, Id = id, Name = $"{CatalogRecordService.FriendlyName(table.TrimEnd('s'))} {id}" };
+            return new ItemLinkedEffect { Source = source, TargetTable = table, Id = id, Name = $"Unnamed {CatalogRecordService.FriendlyName(table.TrimEnd('s')).ToLowerInvariant()}" };
         }
         var description = record.Localizations
             .Where(field => field.Field is "description" or "desc" or "web_desc" or "tooltip")
@@ -315,7 +430,7 @@ public sealed class ItemGameplayService
         1 => "Cloth armor",
         2 => "Leather armor",
         3 => "Plate armor",
-        _ => $"Armor type {typeId}"
+        _ => "Other armor type"
     };
 
     private sealed class EquipmentData
@@ -335,5 +450,9 @@ public sealed class ItemGameplayService
         public int MagicResistanceBasisPoints { get; set; }
         public uint RechargeBuffId { get; set; }
         public uint ProcId { get; set; }
+        public string TemplateTable { get; set; } = string.Empty;
+        public uint TemplateRowId { get; set; }
+        public uint HoldableId { get; set; }
+        public uint TypeId { get; set; }
     }
 }

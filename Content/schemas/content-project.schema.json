@@ -14,6 +14,7 @@
         "recipes": { "type": "array", "items": { "type": "string" } },
         "workbenches": { "type": "array", "items": { "type": "string" } },
         "records": { "type": "array", "items": { "type": "string" } },
+        "assertions": { "type": "array", "items": { "type": "string" } },
         "rawSql": { "type": "array", "items": { "type": "string" } }
     },
     "additionalProperties": false

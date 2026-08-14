@@ -260,6 +260,23 @@ public class MateManager(WorldInstance parentWorldInstance)
     }
 
     /// <summary>
+    /// Spawns a short-lived skill summon without replacing or persisting the player's normal mate.
+    /// </summary>
+    public void AddTemporaryMateAndSpawn(Character owner, Mate mate)
+    {
+        if (!_activeMates.TryGetValue(owner.Id, out var activeMateList))
+        {
+            activeMateList = [];
+            _activeMates.Add(owner.Id, activeMateList);
+        }
+
+        activeMateList.Add(mate);
+        owner.SendPacket(new SCMateSpawnedPacket(mate));
+        mate.Spawn();
+        Logger.Debug($"Temporary mate spawned. ownerObjId: {owner.ObjId}, tlId: {mate.TlId}, mateObjId: {mate.ObjId}");
+    }
+
+    /// <summary>
     /// Despawns and Removes a pet
     /// </summary>
     /// <param name="owner"></param>

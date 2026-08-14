@@ -1,4 +1,5 @@
 @page "/workbenches"
+@implements IDisposable
 @inject DesignerWorkspace Workspace
 
 <PageTitle>@(_isExisting ? $"Edit {_name}" : "Workbench Maker")</PageTitle>
@@ -10,7 +11,7 @@
             <a class="back-link" href="/manifests">← Back to My changes</a>
             <p class="eyebrow">EDITING A SAVED WORKBENCH</p>
             <h1>@_name</h1>
-            <p class="lede">World object ID @_workbench?.Id · recipes, player-facing details, and safe appearance choices are organized below.</p>
+            <p class="lede">Custom workbench · recipes, player-facing details, and safe appearance choices are organized below.</p>
         }
         else
         {
@@ -33,7 +34,7 @@
         {
             @if (_sourceMatches.Count == 0)
             {
-                <p class="picker-empty">No crafting workbench matched that name. Try a shorter phrase or a world-object ID.</p>
+                <p class="picker-empty">No crafting workbench matched that name. Try a shorter phrase or one distinctive word.</p>
             }
             else
             {
@@ -42,7 +43,7 @@
                     {
                         <button class="clone-result @(match.Id == _source ? "selected" : "")" @onclick="() => SelectSource(match)">
                             <span><strong>@match.Name</strong><small>@match.RecipeCount recipe(s) · @match.GroupCount behavior group(s) · @match.FunctionCount function(s)</small></span>
-                            <code>@match.Id</code>
+                            <span class="result-action">Use this</span>
                         </button>
                     }
                 </div>
@@ -50,29 +51,29 @@
         }
         @if (_sourceGraph is not null)
         {
-            <div class="selected-source"><div><small>COPYING</small><strong>@_sourceGraph.Name</strong><span>World object @_sourceGraph.Id · model @_sourceGraph.Model</span></div><button class="text-button" @onclick="ClearSource">Choose a different workbench</button></div>
+            <div class="selected-source"><div><small>COPYING</small><strong>@_sourceGraph.Name</strong><span>The complete crafting behavior and existing appearance are ready to customize.</span></div><button class="text-button" @onclick="ClearSource">Choose a different workbench</button></div>
         }
     </section>
 }
 
 @if (_workbench is not null)
 {
+    @if (_externalUpdate)
+    {
+        <section class="entry-help panel shared-update"><span class="help-icon">↻</span><div><strong>Newer shared work is available.</strong><p>An agent or another designer updated this workbench after you opened it.</p><button class="button" @onclick="ReloadSharedChange">Load their latest changes</button></div></section>
+    }
     <section class="entry-help panel"><span class="help-icon">?</span><div><strong>@(_isExisting ? "You are changing the saved plan, not the live game." : "This is the editable copy. The original workbench will not be changed.")</strong><p>The complicated function graph remains protected. You can safely change what players see, choose an existing client model, and manage recipes by name.</p></div></section>
 
     <section class="entry-section panel">
         <div class="section-intro"><span>@(_isExisting ? "1" : "2")</span><div><p class="eyebrow">WHAT PLAYERS SEE</p><h2>Name and appearance</h2><p>Leave the appearance override empty to keep the selected workbench's known-good model.</p></div></div>
         <div class="friendly-field-grid">
-            @if (!_isExisting)
-            {
-                <article class="friendly-field"><div class="field-label"><label>Project key</label></div><input @bind="_key" @bind:event="oninput" placeholder="workbench.custom-carpentry" /><p>An internal label used in My changes. Players never see it.</p></article>
-            }
             <article class="friendly-field"><div class="field-label"><label>English name</label></div><input @bind="_name" @bind:event="oninput" /><p>The interaction name shown to English-language players.</p></article>
             <article class="friendly-field"><div class="field-label"><label>Existing model override</label></div><input @bind="_workbench.ModelOverride" @bind:event="oninput" placeholder="Leave empty to keep the source model" /><p>Only use a model already present in the r208022 client. Source model: <code>@(_sourceGraph?.Model ?? "kept from the saved source")</code></p></article>
         </div>
     </section>
 
     <section class="entry-section panel">
-        <div class="section-intro"><span>@(_isExisting ? "2" : "3")</span><div><p class="eyebrow">WHAT IT OFFERS</p><h2>Attached recipes</h2><p>Find recipes by name or ID, add the ones this workbench should offer, and remove anything that does not belong.</p></div></div>
+        <div class="section-intro"><span>@(_isExisting ? "2" : "3")</span><div><p class="eyebrow">WHAT IT OFFERS</p><h2>Attached recipes</h2><p>Find recipes by name, add the ones this workbench should offer, and remove anything that does not belong.</p></div></div>
         <div class="recipe-picker">
             <div class="clone-search">
                 <input aria-label="Find a recipe to attach" @bind="_recipeQuery" @bind:event="oninput" @onkeydown="HandleRecipeSearchKey" placeholder="Type a recipe name, including one from My changes…" />
@@ -82,7 +83,7 @@
             {
                 @if (_recipeMatches.Count == 0)
                 {
-                    <p class="picker-empty">No recipes matched. Try a shorter name or exact recipe ID.</p>
+                    <p class="picker-empty">No recipes matched. Try a shorter name or one distinctive word.</p>
                 }
                 else
                 {
@@ -109,26 +110,15 @@
             <div class="attached-recipe-list">
                 @foreach (var recipe in _selectedRecipes)
                 {
-                    <article><div><strong>@recipe.Name</strong><small>Recipe @recipe.Id · @recipe.MaterialCount ingredient(s) → @recipe.ProductCount product(s)</small></div><button class="text-button danger-text" @onclick="() => RemoveRecipe(recipe)">Remove</button></article>
+                    <article><div><strong>@recipe.Name</strong><small>@recipe.MaterialCount ingredient(s) → @recipe.ProductCount product(s)</small></div><button class="text-button danger-text" @onclick="() => RemoveRecipe(recipe)">Remove</button></article>
                 }
             </div>
         }
     </section>
 
-    <details class="entry-section panel all-data">
-        <summary><span><strong>Advanced workbench identity</strong><small>Normally managed automatically</small></span></summary>
-        <p class="advanced-explanation">These values connect the copied function graph to its recipe group. Most designers should leave them alone.</p>
-        <div class="field-group"><div class="friendly-field-grid">
-            <article class="friendly-field"><div class="field-label"><label>Craft-pack name</label></div><input @bind="_workbench.CraftPack.Name" /><p>An internal grouping name; players do not see it.</p></article>
-            <article class="friendly-field identity"><div class="field-label"><label>Source world-object ID</label></div><div class="read-value"><code>@_workbench.SourceDoodadId</code><small>The proven behavior graph being copied</small></div></article>
-            @if (_isExisting)
-            {
-                <article class="friendly-field identity"><div class="field-label"><label>Craft-pack ID</label></div><div class="read-value"><code>@_workbench.CraftPack.Id</code><small>Managed automatically</small></div></article>
-            }
-        </div></div>
-    </details>
+    <section class="entry-help panel"><span class="help-icon">✓</span><div><strong>Complex behavior is protected automatically.</strong><p>The original function graph, crafting group, and client interactions stay connected while you work with names and familiar choices.</p></div></section>
 
-    <section class="save-dock panel"><div><strong>@(_isExisting ? "Ready to update this workbench?" : "Ready to save this custom workbench?")</strong><span>@(_isExisting ? "Its existing custom IDs and full function graph remain unchanged." : "Safe IDs will be reserved across the complete behavior graph.")</span></div><button class="button primary" @onclick="Save" disabled="@_busy">@(_busy ? "Saving…" : _isExisting ? "Update saved workbench" : "Save custom workbench")</button></section>
+    <section class="save-dock panel"><div><strong>@(_isExisting ? "Ready to update this workbench?" : "Ready to save this custom workbench?")</strong><span>Content Studio will preserve every connection automatically.</span></div><button class="button primary" @onclick="Save" disabled="@_busy">@(_busy ? "Saving…" : _isExisting ? "Update saved workbench" : "Save custom workbench")</button></section>
 }
 else if (!_busy)
 {
@@ -137,7 +127,7 @@ else if (!_busy)
 
 @if (_result is not null)
 {
-    <section class="panel success-panel saved-entry"><p class="eyebrow">SAVED</p><h2>@_result.Key <code>@_result.Id</code></h2><p>@_result.Allocations.Count safe IDs were reserved across the complete behavior graph.</p><p>Test spawn: <code>@_result.GmCommand</code></p><div><a class="button primary" href="/manifests">Review in My changes</a></div></section>
+    <section class="panel success-panel saved-entry"><p class="eyebrow">SAVED</p><h2>@_name</h2><p>The workbench and its complete behavior graph were saved safely.</p><div><a class="button primary" href="/manifests">Review in My changes</a></div></section>
 }
 
 @if (!string.IsNullOrEmpty(_message)) { <div class="toast @(_isError ? "error" : "success")">@_message</div> }
@@ -160,8 +150,12 @@ else if (!_busy)
     private WorkbenchDefinition? _workbench;
     private ScaffoldResult? _result;
     private string? _editPath;
+    private string? _editVersion;
+    private bool _externalUpdate;
     private string? _message;
     private bool _isError;
+
+    protected override void OnInitialized() => Workspace.Changed += WorkspaceChanged;
 
     protected override void OnParametersSet()
     {
@@ -212,8 +206,9 @@ else if (!_busy)
         _sourceGraph = catalog.GetWorkbench(config.BaselinePath, sourceId) ?? throw new ContentStudioException("That workbench could not be loaded.");
         _source = sourceId;
         _sourceQuery = _sourceGraph.Name;
-        _name = $"Custom {_sourceGraph.Name}";
-        _key = $"workbench.custom-{Slug(_sourceGraph.Name)}";
+        var suggestion = new DesignerPlanNamingService().SuggestWorkbenchCopy(config.ProjectPath, _sourceGraph.Name);
+        _name = suggestion.Name;
+        _key = suggestion.Key;
         _workbench = new WorkbenchDefinition
         {
             SourceDoodadId = sourceId,
@@ -264,7 +259,10 @@ else if (!_busy)
         var manifests = new ManifestService();
         _editPath = manifests.FindByKey(config.ProjectPath, Plan!);
         if (!_editPath.Contains($"{Path.DirectorySeparatorChar}workbenches{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)) throw new ContentStudioException("That saved change is not a workbench.");
-        _workbench = ContentStudioJson.Deserialize<WorkbenchDefinition>(manifests.Read(_editPath), _editPath);
+        var snapshot = manifests.ReadSnapshot(_editPath);
+        _editVersion = snapshot.Version;
+        _externalUpdate = false;
+        _workbench = ContentStudioJson.Deserialize<WorkbenchDefinition>(snapshot.Contents, _editPath);
         _isExisting = true;
         _source = _workbench.SourceDoodadId;
         _name = _workbench.Names.GetValueOrDefault("en_us", _workbench.Key);
@@ -286,7 +284,7 @@ else if (!_busy)
         {
             if (projectRecipes.TryGetValue(id, out var projectRecipe)) result.Add(projectRecipe);
             else if (baselineRecipes.TryGetValue(id, out var baselineRecipe)) result.Add(baselineRecipe);
-            else result.Add(new RecipeLookupResult(id, $"Unknown recipe {id}", 0, 0, 0));
+            else result.Add(new RecipeLookupResult(id, "Unavailable recipe", 0, 0, 0));
         }
         return result;
     }
@@ -299,8 +297,15 @@ else if (!_busy)
     private void CreateWorkbench() => Try(() =>
     {
         if (_workbench is null || _sourceGraph is null || _source == 0) throw new ContentStudioException("Choose a source workbench first.");
-        ValidateScreen();
         var config = Workspace.LoadConfiguration();
+        var naming = new DesignerPlanNamingService();
+        if (naming.WorkbenchNameExists(config.ProjectPath, _name))
+        {
+            var suggestion = naming.SuggestWorkbenchName(config.ProjectPath, _name);
+            throw new ContentStudioException($"A workbench named ‘{_name.Trim()}’ already exists in My changes. Choose a different name, such as ‘{suggestion}’.");
+        }
+        _key = naming.EnsureUniqueWorkbenchKey(config.ProjectPath, _key);
+        ValidateScreen();
         _result = new ScaffoldService().CreateWorkbench(new WorkbenchScaffoldRequest
         {
             ProjectPath = config.ProjectPath,
@@ -313,7 +318,9 @@ else if (!_busy)
             CraftPackName = _workbench.CraftPack.Name
         });
         _editPath = _result.Path;
-        _workbench = ContentStudioJson.Deserialize<WorkbenchDefinition>(new ManifestService().Read(_editPath), _editPath);
+        var snapshot = new ManifestService().ReadSnapshot(_editPath);
+        _editVersion = snapshot.Version;
+        _workbench = ContentStudioJson.Deserialize<WorkbenchDefinition>(snapshot.Contents, _editPath);
         _isExisting = true;
     }, "Custom workbench saved. You can continue editing it here.");
 
@@ -326,7 +333,7 @@ else if (!_busy)
         _workbench.ModelOverride = string.IsNullOrWhiteSpace(_workbench.ModelOverride) ? null : _workbench.ModelOverride.Trim();
         _workbench.RecipeIds = _selectedRecipes.Select(recipe => recipe.Id).ToArray();
         _workbench.RowIds.CraftPackLinks = EnsureLinkIds(config, _workbench.Key, _workbench.RowIds.CraftPackLinks, _workbench.RecipeIds.Length);
-        new ManifestService().Save(_editPath, ContentStudioJson.Serialize(_workbench));
+        _editVersion = new ManifestService().Save(_editPath, ContentStudioJson.Serialize(_workbench), _editVersion);
     }, "Saved workbench updated.");
 
     private void ValidateScreen()
@@ -362,13 +369,26 @@ else if (!_busy)
     private async Task RunBusy(Action action)
     {
         try { _busy = true; _message = null; _isError = false; await Task.Run(action); }
-        catch (Exception exception) { _isError = true; _message = exception.Message; }
+        catch (Exception exception) { _isError = true; _message = DesignerMessage.ForUser(exception); }
         finally { _busy = false; }
     }
 
     private void Try(Action action, string? success)
     {
         try { _message = null; action(); _isError = false; _message = success; }
-        catch (Exception exception) { _isError = true; _message = exception.Message; }
+        catch (Exception exception) { _isError = true; _message = DesignerMessage.ForUser(exception); }
     }
+
+    private void ReloadSharedChange() => Try(LoadWorkbench, "Loaded the latest shared workbench.");
+    private void WorkspaceChanged(object? sender, WorkspaceChangedEventArgs args)
+    {
+        if (_editPath is null || !Path.GetFullPath(args.Path).Equals(Path.GetFullPath(_editPath), StringComparison.OrdinalIgnoreCase)) return;
+        _ = InvokeAsync(() =>
+        {
+            try { _externalUpdate = !new ManifestService().Version(_editPath).Equals(_editVersion, StringComparison.Ordinal); }
+            catch (ContentStudioException) { _externalUpdate = true; }
+            StateHasChanged();
+        });
+    }
+    public void Dispose() => Workspace.Changed -= WorkspaceChanged;
 }
