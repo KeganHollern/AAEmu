@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "name": "archeage-r208022-camera-distance-35",
+  "description": "Raise the third-person camera maximum from 10/18 to 35 in all r208022 camera configuration sources.",
+  "expectedPackLength": 24885257728,
+  "patches": [
+    {
+      "name": "32-bit action camera maximum",
+      "virtualPath": "game/config/cvargroups/option_camera_fov_set.cfg",
+      "absoluteOffset": 23147958862,
+      "expectedAscii": "10",
+      "replacementAscii": "35"
+    },
+    {
+      "name": "32-bit classic camera maximum",
+      "virtualPath": "game/config/cvargroups/option_camera_fov_set.cfg",
+      "absoluteOffset": 23147958907,
+      "expectedAscii": "18",
+      "replacementAscii": "35"
+    },
+    {
+      "name": "64-bit action camera maximum",
+      "virtualPath": "game/config64/cvargroups/option_camera_fov_set.cfg",
+      "absoluteOffset": 23147886670,
+      "expectedAscii": "10",
+      "replacementAscii": "35"
+    },
+    {
+      "name": "64-bit classic camera maximum",
+      "virtualPath": "game/config64/cvargroups/option_camera_fov_set.cfg",
+      "absoluteOffset": 23147886715,
+      "expectedAscii": "18",
+      "replacementAscii": "35"
+    },
+    {
+      "name": "base client camera maximum",
+      "virtualPath": "game/config/client.cfg",
+      "absoluteOffset": 23147929131,
+      "expectedAscii": "18",
+      "replacementAscii": "35"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "archeage-r208022-skip-display-mode-tests",
+  "description": "Keep display-mode enumeration but avoid repeatedly asking the Windows display driver to trial-switch every advertised mode during startup.",
+  "expectedBinaryName": "CrySystem.dll",
+  "expectedLength": 1355264,
+  "originalSha256": "04B994394C24D2C31033FF196003D71913A20ECF7C7C2443520AC158C7798F23",
+  "patchedSha256": "C8A919CCA6669099E2151595E76DB9E63C288B72B1AA7B0C2E2A1CA369223AF0",
+  "patches": [
+    {
+      "name": "accept enumerated display modes without driver-level fullscreen tests",
+      "offset": 398101,
+      "expectedHex": "FF1558856036",
+      "replacementHex": "33C083C41490"
+    }
+  ]
+}

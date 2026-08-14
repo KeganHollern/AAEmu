@@ -59,7 +59,12 @@ public partial class Npc : Unit
         }
     }
 
-    public override float Scale => Template.Scale;
+    /// <summary>
+    /// Optional runtime-only scale used for NPCs that should not use their template's authored scale.
+    /// </summary>
+    public float? ScaleOverride { get; set; }
+
+    public override float Scale => ScaleOverride ?? Template.Scale;
 
     public override byte RaceGender => (byte)(16 * Template.Gender + Template.Race);
 

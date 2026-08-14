@@ -14,15 +14,19 @@ public class CSExpressEmotionPacket() : GamePacket(CSOffsets.CSExpressEmotionPac
         var emotionId = stream.ReadUInt32();
 
         Logger.Warn("ExpressEmotion, ObjId: {0}, Obj2Id: {1}, EmotionId: {2}", characterObjId, npcObjId, emotionId);
-        Connection?.ActiveChar?.BroadcastPacket(new SCEmotionExpressedPacket(characterObjId, npcObjId, emotionId), true);
+        var character = Connection?.ActiveChar;
+        if (character == null)
+            return;
+
+        if (CurrencyShopManager.TryOpen(character, emotionId))
+            return;
+
+        character.BroadcastPacket(new SCEmotionExpressedPacket(characterObjId, npcObjId, emotionId), true);
 
         //Connection?.ActiveChar?.Quests?.OnExpressFire(emotionId, characterObjId, npcObjId);
         // инициируем событие
         //Task.Run(() => QuestManager.Instance.DoOnExpressFireEvents(Connection.ActiveChar, emotionId, characterObjId, npcObjId));
-        if (Connection != null)
-        {
-            var animId = ExpressTextManager.Instance.GetExpressAnimId(emotionId);
-            QuestManager.Instance.DoOnExpressFireEvents(Connection.ActiveChar, animId, characterObjId, npcObjId);
-        }
+        var animId = ExpressTextManager.Instance.GetExpressAnimId(emotionId);
+        QuestManager.Instance.DoOnExpressFireEvents(character, animId, characterObjId, npcObjId);
     }
 }
