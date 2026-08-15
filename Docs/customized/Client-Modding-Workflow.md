@@ -18,6 +18,21 @@ The packed entries are plaintext and uncompressed. Their file-table hashes are z
 
 The gameplay module `bin32/x2game.dll` is protected on disk: its executable and read-only data sections have near-random entropy and its ordinary import metadata is not usable for static analysis. If the packed configuration test still encounters a clamp, the next stage is runtime inspection after the module has unpacked in memory.
 
+## Integrated camera controls
+
+The patched basic Screen settings page exposes two persistent controls while the player is in the world:
+
+| Control | Stored option | Applied CVar | Range |
+| --- | --- | --- | --- |
+| Maximum Camera Distance | `AAEmuCameraMaxDistance` | `camera_max_dist` | `10`–`35` |
+| Field of View | `AAEmuCameraFov` | `cl_fov` | `40`–`120` |
+
+`35` remains the camera-distance maximum established by the data patch. The FOV option preserves the stock first-use value for the selected camera mode (`60` for action mode and `42.75` for classic mode) until the user moves the slider. Both callbacks clamp manually edited stored values before applying them. The named values use `OL_SYSTEM`, so the selections persist across client restarts. Their saved values are applied on `ENTERED_WORLD`, after the camera CVars have been registered; applying them while `screen_option.alb` first loads is too early for `camera_max_dist`. Saving the page applies them after the stock action/classic camera selector, preventing that selector from immediately overwriting the custom values.
+
+The r208022 slider layout accepts either two endpoint captions or four-to-six captions. Three captions make the stock anchor table index zero and abort construction of the entire options window. Custom sliders must therefore stay within one of the supported caption counts; these controls use four.
+
+`Tools/ClientPatcher/Build-WindowedFullscreenScreenOption.ps1` now builds one composable `screen_option.alb` containing both Windowed Fullscreen and the camera controls. It compiles `Sources/camera_controls_screen.lua`, transplants only the required callbacks and basic-screen frame, strips execution-irrelevant debug padding, and keeps the replacement exactly the same size as the archived r208022 module. Apply the compiled module with `Invoke-AAPakFileReplacementPatch.ps1` using virtual path `game/scriptsbin/x2ui/option/screen_option.alb`.
+
 ## Guarded patch tool
 
 `Tools/ClientPatcher/Invoke-ClientPatch.ps1` consumes a build-specific JSON manifest. It checks that the pack is at least the target build's stock length and verifies every expected byte before making a change. The minimum-length check lets exact-offset patches remain composable with later AAPacker modules appended to the same archive. Apply and restore operations refuse to run while ArcheAge is open, use exclusive file access, flush changes to disk, verify every write, and preserve the original bytes in a small local backup next to `game_pak`.

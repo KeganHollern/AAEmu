@@ -416,6 +416,107 @@ def add_windowed_fullscreen_option_registration(prototype: Prototype) -> None:
         prototype.line_info = prototype.line_info[:10] + [22] * len(registration_code) + prototype.line_info[11:]
 
 
+def add_camera_option_registration(prototype: Prototype, donor_root: Prototype) -> None:
+    expected_constants = (
+        b"id", b"ui_scale", b"default", None, b"funcDefaultValue", b"saveLevel",
+        b"OL_SYSTEM", b"funcOnChanged", b"RegisterOptionItem",
+    )
+    for index, expected in enumerate(expected_constants):
+        constant = prototype.constants[index]
+        if expected is not None and constant.value != expected:
+            raise ValueError(f"Unexpected screen_option.alb root constant K{index}: {constant.value!r}")
+
+    if len(donor_root.children) != 5:
+        raise ValueError("Camera-control donor must contain four callbacks and one frame prototype")
+    callbacks = donor_root.children[:4]
+    if any(callback.upvalue_count != 0 for callback in callbacks):
+        raise ValueError("Camera-control callbacks must not capture upvalues")
+
+    replace_prototype(prototype, "0_11", donor_root.children[4])
+
+    callback_child_indices = []
+    for callback in callbacks:
+        transplanted = copy.deepcopy(callback)
+        transplanted.source = prototype.source
+        callback_child_indices.append(len(prototype.children))
+        prototype.children.append(transplanted)
+
+    def add_string(value: bytes) -> int:
+        index = len(prototype.constants)
+        prototype.constants.append(LuaConstant(4, value))
+        return index
+
+    def add_number(value: float) -> int:
+        index = len(prototype.constants)
+        prototype.constants.append(LuaConstant(3, value))
+        return index
+
+    distance_option_index = add_string(b"AAEmuCameraMaxDistance")
+    fov_option_index = add_string(b"AAEmuCameraFov")
+    apply_distance_index = add_string(b"AAEmuApplyCameraMaxDistance")
+    apply_fov_index = add_string(b"AAEmuApplyCameraFov")
+    default_fov_index = add_string(b"AAEmuDefaultCameraFov")
+    apply_persisted_index = add_string(b"AAEmuApplyPersistedCameraOptions")
+    ui_parent_index = add_string(b"UIParent")
+    set_event_handler_index = add_string(b"SetEventHandler")
+    entered_world_index = add_string(b"ENTERED_WORLD")
+    distance_default_index = add_number(35.0)
+    fov_default_index = add_number(60.0)
+
+    # Define the callbacks, register two named system-level option items, then
+    # apply their persisted values once the game has registered its camera CVars.
+    # In particular, camera_max_dist does not exist yet when this module loads.
+    registration_code = [
+        encode_abx("CLOSURE", 4, callback_child_indices[0]),
+        encode_abx("SETGLOBAL", 4, apply_distance_index),
+        encode_abx("CLOSURE", 4, callback_child_indices[1]),
+        encode_abx("SETGLOBAL", 4, apply_fov_index),
+        encode_abx("CLOSURE", 4, callback_child_indices[2]),
+        encode_abx("SETGLOBAL", 4, default_fov_index),
+        encode_abx("CLOSURE", 4, callback_child_indices[3]),
+        encode_abx("SETGLOBAL", 4, apply_persisted_index),
+        encode_abc("NEWTABLE", 4, 2, 0),
+        encode_abc("NEWTABLE", 5, 0, 4),
+        encode_abc("SETTABLE", 5, 0x100 | 0, 0x100 | distance_option_index),
+        encode_abc("SETTABLE", 5, 0x100 | 2, 0x100 | distance_default_index),
+        encode_abx("GETGLOBAL", 6, 6),
+        encode_abc("SETTABLE", 5, 0x100 | 5, 6),
+        encode_abc("NEWTABLE", 6, 0, 5),
+        encode_abc("SETTABLE", 6, 0x100 | 0, 0x100 | fov_option_index),
+        encode_abc("SETTABLE", 6, 0x100 | 2, 0x100 | fov_default_index),
+        encode_abx("GETGLOBAL", 7, default_fov_index),
+        encode_abc("SETTABLE", 6, 0x100 | 4, 7),
+        encode_abx("GETGLOBAL", 7, 6),
+        encode_abc("SETTABLE", 6, 0x100 | 5, 7),
+        encode_abc("SETLIST", 4, 2, 1),
+        encode_abx("GETGLOBAL", 5, 8),
+        encode_abc("MOVE", 6, 4, 0),
+        encode_abc("CALL", 5, 2, 1),
+        encode_abx("GETGLOBAL", 5, ui_parent_index),
+        encode_abc("SELF", 5, 5, 0x100 | set_event_handler_index),
+        encode_abx("LOADK", 7, entered_world_index),
+        encode_abx("GETGLOBAL", 8, apply_persisted_index),
+        encode_abc("CALL", 5, 4, 1),
+    ]
+
+    # The fullscreen-window registration ends at instruction 18. Insert before
+    # the stock control closures so their child indices and captures stay intact.
+    insertion_index = 19
+    if (
+        len(prototype.code) <= insertion_index
+        or (prototype.code[insertion_index] & 0x3F) != OPCODES.index("CLOSURE")
+    ):
+        raise ValueError("Unexpected patched screen_option.alb registration layout")
+    prototype.code = prototype.code[:insertion_index] + registration_code + prototype.code[insertion_index:]
+    if prototype.line_info:
+        prototype.line_info = (
+            prototype.line_info[:insertion_index]
+            + [22] * len(registration_code)
+            + prototype.line_info[insertion_index:]
+        )
+    prototype.max_stack_size = max(prototype.max_stack_size, 9)
+
+
 def format_constant(constant: LuaConstant) -> str:
     if isinstance(constant.value, bytes):
         return repr(constant.value.decode("utf-8", "replace"))
@@ -505,6 +606,14 @@ def main() -> None:
     screen_mode_parser.add_argument("donor", type=Path, help="Compiled windowed-fullscreen Lua source")
     screen_mode_parser.add_argument("output", type=Path)
 
+    camera_controls_parser = subparsers.add_parser(
+        "patch-camera-controls",
+        help="Add persistent camera-distance and FOV controls to a patched r208022 screen option module",
+    )
+    camera_controls_parser.add_argument("input", type=Path, help="Patched r208022 screen_option.alb")
+    camera_controls_parser.add_argument("donor", type=Path, help="Compiled camera-control Lua source")
+    camera_controls_parser.add_argument("output", type=Path)
+
     args = parser.parse_args()
     source_format, prototype = read_chunk(args.input)
     if args.command == "inspect":
@@ -578,6 +687,42 @@ def main() -> None:
         get_prototype(written_root, "0_3")
         digest = hashlib.sha256(args.output.read_bytes()).hexdigest().upper()
         print(f"Built windowed-fullscreen screen option -> {args.output} (SHA-256 {digest})")
+        return
+
+    if args.command == "patch-camera-controls":
+        donor_format, donor_root = read_chunk(args.donor)
+        if donor_format.instruction_size != source_format.instruction_size:
+            raise ValueError("Target and donor instruction sizes do not match")
+        add_camera_option_registration(prototype, donor_root)
+        write_chunk(args.output, source_format, prototype)
+        if args.output.stat().st_size > args.input.stat().st_size:
+            # The preceding screen-mode build may contain a large debug-only padding
+            # local. Strip all execution-irrelevant debug tables before deciding
+            # whether the combined module fits its original archive slot.
+            strip_debug_info(prototype)
+            write_chunk(args.output, source_format, prototype)
+        size_delta = args.input.stat().st_size - args.output.stat().st_size
+        if size_delta > 0:
+            padding_name_length = size_delta - 13
+            if padding_name_length < 1:
+                raise ValueError(
+                    f"Patched chunk is {size_delta} bytes smaller, which is insufficient for valid debug padding"
+                )
+            prefix = b"AAEMU_CAMERA_PADDING_"
+            padding_name = (prefix + (b"_" * padding_name_length))[:padding_name_length]
+            prototype.local_variables.append(LocalVariable(padding_name, 0, 0))
+            write_chunk(args.output, source_format, prototype)
+        if args.output.stat().st_size != args.input.stat().st_size:
+            raise ValueError(
+                f"Camera-control chunk size {args.output.stat().st_size} does not match target size "
+                f"{args.input.stat().st_size}"
+            )
+        written_format, written_root = read_chunk(args.output)
+        if written_format != source_format:
+            raise ValueError("Written chunk format does not match the target chunk")
+        get_prototype(written_root, "0_11")
+        digest = hashlib.sha256(args.output.read_bytes()).hexdigest().upper()
+        print(f"Built camera-control screen option -> {args.output} (SHA-256 {digest})")
         return
 
     target_format = dataclasses.replace(
