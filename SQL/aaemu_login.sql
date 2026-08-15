@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `banned` int NOT NULL DEFAULT '0',
   `ban_reason` int NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
-  KEY `username` (`username`)
+  UNIQUE KEY `uq_users_username` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=DYNAMIC COMMENT='Account login information';
 
 
@@ -45,3 +45,39 @@ CREATE TABLE IF NOT EXISTS `user_2fa` (
   CONSTRAINT `fk_user_2fa_user_id` FOREIGN KEY (`user_id`)
     REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=DYNAMIC COMMENT='Two-factor authentication settings for Korea auth';
+
+
+CREATE TABLE IF NOT EXISTS `launcher_sessions` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `user_id` int unsigned NOT NULL,
+  `access_token_hash` binary(32) NOT NULL,
+  `refresh_token_hash` binary(32) NOT NULL,
+  `access_expires_at` bigint unsigned NOT NULL,
+  `refresh_expires_at` bigint unsigned NOT NULL,
+  `created_at` bigint unsigned NOT NULL,
+  `updated_at` bigint unsigned NOT NULL,
+  `revoked_at` bigint unsigned DEFAULT NULL,
+
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_launcher_sessions_access_token_hash` (`access_token_hash`),
+  UNIQUE KEY `uq_launcher_sessions_refresh_token_hash` (`refresh_token_hash`),
+  KEY `idx_launcher_sessions_user_id` (`user_id`),
+  KEY `idx_launcher_sessions_refresh_expires_at` (`refresh_expires_at`),
+  CONSTRAINT `fk_launcher_sessions_user_id` FOREIGN KEY (`user_id`)
+    REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=DYNAMIC COMMENT='Revocable native launcher sessions';
+
+
+CREATE TABLE IF NOT EXISTS `launcher_launch_tickets` (
+  `ticket_hash` binary(32) NOT NULL,
+  `session_id` bigint unsigned NOT NULL,
+  `username` varchar(32) NOT NULL,
+  `expires_at` bigint unsigned NOT NULL,
+  `created_at` bigint unsigned NOT NULL,
+
+  PRIMARY KEY (`ticket_hash`),
+  UNIQUE KEY `uq_launcher_launch_tickets_session_id` (`session_id`),
+  KEY `idx_launcher_launch_tickets_expires_at` (`expires_at`),
+  CONSTRAINT `fk_launcher_launch_tickets_session_id` FOREIGN KEY (`session_id`)
+    REFERENCES `launcher_sessions` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=DYNAMIC COMMENT='Single-use native launcher game tickets';

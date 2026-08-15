@@ -6,6 +6,7 @@ namespace AAEmu.Login.Core.Controllers;
 public interface IGameController
 {
     bool TryGetParentId(GameServerId gsId, out GameServerId id);
+    bool HasActiveGameServer { get; }
     void Load();
     void Add(GameServerId gsId, List<GameServerId> mirrorsId, InternalConnection connection);
     void Remove(GameServerId gsId);

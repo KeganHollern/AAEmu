@@ -4,6 +4,7 @@ using System.Reflection;
 using AAEmu.Commons.IO;
 using AAEmu.Login.Core.Authentication;
 using AAEmu.Login.Core.Controllers;
+using AAEmu.Login.Core.Launcher;
 using AAEmu.Login.Core.Network.Internal;
 using AAEmu.Login.Core.Network.Login;
 using AAEmu.Login.Core.PacketHandlers;
@@ -109,6 +110,7 @@ public static class Program
         builder.Services.AddOptionsWithValidateOnStart<PublicNetworkConfig>()
             .BindConfiguration(PublicNetworkConfig.ConfigurationSectionName)
             .ValidateDataAnnotations();
+        builder.Services.AddLauncherApi();
 
         builder.Services.AddSingleton<IMySqlConnectionFactory, MySqlConnectionFactory>();
         builder.Services.AddTransient<MySqlConnection>(sp =>
@@ -130,12 +132,26 @@ public static class Program
         builder.Services.AddInternalPacketHandlers();
         builder.Services.AddLoginPacketHandlers();
 
-        builder.Services.AddHealthChecks();
+        builder.Services.AddHealthChecks()
+            .AddCheck<LauncherReadinessHealthCheck>("login-ready");
 
         var app = builder.Build();
 
+        var launcherOptions = app.Services
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<LauncherApiOptions>>().Value;
+        var koreaAuthOptions = app.Services
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<KoreaAuthOptions>>().Value;
+        if (launcherOptions.Enabled && koreaAuthOptions.Enabled)
+        {
+            throw new InvalidOperationException(
+                "LauncherApi cannot be enabled while KoreaAuth is enabled because the native launcher " +
+                "does not implement Korea second-factor authentication");
+        }
+
         app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
         app.MapHealthChecks("/health/ready");
+        if (launcherOptions.Enabled)
+            app.MapLauncherApi();
 
         await app.RunAsync();
     }

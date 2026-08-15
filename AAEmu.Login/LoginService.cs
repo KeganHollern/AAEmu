@@ -1,5 +1,6 @@
 ﻿using AAEmu.Commons.Utils.Updater;
 using AAEmu.Login.Core.Controllers;
+using AAEmu.Login.Core.Launcher;
 using AAEmu.Login.Core.Network.Internal;
 using AAEmu.Login.Models;
 using AAEmu.Login.Utils;
@@ -11,12 +12,15 @@ public sealed class LoginService(
     IGameController gameController,
     IRequestController requestController,
     IInternalNetwork internalNetwork,
+    ILoginReadiness loginReadiness,
+    IClientCompactProvider clientCompactProvider,
     IMySqlConnectionFactory connectionFactory,
     IOptions<DBConnectionsConfig> dbConnectionsConfig,
     ILogger<LoginService> logger) : IHostedService, IDisposable
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        loginReadiness.MarkUnavailable();
         logger.LogInformation("Starting daemon: AAEmu.Login");
 
         // Check for updates
@@ -34,11 +38,14 @@ public sealed class LoginService(
 
         requestController.Initialize();
         gameController.Load();
+        await clientCompactProvider.InitializeAsync(cancellationToken);
         internalNetwork.Start();
+        loginReadiness.MarkInitialized();
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
+        loginReadiness.MarkUnavailable();
         logger.LogInformation("Stopping daemon.");
         internalNetwork.Stop();
         return Task.CompletedTask;

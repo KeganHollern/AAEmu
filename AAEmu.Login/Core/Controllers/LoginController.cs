@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using AAEmu.Login.Core.Authentication;
 using AAEmu.Login.Core.Network.Connections;
@@ -41,26 +43,41 @@ public partial class LoginController(
     public async Task<LoginResult> Login(string username, Password password, IPAddress ip,
         CancellationToken cancellationToken)
     {
+        return await LoginInternalAsync(username, password, ip, allowPasswordRehash: true,
+            createLegacyAccount: false, cancellationToken);
+    }
+
+    public async Task<LoginResult> LoginLauncherAsync(string username, string plaintextPassword, IPAddress ip,
+        CancellationToken cancellationToken)
+    {
+        return await LoginInternalAsync(username, Password.FromPlaintext(plaintextPassword), ip,
+            allowPasswordRehash: false, createLegacyAccount: true, cancellationToken);
+    }
+
+    private async Task<LoginResult> LoginInternalAsync(string username, Password password, IPAddress ip,
+        bool allowPasswordRehash, bool createLegacyAccount, CancellationToken cancellationToken)
+    {
         await using var connect = connectionFactory.CreateConnection();
         await using var command = connect.CreateCommand();
         command.CommandText = "SELECT * FROM users where username=@username";
         command.Parameters.AddWithValue("@username", username);
-        await using var reader = command.ExecuteReader();
-        if (!await reader.ReadAsync())
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
         {
             if (_autoAccount)
             {
                 await reader.CloseAsync();
-                return await CreateAndLoginInvalid(username, password, ip, connect);
+                return await CreateAndLoginInvalid(username, password, ip, connect, allowPasswordRehash,
+                    createLegacyAccount, cancellationToken);
             }
 
             return new LoginResult(false, default, LoginDeniedReason.BadAccount);
         }
 
-        var storedPassword = reader.GetString("password");
+        var storedPassword = Convert.ToString(reader["password"])!;
         var storedKoreaChallengeHash = reader.IsDBNull(reader.GetOrdinal("korea_challenge_hash"))
             ? null
-            : reader.GetString("korea_challenge_hash");
+            : Convert.ToString(reader["korea_challenge_hash"]);
 
         var verificationResult = passwordService.VerifyPassword(storedPassword, password);
         if (verificationResult == PasswordVerificationResult.Failed)
@@ -68,14 +85,14 @@ public partial class LoginController(
             return new LoginResult(false, default, LoginDeniedReason.BadAccount);
         }
 
-        var banned = reader.GetBoolean("banned");
+        var banned = Convert.ToBoolean(reader["banned"]);
         if (banned)
         {
-            var banReason = (LoginDeniedReason)(byte)reader.GetUInt32("ban_reason");
+            var banReason = (LoginDeniedReason)(byte)Convert.ToUInt32(reader["ban_reason"]);
             return new LoginResult(false, default, banReason);
         }
 
-        var accountId = new AccountId(reader.GetUInt32("id"));
+        var accountId = new AccountId(Convert.ToUInt32(reader["id"]));
         var now = DateTime.UtcNow;
 
         logger.LogInformation("{Username} connected.", username.ReplaceLineEndings(" "));
@@ -85,7 +102,8 @@ public partial class LoginController(
         #region update account
 
         // Determine what needs rehashing, which is only possible when we have a plaintext password
-        var rehashPbkdf2 = verificationResult == PasswordVerificationResult.SuccessRehashNeeded
+        var rehashPbkdf2 = allowPasswordRehash
+                           && verificationResult == PasswordVerificationResult.SuccessRehashNeeded
                            && password.Kind == PasswordKind.Plaintext;
         var koreaRehashNeeded = _koreaOptions.Enabled
                                 && password.Kind == PasswordKind.Plaintext
@@ -129,7 +147,7 @@ public partial class LoginController(
         command.Parameters.AddWithValue("@last_login", ((DateTimeOffset)now).ToUnixTimeSeconds());
         command.Parameters.AddWithValue("@updated_at", ((DateTimeOffset)now).ToUnixTimeSeconds());
 
-        if (await command.ExecuteNonQueryAsync() != 1)
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
         {
             logger.LogWarning("Database update failed, error occurred while updating account login IP and time");
         }
@@ -180,12 +198,20 @@ public partial class LoginController(
     }
 
     private async Task<LoginResult> CreateAndLoginInvalid(string username, Password password,
-        IPAddress clientIp, MySqlConnection connection)
+        IPAddress clientIp, MySqlConnection connection, bool allowPasswordRehash, bool createLegacyAccount,
+        CancellationToken cancellationToken)
     {
         if (!UsernameRegex().IsMatch(username))
             return new LoginResult(false, default, LoginDeniedReason.BadAccount);
 
-        var passwordHash = passwordService.HashForStorage(password);
+        var storagePassword = password;
+        if (createLegacyAccount && password.Kind == PasswordKind.Plaintext)
+        {
+            var digest = SHA256.HashData(Encoding.UTF8.GetBytes(password.Value));
+            storagePassword = Password.FromSha256Hex(Convert.ToHexString(digest));
+        }
+
+        var passwordHash = passwordService.HashForStorage(storagePassword);
 
         await using var command = connection.CreateCommand();
 
@@ -212,13 +238,22 @@ public partial class LoginController(
         command.Parameters.AddWithValue("@created_at", ((DateTimeOffset)DateTime.UtcNow).ToUnixTimeSeconds());
         command.Parameters.AddWithValue("@updated_at", ((DateTimeOffset)DateTime.UtcNow).ToUnixTimeSeconds());
 
-        if (await command.ExecuteNonQueryAsync() != 1)
+        try
         {
-            return new LoginResult(false, default, LoginDeniedReason.LoginUnknown);
+            if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+                return new LoginResult(false, default, LoginDeniedReason.LoginUnknown);
+        }
+        catch (MySqlException exception) when (exception.Number == 1062)
+        {
+            // Another concurrent AutoAccount request created this username first.
+            // Re-run normal authentication against the single canonical row.
+            return await LoginInternalAsync(username, password, clientIp, allowPasswordRehash,
+                createLegacyAccount, cancellationToken);
         }
 
         logger.LogDebug("Created account from invalid username login with value {Username}", username);
-        return await Login(username, password, clientIp, CancellationToken.None);
+        return await LoginInternalAsync(username, password, clientIp, allowPasswordRehash, createLegacyAccount,
+            cancellationToken);
     }
 
     public void AddReconnectionToken(InternalConnection connection, GameServerId gsId, AccountId accountId, uint token)
