@@ -21,6 +21,13 @@ public interface ILoginController
     Task<LoginResult> Login(string username, Password password, IPAddress ip, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Authenticates a native launcher session without rewriting the legacy password verifier.
+    /// This keeps accounts usable by the existing Trion launcher during the migration period.
+    /// </summary>
+    Task<LoginResult> LoginLauncherAsync(string username, string plaintextPassword, IPAddress ip,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Retrieves the Korea challenge-response authentication material for the given username.
     /// Used by <see cref="AAEmu.Login.Core.Authentication.KoreaAuthFlow"/> to seed the V2 challenge.
     /// </summary>

@@ -19,6 +19,8 @@ public class GameController(
     private readonly ConcurrentDictionary<GameServerId, GameServer> _gameServers = [];
     private readonly Dictionary<GameServerId, GameServerId> _mirrorsId = [];
 
+    public bool HasActiveGameServer => _gameServers.Values.Any(static gameServer => gameServer.Active);
+
     public bool TryGetParentId(GameServerId gsId, out GameServerId id) => _mirrorsId.TryGetValue(gsId, out id);
 
     private static async Task SendPacketWithDelay(InternalConnection connection, int delay, InternalPacket message)
