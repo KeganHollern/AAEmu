@@ -83,9 +83,15 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
 
                 duel.DuelFlag = _combatFlag.Spawn(0); // set CombatFlag
 
-                // change the faction temporarily
-                SetFaction(duel.Challenger, FactionsEnum.RedTeam);
-                SetFaction(duel.Challenged, FactionsEnum.BlueTeam);
+                // Bind both players to the duel flag and run the client-side
+                // 3..2..1 countdown. Factions stay friendly until DuelStart:
+                // retail duels only turn hostile when the countdown finishes.
+                duel.SendPacketsBoth(new SCAreaChatBubblePacket(true, duel.Challenger.ObjId, 543));
+                duel.SendPacketsBoth(new SCDuelStatePacket(duel.Challenger.ObjId, duel.DuelFlag.ObjId));
+                duel.SendPacketsBoth(new SCDuelStatePacket(duel.Challenged.ObjId, duel.DuelFlag.ObjId));
+                // make the flag flutter in the wind
+                duel.SendPacketChallenger(new SCDoodadPhaseChangedPacket(_combatFlag.Last));
+                duel.SendPacketsBoth(new SCDuelStartCountdownPacket());
 
                 //Schedule duel start task.
                 duel.DuelStartTask = new DuelStartTask(duel.Challenger.Id);
@@ -118,9 +124,12 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
 
     private void RestoreFaction(Unit owner)
     {
-        // restore the fraction
-        owner.SetFaction(SaveFactions[owner.Id]);
-        SaveFactions.Remove(owner.Id);
+        // restore the fraction; tolerate a duel that never reached DuelStart
+        // (cancelled during the countdown), where no swap was recorded
+        if (!SaveFactions.Remove(owner.Id, out var originalFaction))
+            return;
+
+        owner.SetFaction(originalFaction);
     }
 
     public void DuelStart(uint id)
@@ -128,14 +137,13 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
         try
         {
             var duel = _duels[id];
+
+            // The countdown has finished: only now do the players turn hostile
+            // to each other (temporary Red/Blue team factions) and see "Duel Start".
+            SetFaction(duel.Challenger, FactionsEnum.RedTeam);
+            SetFaction(duel.Challenged, FactionsEnum.BlueTeam);
+
             duel.SendPacketsBoth(new SCDuelStartedPacket(duel.Challenger.ObjId, duel.Challenged.ObjId));
-            duel.SendPacketsBoth(new SCAreaChatBubblePacket(true, duel.Challenger.ObjId, 543));
-            //duel.SendPacketChallenger(new SCAreaChatBubblePacket(true, duel.Challenged.ObjId, 543));
-            duel.SendPacketsBoth(new SCDuelStartCountdownPacket());
-            duel.SendPacketsBoth(new SCDuelStatePacket(duel.Challenger.ObjId, duel.DuelFlag.ObjId));
-            duel.SendPacketsBoth(new SCDuelStatePacket(duel.Challenged.ObjId, duel.DuelFlag.ObjId));
-            // make the flag flutter in the wind
-            duel.SendPacketChallenger(new SCDoodadPhaseChangedPacket(_combatFlag.Last));
             // Player can be attacked
             duel.SendPacketsBoth(new SCCombatEngagedPacket(duel.Challenger.ObjId));
             duel.SendPacketsBoth(new SCCombatEngagedPacket(duel.Challenged.ObjId));
