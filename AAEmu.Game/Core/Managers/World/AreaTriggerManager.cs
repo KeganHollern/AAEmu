@@ -1,5 +1,6 @@
 ﻿using AAEmu.Commons.Utils;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.Units;
 using NLog;
 
 namespace AAEmu.Game.Core.Managers.World;
@@ -38,6 +39,26 @@ public class AreaTriggerManager : Singleton<AreaTriggerManager>, IAreaTriggerMan
         }
     }
 
+    /// <summary>
+    /// Immediately removes a unit from every trigger that still tracks it,
+    /// firing the leave events (and inside-buff removal) without waiting for
+    /// the next spatial diff. Call when a unit leaves the world.
+    /// </summary>
+    public void EvictUnit(Unit unit)
+    {
+        if (unit == null)
+            return;
+
+        AreaTrigger[] triggers;
+        lock (_addLock)
+        {
+            triggers = [.. _areaTriggers, .. _addQueue];
+        }
+
+        foreach (var trigger in triggers)
+            trigger?.ForceLeave(unit);
+    }
+
     public void Tick(TimeSpan delta)
     {
         try
@@ -51,16 +72,24 @@ public class AreaTriggerManager : Singleton<AreaTriggerManager>, IAreaTriggerMan
 
             foreach (var trigger in _areaTriggers)
             {
-                // if (trigger.Owner.Position)
-                if (trigger?.Owner?.Region?.HasPlayerActivity() ?? false)
+                // Tick triggers in player-active regions, and any trigger that
+                // still tracks units inside: a unit that teleported away from a
+                // now-quiet region must still get its leave event, otherwise
+                // region-scoped area buffs (e.g. the Nui statue's "No Fight")
+                // stick forever.
+                if ((trigger?.Owner?.Region?.HasPlayerActivity() ?? false) || (trigger?.HasUnitsInside ?? false))
                     trigger?.Tick(delta);
             }
 
             lock (_remLock)
             {
-                foreach (var triggerToRemove in _removeQueue)
+                // _addLock guards _areaTriggers for concurrent EvictUnit snapshots.
+                lock (_addLock)
                 {
-                    _areaTriggers.Remove(triggerToRemove);
+                    foreach (var triggerToRemove in _removeQueue)
+                    {
+                        _areaTriggers.Remove(triggerToRemove);
+                    }
                 }
 
                 _removeQueue = [];

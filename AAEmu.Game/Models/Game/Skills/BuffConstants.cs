@@ -49,6 +49,7 @@ public enum BuffConstants : uint
     DrumPlay = 8216, // this one is actually called Play Drums, but not really used
     EquipShield = 8226,
     EquipTwoHanded = 8227,
+    BeginnersBlessing = 11033, // Short post-resurrection protection; drops on skill use/interaction
 
     // Tags
     TagPrisoner = 344,

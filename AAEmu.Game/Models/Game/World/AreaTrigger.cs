@@ -30,6 +30,19 @@ public class AreaTrigger
     public int TickRate { get; set; }
     private DateTime _lastTick = DateTime.MinValue;
 
+    /// <summary>
+    /// True while at least one unit is tracked inside the shape. Lets the
+    /// manager keep ticking this trigger even when the owning region has no
+    /// player activity, so leave detection cannot be starved (stuck No Fight
+    /// buffs after teleporting away from a quiet Nui shrine).
+    /// </summary>
+    public bool HasUnitsInside
+    {
+        get { lock (_unitsLock) return Units.Count > 0; }
+    }
+
+    private readonly object _unitsLock = new();
+
     private void UpdateUnits()
     {
         if (Owner == null || Shape == null || !Owner.IsVisible)
@@ -38,17 +51,19 @@ public class AreaTrigger
             return;
         }
 
-        // Get units currently in the shape
-        var currentUnitsInShape = WorldManager.GetAroundByShape<Unit>(Owner, Shape);
-        if (currentUnitsInShape == null)
-        {
-            return;
-        }
+        // Get units currently in the shape. A null result means the query could
+        // not run (owner region unloaded): treat it as an empty area so tracked
+        // units still receive their leave events instead of being stranded with
+        // the trigger's inside-buff.
+        var currentUnitsInShape = WorldManager.GetAroundByShape<Unit>(Owner, Shape) ?? [];
 
+        List<Unit> unitsSnapshot;
+        lock (_unitsLock)
+            unitsSnapshot = Units;
         // Check who left since last check
-        var leftUnits = Units?.Where(oldU => currentUnitsInShape.All(newU => oldU.ObjId != newU.ObjId)) ?? [];
+        var leftUnits = unitsSnapshot.Where(oldU => currentUnitsInShape.All(newU => oldU.ObjId != newU.ObjId));
         // Check who's new in the shape
-        var newUnits = currentUnitsInShape.Where(newU => Units == null || Units.All(oldU => newU.ObjId != oldU.ObjId));
+        var newUnits = currentUnitsInShape.Where(newU => unitsSnapshot.All(oldU => newU.ObjId != oldU.ObjId));
 
         // Trigger events for new units
         foreach (var newUnit in newUnits)
@@ -65,7 +80,8 @@ public class AreaTrigger
         }
 
         // Save new units list
-        Units = currentUnitsInShape;
+        lock (_unitsLock)
+            Units = currentUnitsInShape;
     }
 
     private void OnEnter(Unit unit)
@@ -97,11 +113,29 @@ public class AreaTrigger
         }
     }
 
+    /// <summary>
+    /// Immediately removes a unit from this trigger (with its inside-buff) if
+    /// it is currently tracked, without waiting for the next spatial diff.
+    /// Used when a unit leaves the world or teleports.
+    /// </summary>
+    public void ForceLeave(Unit unit)
+    {
+        bool wasInside;
+        lock (_unitsLock)
+            wasInside = Units.RemoveAll(u => u.ObjId == unit.ObjId) > 0;
+
+        if (wasInside)
+            OnLeave(unit);
+    }
+
     public void OnDelete()
     {
         if (InsideBuffTemplate != null)
         {
-            foreach (var unit in Units)
+            List<Unit> unitsSnapshot;
+            lock (_unitsLock)
+                unitsSnapshot = [.. Units];
+            foreach (var unit in unitsSnapshot)
             {
                 unit.DecrementTriggerCount(InsideBuffTemplate.BuffId);
                 if (unit.GetTriggerCount(InsideBuffTemplate.BuffId) == 0)
