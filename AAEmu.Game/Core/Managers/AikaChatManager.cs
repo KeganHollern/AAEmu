@@ -30,6 +30,7 @@ public class AikaChatManager : Singleton<AikaChatManager>, IAikaChatManager
     private sealed class ChannelState
     {
         public readonly object Sync = new();
+        public readonly Queue<ChatLine> History = new();
         public bool Busy;
         public bool Pending;
     }
@@ -114,7 +115,7 @@ public class AikaChatManager : Singleton<AikaChatManager>, IAikaChatManager
             if (reply.Length == 0)
                 reply = "H-hmph! I wasn't even listening!";
 
-            channel.SendPacket(new SCChatMessagePacket(ChatType.Ally, (uint)channel.Faction, config.BotName, reply));
+            channel.SendPacket(new SCChatMessagePacket(ChatType.Ally, channel.Faction, config.BotName, reply));
             lock (state.Sync)
                 AppendHistoryLocked(state, new ChatLine(config.BotName, reply, true), config);
             Logger.Info($"{config.BotName} replied in {channel.InternalName} faction chat ({reply.Length} chars)");

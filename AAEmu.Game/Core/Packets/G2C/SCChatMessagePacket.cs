@@ -2,6 +2,7 @@
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Chat;
+using AAEmu.Game.Models.StaticValues;
 
 namespace AAEmu.Game.Core.Packets.G2C;
 
@@ -15,7 +16,7 @@ public class SCChatMessagePacket : GamePacket
     private readonly int _ability;
     private readonly byte _languageType;
     private readonly string _speakerName;
-    private readonly uint _factionId;
+    private readonly FactionsEnum _factionId;
 
     public SCChatMessagePacket(ChatType type, string message) : base(SCOffsets.SCChatMessagePacket, 1)
     {
@@ -27,7 +28,7 @@ public class SCChatMessagePacket : GamePacket
     /// Chat line from a named, non-player speaker (e.g. the AI chat companion).
     /// The client renders the name without a backing character object.
     /// </summary>
-    public SCChatMessagePacket(ChatType type, uint factionId, string speakerName, string message)
+    public SCChatMessagePacket(ChatType type, FactionsEnum factionId, string speakerName, string message)
         : base(SCOffsets.SCChatMessagePacket, 1)
     {
         _type = type;
