@@ -27,6 +27,7 @@ public interface IBuffs
     bool HasEffectsMatchingCondition(Func<Buff, bool> predicate);
     void RemoveAllEffects();
     void RemoveBuff(uint buffId);
+    void RemoveBadBuffsFromCaster(uint casterObjId);
     void RemoveBuffs(BuffKind kind, int count, uint buffTagId = 0);
     void RemoveBuffs(uint buffTagId, int count);
     void RemoveEffect(Buff buff);

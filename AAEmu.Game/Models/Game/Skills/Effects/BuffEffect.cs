@@ -84,9 +84,13 @@ public class BuffEffect : EffectTemplate
 
         target.Buffs.AddBuff(new Buff(target, caster, casterObj, Buff, source.Skill, time) { AbLevel = abLevel });
 
-        // Check if a bad buff was applied to a friendly faction (bloodlust)
+        // Check if a bad buff was applied to a friendly faction (bloodlust).
+        // Only a deliberate skill cast can flag the caster: a buff's own tick
+        // re-applying itself (area spread, refresh) is a mechanical consequence
+        // and must not criminalize the original caster after relations changed
+        // (duel ended, debuff spread onto the victim's allies).
         var relationToTarget = caster?.GetRelationStateTo(target) ?? RelationState.Neutral;
-        if (Buff.Kind == BuffKind.Bad && target is not Npc && 
+        if (Buff.Kind == BuffKind.Bad && source.Buff == null && target is not Npc &&
             relationToTarget == RelationState.Friendly && caster != target &&
             !target.Buffs.CheckBuff((uint)BuffConstants.Retribution))
         {

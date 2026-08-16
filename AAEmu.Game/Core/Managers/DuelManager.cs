@@ -244,6 +244,13 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
                 duel.SendPacketsBoth(new SCDoodadRemovedPacket(duel.DuelFlag.ObjId));
             }
 
+            // A duel is a consensual fight: strip each side's lingering hostile
+            // effects (DoTs, spreading debuffs) before restoring factions so a
+            // leftover tick cannot damage or PvP-flag anyone once the players
+            // are friendly again (issue #20).
+            duel.Challenger.Buffs.RemoveBadBuffsFromCaster(duel.Challenged.ObjId);
+            duel.Challenged.Buffs.RemoveBadBuffsFromCaster(duel.Challenger.ObjId);
+
             // restore the fraction
             RestoreFaction(duel.Challenger);
             RestoreFaction(duel.Challenged);

@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Skills.Buffs;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Utils;
@@ -410,7 +411,21 @@ public class BuffTemplate
         else if (ownerUnit != null && !units.Contains(owner))
             units.Add(ownerUnit);
 
-        units = SkillTargetingUtil.FilterWithRelation((SkillTargetRelation)TickAreaRelationId, (Unit)caster, units).ToList();
+        var relation = (SkillTargetRelation)TickAreaRelationId;
+        if (relation == SkillTargetRelation.CarrierAndFriendly && ownerUnit != null)
+        {
+            // "You and allies within Xm": relative to the current carrier, never
+            // the original caster. A spreading debuff must not jump to hostiles,
+            // bystanders, or back onto whoever cast it (issue #56).
+            units = units
+                .Where(u => u == ownerUnit ||
+                            (ownerUnit.GetRelationStateTo(u) == RelationState.Friendly && !ownerUnit.CanAttack(u)))
+                .ToList();
+        }
+        else
+        {
+            units = SkillTargetingUtil.FilterWithRelation(relation, (Unit)caster, units).ToList();
+        }
 
         var source = caster;
         //if (TickAreaUseOriginSource)
