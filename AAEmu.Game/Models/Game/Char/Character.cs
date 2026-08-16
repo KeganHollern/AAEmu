@@ -1889,6 +1889,34 @@ public partial class Character : Unit, ICharacter
         _options[key] = value;
     }
 
+    /// <summary>
+    /// Persists a single UI-option row immediately. UI data (quest-tracker
+    /// checkboxes, keybinds, window layout) otherwise only reaches the database
+    /// inside the periodic or logout Character.Save, so an abrupt server stop
+    /// discarded every update received since the last tick. Options arrive
+    /// rarely (UI events, logout), so a direct write per update is cheap.
+    /// </summary>
+    public void SaveOption(ushort key)
+    {
+        if (!_options.TryGetValue(key, out var value))
+            return;
+
+        try
+        {
+            using var connection = MySQL.CreateConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "REPLACE INTO `options` (`key`,`value`,`owner`) VALUES (@key,@value,@owner)";
+            command.Parameters.AddWithValue("@key", key);
+            command.Parameters.AddWithValue("@value", value);
+            command.Parameters.AddWithValue("@owner", Id);
+            command.ExecuteNonQuery();
+        }
+        catch (Exception e)
+        {
+            Logger.Warn(e, $"Failed to persist ui option {key} for {Name} ({Id})");
+        }
+    }
+
     public string GetOption(ushort key)
     {
         if (_options.TryGetValue(key, out var option))
