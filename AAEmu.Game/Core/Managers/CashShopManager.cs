@@ -2,6 +2,7 @@
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.CashShop;
 using AAEmu.Game.Models.StaticValues;
@@ -181,6 +182,11 @@ public class CashShopManager(IWorldManager worldManager, IAccountManager account
         var numberOfPages = (ushort)Math.Ceiling((float)thisTabItems.Count / itemsPerPage);
         var thisPageItems = thisTabItems.Skip(itemsPerPage * (page - 1)).Take(itemsPerPage).ToList();
 
+        // Bundle the whole page into one compressed send: streaming each goods
+        // row and SKU detail as its own packet made the client repaint the tab
+        // incrementally (a visible blink on first render of every tab).
+        var packets = new CompressedGamePackets();
+
         for (var i = 0; i < thisPageItems.Count; i++)
         {
             var isLast = i == thisPageItems.Count - 1;
@@ -188,7 +194,7 @@ public class CashShopManager(IWorldManager worldManager, IAccountManager account
             if (shopItem == null)
                 continue;
 
-            connection.SendPacket(new SCICSGoodListPacket(isLast, numberOfPages, mainTabId, subTabId, shopItem));
+            packets.AddPacket(new SCICSGoodListPacket(isLast, numberOfPages, mainTabId, subTabId, shopItem));
         }
 
         for (var i = 0; i < thisPageItems.Count; i++)
@@ -202,10 +208,13 @@ public class CashShopManager(IWorldManager worldManager, IAccountManager account
             foreach (var sku in shopItem.Skus.Values)
             {
                 var isLastSku = n >= shopItem.Skus.Count - 1;
-                connection.SendPacket(new SCICSGoodDetailPacket(isLastSku && isLastItem, sku));
+                packets.AddPacket(new SCICSGoodDetailPacket(isLastSku && isLastItem, sku));
                 n++;
             }
         }
+
+        if (packets.Packets.Count > 0)
+            connection.SendPacket(packets);
     }
 
     /// <summary>
