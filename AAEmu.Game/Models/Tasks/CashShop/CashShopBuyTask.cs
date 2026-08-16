@@ -11,7 +11,7 @@ using NLog;
 
 namespace AAEmu.Game.Models.Tasks.CashShop;
 
-public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlayer, List<IcsSku> shoppingCart)
+public class CashShopBuyTask(byte buyMode, Character buyer, uint targetId, uint targetAccountId, string targetName, List<IcsSku> shoppingCart)
     : Task
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
@@ -30,7 +30,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
         if (costs[(byte)CashShopCurrencyType.Credits] > beforeBuyAccountDetails.Credits)
         {
             buyer.SendErrorMessage(ErrorMessageType.IngameShopNotEnoughAaCash); // Not sure if this is the correct error
-            buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+            buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
             return;
         }
 
@@ -39,7 +39,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
         if (costs[(byte)CashShopCurrencyType.AaPoints] > CashShopManager.Instance.GetAccountAaPoints(_buyer.AccountId))
         {
             _buyer.SendErrorMessage(ErrorMessageType.IngameShopBuyFailAaPoint);
-            _buyer.SendPacket(new SCICSBuyResultPacket(false, _buyMode, _targetPlayer.Name, 0));
+            _buyer.SendPacket(new SCICSBuyResultPacket(false, _buyMode, _targetName, 0));
             return;
         }
         */
@@ -48,7 +48,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
         if (costs[(byte)CashShopCurrencyType.Loyalty] > beforeBuyAccountDetails.Loyalty)
         {
             buyer.SendErrorMessage(ErrorMessageType.IngameShopNotEnoughBmMileage);
-            buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+            buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
             return;
         }
 
@@ -56,7 +56,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
         if (costs[(byte)CashShopCurrencyType.Coins] > buyer.Money)
         {
             buyer.SendErrorMessage(ErrorMessageType.NotEnoughCoin);
-            buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+            buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
             return;
         }
         #endregion
@@ -69,7 +69,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
             if (!CashShopManager.Instance.ShopItems.TryGetValue(sku.ShopId, out var shopItem))
             {
                 buyer.SendErrorMessage(ErrorMessageType.IngameShopBuyFail); // generic error
-                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
                 return;
             }
 
@@ -77,7 +77,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
             if (sku.EventEndDate > DateTime.MinValue && DateTime.UtcNow >= sku.EventEndDate)
             {
                 buyer.SendErrorMessage(ErrorMessageType.IngameShopExpiredSellByDate);
-                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
                 return;
             }
 
@@ -85,7 +85,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
             if (shopItem.SaleStart > DateTime.MinValue && DateTime.UtcNow <= shopItem.SaleStart)
             {
                 buyer.SendErrorMessage(ErrorMessageType.IngameShopExpiredSellByDate);
-                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
                 return;
             }
 
@@ -93,7 +93,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
             if (shopItem.SaleEnd > DateTime.MinValue && DateTime.UtcNow >= shopItem.SaleEnd)
             {
                 buyer.SendErrorMessage(ErrorMessageType.IngameShopExpiredSellByDate);
-                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
                 return;
             }
 
@@ -101,7 +101,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
             if (shopItem.LevelMin > 0 && buyer.Level < shopItem.LevelMin)
             {
                 buyer.SendErrorMessage(ErrorMessageType.IngameShopBuyLowLevel);
-                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
                 return;
             }
 
@@ -109,7 +109,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
             if (shopItem.LevelMax > 0 && buyer.Level > shopItem.LevelMax)
             {
                 buyer.SendErrorMessage(ErrorMessageType.IngameShopBuyLowLevel); // Likely not the correct one, but don't see a shop one for max level
-                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
                 return;
             }
 
@@ -117,7 +117,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
             if (shopItem.BuyRestrictType == CashShopRestrictSaleType.Level && buyer.Level < shopItem.BuyRestrictId)
             {
                 buyer.SendErrorMessage(ErrorMessageType.IngameShopBuyLowLevel);
-                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
                 return;
             }
 
@@ -125,7 +125,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
             if (shopItem.BuyRestrictType == CashShopRestrictSaleType.Quest && !buyer.Quests.HasQuestCompleted(shopItem.BuyRestrictId))
             {
                 buyer.SendErrorMessage(ErrorMessageType.IngameShopBuyQuestIncomplete);
-                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+                buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
                 return;
             }
 
@@ -143,7 +143,7 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
                 if (shopItem.Remaining < totalItemsBoughtOfThisType)
                 {
                     buyer.SendErrorMessage(ErrorMessageType.IngameShopSoldOut);
-                    buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, 0));
+                    buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, 0));
                     return;
                 }
             }
@@ -261,21 +261,22 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
                 items.Add(ItemManager.Instance.Create(sku.BonusItemId, (int)sku.BonusItemCount, bonusItemTemplate.FixedGrade >= 0 ? (byte)bonusItemTemplate.FixedGrade : (byte)0, true));
             }
 
-            var mail = new CommercialMail(targetPlayer.Id, targetPlayer.Name, buyer.Name, items, targetPlayer.Id != buyer.Id, false, useName);
+            var mail = new CommercialMail(targetId, targetName, buyer.Name, items, targetId != buyer.Id, false, useName);
             mail.FinalizeMail();
             if (!mail.Send())
             {
-                // Sending this mail should actually never be able to fail.
-                targetPlayer.SendErrorMessage(ErrorMessageType.IngameShopBuyFail); // This is the wrong error, but likely the most fitting for now
+                // Sending this mail should actually never be able to fail. The
+                // receiver may be offline (gift), so report to the buyer.
+                buyer.SendErrorMessage(ErrorMessageType.IngameShopBuyFail); // This is the wrong error, but likely the most fitting for now
             }
 
             entriesSold++;
 
-            Logger.Info($"ICSBuyGood {buyer.Name} -> {targetPlayer.Name} - {useName} x {sku.ItemCount}, SKU:{sku.Sku}");
-            if (!CashShopManager.Instance.LogSale(buyer.AccountId, buyer.Id, targetPlayer.AccountId,
-                    targetPlayer.Id, DateTime.UtcNow, shopItem.ShopId, sku.Sku, sku.DiscountPrice > 0 ? sku.DiscountPrice : sku.Price, sku.Currency, string.Empty))
+            Logger.Info($"ICSBuyGood {buyer.Name} -> {targetName} - {useName} x {sku.ItemCount}, SKU:{sku.Sku}");
+            if (!CashShopManager.Instance.LogSale(buyer.AccountId, buyer.Id, targetAccountId,
+                    targetId, DateTime.UtcNow, shopItem.ShopId, sku.Sku, sku.DiscountPrice > 0 ? sku.DiscountPrice : sku.Price, sku.Currency, string.Empty))
                 Logger.Error(
-                    $"ICSBuyGood {buyer.Name} -> {targetPlayer.Name} - {useName} x {sku.ItemCount}, SKU:{sku.Sku}, save failed!");
+                    $"ICSBuyGood {buyer.Name} -> {targetName} - {useName} x {sku.ItemCount}, SKU:{sku.Sku}, save failed!");
         }
 
         if (entriesSold > 0)
@@ -284,11 +285,11 @@ public class CashShopBuyTask(byte buyMode, Character buyer, Character targetPlay
             buyer.BmPoint = postSaleAccountDetails.Loyalty;
             buyer.SendPacket(new SCICSCashPointPacket(postSaleAccountDetails.Credits));
             buyer.SendPacket(new SCBmPointPacket(postSaleAccountDetails.Loyalty));
-            buyer.SendPacket(new SCICSBuyResultPacket(true, buyMode, targetPlayer.Name, (int)costs[(byte)CashShopCurrencyType.AaPoints]));
+            buyer.SendPacket(new SCICSBuyResultPacket(true, buyMode, targetName, (int)costs[(byte)CashShopCurrencyType.AaPoints]));
         }
         else
         {
-            buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetPlayer.Name, (int)costs[(byte)CashShopCurrencyType.AaPoints]));
+            buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, targetName, (int)costs[(byte)CashShopCurrencyType.AaPoints]));
         }
 
         #endregion

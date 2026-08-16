@@ -1,6 +1,6 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Core.Managers.World;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
@@ -56,15 +56,26 @@ public class CSICSBuyGoodPacket() : GamePacket(CSOffsets.CSICSBuyGoodPacket, 1)
 
         var receiverName = stream.ReadString();
 
-        var targetChar = thisChar;
-        if (receiverName != string.Empty)
-            targetChar = WorldManager.Instance.GetCharacter(receiverName);
+        // Default target: the buyer themselves
+        var targetId = thisChar.Id;
+        var targetAccountId = thisChar.AccountId;
+        var targetName = thisChar.Name;
 
-        if (targetChar == null)
+        if (receiverName != string.Empty)
         {
-            thisChar.SendErrorMessage(ErrorMessageType.IngameShopFindCharacterNameFail);
-            thisChar.SendPacket(new SCICSBuyResultPacket(false, buyMode, receiverName, 0));
-            return;
+            // Gifts are delivered by mail, so the receiver does not need to be
+            // online: resolve the identity from the name cache instead of the
+            // online-character table.
+            targetId = NameManager.Instance.GetCharacterId(receiverName.NormalizeName());
+            if (targetId == 0)
+            {
+                thisChar.SendErrorMessage(ErrorMessageType.IngameShopFindCharacterNameFail);
+                thisChar.SendPacket(new SCICSBuyResultPacket(false, buyMode, receiverName, 0));
+                return;
+            }
+
+            targetName = NameManager.Instance.GetCharacterName(targetId) ?? receiverName;
+            targetAccountId = NameManager.Instance.GetCharacterAccount(targetId);
         }
 
         if (buyList.Count <= 0)
@@ -75,6 +86,6 @@ public class CSICSBuyGoodPacket() : GamePacket(CSOffsets.CSICSBuyGoodPacket, 1)
         }
 
         // Create task for the transaction, this allows handling of credits in a async manner
-        TaskManager.Instance.Schedule(new CashShopBuyTask(buyMode, Connection.ActiveChar, targetChar, buyList), TimeSpan.FromSeconds(1));
+        TaskManager.Instance.Schedule(new CashShopBuyTask(buyMode, Connection.ActiveChar, targetId, targetAccountId, targetName, buyList), TimeSpan.FromSeconds(1));
     }
 }
