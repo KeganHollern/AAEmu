@@ -143,9 +143,11 @@ $"Trying to set Npc {Owner.TemplateId}:{Owner.ObjId} current behavior, but it is
 
     public void Tick(TimeSpan delta)
     {
-        /*if ((!Owner?.Region?.IsEmpty() ?? false)
-            || (Owner?.Region?.AreNeighborsEmpty() ?? false))*/
-        if (HasPersistentAi() || (Owner?.Region?.HasPlayerActivity() ?? false))
+        // Keep ticking NPCs that are mid-combat even when their own region has
+        // no player activity: a mob chasing a fleeing player can cross into an
+        // empty region, and freezing it there would strand it in Attack state
+        // forever (never leashing home, never clearing its aggro targets).
+        if (HasPersistentAi() || (Owner?.Region?.HasPlayerActivity() ?? false) || (Owner?.IsInBattle ?? false))
         {
             _currentBehavior?.Tick(delta);
 
