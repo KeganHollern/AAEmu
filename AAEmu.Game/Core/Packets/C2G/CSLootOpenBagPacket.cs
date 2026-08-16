@@ -3,7 +3,7 @@ using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Units;
-using AAEmu.Game.Models.Game.World.Interactions;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Tasks.Doodads;
 using System.Linq;
 
@@ -53,14 +53,22 @@ public class CSLootOpenBagPacket() : GamePacket(CSOffsets.CSLootOpenBagPacket, 1
             if (doodad.LootingContainer.Items.Count > 0 || !IsFuncDrivenLootDoodad(doodad))
                 return false;
 
-            // Pack-style pickup -> route through RecoverItem with backpack guard, same as right-click
-            // (GenericRecoverItemSkillId). This is the only safe path for DoodadFuncRecoverItem: it refuses to fire
-            // if the player already wears a pack, preventing the duplication / pack-swap parasites observed on
-            // housing tradepacks. We forward the real recover skillId so the F-key path stays consistent with the
-            // right-click path (DoodadFuncRecoverItem currently only logs it, but later checks/effects may rely on it).
+            // Pack-style pickup -> start the real Collect cast (skill 11361: 1s cast bar +
+            // pulling animation). When the cast completes, the skill's InteractionEffect
+            // (WorldInteractionType.RecoverItem) performs the recover with the backpack
+            // guard and deletes the doodad — same terminal path as the right-click pickup,
+            // no longer executed instantly (issue #40).
             if (IsRecoverItemDoodad(doodad))
             {
-                new RecoverItem().Execute(Connection.ActiveChar, null, doodad, null, GenericRecoverItemSkillId, 0, null);
+                // Retail refuses instantly when already carrying a pack; don't start a
+                // doomed 1s cast only to fail at the end.
+                if (!Connection.ActiveChar.Inventory.CanReplaceGliderInBackpackSlot())
+                {
+                    Connection.ActiveChar.SendErrorMessage(ErrorMessageType.FailedToUseItem);
+                    return true;
+                }
+
+                Connection.ActiveChar.UseSkill(GenericRecoverItemSkillId, doodad);
                 return true;
             }
 
