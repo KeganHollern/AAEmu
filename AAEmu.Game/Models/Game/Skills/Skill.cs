@@ -1065,6 +1065,17 @@ public class Skill
                     break;
             }
 
+            // Spawn effects are anchored to the cast, not to bystanders: a
+            // target-centred area application would summon one NPC per unit
+            // standing in the blast (Set Explosives popped an extra elemental
+            // for every nearby player). Keep only the primary target, falling
+            // back to the closest one when the primary was filtered out.
+            if (effect.Template is SpawnEffect && effectedTargets.Count > 1)
+            {
+                var anchor = effectedTargets.FirstOrDefault(t => t == targetSelf) ?? effectedTargets[0];
+                effectedTargets = [anchor];
+            }
+
             // Loop targets for this effect
             foreach (var target in effectedTargets)
             {
