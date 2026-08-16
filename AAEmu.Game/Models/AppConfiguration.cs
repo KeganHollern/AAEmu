@@ -42,6 +42,7 @@ public partial class AppConfiguration
     public SpecialtyConfig Specialty { get; set; } = new();
     public ScriptsConfig Scripts { get; set; } = new();
     public JusticeConfig Justice { get; set; } = new();
+    public AiChatConfig AiChat { get; set; } = new();
     public string DefaultLanguage { get; set; } = "en_us";
     public bool DebugInfo { get; set; } = true;
     public uint DebugInfoLevel { get; set; } = 100;

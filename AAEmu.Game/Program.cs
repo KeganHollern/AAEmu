@@ -127,6 +127,9 @@ public static class Program
                 services.AddSingleton<AIManager>();
                 services.AddSingleton<IAIManager>(sp => sp.GetRequiredService<AIManager>());
 
+                services.AddSingleton<AikaChatManager>();
+                services.AddSingleton<IAikaChatManager>(sp => sp.GetRequiredService<AikaChatManager>());
+
                 services.AddSingleton<AiPathsManager>();
                 services.AddSingleton<IAiPathsManager>(sp => sp.GetRequiredService<AiPathsManager>());
 
