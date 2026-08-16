@@ -934,7 +934,14 @@ public class Skill
         if (Template.TargetAreaRadius > 0)
         {
             var units = WorldManager.GetAround<BaseUnit>(targetSelf, Template.TargetAreaRadius, true);
-            if (Template.TargetSelection == SkillTargetSelection.Source)
+            // GetAround excludes the centre object by ObjId, so the primary target
+            // must be re-added: an area centred on a target always includes that
+            // target. Source kept its historical re-add; Target-selection used to
+            // drop it, which silently skipped every doodad-targeted effect — e.g.
+            // Set Explosives (12403) never applied its InteractionEffect to the
+            // Explosives Pit, so quest 922 "Work Smarter, Not Harder" stayed 0/3.
+            // The relation filter below still applies to the re-added target.
+            if (Template.TargetSelection is SkillTargetSelection.Source or SkillTargetSelection.Target)
                 units.Add(targetSelf); // Add main target as well
             units = FilterAoeUnits(caster, units).ToList();
 
