@@ -1,3 +1,4 @@
+using System.Net;
 using AAEmu.Login.Core.Controllers;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.RateLimiting;
@@ -61,6 +62,56 @@ public static class LauncherApiEndpoints
         group.MapGet("/assets/client.sqlite3", DownloadClientCompactAsync)
             .RequireRateLimiting("launcher-download");
         group.MapPost("/launch-tickets", CreateLaunchTicketAsync).RequireRateLimiting("launcher-login");
+
+        // In-game web test page (aaemu-cluster#26): the ArcheAge client's embedded
+        // Awesomium browser (Chromium ~18) opens the TrionWeb base URLs and appends
+        // its own path suffixes. Accept any suffix and echo the request back in
+        // deliberately ancient, self-contained HTML so we can prove the URLs are
+        // server-controlled and learn the exact path each client surface requests.
+        app.MapGet("/launcher/test-shop-ui", GetTestShopUi);
+        app.MapGet("/launcher/test-shop-ui/{**clientPath}", GetTestShopUi);
+    }
+
+    private static IResult GetTestShopUi(HttpContext context)
+    {
+        var requestedPath = WebUtility.HtmlEncode(context.Request.Path.Value ?? "/");
+        var query = WebUtility.HtmlEncode(context.Request.QueryString.Value ?? "");
+        var userAgent = WebUtility.HtmlEncode(context.Request.Headers.UserAgent.ToString());
+        var utcNow = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+        var html = $$"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+            <meta charset="utf-8">
+            <title>Hyprlane Shop Test</title>
+            <style>
+            body { font-family: Georgia, serif; background: #f6efe2; color: #3b2f1e; margin: 24px; }
+            .card { background: #fffdf7; border: 2px solid #c8b184; padding: 16px 20px; }
+            h1 { color: #7a5b16; font-size: 28px; margin: 0 0 8px 0; }
+            code { background: #efe6d2; padding: 2px 5px; }
+            .ok { color: #1c7a2d; font-weight: bold; }
+            .bad { color: #a33333; font-weight: bold; }
+            </style>
+            </head>
+            <body>
+            <div class="card">
+            <h1>Hyprlane in-game browser test</h1>
+            <p class="ok">HTML + CSS render OK.</p>
+            <p>Requested path: <code>{{requestedPath}}</code></p>
+            <p>Query: <code>{{query}}</code></p>
+            <p>User agent: <code>{{userAgent}}</code></p>
+            <p>Server time (UTC): <code>{{utcNow}}</code></p>
+            <p id="js">JavaScript: <span class="bad">NOT running</span></p>
+            <script type="text/javascript">
+            document.getElementById('js').innerHTML = 'JavaScript: <span class="ok">running (ES5)</span>';
+            </script>
+            <p><a href="/launcher/test-shop-ui/clicked-a-link">Follow a link</a></p>
+            </div>
+            </body>
+            </html>
+            """;
+        return Results.Content(html, "text/html; charset=utf-8");
     }
 
     private static IResult GetStatus(
