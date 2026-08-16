@@ -517,6 +517,107 @@ def add_camera_option_registration(prototype: Prototype, donor_root: Prototype) 
     prototype.max_stack_size = max(prototype.max_stack_size, 9)
 
 
+def patch_hud_auction_button(prototype: Prototype) -> None:
+    """Repair the r208022 HUD auction skin and use its existing locale entry."""
+    if len(prototype.code) != 72 or len(prototype.constants) != 23:
+        raise ValueError("Unexpected r208022 right_button_set.alb root layout")
+    expected_root_constants = {
+        20: b"UIParent",
+        21: b"hudAuctionButton",
+        22: b"auctionToggleBtn",
+    }
+    for index, expected in expected_root_constants.items():
+        if prototype.constants[index].value != expected:
+            raise ValueError(
+                f"Unexpected right_button_set.alb root K{index}: "
+                f"{prototype.constants[index].value!r}"
+            )
+
+    auction_factory = get_prototype(prototype, "0_6")
+    if (
+        len(auction_factory.code) != 38
+        or auction_factory.constants[10].value != b"BUTTON_HUD"
+        or auction_factory.constants[11].value != b"TOGGLE_AUCTION"
+    ):
+        raise ValueError("Unexpected r208022 auction-button factory layout")
+
+    tooltip = get_prototype(prototype, "0_6_1")
+    if (
+        tooltip.parameter_count != 1
+        or tooltip.max_stack_size != 6
+        or len(tooltip.code) != 7
+        or len(tooltip.constants) != 2
+        or tooltip.constants[0].value != b"SetTooltip"
+        or tooltip.constants[1].value != "경매장".encode("utf-8")
+    ):
+        raise ValueError("Unexpected r208022 auction-tooltip handler layout")
+
+    def add_string(value: bytes) -> int:
+        index = len(prototype.constants)
+        prototype.constants.append(LuaConstant(4, value))
+        return index
+
+    def add_number(value: float) -> int:
+        index = len(prototype.constants)
+        prototype.constants.append(LuaConstant(3, value))
+        return index
+
+    button_hud_index = add_string(b"BUTTON_HUD")
+    toggle_auction_index = add_string(b"TOGGLE_AUCTION")
+    coords_index = add_string(b"coords")
+    normal_index = add_string(b"normal")
+    over_index = add_string(b"over")
+    y_element_index = add_number(2.0)
+    corrected_y_index = add_number(335.0)
+
+    # The stock normal/hover rectangles start at Y=352/351, even though their
+    # artwork is centered at Y=335. The pressed and disabled rectangles are
+    # separate atlas cells and must remain at Y=351.
+    skin_fix_code = [
+        encode_abx("GETGLOBAL", 11, button_hud_index),
+        encode_abc("GETTABLE", 11, 11, 0x100 | toggle_auction_index),
+        encode_abc("GETTABLE", 11, 11, 0x100 | coords_index),
+        encode_abc("GETTABLE", 12, 11, 0x100 | normal_index),
+        encode_abc("SETTABLE", 12, 0x100 | y_element_index, 0x100 | corrected_y_index),
+        encode_abc("GETTABLE", 12, 11, 0x100 | over_index),
+        encode_abc("SETTABLE", 12, 0x100 | y_element_index, 0x100 | corrected_y_index),
+    ]
+    prototype.code = skin_fix_code + prototype.code
+    if prototype.line_info:
+        prototype.line_info = [1] * len(skin_fix_code) + prototype.line_info
+    for local_variable in prototype.local_variables:
+        local_variable.start_pc += len(skin_fix_code)
+        local_variable.end_pc += len(skin_fix_code)
+
+    # Resolve the localized value on hover. The cached locale.auction.auction
+    # path is not populated yet when this HUD handler can first run.
+    tooltip.constants = [
+        LuaConstant(4, b"SetTooltip"),
+        LuaConstant(4, b"X2Locale"),
+        LuaConstant(4, b"LocalizeUiText"),
+        LuaConstant(4, b"AUCTION_TEXT"),
+        LuaConstant(4, b"auction_title"),
+    ]
+    tooltip.code = [
+        encode_abx("GETGLOBAL", 1, 0),
+        encode_abx("GETGLOBAL", 2, 1),
+        encode_abc("SELF", 2, 2, 0x100 | 2),
+        encode_abx("GETGLOBAL", 4, 3),
+        encode_abx("LOADK", 5, 4),
+        encode_abc("CALL", 2, 4, 2),
+        encode_abc("MOVE", 3, 0, 0),
+        encode_abc("LOADBOOL", 4, 0, 0),
+        encode_abc("LOADBOOL", 5, 0, 0),
+        encode_abc("CALL", 1, 5, 1),
+        encode_abc("RETURN", 0, 1, 0),
+    ]
+    if tooltip.line_info:
+        tooltip.line_info = [228] * 10 + [229]
+    for local_variable in tooltip.local_variables:
+        if local_variable.name == b"self":
+            local_variable.end_pc = len(tooltip.code) - 1
+
+
 def format_constant(constant: LuaConstant) -> str:
     if isinstance(constant.value, bytes):
         return repr(constant.value.decode("utf-8", "replace"))
@@ -614,6 +715,13 @@ def main() -> None:
     camera_controls_parser.add_argument("donor", type=Path, help="Compiled camera-control Lua source")
     camera_controls_parser.add_argument("output", type=Path)
 
+    hud_auction_parser = subparsers.add_parser(
+        "patch-hud-auction-button",
+        help="Repair the r208022 HUD auction icon alignment and localized tooltip",
+    )
+    hud_auction_parser.add_argument("input", type=Path, help="Stock r208022 right_button_set.alb")
+    hud_auction_parser.add_argument("output", type=Path)
+
     args = parser.parse_args()
     source_format, prototype = read_chunk(args.input)
     if args.command == "inspect":
@@ -629,6 +737,24 @@ def main() -> None:
         print(source_format)
         selected = get_prototype(prototype, args.prototype)
         disassemble_prototype(selected, args.prototype)
+        return
+
+    if args.command == "patch-hud-auction-button":
+        patch_hud_auction_button(prototype)
+        write_chunk(args.output, source_format, prototype)
+        written_format, written_root = read_chunk(args.output)
+        if written_format != source_format:
+            raise ValueError("Written chunk format does not match the target chunk")
+        written_tooltip = get_prototype(written_root, "0_6_1")
+        if (
+            len(written_root.code) != 79
+            or len(written_tooltip.code) != 11
+            or written_tooltip.constants[1].value != b"X2Locale"
+            or written_tooltip.constants[4].value != b"auction_title"
+        ):
+            raise ValueError("Written HUD auction-button patch failed structural verification")
+        digest = hashlib.sha256(args.output.read_bytes()).hexdigest().upper()
+        print(f"Patched r208022 HUD auction button -> {args.output} (SHA-256 {digest})")
         return
 
     if args.command == "transplant":

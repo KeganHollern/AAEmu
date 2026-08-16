@@ -65,6 +65,12 @@ pwsh -NoProfile -File Tools/ClientPatcher/Invoke-ClientPatch.ps1 `
 
 The local backup is written to `.aaemu-client-backups` beside `game_pak`. Do not commit that directory.
 
+## Lower-right HUD auction button
+
+The r208022 auction shortcut in `game/scriptsbin/x2ui/hud/main_menu_bar/right_button_set.alb` has two independent client defects. Its tooltip is a hardcoded Korean literal, and its normal/hover atlas rectangles start 16–17 pixels below their actual artwork. The pressed artwork is correctly aligned, which is why holding the mouse button makes the icon appear to move into place.
+
+`Build-HudAuctionButtonFix.ps1` creates a guarded replacement that moves only the normal and hover texture Y coordinates to `335` and resolves `AUCTION_TEXT` / `auction_title` directly through the stock localization API on hover. A cached `locale.auction.auction` lookup is too early for this HUD handler and can return no text. The click behavior, anchor, pressed/disabled artwork, and neighboring buttons are unchanged. See `Docs/customized/HUD-Auction-Button-Fix.md` for the exact rectangles, hashes, commands, and verification steps.
+
 ## Startup desktop-stall fix
 
 The r208022 `CrySystem.dll` enumerates display modes during startup and calls `ChangeDisplaySettingsExA` with `CDS_TEST | CDS_FULLSCREEN` for every eligible mode. This happens even when the client is configured for windowed mode. On current Windows and graphics drivers, those repeated driver-level mode tests can make the mouse, Explorer, and the desktop compositor nearly unresponsive for several seconds.
