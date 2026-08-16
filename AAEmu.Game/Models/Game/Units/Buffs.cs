@@ -685,6 +685,36 @@ public class Buffs : IBuffs
             }
     }
 
+    /// <summary>
+    /// Removes every non-system Bad buff that the given unit applied to this
+    /// owner. Used when a consensual fight ends (duel) so lingering hostile
+    /// effects cannot keep ticking across the restored faction relations and
+    /// damage or flag anyone.
+    /// </summary>
+    /// <param name="casterObjId">ObjId of the unit whose hostile buffs to remove</param>
+    public void RemoveBadBuffsFromCaster(uint casterObjId)
+    {
+        if (_effects == null)
+            return;
+
+        // Create a copy of the list of effects to avoid changing the list while iterating
+        IEnumerable<Buff> effects;
+        lock (_lock)
+        {
+            effects = _effects.ToArray();
+        }
+
+        foreach (var buff in effects)
+        {
+            if (buff?.Template is not { System: false, Kind: BuffKind.Bad })
+                continue;
+            if (buff.Caster?.ObjId != casterObjId)
+                continue;
+
+            buff.Exit();
+        }
+    }
+
     public void RemoveAllEffects()
     {
         var own = GetOwner();
