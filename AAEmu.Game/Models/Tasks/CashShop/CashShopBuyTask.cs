@@ -210,6 +210,10 @@ public class CashShopBuyTask(byte buyMode, Character buyer, uint targetId, uint 
                 {
                     shopItem.Remaining -= (int)sku.ItemCount;
                     CashShopManager.Instance.UpdateRemainingShopItemStock(shopItem.ShopId, shopItem.Remaining);
+                    // Push the new count to the buyer: the client caches shop
+                    // pages, so without this sync the "# Left" display stays
+                    // stale until relog.
+                    buyer.SendPacket(new SCICSSyncGoodPacket((int)shopItem.ShopId, shopItem.Remaining));
                 }
                 else
                 {
