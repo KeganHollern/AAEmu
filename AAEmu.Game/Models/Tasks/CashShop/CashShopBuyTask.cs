@@ -167,31 +167,8 @@ public class CashShopBuyTask(byte buyMode, Character buyer, uint targetId, uint 
             // Validate Limited Sales
             if (shopItem.LimitedType != CashShopLimitType.None)
             {
-                // If there is a limit type set, grab previous sales of this ShopItem (any SKU attached)
-                var oldSales = CashShopManager.Instance.GetSalesForShopItem(
-                    buyer.AccountId,
-                    shopItem.LimitedType == CashShopLimitType.Character ? buyer.Id : 0,
-                    shopItem.ShopId);
-
-                // Calculate old amount bought
-                var oldSalesCount = 0u;
-                foreach (var oldSale in oldSales)
-                {
-                    // Ignore if SKU no longer exists
-                    if (!CashShopManager.Instance.SKUs.TryGetValue(oldSale.Sku, out var oldSKU))
-                        continue;
-
-                    if (shopItem.LimitedType == CashShopLimitType.Character)
-                    {
-                        if (oldSale.BuyerChar == buyer.Id)
-                            oldSalesCount += oldSKU.ItemCount;
-                    }
-                    else if (shopItem.LimitedType == CashShopLimitType.Account)
-                    {
-                        if (oldSale.BuyerAccount == buyer.AccountId)
-                            oldSalesCount += oldSKU.ItemCount;
-                    }
-                }
+                // If there is a limit type set, count previous purchases of this ShopItem (any SKU attached)
+                var oldSalesCount = CashShopManager.Instance.GetPurchasedCount(shopItem, buyer.AccountId, buyer.Id);
 
                 // Check if with the new amount we still stay under the limit
                 if (oldSalesCount + sku.ItemCount > shopItem.LimitedStockMax)

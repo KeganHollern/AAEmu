@@ -5,7 +5,7 @@ using AAEmu.Game.Models.StaticValues;
 
 namespace AAEmu.Game.Core.Packets.G2C;
 
-public class SCICSGoodListPacket(bool pageEnd, ushort totalPage, byte mainTab, byte subTab, IcsItem item)
+public class SCICSGoodListPacket(bool pageEnd, ushort totalPage, byte mainTab, byte subTab, IcsItem item, int? remainingOverride = null)
     : GamePacket(SCOffsets.SCICSGoodListPacket, 1)
 {
     private readonly IcsSku _firstSku = item.FirstSku;
@@ -36,7 +36,7 @@ public class SCICSGoodListPacket(bool pageEnd, ushort totalPage, byte mainTab, b
         {
             stream.Write((byte)_firstSku.Currency);
             stream.Write(_firstSku.Price);
-            stream.Write(item.Remaining);
+            stream.Write(remainingOverride ?? item.Remaining);
             stream.Write(_firstSku.BonusItemId);
             stream.Write(_firstSku.BonusItemCount);
             stream.Write((byte)item.ShopButtons);
