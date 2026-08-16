@@ -43,6 +43,7 @@ public partial class AppConfiguration
     public ScriptsConfig Scripts { get; set; } = new();
     public JusticeConfig Justice { get; set; } = new();
     public AiChatConfig AiChat { get; set; } = new();
+    public TrionWebConfig TrionWeb { get; set; } = new();
     public string DefaultLanguage { get; set; } = "en_us";
     public bool DebugInfo { get; set; } = true;
     public uint DebugInfoLevel { get; set; } = 100;
@@ -52,6 +53,20 @@ public partial class AppConfiguration
         public string Host { get; set; }
         public ushort Port { get; set; }
         public int NumConnections { get; set; }
+    }
+
+    /// <summary>
+    /// Web URLs handed to the client at world-enter via SCTrionConfigPacket.
+    /// The client treats each as a folder base (it appends its own paths) and
+    /// renders the pages in its embedded Awesomium browser: the "Get Credits"
+    /// popup, wiki, and web-shop surfaces.
+    /// </summary>
+    public class TrionWebConfig
+    {
+        public bool Activate { get; set; } = true;
+        public string AuthUrl { get; set; } = "http://localhost/aaemu/login";
+        public string PlatformUrl { get; set; } = "http://localhost/aaemu/platform";
+        public string CommerceUrl { get; set; } = "http://localhost/aaemu/shop";
     }
 
     public class DBConnections

@@ -2,6 +2,7 @@
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models;
 
 namespace AAEmu.Game.Core.Packets.Proxy;
 
@@ -31,20 +32,17 @@ public class FinishStatePacket() : GamePacket(PPOffsets.FinishStatePacket, 2)
                 Connection.SendPacket(new SetGameTypePacket(levelname, 0, 1)); // TODO - level
                 Connection.SendPacket(new SCInitialConfigPacket());
 
-                // Test URLs                                          // Original Trion values
-                // Client treats these as folders and will add a trailing slash (/) with whatever it needs
-                // For example, opening the Wiki would send http://localhost/aaemu/platform/login
-                var authUrl = "http://localhost/aaemu/login";         // "https://session.draft.integration.triongames.priv";
-                var platformUrl = "http://localhost/aaemu/platform";  // "http://archeage.draft.integration.triongames.priv/commerce/pruchase/credits/purchase-credits-flow.action";
-                var commerceUrl = "http://localhost/aaemu/shop";      // "" ;
-
-                // It seems this packet can be ignored if you don't use the wiki/shop
+                // Web URLs for the embedded Awesomium browser (Get Credits popup,
+                // wiki, web shop). The client treats these as folder bases and
+                // appends its own paths, e.g. the wiki opens platformUrl + "/login".
+                // Original Trion platformUrl was the purchase-credits-flow page.
+                var trionWeb = AppConfiguration.Instance.TrionWeb;
                 Connection.SendPacket(new SCTrionConfigPacket(
-                    true,
-                    authUrl,
-                    platformUrl,
-                    commerceUrl)
-                ); // TODO - config files
+                    trionWeb.Activate,
+                    trionWeb.AuthUrl,
+                    trionWeb.PlatformUrl,
+                    trionWeb.CommerceUrl)
+                );
                 Connection.SendPacket(new SCAccountInfoPacket(
                         (int)Connection.Payment.Method,
                         Connection.Payment.Location,

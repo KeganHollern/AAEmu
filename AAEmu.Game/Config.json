@@ -38,6 +38,12 @@
     "DebugInfo": true,
     "DebugInfoLevel": 100,
 	"DefaultLanguage" : "en_us",
+    "TrionWeb": {
+        "Activate": true,
+        "AuthUrl": "http://localhost/aaemu/login",
+        "PlatformUrl": "http://localhost/aaemu/platform",
+        "CommerceUrl": "http://localhost/aaemu/shop"
+    },
     "AiChat": {
         "Enabled": false,
         "Endpoint": "http://127.0.0.1:8080/v1/chat/completions",
