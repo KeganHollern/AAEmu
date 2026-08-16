@@ -1639,6 +1639,18 @@ public class Unit : BaseUnit, IUnit
 
             // Send initial hit packet as well
             unit.SendPacketToPlayers([this, unit], new SCCombatFirstHitPacket(this.ObjId, unit.ObjId, 0));
+
+            // The first-hit packet already flips the CLIENT into combat stance.
+            // Mirror it on the server: without this, a player who is sight-aggroed
+            // and flees before any damage lands never gets a falling IsInBattle
+            // edge, so SCCombatCleared is never sent and the client stays in
+            // combat until relog. With the flag set, the combat timeout in
+            // CombatTick emits the clear once activity stops.
+            if (unit.Hp > 0 && !unit.IsInBattle)
+            {
+                unit.IsInBattle = true;
+                unit.LastCombatActivity = DateTime.UtcNow;
+            }
         }
 
         if (player == null)

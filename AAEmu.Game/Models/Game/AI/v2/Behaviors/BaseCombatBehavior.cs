@@ -240,7 +240,6 @@ public abstract class BaseCombatBehavior : Behavior
         }
     }
 
-    // TODO: Absolute return dist
     protected bool ShouldReturn
     {
         get
@@ -270,8 +269,14 @@ public abstract class BaseCombatBehavior : Behavior
             var distanceToIdlePosition = MathUtil.CalculateDistance(Ai.Owner.Transform.World.Position, Ai.IdlePosition, true);
 
             var res = distanceToTarget > returnDistance || distanceToIdlePosition > returnDistance;
-            if (res)
-                res = distanceToIdlePosition <= absoluteReturnDistance; // if it's greater, then we need a teleport to the spawn point
+            if (distanceToIdlePosition > absoluteReturnDistance)
+            {
+                // Way beyond the leash: always give up the chase. This used to be
+                // inverted (res forced false past the absolute distance), which made
+                // mobs pursue fleeing players across the map forever. ReturnState
+                // walks home and teleports if the walk cannot finish.
+                res = true;
+            }
             return res;
         }
     }
