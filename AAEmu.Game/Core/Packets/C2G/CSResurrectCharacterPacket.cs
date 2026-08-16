@@ -132,6 +132,12 @@ public class CSResurrectCharacterPacket() : GamePacket(CSOffsets.CSResurrectChar
         // Route death-debuffs based on death context (set by Character.DoDie).
         ApplyRevivalDebuffs(Connection.ActiveChar, inPlace);
 
+        // Retail grants a short protection shield after any resurrection
+        // (Beginner's Blessing, 6s); it falls off early on skill use or when
+        // interacting with nearby objects.
+        ApplyBuff(Connection.ActiveChar, new SkillCasterUnit(Connection.ActiveChar.ObjId),
+            (uint)BuffConstants.BeginnersBlessing);
+
         Connection.ActiveChar.IsUnderWater = false;
         //Connection.ActiveChar.StartRegen();
         Connection.ActiveChar.Breath = Connection.ActiveChar.LungCapacity;

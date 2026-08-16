@@ -63,6 +63,9 @@ public class GameProtocolHandler : BaseProtocolHandler
                 {
                     // On crash, force people out of the chat channels so we don't get phantom or duplicates
                     Managers.ChatManager.Instance.LeaveAllChannels(con.ActiveChar);
+                    // Force out of any area triggers so region-scoped buffs are
+                    // released immediately instead of waiting for a spatial diff
+                    Managers.World.AreaTriggerManager.Instance.EvictUnit(con.ActiveChar);
                     // ObjectIdManager.Instance.ReleaseId(con.ActiveChar.BcId);
                 }
                 con.OnDisconnect();
