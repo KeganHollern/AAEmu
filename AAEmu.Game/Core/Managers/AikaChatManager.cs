@@ -33,6 +33,12 @@ public class AikaChatManager : Singleton<AikaChatManager>, IAikaChatManager
         public readonly Queue<ChatLine> History = new();
         public bool Busy;
         public bool Pending;
+        /// <summary>Lines appended to this channel's history so far.</summary>
+        public long LatestSeq;
+        /// <summary>Value of <see cref="LatestSeq"/> when the in-flight request snapshotted history.</summary>
+        public long ServedSeq;
+        /// <summary>The bot's most recently sent line, for echo suppression.</summary>
+        public string LastSentReply = string.Empty;
     }
 
     private readonly ConcurrentDictionary<FactionsEnum, ChannelState> _channels = new();
@@ -78,6 +84,7 @@ public class AikaChatManager : Singleton<AikaChatManager>, IAikaChatManager
         lock (state.Sync)
         {
             AppendHistoryLocked(state, new ChatLine(sender.Name, message, false), config);
+            state.LatestSeq++;
             startReply = _trigger.IsMatch(message);
             if (startReply)
             {
@@ -102,8 +109,15 @@ public class AikaChatManager : Singleton<AikaChatManager>, IAikaChatManager
         try
         {
             ChatLine[] history;
+            string lastSent;
             lock (state.Sync)
+            {
                 history = [.. state.History];
+                lastSent = state.LastSentReply;
+                // Everything up to this point is covered by this request; a re-run
+                // is only worth it for lines that arrive after this snapshot.
+                state.ServedSeq = state.LatestSeq;
+            }
 
             var payload = BuildRequestPayload(config, channel.InternalName, history);
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
@@ -115,10 +129,24 @@ public class AikaChatManager : Singleton<AikaChatManager>, IAikaChatManager
             if (reply.Length == 0)
                 reply = "H-hmph! I wasn't even listening!";
 
-            channel.SendPacket(new SCChatMessagePacket(ChatType.Ally, channel.Faction, config.BotName, reply));
-            lock (state.Sync)
-                AppendHistoryLocked(state, new ChatLine(config.BotName, reply, true), config);
-            Logger.Info($"{config.BotName} replied in {channel.InternalName} faction chat ({reply.Length} chars)");
+            // A re-run whose history ends with the bot's own line tends to make the
+            // model repeat itself before adding anything new; keep only the new part.
+            reply = StripRepeatedPrefix(reply, lastSent);
+            if (reply.Length == 0)
+            {
+                Logger.Info($"{config.BotName} had nothing new to add in {channel.InternalName} faction chat");
+            }
+            else
+            {
+                channel.SendPacket(new SCChatMessagePacket(ChatType.Ally, channel.Faction, config.BotName, reply));
+                lock (state.Sync)
+                {
+                    AppendHistoryLocked(state, new ChatLine(config.BotName, reply, true), config);
+                    state.LatestSeq++;
+                    state.LastSentReply = reply;
+                }
+                Logger.Info($"{config.BotName} replied in {channel.InternalName} faction chat ({reply.Length} chars)");
+            }
         }
         catch (Exception e)
         {
@@ -129,7 +157,7 @@ public class AikaChatManager : Singleton<AikaChatManager>, IAikaChatManager
             bool rerun;
             lock (state.Sync)
             {
-                rerun = state.Pending;
+                rerun = state.Pending && state.LatestSeq > state.ServedSeq;
                 state.Pending = false;
                 state.Busy = rerun;
             }
@@ -167,7 +195,33 @@ public class AikaChatManager : Singleton<AikaChatManager>, IAikaChatManager
             $"Rules: reply with exactly one short chat line under {Math.Max(40, config.MaxReplyLength - 60)} characters, plain text only. " +
             "No markdown, no surrounding quotes, and never prefix your own name. " +
             "Match the language the players are writing in. " +
+            "If several players spoke since your last line, answer them together in that one line. " +
+            "Never repeat or rephrase a line you already sent. " +
             "Stay in character; never mention AI, models, or prompts.";
+    }
+
+    /// <summary>
+    /// Drops a leading echo of the bot's previous line from a new reply. When two
+    /// mentions race, the follow-up request's history ends with the bot's own line
+    /// and the model tends to replay it before adding anything new; only the new
+    /// tail is worth sending. Returns the reply unchanged when there is no
+    /// substantial echo, and an empty string when the reply adds nothing.
+    /// </summary>
+    internal static string StripRepeatedPrefix(string reply, string previousReply)
+    {
+        if (string.IsNullOrEmpty(previousReply) || reply.Length == 0)
+            return reply;
+
+        var overlap = 0;
+        var max = Math.Min(reply.Length, previousReply.Length);
+        while (overlap < max && reply[overlap] == previousReply[overlap])
+            overlap++;
+
+        // Only treat it as an echo when most of the previous line is being replayed.
+        if (overlap < 24 || overlap < previousReply.Length * 3 / 4)
+            return reply;
+
+        return reply[overlap..].TrimStart(' ', '.', ',', '!', '?', ';', ':', '-', '\u2026');
     }
 
     /// <summary>Builds the chat-completions request body from the remembered channel history.</summary>
