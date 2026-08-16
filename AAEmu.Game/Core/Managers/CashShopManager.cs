@@ -194,7 +194,20 @@ public class CashShopManager(IWorldManager worldManager, IAccountManager account
             if (shopItem == null)
                 continue;
 
-            packets.AddPacket(new SCICSGoodListPacket(isLast, numberOfPages, mainTabId, subTabId, shopItem));
+            int? remainingOverride = null;
+            if (shopItem.LimitedType != CashShopLimitType.None && connection.ActiveChar != null)
+            {
+                // The protocol has no per-buyer purchase-count packet, so the
+                // client cannot grey out an item whose account/character limit
+                // this viewer already consumed. Mask the remaining count to 0
+                // for them: "# Left" becomes "left for you" and the client
+                // renders its sold-out state instead of a doomed buy flow.
+                var bought = GetPurchasedCount(shopItem, connection.AccountId, connection.ActiveChar.Id);
+                if (bought >= shopItem.LimitedStockMax)
+                    remainingOverride = 0;
+            }
+
+            packets.AddPacket(new SCICSGoodListPacket(isLast, numberOfPages, mainTabId, subTabId, shopItem, remainingOverride));
         }
 
         for (var i = 0; i < thisPageItems.Count; i++)
@@ -269,6 +282,36 @@ public class CashShopManager(IWorldManager worldManager, IAccountManager account
             }
         }
         return res;
+    }
+
+    /// <summary>
+    /// Returns how many units of a limited ShopItem the given account or
+    /// character has already bought, across every SKU attached to it.
+    /// </summary>
+    public uint GetPurchasedCount(IcsItem shopItem, uint accountId, uint characterId)
+    {
+        if (shopItem.LimitedType == CashShopLimitType.None)
+            return 0;
+
+        var oldSales = GetSalesForShopItem(
+            accountId,
+            shopItem.LimitedType == CashShopLimitType.Character ? characterId : 0,
+            shopItem.ShopId);
+
+        var count = 0u;
+        foreach (var oldSale in oldSales)
+        {
+            // Ignore if the SKU no longer exists
+            if (!SKUs.TryGetValue(oldSale.Sku, out var oldSku))
+                continue;
+
+            if (shopItem.LimitedType == CashShopLimitType.Character && oldSale.BuyerChar == characterId)
+                count += oldSku.ItemCount;
+            else if (shopItem.LimitedType == CashShopLimitType.Account && oldSale.BuyerAccount == accountId)
+                count += oldSku.ItemCount;
+        }
+
+        return count;
     }
 
     public bool LogSale(uint buyerAccount, uint buyerChar,
