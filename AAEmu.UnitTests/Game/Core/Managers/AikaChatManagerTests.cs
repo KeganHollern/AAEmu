@@ -51,6 +51,36 @@ public class AikaChatManagerTests
     }
 
     [Test]
+    public async Task StripRepeatedPrefixDropsFullEcho()
+    {
+        const string prev = "Ew, no. He talks too much. It's not jealousy or anything.";
+        await Assert.That(AikaChatManager.StripRepeatedPrefix(prev, prev)).IsEqualTo(string.Empty);
+    }
+
+    [Test]
+    public async Task StripRepeatedPrefixKeepsOnlyTheNewTail()
+    {
+        const string prev = "Ew, no. He talks too much. It's not jealousy or anything. Just common sense.";
+        const string echoed = prev + " And it's four!";
+        await Assert.That(AikaChatManager.StripRepeatedPrefix(echoed, prev)).IsEqualTo("And it's four!");
+    }
+
+    [Test]
+    [Arguments("Hmph. Fine, I'll help you this once.", "Something entirely different was said before.")]
+    [Arguments("Ew, no way that works.", "Ew, no. He talks too much, seriously.")]
+    [Arguments("short echo", "short")]
+    public async Task StripRepeatedPrefixKeepsRepliesWithoutSubstantialEcho(string reply, string previous)
+    {
+        await Assert.That(AikaChatManager.StripRepeatedPrefix(reply, previous)).IsEqualTo(reply);
+    }
+
+    [Test]
+    public async Task StripRepeatedPrefixIgnoresEmptyPrevious()
+    {
+        await Assert.That(AikaChatManager.StripRepeatedPrefix("Hmph.", "")).IsEqualTo("Hmph.");
+    }
+
+    [Test]
     public async Task RequestPayloadMapsHistoryRolesAndDisablesThinking()
     {
         var config = new AiChatConfig();
