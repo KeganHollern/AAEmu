@@ -130,6 +130,7 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
                 break;
             case ChatType.Ally: //faction (by current allegiance)
                 ChatManager.Instance.GetFactionChat(Connection.ActiveChar.Faction.MotherId).SendMessage(Connection.ActiveChar, message, ability, languageType);
+                AikaChatManager.Instance.OnFactionChatMessage(Connection.ActiveChar, message);
                 break;
             case ChatType.Judge: //faction (by current allegiance)
                 ChatManager.Instance.GetTrialChat(Connection.ActiveChar)?.SendMessage(Connection.ActiveChar, message, ability, languageType);
