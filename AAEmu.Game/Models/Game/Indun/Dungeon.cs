@@ -223,7 +223,6 @@ public class Dungeon
             // abandoned-instance sweep; the caller falls through to creating a fresh instance.
             if (IsDestroyed)
                 return false;
-            _emptySince = null;
         }
 
         if (EnterRequests.Contains(character))
@@ -241,6 +240,17 @@ public class Dungeon
             Logger.Info($"[{World}] Player {character.Name} did too many dungeon attempts.");
             character.SendErrorMessage(ErrorMessageType.InstanceVisitLimit);
             return false;
+        }
+
+        // aaemu-cluster#92 (#102, review): disarm the abandoned sweep only once the player has
+        // actually passed the refusal checks above. Clearing the stamp earlier let a refused
+        // attempt (court case, entry limit, creator disconnecting during load) pin a never-entered
+        // instance until the 24h expiry.
+        lock (_lock)
+        {
+            if (IsDestroyed)
+                return false;
+            _emptySince = null;
         }
 
         PlayersWithAccess.Add(character.Id);

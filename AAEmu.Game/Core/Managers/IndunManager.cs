@@ -248,11 +248,14 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
                     return false;
                 }
 
-                // A false return can also mean the sweep destroyed this instance between our check
-                // and the queue attempt; fall through to creating a fresh one. (aaemu-cluster#92, #102)
+                // Fall through to creating a fresh instance ONLY when the sweep destroyed this one
+                // between our check and the queue attempt; other refusals (court case, entry limit)
+                // must not orphan a brand-new instance. (aaemu-cluster#92, #102, review)
                 if (possibleTargetInstance.QueuePlayer(character))
                     return true;
-                break;
+                if (possibleTargetInstance.IsDestroyed)
+                    break;
+                return false;
             }
         }
         else
@@ -275,7 +278,9 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
 
                 if (possibleTargetInstance.QueuePlayer(character))
                     return true;
-                break;
+                if (possibleTargetInstance.IsDestroyed)
+                    break;
+                return false;
             }
         }
 
