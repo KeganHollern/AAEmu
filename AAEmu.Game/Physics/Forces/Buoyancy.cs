@@ -50,11 +50,6 @@ public class Buoyancy : ForceGenerator
     /// </summary>
     public float Damping { get; set; }
 
-    /// <summary>
-    /// Flow direction and magnitude.
-    /// </summary>
-    public JVector Flow { get; set; }
-
     private DefineFluidArea _fluidArea;
     private float WaterSurfaceLevel => FluidBox.Max.Y;
 
@@ -66,7 +61,6 @@ public class Buoyancy : ForceGenerator
     {
         Density = BaseWaterDensity;
         Damping = 0.1f;
-        Flow = JVector.Zero;
     }
 
     /// <summary>
@@ -211,6 +205,8 @@ public class Buoyancy : ForceGenerator
             if (slave.ShipController == null || slave.ShipController.ShipModel.Mass <= 0)
                 continue;
 
+            var shipModel = slave.ShipController.ShipModel;
+
             // Skip simulation if still summoning
             body.AffectedByGravity = slave.SpawnTime.AddSeconds(slave.Template.PortalTime) <= DateTime.UtcNow;
             if (!body.AffectedByGravity)
@@ -228,35 +224,56 @@ public class Buoyancy : ForceGenerator
             var depth = waterSurfaceLevel - body.Position.Y;
             if (depth <= 0) continue;
 
-            ApplyDrag(body, slave.ShipController.ShipModel.MassBoxSizeX, slave.ShipController.ShipModel.MassBoxSizeY, slave.ShipController.ShipModel.MassBoxSizeZ);
+            var grounded = slave.GroundContactLatched || slave.CachedFloorLevel > slave.CachedWaterSurface;
+            var waterVelocity = grounded
+                ? JVector.Zero
+                : new JVector(slave.CachedWaterFlow.X, slave.CachedWaterFlow.Z, slave.CachedWaterFlow.Y);
+            var relativeVelocity = body.Velocity - waterVelocity;
+
+            ApplyDrag(body, relativeVelocity, shipModel.MassBoxSizeX, shipModel.MassBoxSizeY,
+                shipModel.MassBoxSizeZ);
             // Calculate submerged depth and buoyancy force
             var submergedDepth = Math.Max(0, waterSurfaceLevel - body.Position.Y);
             var isOnWater = submergedDepth > 0;
 
             if (isOnWater)
             {
-                // Apply buoyancy and drag forces
+                // Apply buoyancy and water resistance. Resistance acts on velocity relative to the
+                // local water flow, as it does in CryPhysics, rather than damping toward world zero.
                 var buoyancyForce = new JVector(0, submergedDepth * body.Mass * Density * ShipWaterDensityMul * 9.81f, 0);
                 body.AddForce(buoyancyForce);
 
-                var dragForce = new JVector(-body.Velocity.X * Density, -body.Velocity.Y * Density, -body.Velocity.Z * Density);
-                body.AddForce(dragForce);
+                var resistancePerSecond = MathF.Max(0f, shipModel.WaterResistance);
+                var resistanceForce = CalculateWaterResistanceForce(relativeVelocity, body.Mass,
+                    resistancePerSecond, timeStep);
+                if (resistanceForce.LengthSquared() > 0f)
+                    body.AddForce(resistanceForce);
             }
         }
     }
 
-    private void ApplyDrag(RigidBody body, float hullWidth, float hullLength, float hullHeight)
+    internal static JVector CalculateWaterResistanceForce(JVector relativeVelocity, float mass,
+        float resistancePerSecond, float timeStep)
     {
-        var velocity = body.Velocity;
-        var speed = velocity.Length();
+        if (mass <= 0f || resistancePerSecond <= 0f || timeStep <= 1e-6f)
+            return JVector.Zero;
+
+        var response = 1f - MathF.Exp(-resistancePerSecond * timeStep);
+        return relativeVelocity * (-mass * response / timeStep);
+    }
+
+    private void ApplyDrag(RigidBody body, JVector relativeVelocity, float hullWidth, float hullLength,
+        float hullHeight)
+    {
+        var speed = relativeVelocity.Length();
         if (speed < 0.1f) return;
 
         const float DragCoefficient = 0.8f;
         var area = hullWidth * hullHeight;
         var drag = 0.5f * Density * DragCoefficient * area * speed * speed;
-        JVector.NormalizeInPlace(ref velocity);
-        JVector.NegateInPlace(ref velocity);
-        velocity *= drag;
-        body.AddForce(velocity);
+        JVector.NormalizeInPlace(ref relativeVelocity);
+        JVector.NegateInPlace(ref relativeVelocity);
+        relativeVelocity *= drag;
+        body.AddForce(relativeVelocity);
     }
 }

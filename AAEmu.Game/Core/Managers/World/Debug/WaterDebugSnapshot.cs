@@ -65,7 +65,12 @@ public static class WaterDebugSnapshot
         {
             var a = item.Area;
             var dist = MathF.Sqrt(item.DistSq);
-            var tag = a.AreaType == WaterBodyAreaType.Polygon ? "[P]" : "[L]";
+            var tag = a.AreaType switch
+            {
+                WaterBodyAreaType.Polygon => "[P]",
+                WaterBodyAreaType.River => "[R]",
+                _ => "[L]"
+            };
             var shortName = ShortWaterName(a.Name);
             var bb = a.BoundingBox.Contains(px, py);
             var rwExtra = a.AreaType == WaterBodyAreaType.LineArray ? $" rw={a.RiverWidth:F1}" : "";
@@ -109,7 +114,7 @@ public static class WaterDebugSnapshot
         var river = 0;
         var area = 0;
         var ocean = 0;
-        var sector = 0;
+        var unknown = 0;
         foreach (var p in list)
         {
             if (p is not AAEmu.Game.Models.CryEngine.Objects.ObjectDataType11Water w)
@@ -120,14 +125,14 @@ public static class WaterDebugSnapshot
                 case AAEmu.Game.Models.CryEngine.Objects.WaterObjectVolumeType.River: river++; break;
                 case AAEmu.Game.Models.CryEngine.Objects.WaterObjectVolumeType.Area: area++; break;
                 case AAEmu.Game.Models.CryEngine.Objects.WaterObjectVolumeType.Ocean: ocean++; break;
-                case AAEmu.Game.Models.CryEngine.Objects.WaterObjectVolumeType.Sector: sector++; break;
+                case AAEmu.Game.Models.CryEngine.Objects.WaterObjectVolumeType.Unknown: unknown++; break;
             }
         }
 
         if (n == 0)
             yield break;
 
-        yield return $"[waterprobe] Cell client [object] water volumes={n} (River={river} Area={area} Ocean={ocean} Sector={sector})";
+        yield return $"[waterprobe] Cell client [object] water volumes={n} (River={river} Area={area} Ocean={ocean} Unknown={unknown})";
     }
 
     private static float DistSqPointToRect(float px, float py, RectangleF r)

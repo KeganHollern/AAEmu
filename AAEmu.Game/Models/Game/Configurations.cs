@@ -106,7 +106,7 @@ public class WorldConfig
     public float TargetPhysicsTps { get; set; } = 25f;
 
     /// <summary>
-    /// Ship wind model used for open-sea wind when there is no river flow (<see cref="Slave.CachedWaterFlow"/> is zero).
+    /// Ship wind model. Water-current velocity is simulated independently from wind.
     /// Configure in <c>AAEmu.Game/Configurations/World.json</c> under <c>World.WindModel</c>.
     ///
     /// Allowed values:

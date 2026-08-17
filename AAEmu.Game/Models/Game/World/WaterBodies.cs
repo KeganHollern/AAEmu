@@ -48,17 +48,6 @@ public class WaterBodies
     public static float GetMinIngestBboxAreaSqm(bool isMainWorld) =>
         isMainWorld ? MinWaterBboxAreaSquareMeters : MinInstanceWaterBboxAreaSquareMeters;
 
-    // New contract: gameplay flow is heuristic-only, fixed speed.
-    private const float HeuristicRiverFlowSpeed = 1f;
-
-    /// <summary>Multiply <see cref="WaterBodyArea.FlowSpeedSigned"/> after terrain/geometry (+1 or −1). Set −1 if drift is opposite to client polyline/PCA.</summary>
-    private const float HeuristicFlowSignHack = -1f;
-
-    // River-like thresholds (meters)
-    private const float RiverLikeMinLengthMeters = 120f;
-    private const float RiverLikeMinAspectRatio = 2.5f;
-    private const float RiverLikeMaxHalfWidthMeters = 130f;
-
     internal static bool TryGetRiverLikePolygonMetrics(List<Vector3> points, out float lengthMeters,
         out float maxHalfWidthMeters, out float meanFullWidthMeters, out float areaSqm, out float aspect,
         out Vector2 principalAxisUnit)
@@ -141,23 +130,6 @@ public class WaterBodies
         return true;
     }
 
-    private static bool IsRiverLikePolygon(List<Vector3> points, out Vector2 axisUnit)
-    {
-        axisUnit = Vector2.UnitX;
-        if (!TryGetRiverLikePolygonMetrics(points, out var length, out var maxHalfWidth, out var meanFullWidth, out _,
-                out var aspect, out var axis))
-            return false;
-        if (length < RiverLikeMinLengthMeters)
-            return false;
-        if (maxHalfWidth > RiverLikeMaxHalfWidthMeters)
-            return false;
-        if (aspect < RiverLikeMinAspectRatio)
-            return false;
-
-        axisUnit = axis;
-        return true;
-    }
-
     private static Vector2 GetMeanXY(List<Vector3> points)
     {
         var n = points.Count;
@@ -206,29 +178,6 @@ public class WaterBodies
         cxx = (float)(sxx * inv);
         cxy = (float)(sxy * inv);
         cyy = (float)(syy * inv);
-    }
-
-    private static bool TryGetHeightNoLoad(WorldTemplate template, Vector2 p, out float h)
-    {
-        h = 0f;
-        if (template == null)
-            return false;
-        var cellX = (int)p.X / WorldManager.CELL_SIZE;
-        var cellY = (int)p.Y / WorldManager.CELL_SIZE;
-        var cell = template.GetCell(cellX, cellY);
-        if (cell == null || cell.HeightMap == null || !cell.Loaded)
-            return false;
-        h = cell.GetHeight((int)p.X, (int)p.Y);
-        return true;
-    }
-
-    private static float GetSignedSpeedFromTerrainNoLoad(WorldTemplate template, Vector2 a, Vector2 b, float speedAbs)
-    {
-        if (speedAbs <= 0f)
-            return 0f;
-        if (!TryGetHeightNoLoad(template, a, out var ha) || !TryGetHeightNoLoad(template, b, out var hb))
-            return speedAbs; // unknown; keep geometric sign
-        return hb > ha ? -speedAbs : speedAbs;
     }
 
     private bool IsWaterFootprintTooSmall(WaterBodyArea area)
@@ -376,6 +325,8 @@ public class WaterBodies
             var area = Areas[(int)areaId];
             for (var i = 0; i < area.Points.Count; i++)
                 area.Points[i] = area.Points[i] with { Z = area.Points[i].Z + deltaZ };
+            if (MathF.Abs(area.SurfacePlaneNormal.Z) > 1e-6f)
+                area.SurfacePlaneD -= area.SurfacePlaneNormal.Z * deltaZ;
             area.Depth = MathF.Max(0f, area.Depth + deltaZ);
             area.UpdateBounds();
             return true;
@@ -386,107 +337,89 @@ public class WaterBodies
     {
         flowDirection = Vector3.Zero;
 
-        if (point.Z <= OceanLevel)
-            return true;
-
         lock (_lock)
         {
             EnsureSpatialIndexUnderLock();
-
-            var totalFlow = Vector3.Zero;
-            var targets = 0;
-            var px = point.X;
-            var py = point.Y;
-            var cx = (int)MathF.Floor(px / SpatialCellSize);
-            var cy = (int)MathF.Floor(py / SpatialCellSize);
-
-            if (_areaIndexByCell == null || !_areaIndexByCell.TryGetValue((cx, cy), out var inCell))
-            {
-                flowDirection = Vector3.Zero;
-                return false;
-            }
-
-            foreach (var areaId in inCell)
-            {
-                var area = Areas[(int)areaId];
-                if (!area.BoundingBox.Contains(px, py))
-                    continue;
-
-                if (area.GetSurface(point, out var surfacePoint, out var fd) &&
-                    point.Z <= surfacePoint.Z &&
-                    point.Z >= surfacePoint.Z - area.Depth)
-                {
-                    totalFlow += fd;
-                    targets++;
-                }
-            }
-
-            if (targets > 0)
-            {
-                flowDirection = totalFlow / targets;
+            if (TrySelectAreaUnderLock(point, requireAtOrBelowSurface: true, out _, out flowDirection))
                 return true;
-            }
         }
 
         flowDirection = Vector3.Zero;
-        return false;
+        return point.Z <= OceanLevel;
     }
 
     public float GetWaterSurface(Vector3 point, out Vector3 flowDirection)
     {
         flowDirection = Vector3.Zero;
 
-        if (point.Z <= OceanLevel)
-            return OceanLevel;
-
         lock (_lock)
         {
             EnsureSpatialIndexUnderLock();
-
-            var closestSurfaceDist = float.PositiveInfinity;
-            var chosenZ = OceanLevel;
-            var px = point.X;
-            var py = point.Y;
-            var cx = (int)MathF.Floor(px / SpatialCellSize);
-            var cy = (int)MathF.Floor(py / SpatialCellSize);
-
-            if (_areaIndexByCell != null && _areaIndexByCell.TryGetValue((cx, cy), out var inCell))
-            {
-                foreach (var areaId in inCell)
-                {
-                    var area = Areas[(int)areaId];
-                    if (!area.BoundingBox.Contains(px, py))
-                        continue;
-
-                    if (!area.GetSurface(point, out var surfacePoint, out var f))
-                        continue;
-                    if (point.Z < surfacePoint.Z - area.Depth)
-                        continue;
-
-                    var surfaceDistance = MathF.Abs(surfacePoint.Z - point.Z);
-                    if (surfaceDistance < closestSurfaceDist)
-                    {
-                        closestSurfaceDist = surfaceDistance;
-                        chosenZ = surfacePoint.Z;
-                        flowDirection = f;
-                    }
-                }
-            }
-
-            if (closestSurfaceDist < float.PositiveInfinity)
-                return chosenZ;
+            if (TrySelectAreaUnderLock(point, requireAtOrBelowSurface: false, out var surfacePoint,
+                    out flowDirection))
+                return surfacePoint.Z;
         }
 
         return OceanLevel;
     }
 
-    private static Vector3 WaterPointToWorld(Vector3 cellOffset, Vector3 filePoint, float surfaceZ)
+    /// <summary>
+    /// Selects the smallest containing physical water area, matching CryPhysics overlap priority.
+    /// Caller must hold <see cref="_lock"/> and have ensured the spatial index.
+    /// </summary>
+    private bool TrySelectAreaUnderLock(Vector3 point, bool requireAtOrBelowSurface, out Vector3 chosenSurface,
+        out Vector3 chosenFlow)
+    {
+        chosenSurface = Vector3.Zero;
+        chosenFlow = Vector3.Zero;
+
+        var cx = (int)MathF.Floor(point.X / SpatialCellSize);
+        var cy = (int)MathF.Floor(point.Y / SpatialCellSize);
+        if (_areaIndexByCell == null || !_areaIndexByCell.TryGetValue((cx, cy), out var inCell))
+            return false;
+
+        var found = false;
+        var smallestFootprint = float.PositiveInfinity;
+        var nearestSurfaceDistance = float.PositiveInfinity;
+        var chosenId = uint.MaxValue;
+
+        foreach (var areaId in inCell)
+        {
+            var area = Areas[(int)areaId];
+            if (!area.BoundingBox.Contains(point.X, point.Y) ||
+                !area.GetSurface(point, out var surfacePoint, out var flow))
+                continue;
+            if (requireAtOrBelowSurface && point.Z > surfacePoint.Z)
+                continue;
+            if (point.Z < surfacePoint.Z - area.Depth)
+                continue;
+
+            var footprint = area.BoundingBox.Width * area.BoundingBox.Height;
+            var surfaceDistance = MathF.Abs(surfacePoint.Z - point.Z);
+            if (footprint > smallestFootprint ||
+                (MathF.Abs(footprint - smallestFootprint) <= 1e-4f &&
+                 (surfaceDistance > nearestSurfaceDistance ||
+                  (MathF.Abs(surfaceDistance - nearestSurfaceDistance) <= 1e-4f && area.Id >= chosenId))))
+                continue;
+
+            found = true;
+            smallestFootprint = footprint;
+            nearestSurfaceDistance = surfaceDistance;
+            chosenId = area.Id;
+            chosenSurface = surfacePoint;
+            chosenFlow = flow;
+        }
+
+        return found;
+    }
+
+    private static Vector3 WaterPointToWorld(Vector3 cellOffset, ObjectDataType11Water water, Vector3 filePoint)
     {
         const float localBand = WorldManager.CELL_SIZE * 2f;
         var xyCellLocal = filePoint.X <= localBand && filePoint.Y <= localBand &&
                           filePoint.X >= -512f && filePoint.Y >= -512f;
         var xy = xyCellLocal ? cellOffset + filePoint : filePoint;
-        return xy with { Z = surfaceZ };
+        return xy with { Z = water.GetSurfaceHeight(filePoint.X, filePoint.Y) };
     }
 
     public void AddFromCellData(WorldCell worldCell)
@@ -518,117 +451,118 @@ public class WaterBodies
         if (prefab is not ObjectDataType11Water water)
             return;
 
-        if (water.VolumeType == WaterObjectVolumeType.Ocean &&
-            water.SurfaceHeight <= worldCell.Template.OceanLevel + TemplateSeaDuplicateSurfaceMarginMeters)
-            return;
-
-        var likeRiver =
-            water.VolumeType == WaterObjectVolumeType.River;
-        var likeArea =
-            water.VolumeType == WaterObjectVolumeType.Area ||
-            water.VolumeType == WaterObjectVolumeType.Ocean ||
-            water.VolumeType == WaterObjectVolumeType.Sector;
-
-        // Surface polygon (always present for contour volumes)
-        if (water.PhysicsContourPointsList.Count >= 3 && (likeArea || likeRiver))
-            AddPolygonFromPhysicsContour(worldCell.Template, water, cellOffset,
-                likeRiver
-                    ? $"WaterContour_C{worldCell.CellX}-{worldCell.CellY}_{prefabIdx}"
-                    : $"Water_C{worldCell.CellX}-{worldCell.CellY}_{prefabIdx}");
-
-        // River corridor (only for explicit river volumes)
-        if (!likeRiver)
-            return;
-
-        List<Vector3> riverWorldPoints = null;
-        if (water.ShapePointsList.Count >= 2)
+        switch (water.VolumeType)
         {
-            riverWorldPoints = [];
-            foreach (var sp in water.ShapePointsList)
-                riverWorldPoints.Add(WaterPointToWorld(cellOffset, sp, water.SurfaceHeight));
-        }
-        else if (Vector3.Distance(water.StartPos, water.EndPos) > 0.5f)
-        {
-            riverWorldPoints =
-            [
-                WaterPointToWorld(cellOffset, water.StartPos, water.SurfaceHeight),
-                WaterPointToWorld(cellOffset, water.EndPos, water.SurfaceHeight)
-            ];
-        }
-
-        if (riverWorldPoints is not { Count: >= 2 })
-            return;
-
-        var newRiver = new WaterBodyArea($"Segment_C{worldCell.CellX}-{worldCell.CellY}_{prefabIdx}",
-            WaterBodyAreaType.LineArray);
-        newRiver.Depth = water.Depth;
-        newRiver.RiverWidth = Math.Clamp(water.Depth * 2f, 4f, 40f);
-        foreach (var centerPoint in riverWorldPoints)
-        {
-            if (!newRiver.Points.Contains(centerPoint))
-                newRiver.Points.Add(centerPoint);
-        }
-
-        var a = new Vector2(newRiver.Points[0].X, newRiver.Points[0].Y);
-        var b = new Vector2(newRiver.Points[^1].X, newRiver.Points[^1].Y);
-        var dir = b - a;
-        newRiver.FlowAxis = dir.LengthSquared() > 1e-12f ? Vector2.Normalize(dir) : Vector2.UnitX;
-        newRiver.FlowSpeedAbs = HeuristicRiverFlowSpeed;
-        newRiver.FlowSpeedSigned = GetSignedSpeedFromTerrainNoLoad(worldCell.Template, a, b, HeuristicRiverFlowSpeed) * HeuristicFlowSignHack;
-        newRiver.Speed = newRiver.FlowSpeedSigned;
-        newRiver.UpdateBounds();
-        if (IsWaterFootprintTooSmall(newRiver))
-            return;
-        lock (_lock)
-        {
-            newRiver.Id = (uint)Areas.Count;
-            Areas.Add(newRiver);
-            SpatialIndexAddUnderLock(newRiver);
-            _indexedAreaCount = Areas.Count;
+            case WaterObjectVolumeType.Area when water.PhysicsContourPointsList.Count >= 3:
+                AddPolygonFromPhysicsContour(water, cellOffset,
+                    $"Water_C{worldCell.CellX}-{worldCell.CellY}_{prefabIdx}");
+                break;
+            case WaterObjectVolumeType.River when water.PhysicsContourPointsList.Count >= 3:
+                AddRiverFromPhysicsContour(water, cellOffset,
+                    $"River_C{worldCell.CellX}-{worldCell.CellY}_{prefabIdx}");
+                break;
+            case WaterObjectVolumeType.Ocean
+                when water.SurfaceHeight > worldCell.Template.OceanLevel + TemplateSeaDuplicateSurfaceMarginMeters &&
+                     water.PhysicsContourPointsList.Count >= 3:
+                AddPolygonFromPhysicsContour(water, cellOffset,
+                    $"Ocean_C{worldCell.CellX}-{worldCell.CellY}_{prefabIdx}");
+                break;
         }
     }
 
-    private void AddPolygonFromPhysicsContour(WorldTemplate template, ObjectDataType11Water water, Vector3 cellOffset,
-        string name)
+    private void AddPolygonFromPhysicsContour(ObjectDataType11Water water, Vector3 cellOffset, string name)
     {
-        var newLake = new WaterBodyArea(name, WaterBodyAreaType.Polygon);
-        newLake.Depth = water.Depth;
+        var newLake = new WaterBodyArea(name, WaterBodyAreaType.Polygon)
+        {
+            Depth = water.Depth,
+            FlowSpeedAbs = 0f,
+            FlowSpeedSigned = 0f,
+            Speed = 0f
+        };
         foreach (var v3 in water.PhysicsContourPointsList)
         {
-            var p = WaterPointToWorld(cellOffset, v3, water.SurfaceHeight);
+            var p = WaterPointToWorld(cellOffset, water, v3);
             if (!newLake.Points.Contains(p))
                 newLake.Points.Add(p);
         }
 
-        if (newLake.Points.Count == 0)
+        if (newLake.Points.Count < 3)
             return;
 
-        newLake.Points.Add(newLake.Points[0]);
+        SetWorldSurfacePlane(newLake, water.FogPlaneNormal);
         newLake.UpdateBounds();
-
-        newLake.FlowSpeedAbs = 0f;
-        newLake.FlowSpeedSigned = 0f;
-        newLake.Speed = 0f;
-        if (IsRiverLikePolygon(newLake.Points, out var axis))
-        {
-            newLake.FlowAxis = axis;
-            newLake.FlowSpeedAbs = HeuristicRiverFlowSpeed;
-
-            var mean = GetMeanXY(newLake.Points);
-            var halfLen = Math.Max(10f, newLake.BoundingBox.Width + newLake.BoundingBox.Height) * 0.25f;
-            var p0 = mean - axis * halfLen;
-            var p1 = mean + axis * halfLen;
-            newLake.FlowSpeedSigned = GetSignedSpeedFromTerrainNoLoad(template, p0, p1, HeuristicRiverFlowSpeed) * HeuristicFlowSignHack;
-            newLake.Speed = newLake.FlowSpeedSigned;
-        }
-
         if (IsWaterFootprintTooSmall(newLake))
             return;
+
+        RegisterArea(newLake);
+    }
+
+    private void AddRiverFromPhysicsContour(ObjectDataType11Water water, Vector3 cellOffset, string name)
+    {
+        var points = new List<Vector3>(water.PhysicsContourPointsList.Count);
+        foreach (var point in water.PhysicsContourPointsList)
+            points.Add(WaterPointToWorld(cellOffset, water, point));
+
+        var river = new WaterBodyArea(name, WaterBodyAreaType.River)
+        {
+            Depth = water.Depth,
+            Points = points,
+            Speed = water.Speed,
+            FlowSpeedAbs = MathF.Abs(water.Speed),
+            FlowSpeedSigned = water.Speed
+        };
+        SetWorldSurfacePlane(river, water.FogPlaneNormal);
+        river.FlowVelocity = GetNativeRiverFlowVelocity(water, cellOffset);
+        var horizontalFlow = new Vector2(river.FlowVelocity.X, river.FlowVelocity.Y);
+        if (horizontalFlow.LengthSquared() > 1e-12f)
+            river.FlowAxis = Vector2.Normalize(horizontalFlow);
+        river.UpdateBounds();
+
+        // This contour is an explicit client physics area. Do not discard narrow/short river
+        // sections using the decorative-puddle threshold used for ordinary area volumes.
+        RegisterArea(river);
+    }
+
+    /// <summary>
+    /// ArcheAge r208022 uses the CryEngine 3 river contract: stream speed is uniform along the
+    /// river render quad's initial vector. Points 0/1 form the first cross-section and 2/3 the next.
+    /// </summary>
+    private static Vector3 GetNativeRiverFlowVelocity(ObjectDataType11Water water, Vector3 cellOffset)
+    {
+        if (water.ShapePointsList.Count != 4 || water.Speed == 0f)
+            return Vector3.Zero;
+
+        var p0 = WaterPointToWorld(cellOffset, water, water.ShapePointsList[0]);
+        var p1 = WaterPointToWorld(cellOffset, water, water.ShapePointsList[1]);
+        var p2 = WaterPointToWorld(cellOffset, water, water.ShapePointsList[2]);
+        var p3 = WaterPointToWorld(cellOffset, water, water.ShapePointsList[3]);
+        var firstCrossSection = (p0 + p1) * 0.5f;
+        var secondCrossSection = (p2 + p3) * 0.5f;
+        return NormalizeOrZero(secondCrossSection - firstCrossSection) * water.Speed;
+    }
+
+    private static Vector3 NormalizeOrZero(Vector3 value)
+    {
+        var lengthSquared = value.LengthSquared();
+        return lengthSquared > 1e-12f ? value / MathF.Sqrt(lengthSquared) : Vector3.Zero;
+    }
+
+    private static void SetWorldSurfacePlane(WaterBodyArea area, Vector3 normal)
+    {
+        if (area.Points.Count == 0 || MathF.Abs(normal.Z) <= 1e-6f)
+            return;
+
+        area.SurfacePlaneNormal = normal;
+        area.SurfacePlaneD = -Vector3.Dot(normal, area.Points[0]);
+    }
+
+    private void RegisterArea(WaterBodyArea area)
+    {
         lock (_lock)
         {
-            newLake.Id = (uint)Areas.Count;
-            Areas.Add(newLake);
-            SpatialIndexAddUnderLock(newLake);
+            area.Id = (uint)Areas.Count;
+            Areas.Add(area);
+            SpatialIndexAddUnderLock(area);
             _indexedAreaCount = Areas.Count;
         }
     }

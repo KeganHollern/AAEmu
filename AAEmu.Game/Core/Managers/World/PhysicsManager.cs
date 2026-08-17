@@ -278,18 +278,6 @@ public class PhysicsManager
                                     _ = new OneShotVelocityKick(_physWorld, slave.RigidBody, new JVector(recoilDv.X, 0f, recoilDv.Y));
                                 }
                                 _shipShore.ResolveTerrainContacts(slave, physicsTotalDelta, _physWorld);
-
-                                // Apply current drift after shore resolve/cache refresh; never drag ships while beached/on land.
-                                var underPos = slave.Transform.World.Position + Vector3.UnitZ * (slave.ShipController?.ShipModel.MassBoxSizeZ ?? 1f) / -2f * slave.Scale;
-                                if (SimulationWorld.Water.IsWater(underPos, out var flowDirection) && flowDirection.LengthSquared() > 1e-10f)
-                                {
-                                    var groundedNow = slave.GroundContactLatched || slave.CachedFloorLevel > slave.CachedWaterSurface;
-                                    if (!groundedNow)
-                                    {
-                                        var dtFlow = (float)physicsTotalDelta.TotalSeconds;
-                                        slave.RigidBody.Position += new JVector(flowDirection.X * dtFlow, flowDirection.Z * dtFlow, flowDirection.Y * dtFlow);
-                                    }
-                                }
                                 shipsThisTick.Add(slave);
                             }
                         }
@@ -787,10 +775,9 @@ public class PhysicsManager
         moveType.AngVelY = rigidBody.AngularVelocity.Z;
         moveType.AngVelZ = rigidBody.AngularVelocity.Y;
 
-        const int velMultiplier = 2048;
-        moveType.VelX = (short)(rep.VelPx * velMultiplier);
-        moveType.VelY = (short)(rep.VelPy * velMultiplier);
-        moveType.VelZ = (short)(rep.VelPz * velMultiplier);
+        moveType.VelX = EncodeMovementVelocity(rep.VelPx);
+        moveType.VelY = EncodeMovementVelocity(rep.VelPy);
+        moveType.VelZ = EncodeMovementVelocity(rep.VelPz);
 
         // Do not allow the body to flip
         //slave.RigidBody.Orientation = JMatrix.CreateFromYawPitchRoll(rpy.Item1, 0, 0); // TODO: Fix me with proper physics
@@ -811,6 +798,16 @@ public class PhysicsManager
 
         if (rep.ContactHoldTicks > 0)
             rep.ContactHoldTicks--;
+    }
+
+    /// <summary>Encodes m/s for the signed 16-bit client velocity field without overflow reversal.</summary>
+    internal static short EncodeMovementVelocity(float velocity)
+    {
+        const float velMultiplier = 2048f;
+        if (float.IsNaN(velocity))
+            return 0;
+
+        return (short)Math.Clamp(velocity * velMultiplier, short.MinValue, short.MaxValue);
     }
 
     /// <summary>

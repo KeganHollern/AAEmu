@@ -504,7 +504,8 @@ public sealed class ShipShipInteraction
 
         var rpy = PhysicsUtil.GetYawPitchRollFromMatrix(JMatrix.CreateFromQuaternion(rb.Orientation));
         var bow = rpy.Item1 + MathUtil.HalfPi;
-        var alongPhys = rb.Velocity.X * MathF.Cos(bow) + rb.Velocity.Z * MathF.Sin(bow);
+        var relativeVelocity = ShipController.GetWaterRelativeVelocity(slave, rb);
+        var alongPhys = relativeVelocity.X * MathF.Cos(bow) + relativeVelocity.Z * MathF.Sin(bow);
         var denom = (slave.MoveSpeedMul / 4f) * slave.TurnSpeedVelocityMul;
         if (denom < 1e-5f)
             return;
