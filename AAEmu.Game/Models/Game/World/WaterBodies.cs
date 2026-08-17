@@ -33,6 +33,21 @@ public class WaterBodies
     /// <summary>Skip water zones whose XY bbox area is below this (m²).</summary>
     public const float MinWaterBboxAreaSquareMeters = 5000f;
 
+    /// <summary>
+    /// Ingest threshold (m²) for instance (non-main) worlds. The 5000 m² cut exists to drop
+    /// decorative-puddle noise, which is a main_world concern; dungeon pools are gameplay water
+    /// (the Sharpwind Mines lake quad is ≈4420 m² and must survive ingest). aaemu-cluster#92 / #93.
+    /// </summary>
+    public const float MinInstanceWaterBboxAreaSquareMeters = 25f;
+
+    /// <summary>Active ingest threshold for this world's water; set from <see cref="GetMinIngestBboxAreaSqm"/> at world init. aaemu-cluster#93.</summary>
+    [JsonIgnore]
+    public float MinIngestBboxAreaSquareMeters { get; set; } = MinWaterBboxAreaSquareMeters;
+
+    /// <summary>Pure per-world ingest threshold decision (unit tested). aaemu-cluster#93.</summary>
+    public static float GetMinIngestBboxAreaSqm(bool isMainWorld) =>
+        isMainWorld ? MinWaterBboxAreaSquareMeters : MinInstanceWaterBboxAreaSquareMeters;
+
     // New contract: gameplay flow is heuristic-only, fixed speed.
     private const float HeuristicRiverFlowSpeed = 1f;
 
@@ -216,10 +231,10 @@ public class WaterBodies
         return hb > ha ? -speedAbs : speedAbs;
     }
 
-    private static bool IsWaterFootprintTooSmall(WaterBodyArea area)
+    private bool IsWaterFootprintTooSmall(WaterBodyArea area)
     {
         var bboxArea = area.BoundingBox.Width * area.BoundingBox.Height;
-        return bboxArea < MinWaterBboxAreaSquareMeters;
+        return bboxArea < MinIngestBboxAreaSquareMeters;
     }
 
     private void EnsureSpatialIndexUnderLock()
@@ -289,6 +304,82 @@ public class WaterBodies
     {
         lock (_lock)
             return [.. Areas];
+    }
+
+    /// <summary>
+    /// Finds the area whose XY bounding box is nearest to <paramref name="pos"/> (distance 0 when
+    /// inside), or null when nothing is within <paramref name="maxDistance"/>. Used by
+    /// DoodadFuncWaterVolume to locate the pool a valve doodad controls. aaemu-cluster#92 / #98.
+    /// </summary>
+    public WaterBodyArea GetNearestArea(Vector3 pos, float maxDistance)
+    {
+        lock (_lock)
+        {
+            WaterBodyArea best = null;
+            var bestDist = maxDistance;
+            foreach (var area in Areas)
+            {
+                var bb = area.BoundingBox;
+                var dx = MathF.Max(MathF.Max(bb.Left - pos.X, 0f), pos.X - (bb.Left + bb.Width));
+                var dy = MathF.Max(MathF.Max(bb.Top - pos.Y, 0f), pos.Y - (bb.Top + bb.Height));
+                var d = MathF.Sqrt(dx * dx + dy * dy);
+                if (d > bestDist)
+                    continue;
+                bestDist = d;
+                best = area;
+            }
+
+            return best;
+        }
+    }
+
+    /// <summary>
+    /// Adds a synthetic square gameplay area (DoodadFuncWaterVolume with no ingested pool nearby):
+    /// surface at center.Z. Deliberately bypasses the ingest footprint filter — this is explicit
+    /// gameplay water, not cell noise. aaemu-cluster#92 / #98.
+    /// </summary>
+    public WaterBodyArea AddSquareArea(string name, Vector3 center, float sizeMeters, float depth)
+    {
+        var half = sizeMeters * 0.5f;
+        var area = new WaterBodyArea(name, WaterBodyAreaType.Polygon) { Depth = depth };
+        area.Points.Add(new Vector3(center.X - half, center.Y - half, center.Z));
+        area.Points.Add(new Vector3(center.X + half, center.Y - half, center.Z));
+        area.Points.Add(new Vector3(center.X + half, center.Y + half, center.Z));
+        area.Points.Add(new Vector3(center.X - half, center.Y + half, center.Z));
+        area.Points.Add(area.Points[0]);
+        area.UpdateBounds();
+
+        lock (_lock)
+        {
+            area.Id = (uint)Areas.Count;
+            Areas.Add(area);
+            SpatialIndexAddUnderLock(area);
+            _indexedAreaCount = Areas.Count;
+        }
+
+        return area;
+    }
+
+    /// <summary>
+    /// Shifts an area's surface by <paramref name="deltaZ"/>, thread-safe with the
+    /// <see cref="IsWater(Vector3, out Vector3)"/>/<see cref="GetWaterSurface"/> readers. Depth grows by
+    /// the same delta so the original bottom (surface − depth) stays wet while the surface rises.
+    /// XY bounds are untouched, so the spatial index stays valid. aaemu-cluster#92 / #98.
+    /// </summary>
+    public bool RaiseAreaSurface(uint areaId, float deltaZ)
+    {
+        lock (_lock)
+        {
+            if (areaId >= Areas.Count)
+                return false;
+
+            var area = Areas[(int)areaId];
+            for (var i = 0; i < area.Points.Count; i++)
+                area.Points[i] = area.Points[i] with { Z = area.Points[i].Z + deltaZ };
+            area.Depth = MathF.Max(0f, area.Depth + deltaZ);
+            area.UpdateBounds();
+            return true;
+        }
     }
 
     public bool IsWater(Vector3 point, out Vector3 flowDirection)

@@ -16,9 +16,22 @@ public class NpcSpawnerDespawnEffect : EffectTemplate
     {
         Logger.Info($"NpcSpawnerDespawnEffect: SpawnerId={SpawnerId}");
 
-        //var spawner = SpawnManager.Instance.GetNpcSpawner(SpawnerId, (byte)caster.Transform.WorldId);
-        //spawner.DoDespawn();
+        // aaemu-cluster#92 (#99): this was a stub. Resolve every spawner bound to this compact
+        // npc_spawners template id (normal and pinned/event) and remove its NPCs without
+        // scheduling respawns. Deactivate first so an actively ticking spawner does not
+        // immediately repopulate what we just removed.
+        var spawners = caster.ParentWorld.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(SpawnerId);
+        if (spawners.Count == 0)
+        {
+            Logger.Info($"NpcSpawnerDespawnEffect: SpawnerId={SpawnerId} not found in spawners.");
+            return;
+        }
 
-        //Logger.Debug("NpcSpawnerDespawnEffect id:{0}, Npc unitId:{1} spawnerId:{2}", Id, spawner.UnitId, SpawnerId);
+        foreach (var spawner in spawners)
+        {
+            spawner.Deactivate();
+            spawner.DespawnAll();
+            Logger.Debug($"NpcSpawnerDespawnEffect id={Id}, Npc unitId={spawner.UnitId} spawnerId={SpawnerId}");
+        }
     }
 }

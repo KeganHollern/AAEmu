@@ -773,6 +773,12 @@ public class Doodad : BaseUnit
         // the phase change packet call must be after the phase functions to have the correct FuncGroupId in the packet
         BroadcastPacket(new SCDoodadPhaseChangedPacket(this), true); // change the phase to display doodad
 
+        // aaemu-cluster#92 / #95: re-arm the per-instance DoodadFuncAreaTrigger sensors for the phase
+        // we settled in, then notify world subscribers (dungeon scripts) with the NEW FuncGroupId.
+        // Null-conditional because the initial InitDoodad settle can run before ParentWorld is assigned.
+        ParentWorld?.DoodadAreaTriggers.OnDoodadPhaseChanged(this);
+        ParentWorld?.RaiseDoodadPhaseChanged(this, FuncGroupId);
+
         return stop; // if true, it did not pass the check for the quest (it must be aborted)
     }
 
@@ -943,6 +949,9 @@ public class Doodad : BaseUnit
 
         // Mark as deleted early to avoid re-entry/races (e.g. concurrent packet handlers).
         _deleted = true;
+
+        // aaemu-cluster#95: disarm any per-instance area-trigger sensor watching this doodad.
+        ParentWorld?.DoodadAreaTriggers.OnDoodadDeleted(this);
 
         base.Delete();
         var triggersToRemove = new List<AreaTrigger>(AttachAreaTriggers);

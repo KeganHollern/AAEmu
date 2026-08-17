@@ -24,13 +24,22 @@ public class NpcSpawnerSpawnEffect : EffectTemplate
     {
         Logger.Info($"NpcSpawnerSpawnEffect: SpawnerId={SpawnerId}, LifeTime={LifeTime}, UseSummonerAggroTarget={UseSummonerAggroTarget}, ActivationState={ActivationState}");
 
-        var spawners = caster.ParentWorld.SpawnManager.GetNpcSpawner(SpawnerId);
+        // aaemu-cluster#92 (#99): search both the normal and the pinned/event spawner dictionaries,
+        // effects referencing pinned spawner template ids could not find them before.
+        var spawners = caster.ParentWorld.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(SpawnerId);
         if (spawners is not { Count: not 0 })
             Logger.Info($"NpcSpawnerSpawnEffect: SpawnerId={SpawnerId} not found in spawners.");
         else
         {
             foreach (var spawner in spawners)
             {
+                // aaemu-cluster#92 (#99): the effect's activation_state drives the runtime gate so
+                // the spawner keeps (or stops) ticking after this one-shot spawn.
+                if (ActivationState)
+                    spawner.Activate();
+                else
+                    spawner.Deactivate();
+
                 // spawn in the same world as for caster
                 spawner.Position.WorldId = caster.Transform.WorldId;
                 var npc = spawner.ForceSpawn(0);

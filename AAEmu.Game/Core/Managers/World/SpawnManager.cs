@@ -99,8 +99,20 @@ public class SpawnManager(WorldInstance parentWorld)
                 }
                 else
                 {
-                    // There were spawners found in the game data that define this NPC
+                    // There were spawners found in the game data that define this NPC.
+                    // aaemu-cluster#92 (#94): a dump point used to bind one spawner per compact
+                    // npc_spawners row of the member, so inactive staging rows (activation_state=f,
+                    // e.g. 13392 "비활성_instance_cuttingwind_deadmine_slimes") double-spawned on top
+                    // of the live row. Bind only the active templates when the member has several.
+                    var candidateTemplates = new List<NpcSpawnerTemplate>(gameDataNpcSpawnerIds.Count);
                     foreach (var id in gameDataNpcSpawnerIds)
+                        candidateTemplates.Add(NpcGameData.Instance.GetNpcSpawnerTemplate(id));
+
+                    var selectedIds = SelectSpawnerTemplateIds(candidateTemplates);
+                    if (selectedIds.Count == 0)
+                        selectedIds = gameDataNpcSpawnerIds; // no template resolvable: keep legacy ids so the usual warnings surface
+
+                    foreach (var id in selectedIds)
                     {
                         var spawner = NpcSpawner.Clone(npcSpawner);
                         var template = NpcGameData.Instance.GetNpcSpawnerTemplate(id);
@@ -124,17 +136,30 @@ public class SpawnManager(WorldInstance parentWorld)
             }
             else
             {
-                // Load NPC Spawns for Events
+                // Load NPC Spawns pinned to explicit spawner template ids (howling-abyss convention)
                 var spawners = new List<NpcSpawner>();
                 foreach (var id in npcSpawner.NpcSpawnerIds)
                 {
                     npcSpawner.Id = id;
+                    // aaemu-cluster#92 (#97): pinned entries need a real SpawnerId so the world
+                    // tick, schedules and SpawnedNpcs bookkeeping treat them like normal spawners.
+                    npcSpawner.SpawnerId = id;
                     npcSpawner.Template = new NpcSpawnerTemplate(id, npcSpawner.UnitId);
+                    // aaemu-cluster#92 (#97): mirror the authored activation_state so an inactive
+                    // pinned spawner stays dark until a dungeon script calls Activate(), while an
+                    // active one is picked up by the world tick like any other spawner.
+                    var authoredTemplate = NpcGameData.Instance.GetNpcSpawnerTemplate(id);
+                    if (authoredTemplate != null)
+                        npcSpawner.Template.ActivationState = authoredTemplate.ActivationState;
                     npcSpawner.ParentWorld = World;
                     foreach (var n in npcSpawner.Template.Npcs)
                     {
                         n.Position = npcSpawner.Position;
                     }
+
+                    // aaemu-cluster#92 (#97): without this the tick path warned
+                    // "No spawnable NPCs available" because only ForceSpawn initialized the list.
+                    npcSpawner.InitializeSpawnableNpcs(npcSpawner.Template);
                 }
 
                 spawners.Add(npcSpawner);
@@ -142,6 +167,27 @@ public class SpawnManager(WorldInstance parentWorld)
                 _nextId++;
             }
         }
+    }
+
+    /// <summary>
+    /// Picks the compact npc_spawners templates an unpinned world spawn point should bind to.
+    /// A member with a single authored template keeps it as-is (legacy behavior); with several
+    /// templates only the active ones (activation_state=t) are bound, because the inactive rows
+    /// are staging variants meant to be enabled by scripts. When none are active we fall back to
+    /// binding everything so the data problem stays visible. (aaemu-cluster#92, #94)
+    /// </summary>
+    internal static List<uint> SelectSpawnerTemplateIds(IReadOnlyList<NpcSpawnerTemplate> templates)
+    {
+        var known = templates.Where(t => t != null).ToList();
+        if (known.Count <= 1)
+            return known.Select(t => t.Id).ToList();
+
+        var activeIds = known.Where(t => t.ActivationState).Select(t => t.Id).ToList();
+        if (activeIds.Count > 0)
+            return activeIds;
+
+        Logger.Warn($"SelectSpawnerTemplateIds: member has {known.Count} spawner templates but none are active; binding all of them (ids={string.Join(",", known.Select(t => t.Id))})");
+        return known.Select(t => t.Id).ToList();
     }
 
     /// <summary>
@@ -1129,6 +1175,68 @@ public class SpawnManager(WorldInstance parentWorld)
         }
 
         return temp;
+    }
+
+    /// <summary>
+    /// Gets every spawner the world tick should process: all normal world spawners plus pinned
+    /// event spawners that are currently active. Pinned entries (explicit NpcSpawnerIds in the
+    /// world spawn JSON) previously never ticked at all. (aaemu-cluster#92, #97)
+    /// </summary>
+    public List<NpcSpawner> GetAllTickableSpawners()
+    {
+        var result = new List<NpcSpawner>();
+        lock (NpcSpawners)
+        {
+            foreach (var spawners in NpcSpawners.Values)
+                result.AddRange(spawners);
+
+            foreach (var spawners in NpcEventSpawners.Values)
+            {
+                foreach (var spawner in spawners)
+                {
+                    if (spawner.IsActive)
+                        result.Add(spawner);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Finds every spawner (normal and pinned/event) bound to the given compact npc_spawners
+    /// template id. Dungeon scripts and spawner effects use this to reach pinned spawners that
+    /// only live in NpcEventSpawners. (aaemu-cluster#92, #97/#99)
+    /// </summary>
+    public List<NpcSpawner> GetNpcSpawnersBySpawnerTemplateId(uint spawnerTemplateId)
+    {
+        var ret = new List<NpcSpawner>();
+        lock (NpcSpawners)
+        {
+            foreach (var spawners in NpcSpawners.Values)
+            {
+                foreach (var spawner in spawners)
+                {
+                    if (Matches(spawner))
+                        ret.Add(spawner);
+                }
+            }
+
+            foreach (var spawners in NpcEventSpawners.Values)
+            {
+                foreach (var spawner in spawners)
+                {
+                    if (Matches(spawner))
+                        ret.Add(spawner);
+                }
+            }
+        }
+
+        return ret;
+
+        bool Matches(NpcSpawner spawner) =>
+            spawner.Template?.Id == spawnerTemplateId ||
+            spawner.NpcSpawnerIds?.Contains(spawnerTemplateId) == true;
     }
 
     public List<NpcSpawner> GetNpcSpawner(uint spawnerId)

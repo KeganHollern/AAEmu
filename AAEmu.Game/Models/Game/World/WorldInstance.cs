@@ -97,6 +97,11 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
     /// </summary>
     public SpawnManager SpawnManager { get; set; }
     /// <summary>
+    /// Data-driven world event scripts for this instance (aaemu-cluster#92);
+    /// null when the world template ships no dungeon_scripts.json
+    /// </summary>
+    public Scripting.WorldScriptController ScriptController { get; set; }
+    /// <summary>
     /// Manager that handles vehicle spawns for this instance
     /// </summary>
     public SlaveManager SlaveManager { get; set; }
@@ -226,6 +231,43 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
     }
 
     /// <summary>
+    /// Per-instance registry that arms and fires DoodadFuncAreaTrigger proximity sensors.
+    /// Lazy so worlds without armed sensors (and test-constructed instances) never allocate or tick.
+    /// aaemu-cluster#92 / #95.
+    /// </summary>
+    public DoodadAreaTriggerRegistry DoodadAreaTriggers =>
+        LazyInitializer.EnsureInitialized(ref _doodadAreaTriggers, () => new DoodadAreaTriggerRegistry(this));
+
+    private DoodadAreaTriggerRegistry _doodadAreaTriggers;
+
+    /// <summary>
+    /// Raised (null-safe) at the end of <see cref="Doodad.DoChangePhase"/> with the NEW FuncGroupId.
+    /// The initial InitDoodad phase settle raises it too, so subscribers observe starting state.
+    /// Dungeon world scripts subscribe to drive cross-doodad transitions. aaemu-cluster#92.
+    /// </summary>
+    public event Action<Doodad, uint> DoodadPhaseChanged;
+
+    /// <summary>
+    /// Invoker for <see cref="DoodadPhaseChanged"/>. Subscriber exceptions are contained here because
+    /// a broken script must not abort doodad phase logic or the load-time spawn loop. aaemu-cluster#92.
+    /// </summary>
+    public void RaiseDoodadPhaseChanged(Doodad doodad, uint funcGroupId)
+    {
+        var handlers = DoodadPhaseChanged;
+        if (handlers == null)
+            return;
+
+        try
+        {
+            handlers(doodad, funcGroupId);
+        }
+        catch (Exception e)
+        {
+            Logger.Error(e, $"DoodadPhaseChanged subscriber threw for doodad {doodad?.TemplateId} phase {funcGroupId} in {this}");
+        }
+    }
+
+    /// <summary>
     /// Gets height at target position using the template's terrain surface
     /// </summary>
     /// <param name="x"></param>
@@ -320,6 +362,9 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
     public void InitWaterFromTemplate()
     {
         Water.OceanLevel = Template.OceanLevel;
+        // aaemu-cluster#93: the 5000 m² decorative-puddle cut would drop dungeon pools (Sharpwind
+        // Mines lake quad ≈4420 m²); instances keep small gameplay water.
+        Water.MinIngestBboxAreaSquareMeters = WaterBodies.GetMinIngestBboxAreaSqm(Template.Name == "main_world");
     }
 
     /// <summary>Clears ingested zones and rebuilds them from cells already loaded (after code or data tweaks).</summary>
@@ -664,6 +709,15 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
 
     public void CleanupInstance()
     {
+        // Detach world-script hooks first so no rule fires against a world
+        // that is tearing down (aaemu-cluster#92)
+        ScriptController?.Dispose();
+        ScriptController = null;
+
+        // Stop the per-instance area-trigger tick before objects tear down (aaemu-cluster#95).
+        _doodadAreaTriggers?.Dispose();
+        _doodadAreaTriggers = null;
+
         // Stop respawn system (check for null as SpawnManager may not be initialized in tests)
         if (SpawnManager == null)
             return;

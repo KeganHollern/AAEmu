@@ -903,6 +903,12 @@ public class Unit : BaseUnit, IUnit
     /// <returns>The damage that was dealt</returns>
     public virtual int DoFallDamage(ushort fallVel)
     {
+        // aaemu-cluster#92 / #93: landing in water breaks the fall — no damage and no FallStun.
+        // Dungeon pools are real server-side water now (see WaterBodies instance ingest), and the
+        // client never showed fall damage for water landings.
+        if (ParentWorld?.IsWater(Transform.World.Position) == true)
+            return 0;
+
         var fallDmg = Math.Min(MaxHp, (int)(MaxHp * ((fallVel - 8600) / 15000f)));
         var multiplier = CalculateWithBonuses(0d, UnitAttribute.FallDamageMul) / 100d;
         var minHpLeft = MaxHp / 20; //5% of hp 
@@ -936,7 +942,7 @@ public class Unit : BaseUnit, IUnit
 
         BroadcastPacket(new SCEnvDamagePacket(EnvSource.Falling, ObjId, (uint)fallDmg), true);
         //SendPacket(new SCEnvDamagePacket(EnvSource.Falling, ObjId, (uint)fallDmg));
-        // TODO: Maybe adjust formula & need to detect water landing?
+        // TODO: Maybe adjust formula
         return fallDmg;
     }
 

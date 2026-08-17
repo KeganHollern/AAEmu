@@ -18,7 +18,16 @@ public class DoodadFuncExitIndun : DoodadFuncTemplate
         {
             if (ReturnPointId == 0 && character.MainWorldPosition != null)
             {
-                IndunManager.Instance.RequestLeaveInstance(character);
+                // aaemu-cluster#92 (#102): remember which dungeon is being left before the character
+                // is moved back to the main world (which changes ParentWorld).
+                var dungeon = character.ParentWorld?.DungeonInstance;
+                if (IndunManager.Instance.RequestLeaveInstance(character) && dungeon != null)
+                {
+                    // Stamp the empty timestamp when this was the last player out so the grace sweep
+                    // in IndunManager can reclaim the instance later. Do NOT destroy it immediately;
+                    // players may re-enter after a wipe/repair trip.
+                    dungeon.MarkEmptyIfNoPlayers();
+                }
             }
             else
             {

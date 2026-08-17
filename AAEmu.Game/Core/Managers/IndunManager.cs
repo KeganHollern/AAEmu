@@ -68,6 +68,13 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
                     Logger.Warn($"Removing expired solo dungeon {worldInstance}");
                     worldInstance.DungeonInstance.DestroyDungeon();
                 }
+                // aaemu-cluster#92 (#102): abandoned instances used to survive until the 24h expiry
+                // above; reclaim them once they have been empty past the grace period instead.
+                else if (worldInstance.DungeonInstance.IsAbandoned)
+                {
+                    Logger.Warn($"Removing abandoned empty dungeon {worldInstance}");
+                    worldInstance.DungeonInstance.DestroyDungeon();
+                }
             }
         }
 
@@ -174,7 +181,7 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             return false;
         }
 
-        // 1 - Check if player is already a member of an active dungeon in this zone and re-enter it if they are
+        // 1 - Sanity checks: already queued for an instance here, or still physically inside one
         var possibleTargetInstances = GetExistingDungeonsByZoneKey(targetZone.ZoneKey);
         foreach (var possibleTargetInstance in possibleTargetInstances)
         {
@@ -191,77 +198,68 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
                 possibleTargetInstance.AddPlayer(character);
                 return true;
             }
-            // If they were already had access before, add them to queue (again)
-            if (possibleTargetInstance.PlayersWithAccess.Contains(character.Id))
-            {
-                // Return queue if not full yet
-                if (possibleTargetInstance.World.GetCharacterCount() > possibleTargetInstance._indunZone.MaxPlayers)
-                {
-                    character.SendErrorMessage(ErrorMessageType.InstanceQuota); // Too many users are currently in the dungeon
-                    return false;
-                }
-                
-                return possibleTargetInstance.QueuePlayer(character);
-            }
         }
 
-        // 2 - First check Party required dungeons is available
-        if (dungeonZone.PartyOnly) // Only if dungeon requires party
+        // aaemu-cluster#92 (#102): the reuse key is the OWNER (team or character), not per-character
+        // access. Access-based reuse routed party members back into their old abandoned solo
+        // instances instead of into one shared team instance.
+        if (team != null)
         {
+            // 2a - The character's old solo instances must not be reused while they are in a team.
+            // Unbind them and destroy the ones that sit empty so they cannot leak until the 24h expiry.
             foreach (var possibleTargetInstance in possibleTargetInstances)
             {
-                if (!possibleTargetInstance.PlayerInSameTeam(character))
+                if (possibleTargetInstance.IsSystem || possibleTargetInstance.IsTeamOwned)
                     continue;
-                
+                if (possibleTargetInstance.GetCharacterOwner?.Id != character.Id)
+                    continue;
+
+                possibleTargetInstance.PlayersWithAccess.Remove(character.Id);
+                if (possibleTargetInstance.IsEmpty && possibleTargetInstance.EnterRequests.Count == 0)
+                {
+                    Logger.Info($"Removing stale solo dungeon of {character.Name} ({character.Id}), zone: {dungeonZone}");
+                    possibleTargetInstance.DestroyDungeon();
+                }
+                // Not empty: the empty-instance sweep in IndunInfoTick removes it once it drains
+            }
+
+            // 2b - In a team only the instance owned by this team may be reused,
+            // this also covers PartyOnly dungeons like Sharpwind Mines
+            foreach (var possibleTargetInstance in possibleTargetInstances)
+            {
+                if (possibleTargetInstance.IsSystem || !possibleTargetInstance.IsTeamOwned)
+                    continue;
+                if (possibleTargetInstance.GetOwnerTeam?.Id != team.Id)
+                    continue;
+
                 // Join your team's dungeon (if enough room)
                 if (possibleTargetInstance.IsFull)
                 {
                     character.SendErrorMessage(ErrorMessageType.InstanceQuota); // Too many users are currently in the dungeon
                     return false;
                 }
-                
+
                 return possibleTargetInstance.QueuePlayer(character);
             }
         }
-
-        // 3 - Check if non-party/raid leader is a member of the requested dungeon, if so, join their instance
-        if (team != null)
+        else
         {
-            // 3a - Create a list of players to check with party leader as first entry
-            // The rest is the same order as the team order
-            var checkPlayersList = new List<Character>();
-            foreach (var teamMember in team.Members)
+            // 3 - Solo players may only reuse the dungeon they own themselves
+            foreach (var possibleTargetInstance in possibleTargetInstances)
             {
-                if (teamMember == null || teamMember.Character == null)
+                if (possibleTargetInstance.IsSystem || possibleTargetInstance.IsTeamOwned)
                     continue;
-                if (teamMember.Character.Id == team.OwnerId)
-                {
-                    checkPlayersList.Insert(0, teamMember.Character);
-                }
-                else
-                {
-                    checkPlayersList.Add(teamMember.Character);
-                }
-            }
+                if (possibleTargetInstance.GetCharacterOwner?.Id != character.Id)
+                    continue;
 
-            // 3b - Enumerate the sorted team member list to check if we have a matching dungeon to enter
-            foreach (var playerCharacter in checkPlayersList)
-            {
-                foreach (var possibleTargetInstance in possibleTargetInstances)
+                // Re-enter own dungeon if not full yet (MaxPlayers still applies, e.g. Sharpwind Mines = 3)
+                if (possibleTargetInstance.IsFull)
                 {
-                    if (!possibleTargetInstance.PlayersWithAccess.Contains(playerCharacter.Id))
-                        continue;
-                
-                    // Join your team's dungeon (if enough room)
-                    // TODO: not sure if we should toss a error here, or continue searching for others
-                    if (possibleTargetInstance.IsFull)
-                    {
-                        character.SendErrorMessage(ErrorMessageType.InstanceQuota); // Too many users are currently in the dungeon
-                        return false;
-                    }
-
-                    return possibleTargetInstance.QueuePlayer(character);
+                    character.SendErrorMessage(ErrorMessageType.InstanceQuota); // Too many users are currently in the dungeon
+                    return false;
                 }
+
+                return possibleTargetInstance.QueuePlayer(character);
             }
         }
 

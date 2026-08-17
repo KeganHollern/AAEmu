@@ -57,6 +57,20 @@ public class Dungeon
     private readonly DateTime _createTime = DateTime.UtcNow;
 
     /// <summary>
+    /// Time at which the instance was last seen without any players inside, null while occupied.
+    /// Initialized at creation time so instances that never get entered (e.g. the creating player
+    /// logs off during loading) also qualify for the empty-instance sweep. (aaemu-cluster#92, #102)
+    /// </summary>
+    private DateTime? _emptySince = DateTime.UtcNow;
+
+    /// <summary>
+    /// How long a dungeon may stay empty before the periodic sweep in IndunManager destroys it.
+    /// 10 minutes is long enough for a wiped party to repair and walk back in, but short enough
+    /// that abandoned instances no longer linger until the 24h expiry. (aaemu-cluster#92, #102)
+    /// </summary>
+    private static readonly TimeSpan EmptyInstanceGracePeriod = TimeSpan.FromMinutes(10);
+
+    /// <summary>
     /// For system dungeons like the mirage and the library
     /// </summary>
     /// <param name="indunZone"></param>
@@ -92,7 +106,10 @@ public class Dungeon
         var worldTemplate = WorldManager.Instance.GetWorldTemplateByZoneKey(zoneKeys[0]);
 
         Logger.Info($"[Dungeon] Create system dungeon {worldTemplate?.Name} - channel {channelId}...");
-        World = WorldManager.Instance.CreateWorldInstance(worldTemplate, channelId, overrideInstanceId, fixedInstanceId, character);
+        // aaemu-cluster#92 (#102): don't pass the character as notifyPlayer here; QueuePlayer below
+        // already sends SCProcessingInstancePacket while loading, passing it twice showed the
+        // "creating dungeon" popup twice for the instance creator.
+        World = WorldManager.Instance.CreateWorldInstance(worldTemplate, channelId, overrideInstanceId, fixedInstanceId);
         World.DungeonInstance = this;
         _zoneInstanceId = new ZoneInstanceId(zoneKeys.First(), World.Id);
 
@@ -135,6 +152,41 @@ public class Dungeon
     private bool HasPlayers => (World?.GetCharacterCount() ?? 0) > 0;
 
     public bool IsExpired { get => !IsSystem && _createTime.AddDays(1) < DateTime.UtcNow; }
+
+    /// <summary>
+    /// Returns true if the dungeon has no players inside.
+    /// </summary>
+    public bool IsEmpty => !HasPlayers;
+
+    /// <summary>
+    /// True when a non-system dungeon has been empty (and without pending enter requests) for longer
+    /// than the grace period, meaning the periodic sweep may destroy it. (aaemu-cluster#92, #102)
+    /// </summary>
+    public bool IsAbandoned => !IsSystem && !HasPlayers && EnterRequests.Count == 0 && IsPastEmptyGrace(_emptySince, DateTime.UtcNow);
+
+    /// <summary>
+    /// Returns true when the given empty-since timestamp is older than the empty-instance grace
+    /// period. Kept static/pure so it can be unit tested. (aaemu-cluster#92, #102)
+    /// </summary>
+    public static bool IsPastEmptyGrace(DateTime? emptySince, DateTime now)
+    {
+        return emptySince != null && emptySince.Value + EmptyInstanceGracePeriod <= now;
+    }
+
+    /// <summary>
+    /// Stamps the empty-since timestamp if nobody is inside (keeps the earliest stamp).
+    /// Used after a player exits via a doodad so the grace sweep can reclaim the instance later;
+    /// the instance is intentionally NOT destroyed right away because players may re-enter after
+    /// a wipe/repair trip. (aaemu-cluster#92, #102)
+    /// </summary>
+    public void MarkEmptyIfNoPlayers()
+    {
+        lock (_lock)
+        {
+            if (!HasPlayers)
+                _emptySince ??= DateTime.UtcNow;
+        }
+    }
 
     /// <summary>
     /// Adds a player to the queue while the dungeon is still loading
@@ -182,6 +234,10 @@ public class Dungeon
 
         lock (_lock)
         {
+            // aaemu-cluster#92 (#102): someone is (re)entering, so the instance is no longer
+            // eligible for the empty-instance sweep.
+            _emptySince = null;
+
             if (!World.HasCharacter(character.Id))
             {
                 World.AddObject(character);
@@ -214,7 +270,12 @@ public class Dungeon
         if (character == null) { return false; }
         lock (_lock)
         {
-            return World.RemoveObject(character);
+            var removed = World.RemoveObject(character);
+            // aaemu-cluster#92 (#102): stamp when the last player leaves so the empty-instance
+            // sweep can reclaim this dungeon after the grace period instead of after 24 hours.
+            if (World.GetCharacterCount() == 0)
+                _emptySince ??= DateTime.UtcNow;
+            return removed;
         }
     }
 
@@ -267,6 +328,14 @@ public class Dungeon
 
         TickManager.Instance.OnTick.UnSubscribe(AreaClearTick);
 
+        // aaemu-cluster#92 (#102): check World before touching it; the empty-instance sweep and the
+        // stale-solo-instance cleanup can race the other destroy paths, so this must be safe to
+        // call on an already destroyed (or never entered) dungeon.
+        if (World == null)
+        {
+            return true;
+        }
+
         foreach (var player in World.GetAllCharacters())
         {
             _ = RemovePlayer(player);
@@ -276,11 +345,6 @@ public class Dungeon
         //{
         //    return false;
         //}
-
-        if (World == null)
-        {
-            return true;
-        }
 
         UnregisterIndunEvents();
         TickManager.Instance.OnTick.UnSubscribe(LeaveDungeonTick);
