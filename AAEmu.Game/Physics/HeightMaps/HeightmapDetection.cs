@@ -2,6 +2,7 @@
 using Jitter2.Collision.Shapes;
 using Jitter2.Dynamics;
 using Jitter2.LinearMath;
+using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Physics.HeightMaps;
 
@@ -28,6 +29,12 @@ public class HeightmapDetection : IBroadPhaseFilter
         var collider = shapeA == _shape ? shapeB : shapeA;
 
         if (collider is not RigidBodyShape rbs || rbs.RigidBody.Data.MotionType == MotionType.Static || !rbs.RigidBody.Data.IsActive) return false;
+
+        // A waterfall brush is a visual/static mesh over an overhang. The 2D terrain heightmap
+        // reports the landscape above that corridor and would otherwise pin the falling hull
+        // underneath it. The waterfall controller re-enables terrain on landing or recovery.
+        if (rbs.RigidBody.Tag is Slave { WaterfallTransitActive: true })
+            return false;
 
         ref var body = ref rbs.RigidBody!.Data;
 

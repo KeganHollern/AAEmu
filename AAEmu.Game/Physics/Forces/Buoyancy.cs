@@ -201,6 +201,11 @@ public class Buoyancy : ForceGenerator
             var slave = (Slave)body.Tag;
             if (slave == null) continue;
 
+            // Gravity owns the ballistic part of a waterfall transition. Source-water buoyancy
+            // remains cached for a tick after leaving the river and must not pull the hull back.
+            if (slave.WaterfallTransitActive)
+                continue;
+
             // Skip if no controller or mass
             if (slave.ShipController == null || slave.ShipController.ShipModel.Mass <= 0)
                 continue;
