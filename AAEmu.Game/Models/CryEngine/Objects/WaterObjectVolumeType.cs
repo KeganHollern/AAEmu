@@ -2,8 +2,8 @@
 
 public enum WaterObjectVolumeType : int
 {
-    Area = 0,
-    Sector = 1,
-    River = 2,
-    Ocean = 3,
+    Unknown = 0,
+    Ocean = 1,
+    Area = 2,
+    River = 3,
 }

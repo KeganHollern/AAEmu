@@ -103,11 +103,11 @@ public class ShipController(World world, ShipModelV1 shipModel)
         _ => 3.1f
     };
 
-    /// <summary>Horizontal wind when no river flow and clock wind is off/unavailable (game X,Y).</summary>
+    /// <summary>Fallback horizontal wind when clock wind is off/unavailable (game X,Y).</summary>
     private const float DefaultWindDirX = 0f;
     private const float DefaultWindDirY = 1f;
 
-    /// <summary>Open-sea wind rotates with <see cref="TimeManager"/>; river <see cref="Slave.CachedWaterFlow"/> still wins.</summary>
+    /// <summary>Open-sea wind rotates with <see cref="TimeManager"/>.</summary>
     private const bool WindFollowsTimeOfDay = true;
 
     /// <summary>Shift wind phase in game hours (e.g. if «полночь» в клиенте не совпадает с 0:00).</summary>
@@ -182,15 +182,55 @@ public class ShipController(World world, ShipModelV1 shipModel)
     /// <summary>Normalized wind direction on water plane (physics XZ = game horizontal X,Y).</summary>
     private static (float wx, float wy) GetWindDirNormalized(Slave slave)
     {
-        var f = slave.CachedWaterFlow;
-        var lenSq = f.X * f.X + f.Y * f.Y;
-        if (lenSq > 1e-8f)
-        {
-            var inv = 1f / MathF.Sqrt(lenSq);
-            return (f.X * inv, f.Y * inv);
-        }
-
         return GetOpenSeaWind(slave);
+    }
+
+    /// <summary>
+    /// Composes propulsion through the water with the local water velocity. Horizontal propulsion and
+    /// lateral damping operate in the water-relative frame, so the resulting rigid-body velocity includes
+    /// river current and is replicated to clients.
+    /// </summary>
+    internal static JVector ComposeWaterRelativeVelocity(JVector bodyVelocity, JVector waterVelocity,
+        float forwardX, float forwardZ, float propulsionSpeed, float lateralDamping, float verticalDamping)
+    {
+        var relative = bodyVelocity - waterVelocity;
+        var along = relative.X * forwardX + relative.Z * forwardZ;
+        var perpendicularX = relative.X - along * forwardX;
+        var perpendicularZ = relative.Z - along * forwardZ;
+
+        return new JVector(
+            waterVelocity.X + propulsionSpeed * forwardX + perpendicularX * lateralDamping,
+            waterVelocity.Y + relative.Y * verticalDamping,
+            waterVelocity.Z + propulsionSpeed * forwardZ + perpendicularZ * lateralDamping);
+    }
+
+    /// <summary>
+    /// Returns the local water velocity in physics XYZ. Current only affects a floating hull; grounded
+    /// or airborne ships remain in the world-relative frame used by shore and falling logic.
+    /// </summary>
+    internal static JVector GetEffectiveWaterVelocity(Slave slave, RigidBody rigidBody,
+        ShipModelV1? model = null)
+    {
+        var grounded = slave.GroundContactLatched || slave.CachedFloorLevel > slave.CachedWaterSurface;
+        model ??= slave.ShipController?.ShipModel;
+        if (grounded || model is null)
+            return JVector.Zero;
+
+        var hullBottom = rigidBody.Shapes.Count > 0
+            ? rigidBody.Shapes[0].WorldBoundingBox.Min.Y
+            : rigidBody.Position.Y + ShipMassBoxDefaults.GetCenterZ(model.MassCenterZ, model.MassBoxSizeZ) -
+              ShipMassBoxDefaults.GetSizeZ(model.MassBoxSizeZ) * 0.5f;
+        if (hullBottom > slave.CachedWaterSurface + 0.05f)
+            return JVector.Zero;
+
+        return new JVector(slave.CachedWaterFlow.X, slave.CachedWaterFlow.Z, slave.CachedWaterFlow.Y);
+    }
+
+    /// <summary>Converts authoritative rigid-body velocity to velocity through the local water.</summary>
+    internal static JVector GetWaterRelativeVelocity(Slave slave, RigidBody rigidBody,
+        ShipModelV1? model = null)
+    {
+        return rigidBody.Velocity - GetEffectiveWaterVelocity(slave, rigidBody, model);
     }
 
     /// <summary>Square rig: best speed down/up wind (same as original).</summary>
@@ -660,29 +700,29 @@ public class ShipController(World world, ShipModelV1 shipModel)
 
         var forceThrottle = slave.Speed * slave.MoveSpeedMul / 4f * slave.TurnSpeedVelocityMul; // Not sure if correct, but it feels correct
 
-        // Longitudinal speed from Slave.Speed; preserve damped lateral XZ (perpendicular to bow) so hull impulses can briefly show sideways motion.
+        // Longitudinal speed from Slave.Speed is relative to the water. Preserve damped lateral XZ
+        // (perpendicular to bow) so hull impulses can briefly show sideways motion.
         // On land/shore keep the old overwrite-only model (avoids odd sliding while beached).
         var fx = MathF.Cos(slaveRotRad);
         var fz = MathF.Sin(slaveRotRad);
         if (!isGrounded)
         {
             var v = rigidBody.Velocity;
+            var waterVelocity = GetEffectiveWaterVelocity(slave, rigidBody, shipModel);
+
             // Do not zero vertical velocity (lets ships fall off waterfalls),
             // but damp it when submerged to prevent buoyancy oscillations / runaway upward launch.
             var submergedNow = MathF.Max(0f, slave.CachedWaterSurface - rigidBody.Position.Y);
+            var verticalDamp = 1f;
             if (submergedNow > 0.01f)
             {
-                v.Y *= MathF.Exp(-ShipMotionDefaults.WaterVerticalVelocityDampPerSec * MathF.Max(0f, dtSec));
-                v.Y = Math.Clamp(v.Y, -18f, 6f);
+                verticalDamp = MathF.Exp(-ShipMotionDefaults.WaterVerticalVelocityDampPerSec * MathF.Max(0f, dtSec));
             }
-            var alongDot = v.X * fx + v.Z * fz;
-            var perpX = v.X - alongDot * fx;
-            var perpZ = v.Z - alongDot * fz;
             var lateralDamp = MathF.Exp(-ShipMotionDefaults.LateralVelocityDampPerSec * MathF.Max(0f, dtSec));
-            rigidBody.Velocity = new JVector(
-                forceThrottle * fx + perpX * lateralDamp,
-                v.Y,
-                forceThrottle * fz + perpZ * lateralDamp);
+            var composedVelocity = ComposeWaterRelativeVelocity(v, waterVelocity, fx, fz, forceThrottle,
+                lateralDamp, verticalDamp);
+            composedVelocity.Y = Math.Clamp(composedVelocity.Y, -18f, 6f);
+            rigidBody.Velocity = composedVelocity;
         }
         else
         {

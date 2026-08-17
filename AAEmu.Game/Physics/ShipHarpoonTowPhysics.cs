@@ -230,8 +230,9 @@ public static class ShipHarpoonTowPhysics
         if (sum.LengthSquared() < 1e-10f)
             return;
 
-        var vx = rigidBody.Velocity.X + sum.X;
-        var vz = rigidBody.Velocity.Z + sum.Z;
+        var waterVelocity = ShipController.GetEffectiveWaterVelocity(hull, rigidBody);
+        var vx = rigidBody.Velocity.X - waterVelocity.X + sum.X;
+        var vz = rigidBody.Velocity.Z - waterVelocity.Z + sum.Z;
         var alongVel = vx * bowDirX + vz * bowDirZ;
         var mul = speedToAlongVelScale;
         if (mul < 1e-4f)
@@ -245,9 +246,9 @@ public static class ShipHarpoonTowPhysics
         var perpZ = vz - alongVel * bowDirZ;
 
         rigidBody.Velocity = new JVector(
-            alongVel * bowDirX + perpX,
+            waterVelocity.X + alongVel * bowDirX + perpX,
             rigidBody.Velocity.Y,
-            alongVel * bowDirZ + perpZ);
+            waterVelocity.Z + alongVel * bowDirZ + perpZ);
 
         hull.Speed = alongVel / mul;
 
@@ -369,8 +370,8 @@ public static class ShipHarpoonTowPhysics
         if (total < 1e-3f)
             return false;
 
-        var vTow = HorizontalSpeedXZ(towHullRb);
-        var vBasis = HorizontalSpeedXZ(basisRb);
+        var vTow = HorizontalSpeedXZ(towHull, towHullRb);
+        var vBasis = HorizontalSpeedXZ(basis, basisRb);
         var sTow = mTow * (1f + ShipPairDominanceSpeedCoeff * vTow);
         var sBasis = mBasis * (1f + ShipPairDominanceSpeedCoeff * vBasis);
         var impulseMul = sTow >= sBasis ? ShipPairDominantTowHullMul : ShipPairDominantBasisHullMul;
@@ -422,10 +423,11 @@ public static class ShipHarpoonTowPhysics
         slave.RotSpeed += Math.Clamp(-cross * TowYawAssistRadPerSec * dtSec * yawMassScale, -0.85f, 0.85f);
     }
 
-    private static float HorizontalSpeedXZ(RigidBody rb)
+    private static float HorizontalSpeedXZ(Slave slave, RigidBody rb)
     {
-        var vx = rb.Velocity.X;
-        var vz = rb.Velocity.Z;
+        var relativeVelocity = ShipController.GetWaterRelativeVelocity(slave, rb);
+        var vx = relativeVelocity.X;
+        var vz = relativeVelocity.Z;
         return MathF.Sqrt(vx * vx + vz * vz);
     }
 
@@ -437,7 +439,8 @@ public static class ShipHarpoonTowPhysics
         var fx = MathF.Cos(bowRad);
         var fz = MathF.Sin(bowRad);
         var mul = slave.MoveSpeedMul / 4f * MathF.Max(0.001f, slave.TurnSpeedVelocityMul);
-        var along = rb.Velocity.X * fx + rb.Velocity.Z * fz;
+        var relativeVelocity = ShipController.GetWaterRelativeVelocity(slave, rb);
+        var along = relativeVelocity.X * fx + relativeVelocity.Z * fz;
         slave.Speed = along / mul;
     }
 }

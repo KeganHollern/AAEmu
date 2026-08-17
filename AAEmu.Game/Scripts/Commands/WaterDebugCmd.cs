@@ -63,7 +63,7 @@ public sealed class WaterDebugCmd : ICommand
                 var river = 0;
                 var area = 0;
                 var ocean = 0;
-                var sector = 0;
+                var unknown = 0;
                 var likeRiver = 0;
                 var likeArea = 0;
                 var clientWithFlow = 0;
@@ -92,14 +92,14 @@ public sealed class WaterDebugCmd : ICommand
                             case WaterObjectVolumeType.River: river++; break;
                             case WaterObjectVolumeType.Area: area++; break;
                             case WaterObjectVolumeType.Ocean: ocean++; break;
-                            case WaterObjectVolumeType.Sector: sector++; break;
+                            case WaterObjectVolumeType.Unknown: unknown++; break;
                         }
 
                         if (w.VolumeType == WaterObjectVolumeType.River)
                             likeRiver++;
-                        if (w.VolumeType is WaterObjectVolumeType.Area or WaterObjectVolumeType.Ocean or WaterObjectVolumeType.Sector)
+                        if (w.VolumeType is WaterObjectVolumeType.Area or WaterObjectVolumeType.Ocean)
                             likeArea++;
-                        if (w.Speed != 0f)
+                        if (w.VolumeType == WaterObjectVolumeType.River && w.Speed != 0f)
                             clientWithFlow++;
                     }
                 }
@@ -111,7 +111,7 @@ public sealed class WaterDebugCmd : ICommand
                 CommandManager.SendNormalText(this, messageOutput,
                     $"Water reload: OceanLevel={world.Water.OceanLevel}, areas={serverAreas}, loadedCells={loadedCells}");
                 CommandManager.SendNormalText(this, messageOutput,
-                    $"Client water volumes={clientVolumes} (River={river} Area={area} Ocean={ocean} Sector={sector}), likeRiver={likeRiver}, likeArea={likeArea}, withFlow={clientWithFlow}");
+                    $"Client water volumes={clientVolumes} (River={river} Area={area} Ocean={ocean} Unknown={unknown}), likeRiver={likeRiver}, likeArea={likeArea}, withFlow={clientWithFlow}");
                 CommandManager.SendNormalText(this, messageOutput,
                     $"Server ingested zones with flow (Speed!=0): {serverZonesWithFlow}");
                 return;

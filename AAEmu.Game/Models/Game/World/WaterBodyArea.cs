@@ -28,15 +28,15 @@ public class WaterBodyArea
     [JsonProperty(DefaultValueHandling = DefaultValueHandling.IgnoreAndPopulate)]
     public float Speed { get; set; }
 
-    /// <summary>Unit flow axis in XY (ignored if <see cref="FlowSpeedAbs"/> is 0).</summary>
+    /// <summary>Unit flow axis in XY for legacy JSON polygon/line areas.</summary>
     [JsonProperty(DefaultValueHandling = DefaultValueHandling.IgnoreAndPopulate)]
     public Vector2 FlowAxis { get; set; }
 
-    /// <summary>Absolute flow speed (m/s). Contract: {0,1} for gameplay.</summary>
+    /// <summary>Absolute flow speed in m/s.</summary>
     [JsonProperty(DefaultValueHandling = DefaultValueHandling.IgnoreAndPopulate)]
     public float FlowSpeedAbs { get; set; }
 
-    /// <summary>Signed flow speed along <see cref="FlowAxis"/> (downhill sign). Contract: {-1,0,1}.</summary>
+    /// <summary>Signed flow speed along <see cref="FlowAxis"/> for legacy JSON areas.</summary>
     [JsonProperty(DefaultValueHandling = DefaultValueHandling.IgnoreAndPopulate)]
     public float FlowSpeedSigned { get; set; }
 
@@ -51,6 +51,16 @@ public class WaterBodyArea
 
     [JsonIgnore]
     public List<Vector3> BorderPoints { get; set; }
+
+    /// <summary>Native water velocity in world XYZ for CryEngine river volumes.</summary>
+    [JsonIgnore]
+    public Vector3 FlowVelocity { get; set; }
+
+    [JsonIgnore]
+    public Vector3 SurfacePlaneNormal { get; set; }
+
+    [JsonIgnore]
+    public float SurfacePlaneD { get; set; }
     [JsonIgnore]
     public RectangleF _boundingBox = RectangleF.Empty;
     [JsonIgnore]
@@ -96,10 +106,9 @@ public class WaterBodyArea
             return false;
         }
         
-        if (AreaType == WaterBodyAreaType.Polygon)
+        if (AreaType is WaterBodyAreaType.Polygon or WaterBodyAreaType.River)
         {
-            // For flat areas, just use the top
-            surfacePoint = new Vector3(point.X, point.Y, _highest);
+            surfacePoint = new Vector3(point.X, point.Y, GetPolygonSurfaceHeight(point.X, point.Y));
         }
         else
         if (AreaType == WaterBodyAreaType.LineArray)
@@ -138,7 +147,7 @@ public class WaterBodyArea
         var xMax = 0f;
         var yMax = 0f;
 
-        if (AreaType == WaterBodyAreaType.Polygon)
+        if (AreaType is WaterBodyAreaType.Polygon or WaterBodyAreaType.River)
         {
             // If a polygon, just copy the points
             BorderPoints = Points;
@@ -187,7 +196,7 @@ public class WaterBodyArea
                 xMax = point.X + boundsPad;
                 yMax = point.Y + boundsPad;
                 
-                if (AreaType == WaterBodyAreaType.Polygon)
+                if (AreaType is WaterBodyAreaType.Polygon or WaterBodyAreaType.River)
                 {
                     _lowest = point.Z;
                     _highest = _lowest;
@@ -235,6 +244,14 @@ public class WaterBodyArea
         if (!_boundingBox.Contains(x, y))
             return false;
 
+        if (AreaType == WaterBodyAreaType.River)
+        {
+            var insideRiver = PointInsidePolygon2D(x, y);
+            if (insideRiver)
+                flowVector = FlowVelocity;
+            return insideRiver;
+        }
+
         // Rivers: corridor around the centerline (2D distance to segments). The old ray+BorderPoints+angle
         // path dropped valid points (e.g. 2-point rivers had zero direction; angle checks skipped segments).
         if (AreaType == WaterBodyAreaType.LineArray)
@@ -264,15 +281,15 @@ public class WaterBodyArea
             return false;
 
         var inside = false;
-        for (var i = 0; i + 1 < BorderPoints.Count; i++)
+        for (int i = 0, j = BorderPoints.Count - 1; i < BorderPoints.Count; j = i++)
         {
             var yi = BorderPoints[i].Y;
-            var yj = BorderPoints[i + 1].Y;
+            var yj = BorderPoints[j].Y;
             if ((yi > y) == (yj > y))
                 continue;
 
             var xi = BorderPoints[i].X;
-            var xj = BorderPoints[i + 1].X;
+            var xj = BorderPoints[j].X;
             var denom = yj - yi;
             if (MathF.Abs(denom) < 1e-20f)
                 continue;
@@ -283,6 +300,15 @@ public class WaterBodyArea
         }
 
         return inside;
+    }
+
+    private float GetPolygonSurfaceHeight(float x, float y)
+    {
+        if (MathF.Abs(SurfacePlaneNormal.Z) <= 1e-6f)
+            return _highest;
+
+        return -(SurfacePlaneNormal.X * x + SurfacePlaneNormal.Y * y + SurfacePlaneD) /
+               SurfacePlaneNormal.Z;
     }
 
     private bool ContainsRiverCorridor(float x, float y, out Vector3 flowVector)

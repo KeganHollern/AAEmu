@@ -8,12 +8,12 @@ public class ObjectDataType11Water() : ObjectDataBase(ObjectDataType.WaterVolume
 
     private const int StartOfVariableData = 0x7B; // Variable points data starts at this offset
 
-    /// <summary>
-    /// Likely river type
-    /// </summary>
+    /// <summary>CryEngine <c>IWaterVolumeRenderNode::EWaterVolumeType</c>.</summary>
     public WaterObjectVolumeType VolumeType { get; private set; }
     public ulong VolumeId { get; set; }
+    /// <summary>Serialized render-node AABB minimum.</summary>
     public Vector3 StartPos { get; private set; } = Vector3.Zero;
+    /// <summary>Serialized render-node AABB maximum.</summary>
     public Vector3 EndPos { get; private set; } = Vector3.Zero;
     private int ShapePointsCount { get; set; }
     private int PhysicsContourPointsCount { get; set; }
@@ -33,7 +33,7 @@ public class ObjectDataType11Water() : ObjectDataBase(ObjectDataType.WaterVolume
     public float UTexEnd { get; set; }
     public float UTexBegin { get; set; }
     public float FogPlaneD { get; set; }
-    public Vector3 FogPlanePos { get; set; }
+    public Vector3 FogPlaneNormal { get; set; }
     public float FogColorB { get; set; }
     public float FogColorG { get; set; }
     public float FogColorR { get; set; }
@@ -59,14 +59,15 @@ public class ObjectDataType11Water() : ObjectDataBase(ObjectDataType.WaterVolume
         StartPos = GetVector3(blockData, offset + 0x04); // 3 x float @ 0x04 
         EndPos =  GetVector3(blockData, offset + 0x10);  //
 
-        VolumeType = (WaterObjectVolumeType)blockData.Skip(offset + 0x2B).FirstOrDefault();
+        // r208022 packs the enum into one byte; the following three bytes are independent flags.
+        VolumeType = (WaterObjectVolumeType)blockData[offset + 0x2B];
         VolumeId = BitConverter.ToUInt64(blockData, offset + 0x2F);
         MaterialId = BitConverter.ToInt32(blockData, offset + 0x37);
         FogDensity = BitConverter.ToSingle(blockData, offset + 0x3B);
         FogColorR = BitConverter.ToSingle(blockData, offset + 0x3F);
         FogColorG = BitConverter.ToSingle(blockData, offset + 0x43);
         FogColorB = BitConverter.ToSingle(blockData, offset + 0x47);
-        FogPlanePos = GetVector3(blockData, offset + 0x4B);
+        FogPlaneNormal = GetVector3(blockData, offset + 0x4B);
         FogPlaneD = BitConverter.ToSingle(blockData, offset + 0x57);
         UTexBegin = BitConverter.ToSingle(blockData, offset + 0x5B);
         UTexEnd = BitConverter.ToSingle(blockData, offset + 0x5F);
@@ -77,9 +78,9 @@ public class ObjectDataType11Water() : ObjectDataBase(ObjectDataType.WaterVolume
         Speed = BitConverter.ToSingle(blockData, offset + 0x73);
         PhysicsContourPointsCount = BitConverter.ToInt32(blockData, offset + 0x77);
 
-        SurfaceHeight = Math.Max(EndPos.Z, StartPos.Z);
-
-        // TODO: Find out if there is a directional vector for water speed, or if uses the segment data for its direction
+        var centerX = (StartPos.X + EndPos.X) * 0.5f;
+        var centerY = (StartPos.Y + EndPos.Y) * 0.5f;
+        SurfaceHeight = GetSurfaceHeight(centerX, centerY);
 
         var totalObjectSize = (ShapePointsCount * 12) + (PhysicsContourPointsCount * 12) + StartOfVariableData;
         if (offset + totalObjectSize > blockData.Length)
@@ -108,6 +109,15 @@ public class ObjectDataType11Water() : ObjectDataBase(ObjectDataType.WaterVolume
 
         Data = blockData.Skip(offset).Take(totalObjectSize).ToArray();
         return Data.Length;
+    }
+
+    /// <summary>Returns the water fog-plane height at the serialized local XY coordinate.</summary>
+    public float GetSurfaceHeight(float x, float y)
+    {
+        if (MathF.Abs(FogPlaneNormal.Z) <= 1e-6f)
+            return Math.Max(EndPos.Z, StartPos.Z);
+
+        return -(FogPlaneNormal.X * x + FogPlaneNormal.Y * y + FogPlaneD) / FogPlaneNormal.Z;
     }
 
 }

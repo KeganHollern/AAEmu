@@ -3,5 +3,6 @@
 public enum WaterBodyAreaType
 {
     Polygon,
-    LineArray
+    LineArray,
+    River
 }
