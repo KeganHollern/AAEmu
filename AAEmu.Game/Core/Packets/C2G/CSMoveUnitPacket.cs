@@ -245,7 +245,14 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                         (float)MathUtil.ConvertDirectionToRadian(dmt.RotationZ));
                     //Logger.Info($"SetPosition:World {targetUnit.ObjId} is moving X={targetUnit.Transform.World.Position.X} Y={targetUnit.Transform.World.Position.Y}");
                     //Logger.Info($"SetPosition:Local {targetUnit.ObjId} is moving X={dmt.X} Y={dmt.Y}");
-                    targetUnit.BroadcastPacket(new SCOneUnitMovementPacket(_objId, dmt), true);
+                    // The controlling client already integrates its own movement locally. Echoing a
+                    // skill-controller move (Flags.HasScTypeAndPhase) back to that same character can
+                    // interrupt the local controller and leave it in an invalid movement state.
+                    // Preserve the original 1.2 behavior: observers receive the move, while a different
+                    // controlled character still receives movement authored on its behalf.
+                    targetUnit.BroadcastPacket(
+                        new SCOneUnitMovementPacket(_objId, dmt),
+                        ShouldIncludeTargetCharacter(character, targetUnit));
                     targetUnit.Transform.FinalizeTransform();
 
                     // Handle Fall Velocity
@@ -267,6 +274,11 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
     {
         if (moveType.VelX != 0 || moveType.VelY != 0 || moveType.VelZ != 0)
             unit.Buffs.TriggerRemoveOn(BuffRemoveOn.Move);
+    }
+
+    internal static bool ShouldIncludeTargetCharacter(Character movementAuthor, BaseUnit targetUnit)
+    {
+        return targetUnit is Character && targetUnit.ObjId != movementAuthor.ObjId;
     }
 
     private static bool IsBoardedOnTransfer(BaseUnit unit)
