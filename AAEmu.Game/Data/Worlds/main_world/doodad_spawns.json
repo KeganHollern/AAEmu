@@ -387403,6 +387403,18 @@
   },
   {
     "Id": 0,
+    "UnitId": 4894, // Mirage Isle Portal - Seachild Wharf
+    "Position": {
+      "X": 15413.65,
+      "Y": 11557.65,
+      "Z": 107.1946,
+      "Roll": 0.0,
+      "Pitch": 0.0,
+      "Yaw": 180.0
+    }
+  },
+  {
+    "Id": 0,
     "UnitId": 4894, // Mirage Isle Portal
     "Position": {
       "X": 18950.39,
