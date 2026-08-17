@@ -182,6 +182,18 @@ public class DungeonsConfig
     public int AutoTeamDisbandKickTime { get; set; } = 30;
 
     /// <summary>
+    /// Maximum number of dungeon instances one character may create during the configured rolling window.
+    /// Set to 0 to disable the creation throttle.
+    /// </summary>
+    public uint CreationLimit { get; set; } = 3;
+
+    /// <summary>
+    /// Length in minutes of the rolling dungeon-creation window.
+    /// Set to 0 to disable the creation throttle.
+    /// </summary>
+    public uint CreationWindowMinutes { get; set; } = 15;
+
+    /// <summary>
     /// List of dungeon instances that should be created by default
     /// </summary>
     // ReSharper disable once CollectionNeverUpdated.Global

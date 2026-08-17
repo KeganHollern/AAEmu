@@ -357,7 +357,6 @@ public class IndunGameData : Singleton<IndunGameData>, IGameDataLoader
                     var indunZone = new IndunZone
                     {
                         ZoneGroupId = reader.GetUInt32("zone_group_id"),
-                        // EnterCount = reader.GetUInt32("enter_count"),
                         Name = reader.GetString("name"),
                         Comment = reader.GetString("comment"),
                         LevelMin = reader.GetUInt32("level_min"),
@@ -372,9 +371,6 @@ public class IndunGameData : Singleton<IndunGameData>, IGameDataLoader
                         SelectChannel = reader.GetBoolean("select_channel", true)
                     };
 
-                    // Hack for earlier versions
-                    // Exception for Mirage and Library
-                    indunZone.EnterCount = indunZone.ZoneGroupId == 49 || indunZone.SelectChannel ? 1000u : 3u;
                     indunZone.LocalizedName = LocalizationManager.Instance.Get("indun_zones", "name", indunZone.ZoneGroupId, indunZone.Name);
 
                     _indunZones.Add(indunZone.ZoneGroupId, indunZone);

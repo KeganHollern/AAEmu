@@ -40,10 +40,6 @@ public class Dungeon
     public HashSet<Character> EnterRequests { get; } = [];
     private bool _isTeamOwned;
     private readonly Dictionary<uint, bool> _rooms;
-    //private static Dictionary<uint, Dictionary<uint, int>> _attempts; // <ownerId, <zoneGroupId, attempts>> - dungeon attempts used
-    //private const int FreeAttempts = 3;  // free attempts
-    //private const int ExtraAttempts = 2; // additional attempts
-    //public bool IsWaitingDungeonAccessAttemptsCleared { get; set; }
 
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
     private readonly object _lock = new();
@@ -217,51 +213,59 @@ public class Dungeon
     /// <param name="character"></param>
     public bool QueuePlayer(Character character)
     {
+        return QueuePlayer(character, null);
+    }
+
+    /// <summary>
+    /// Adds a player after atomically confirming the dungeon is still alive and, when supplied,
+    /// satisfying a consuming entry requirement.
+    /// </summary>
+    /// <remarks>
+    /// The requirement callback runs under the same lock as the abandoned-instance check. This
+    /// prevents the cleanup sweep from destroying the dungeon after an entry item is consumed but
+    /// before the player is queued.
+    /// </remarks>
+    internal bool QueuePlayer(Character character, Func<bool> consumeEntryRequirement)
+    {
+        var addImmediately = false;
         lock (_lock)
         {
             // aaemu-cluster#92 (#102): refuse entry into a dungeon that is being destroyed by the
             // abandoned-instance sweep; the caller falls through to creating a fresh instance.
             if (IsDestroyed)
                 return false;
-        }
 
-        if (EnterRequests.Contains(character))
-            return true;
+            if (EnterRequests.Contains(character))
+                return true;
 
-        // Block players who are part of a court case
-        if (TrialManager.Instance.IsPlayerInCourt(character.Id))
-        {
-            character.SendErrorMessage(ErrorMessageType.CannotUsePortalInTrial);
-            return false;
-        }
-
-        if (!IndunManager.Instance.CheckEntryAttemptCount(character.Id, GetZoneGroupId, _indunZone, true))
-        {
-            Logger.Info($"[{World}] Player {character.Name} did too many dungeon attempts.");
-            character.SendErrorMessage(ErrorMessageType.InstanceVisitLimit);
-            return false;
-        }
-
-        // aaemu-cluster#92 (#102, review): disarm the abandoned sweep only once the player has
-        // actually passed the refusal checks above. Clearing the stamp earlier let a refused
-        // attempt (court case, entry limit, creator disconnecting during load) pin a never-entered
-        // instance until the 24h expiry.
-        lock (_lock)
-        {
-            if (IsDestroyed)
+            // Block players who are part of a court case
+            if (TrialManager.Instance.IsPlayerInCourt(character.Id))
+            {
+                character.SendErrorMessage(ErrorMessageType.CannotUsePortalInTrial);
                 return false;
+            }
+
+            if (consumeEntryRequirement != null && !consumeEntryRequirement())
+                return false;
+
+            // aaemu-cluster#92 (#102, review): disarm the abandoned sweep only once the player has
+            // actually passed every refusal check. Clearing the stamp earlier let a refused
+            // attempt pin a never-entered instance until the 24h expiry.
             _emptySince = null;
+
+            PlayersWithAccess.Add(character.Id);
+            addImmediately = FinishedLoading;
+            if (!addImmediately)
+                EnterRequests.Add(character);
         }
 
-        PlayersWithAccess.Add(character.Id);
-        if (FinishedLoading)
+        if (addImmediately)
         {
             AddPlayer(character);
         }
         else
         {
             character.SendPacket(new SCProcessingInstancePacket((int)_zoneInstanceId.ZoneId));
-            EnterRequests.Add(character);
         }
         return true;
     }

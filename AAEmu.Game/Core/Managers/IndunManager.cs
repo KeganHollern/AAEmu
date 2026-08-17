@@ -8,17 +8,24 @@ using AAEmu.Game.Models.Game.Indun;
 using AAEmu.Game.Models.Game.Team;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
+using Microsoft.Extensions.Options;
 using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
 // ReSharper disable once ClassNeverInstantiated.Global
-public class IndunManager(ITickManager tickManager, IWorldManager worldManager, IZoneManager zoneManager, ITeamManager teamManager) : Singleton<IndunManager>, IIndunManager
+public class IndunManager(
+    ITickManager tickManager,
+    IWorldManager worldManager,
+    IZoneManager zoneManager,
+    ITeamManager teamManager,
+    TimeProvider timeProvider,
+    IOptions<AppConfiguration> appConfiguration) : Singleton<IndunManager>, IIndunManager
 {
     // ReSharper disable once InconsistentNaming
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
-    private Dictionary<uint, Dictionary<uint, List<DateTime>>> EntryHistory { get; } = []; // <ownerId, <zoneGroupId, entry time>> - dungeon attempts used
+    private Dictionary<uint, Dictionary<uint, List<DateTimeOffset>>> CreationHistory { get; } = [];
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
     private readonly object _lock = new();
 
@@ -29,6 +36,8 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
 
     private void IndunInfoTick(TimeSpan delta)
     {
+        PruneCreationHistory();
+
         var sysInstanceCount = 0;
         var dungeonInstanceCount = 0;
         var worldList = worldManager.GetWorlds().ToList();
@@ -81,7 +90,7 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             }
         }
 
-        InfoAttempt();
+        InfoCreationHistory();
     }
 
     /// <summary>
@@ -119,16 +128,6 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             return false;
         }
 
-        foreach (var possibleDungeon in GetExistingDungeonsByZoneKey(zone.ZoneKey))
-        {
-            if (possibleDungeon.World.ChannelId == channelId)
-            {
-                dungeon = possibleDungeon;
-                
-                return dungeon.QueuePlayer(character);
-            }
-        }
-
         dungeon = CreateSystemInstance(character, zone.ZoneKey, channelId);
         if (dungeon == null)
         {
@@ -136,7 +135,7 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             return false;
         }
 
-        return dungeon.QueuePlayer(character);
+        return true;
     }
 
     /// <summary>
@@ -178,14 +177,9 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             return false;
         }
 
-        // Check level (or other stat) requirements
-        if (!VerifyDungeonEnterRequirements(dungeonZone, character, team))
-        {
-            return false;
-        }
-
-        // 1 - Sanity checks: already queued for an instance here, or still physically inside one
         var possibleTargetInstances = GetExistingDungeonsByZoneKey(targetZone.ZoneKey);
+
+        // 1 - Requests already being processed and players already inside do not create a new instance.
         foreach (var possibleTargetInstance in possibleTargetInstances)
         {
             // Skip instances that are torn down (or being torn down by the sweep) — their World
@@ -193,19 +187,23 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             if (possibleTargetInstance.IsDestroyed || possibleTargetInstance.World == null)
                 continue;
 
-            // If queued for this dungeon, let them wait
             if (possibleTargetInstance.EnterRequests.Contains(character))
             {
-                // Already queued, please wait
                 character.SendErrorMessage(ErrorMessageType.TryLaterInstance); // probably not a good error for this
                 return true;
             }
-            // If they were already in there, add them again (probably after disconnect)
+
             if (possibleTargetInstance.World.HasCharacter(character.Id))
             {
                 possibleTargetInstance.AddPlayer(character);
                 return true;
             }
+        }
+
+        // Check non-consuming requirements before joining or creating an instance.
+        if (!VerifyDungeonEnterRequirements(dungeonZone, character, team))
+        {
+            return false;
         }
 
         // aaemu-cluster#92 (#102): the reuse key is the OWNER (team or character), not per-character
@@ -249,9 +247,9 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
                 }
 
                 // Fall through to creating a fresh instance ONLY when the sweep destroyed this one
-                // between our check and the queue attempt; other refusals (court case, entry limit)
+                // between our check and the queue attempt; other refusals (court case, required item)
                 // must not orphan a brand-new instance. (aaemu-cluster#92, #102, review)
-                if (possibleTargetInstance.QueuePlayer(character))
+                if (QueuePlayerWithRequiredItem(possibleTargetInstance, character))
                     return true;
                 if (possibleTargetInstance.IsDestroyed)
                     break;
@@ -276,7 +274,7 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
                     return false;
                 }
 
-                if (possibleTargetInstance.QueuePlayer(character))
+                if (QueuePlayerWithRequiredItem(possibleTargetInstance, character))
                     return true;
                 if (possibleTargetInstance.IsDestroyed)
                     break;
@@ -284,7 +282,7 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             }
         }
 
-        // 4 - If none of the above applies, actually create a new dungeon
+        // 5 - If none of the above applies, actually create a new dungeon
         Logger.Info($"Creating a new dungeon for player {character.Name} ({character.Id}), zone: {dungeonZone}, channel: {channelId}");
         if (!CreateDungeonInstance(dungeonZone, character, channelId, out var dungeon))
         {
@@ -292,7 +290,7 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             return false;
         }
 
-        return dungeon.QueuePlayer(character);
+        return true;
     }
 
     /// <summary>
@@ -322,11 +320,9 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
     /// <returns></returns>
     private bool VerifyDungeonEnterRequirements(IndunZone dungeonZone, Character character, Team team)
     {
-        // Check access count
-        if (!CheckEntryAttemptCount(character.Id, dungeonZone.ZoneGroupId, dungeonZone, false))
+        if (TrialManager.Instance.IsPlayerInCourt(character.Id))
         {
-            
-            character.SendErrorMessage(ErrorMessageType.InstanceVisitLimit);
+            character.SendErrorMessage(ErrorMessageType.CannotUsePortalInTrial);
             return false;
         }
 
@@ -352,15 +348,24 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             return false;
         }
         
-        // Check item requirement
-        if (dungeonZone is { ItemId: > 0 } && !PortalManager.CheckItemAndRemove(character, dungeonZone.ItemId, 1))
+        return true;
+    }
+
+    private static bool ConsumeDungeonEntryItem(IndunZone dungeonZone, Character character)
+    {
+        if (dungeonZone.ItemId <= 0 || PortalManager.CheckItemAndRemove(character, dungeonZone.ItemId, 1))
         {
-            Logger.Info($"[IndunManager] Player does not have the required item to create a new dungeon, characterId: {character.Id}, zoneGroupId: {dungeonZone.ZoneGroupId}, item: {dungeonZone.ItemId}");
-            character.SendErrorMessage(ErrorMessageType.EnterInstReqItem, dungeonZone.ItemId);
-            return false;
+            return true;
         }
 
-        return true;
+        Logger.Info($"[IndunManager] Player does not have the required item to enter a dungeon, characterId: {character.Id}, zoneGroupId: {dungeonZone.ZoneGroupId}, item: {dungeonZone.ItemId}");
+        character.SendErrorMessage(ErrorMessageType.EnterInstReqItem, dungeonZone.ItemId);
+        return false;
+    }
+
+    private static bool QueuePlayerWithRequiredItem(Dungeon dungeon, Character character)
+    {
+        return dungeon.QueuePlayer(character, () => ConsumeDungeonEntryItem(dungeon._indunZone, character));
     }
 
     /// <summary>
@@ -376,7 +381,7 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
         dungeon = null;
 
         // Check if we have capacity
-        if (worldManager.GetWorlds().Length > AppConfiguration.Instance.World.MaxInstances)
+        if (worldManager.GetWorlds().Length > appConfiguration.Value.World.MaxInstances)
         {
             Logger.Warn($"Requesting a new instance would exceeds the allowed ammount, characterId: {character.Id}, zoneGroupId: {dungeonZone.ZoneGroupId}");
             character.SendErrorMessage(ErrorMessageType.NoServerInstanceResource);
@@ -386,17 +391,38 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
         var team = teamManager.GetTeamByObjId(character.ObjId);
         Logger.Info($"Requesting instance, characterId: {character.Id}, zoneGroupId: {dungeonZone.ZoneGroupId}");
 
-        // Check requirements such as level, item, etc
-        if (!VerifyDungeonEnterRequirements(dungeonZone, character, team))
+        if (!TryReserveDungeonCreation(character.Id, dungeonZone.ZoneGroupId, out var reservationTime))
         {
+            var config = appConfiguration.Value.Dungeons;
+            Logger.Warn($"Requesting instance too many recent creations ({config.CreationLimit} in {config.CreationWindowMinutes} minutes), characterId: {character.Id}, zoneGroupId: {dungeonZone.ZoneGroupId}");
+            character.SendErrorMessage(ErrorMessageType.InstanceVisitLimit);
             return false;
         }
 
-        // Create the actual dungeon
-        dungeon = new Dungeon(dungeonZone, character, channelId, team);
+        if (!ConsumeDungeonEntryItem(dungeonZone, character))
+        {
+            ReleaseDungeonCreationReservation(character.Id, dungeonZone.ZoneGroupId, reservationTime);
+            return false;
+        }
 
-        // Add creator to queue while dungeon is loading
-        return dungeon.QueuePlayer(character);
+        try
+        {
+            dungeon = new Dungeon(dungeonZone, character, channelId, team);
+            if (dungeon.QueuePlayer(character))
+            {
+                return true;
+            }
+
+            dungeon.DestroyDungeon();
+            dungeon = null;
+            ReleaseDungeonCreationReservation(character.Id, dungeonZone.ZoneGroupId, reservationTime);
+            return false;
+        }
+        catch
+        {
+            ReleaseDungeonCreationReservation(character.Id, dungeonZone.ZoneGroupId, reservationTime);
+            throw;
+        }
     }
 
     /// <summary>
@@ -413,8 +439,8 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
         Logger.Info($"Requesting system instance, zoneKey: {zoneKey}, character: {character?.Name ?? "[SYSTEM]"}, channel: {channelId}, override InstanceId: {(overrideInstanceId ? fixedInstanceId.ToString() : "NO")}");
 
         var team = character != null ? teamManager.GetTeamByObjId(character.ObjId) : null;
-
-        var dungeonZone = IndunGameData.Instance.GetDungeonZone(zoneManager.GetZoneByKey(zoneKey).GroupId);
+        var zone = zoneManager.GetZoneByKey(zoneKey);
+        var dungeonZone = zone == null ? null : IndunGameData.Instance.GetDungeonZone(zone.GroupId);
         if (dungeonZone == null)
         {
             Logger.Error($"Requesting invalid system instance: , zoneKey: {zoneKey}, character: {character?.Name ?? "[SYSTEM]"}, channel: {channelId}, override InstanceId: {(overrideInstanceId ? fixedInstanceId.ToString() : "NO")}");
@@ -427,13 +453,33 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             if (worldInstance.ChannelId == channelId &&
                 worldInstance.DungeonInstance?.GetZoneGroupId == dungeonZone.ZoneGroupId)
             {
-                // Check requirements such as level, item, etc
-                if (character != null && VerifyDungeonEnterRequirements(dungeonZone, character, team))
+                if (character == null || worldInstance.DungeonInstance.EnterRequests.Contains(character) || worldInstance.HasCharacter(character.Id))
                 {
-                    worldInstance.DungeonInstance.QueuePlayer(character);
+                    return worldInstance.DungeonInstance;
                 }
+
+                if (!VerifyDungeonEnterRequirements(dungeonZone, character, team) ||
+                    !QueuePlayerWithRequiredItem(worldInstance.DungeonInstance, character))
+                {
+                    return null;
+                }
+
                 return worldInstance.DungeonInstance;
             }
+        }
+
+        // Check if zones match
+        if (dungeonZone.ZoneGroupId != zone.GroupId)
+        {
+            Logger.Info("[IndunManager] system dungeon request on different area.");
+            character?.SendErrorMessage(ErrorMessageType.ProhibitedInInstance);
+            return null;
+        }
+
+        if (character != null &&
+            (!VerifyDungeonEnterRequirements(dungeonZone, character, team) || !ConsumeDungeonEntryItem(dungeonZone, character)))
+        {
+            return null;
         }
 
         // Create new system instance
@@ -442,18 +488,10 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             IsSystem = true
         };
 
-        // Check if zones match
-        if (dungeonZone.ZoneGroupId != zoneManager.GetZoneByKey(zoneKey)?.GroupId)
+        if (character != null && !dungeon.QueuePlayer(character))
         {
-            Logger.Info("[IndunManager] system dungeon request on different area.");
-            character?.SendErrorMessage(ErrorMessageType.ProhibitedInInstance);
+            dungeon.DestroyDungeon();
             return null;
-        }
-
-        // Check requirements such as level, item, etc
-        if (character != null && VerifyDungeonEnterRequirements(dungeon._indunZone, character, team))
-        {
-            dungeon.QueuePlayer(character);
         }
 
         return dungeon;
@@ -546,54 +584,131 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
         }
     }
 
-    public bool CheckEntryAttemptCount(uint characterId, uint zoneGroupId, IndunZone indunZone, bool addAsNewEnty)
+    internal bool TryReserveDungeonCreation(uint characterId, uint zoneGroupId, out DateTimeOffset reservationTime)
     {
+        reservationTime = default;
+        var config = appConfiguration.Value.Dungeons;
+        if (config.CreationLimit == 0 || config.CreationWindowMinutes == 0)
+        {
+            return true;
+        }
+
+        var now = timeProvider.GetUtcNow();
         lock (_lock)
         {
-            if (!EntryHistory.ContainsKey(characterId))
-                EntryHistory.Add(characterId, []);
+            PruneCreationHistoryUnsafe(now, config.CreationWindowMinutes);
 
-            var zoneAndEntries = EntryHistory.GetValueOrDefault(characterId);
-
-            if (!zoneAndEntries.ContainsKey(zoneGroupId))
-                zoneAndEntries.Add(zoneGroupId, []);
-
-            var entriesList = zoneAndEntries.GetValueOrDefault(zoneGroupId);
-
-            // Can customize this to your start of the day to make this daily entry count
-            var thresholdTime = DateTime.UtcNow.AddHours(-4);
-            var lastEntriesQuery = entriesList.Where(x => x >= thresholdTime).ToList();
-
-            if (lastEntriesQuery.Count >= indunZone.EnterCount)
+            if (!CreationHistory.TryGetValue(characterId, out var zoneAndCreations))
             {
-                // Max entries reached
-                Logger.Warn($"Requesting instance too many daily entries ({lastEntriesQuery.Count} / {indunZone.EnterCount}), characterId: {characterId}, zoneGroupId: {zoneGroupId}");
+                zoneAndCreations = [];
+                CreationHistory.Add(characterId, zoneAndCreations);
+            }
+
+            if (!zoneAndCreations.TryGetValue(zoneGroupId, out var creationTimes))
+            {
+                creationTimes = [];
+                zoneAndCreations.Add(zoneGroupId, creationTimes);
+            }
+
+            if (creationTimes.Count >= config.CreationLimit)
+            {
                 return false;
             }
 
-            // Add current entry attempt if requested
-            if (addAsNewEnty)
-            {
-                entriesList.Add(DateTime.UtcNow);
-                Logger.Warn($"Added entry for player {characterId} in zone {zoneGroupId}, Count is now {entriesList.Count}");
-            }
-
-            return true; // true - you could also go to the dungeon, false - used up free attempts, used up extra attempts
+            creationTimes.Add(now);
+            reservationTime = now;
+            Logger.Debug($"Reserved dungeon creation for player {characterId} in zone group {zoneGroupId}, count is now {creationTimes.Count}/{config.CreationLimit}");
+            return true;
         }
     }
 
-    private void InfoAttempt()
+    internal void ReleaseDungeonCreationReservation(uint characterId, uint zoneGroupId, DateTimeOffset reservationTime)
     {
         lock (_lock)
         {
-            if (EntryHistory is { Count: > 0 })
+            if (!CreationHistory.TryGetValue(characterId, out var zoneAndCreations) ||
+                !zoneAndCreations.TryGetValue(zoneGroupId, out var creationTimes))
             {
-                foreach (var (characterId, zoneAndEntries) in EntryHistory)
+                return;
+            }
+
+            creationTimes.Remove(reservationTime);
+            if (creationTimes.Count == 0)
+            {
+                zoneAndCreations.Remove(zoneGroupId);
+            }
+
+            if (zoneAndCreations.Count == 0)
+            {
+                CreationHistory.Remove(characterId);
+            }
+        }
+    }
+
+    internal int GetRecentDungeonCreationCount(uint characterId, uint zoneGroupId)
+    {
+        var config = appConfiguration.Value.Dungeons;
+        if (config.CreationLimit == 0 || config.CreationWindowMinutes == 0)
+        {
+            return 0;
+        }
+
+        var now = timeProvider.GetUtcNow();
+        lock (_lock)
+        {
+            PruneCreationHistoryUnsafe(now, config.CreationWindowMinutes);
+            return CreationHistory.TryGetValue(characterId, out var zoneAndCreations) &&
+                zoneAndCreations.TryGetValue(zoneGroupId, out var creationTimes)
+                    ? creationTimes.Count
+                    : 0;
+        }
+    }
+
+    private void PruneCreationHistory()
+    {
+        var config = appConfiguration.Value.Dungeons;
+        lock (_lock)
+        {
+            if (config.CreationLimit == 0 || config.CreationWindowMinutes == 0)
+            {
+                CreationHistory.Clear();
+                return;
+            }
+
+            PruneCreationHistoryUnsafe(timeProvider.GetUtcNow(), config.CreationWindowMinutes);
+        }
+    }
+
+    private void PruneCreationHistoryUnsafe(DateTimeOffset now, uint creationWindowMinutes)
+    {
+        var thresholdTime = now.AddMinutes(-creationWindowMinutes);
+        foreach (var (characterId, zoneAndCreations) in CreationHistory.ToList())
+        {
+            foreach (var (zoneGroupId, creationTimes) in zoneAndCreations.ToList())
+            {
+                creationTimes.RemoveAll(creationTime => creationTime <= thresholdTime);
+                if (creationTimes.Count == 0)
                 {
-                    foreach (var (zoneGroupId, entriesList) in zoneAndEntries)
-                    {
-                        Logger.Debug($"For player={characterId} ({worldManager.GetCharacterById(characterId)?.Name}): {entriesList.Count} entries into dungeon zone group {zoneGroupId} ({zoneManager.GetZoneGroupById(zoneGroupId)?.Name})");
-                    }
+                    zoneAndCreations.Remove(zoneGroupId);
+                }
+            }
+
+            if (zoneAndCreations.Count == 0)
+            {
+                CreationHistory.Remove(characterId);
+            }
+        }
+    }
+
+    private void InfoCreationHistory()
+    {
+        lock (_lock)
+        {
+            foreach (var (characterId, zoneAndCreations) in CreationHistory)
+            {
+                foreach (var (zoneGroupId, creationTimes) in zoneAndCreations)
+                {
+                    Logger.Debug($"For player={characterId} ({worldManager.GetCharacterById(characterId)?.Name}): {creationTimes.Count} recent dungeon creations in zone group {zoneGroupId} ({zoneManager.GetZoneGroupById(zoneGroupId)?.Name})");
                 }
             }
         }

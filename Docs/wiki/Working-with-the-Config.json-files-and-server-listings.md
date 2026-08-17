@@ -1,7 +1,7 @@
 # Working with Config Files and Server Listings
 
 - Audience: Contributors, players, and testers
-- Last verified against: `develop` on February 28, 2026
+- Last verified against: `deployment/r208022` on August 17, 2026
 - Prerequisites: Basic JSON editing and AAEmu project structure familiarity
 
 ## Overview
@@ -74,6 +74,28 @@ Set `game_pak` source in one of these places:
 - `AAEmu.Game/Config.Local.json` for local override.
 
 For contributor workflows, prefer `Config.Local.json`.
+
+## Dungeon instance creation throttle
+
+The game server limits how quickly one character can create new player-owned
+dungeon instances in the same dungeon zone. The default is three successful
+creations in a rolling 15-minute window. Joining a party's instance,
+re-entering an existing instance, reconnecting, and entering a system instance
+do not consume this allowance.
+
+Override the defaults in `AAEmu.Game/Config.Local.json` when needed:
+
+```json
+{
+  "Dungeons": {
+    "CreationLimit": 3,
+    "CreationWindowMinutes": 15
+  }
+}
+```
+
+Set either value to `0` to disable the creation throttle. The creation history
+is held in memory and resets when the game server restarts.
 
 ## Migration note from old setup docs
 
