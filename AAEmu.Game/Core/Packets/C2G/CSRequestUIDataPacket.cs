@@ -13,7 +13,7 @@ public class CSRequestUIDataPacket() : GamePacket(CSOffsets.CSRequestUIDataPacke
 
         if (Connection.Characters.TryGetValue(id, out var value))
             Connection.SendPacket(
-                new SCResponseUIDataPacket(id, uiDataType, value.GetOption(uiDataType))
+                new SCResponseUIDataPacket(id, uiDataType, value.GetOptionForClient(uiDataType))
             );
     }
 }
