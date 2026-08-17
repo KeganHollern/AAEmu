@@ -1,5 +1,7 @@
 ﻿using System.Collections;
 using System.Data;
+
+using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Packets.G2C;
@@ -9,6 +11,7 @@ using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
+
 using MySql.Data.MySqlClient;
 
 using NLog;
@@ -154,6 +157,14 @@ public class CharacterQuests(Character owner)
         // Execute the first Step
         _ = quest.RunCurrentStep(); // We don't need the return value here
 
+        // Write the accepted quest through to the database immediately. Quest rows
+        // otherwise only reach MySQL on the periodic SaveManager tick or the logout
+        // save, so an abrupt server stop (crash, forced rollout) silently discarded
+        // every quest accepted since the last tick (aaemu-cluster#81). The quest may have
+        // auto-completed inside RunCurrentStep, so only flush if it is still active.
+        if (ActiveQuests.ContainsKey(quest.TemplateId))
+            FlushQuest(quest);
+
         quest.QuestInitialized();
         return true;
     }
@@ -243,6 +254,7 @@ public class CharacterQuests(Character owner)
         quest.FinalizeQuestActs();
         ActiveQuests.Remove(questId);
         _removed.Add(questId);
+        FlushRemovedQuest(questId);
 
         if (forcibly)
         {
@@ -393,6 +405,7 @@ public class CharacterQuests(Character owner)
         }
         // Set quest flag to (not) completed
         completedBlock.Body.Set(completedQuestBlockIndex, isCompleted);
+        FlushCompletedQuestBlock(completedBlock);
         return completedBlock;
     }
 
@@ -612,6 +625,78 @@ public class CharacterQuests(Character owner)
 
                 command.Parameters.Clear();
             }
+        }
+    }
+
+    /// <summary>
+    /// Immediately persists one active quest row. Quest state otherwise only
+    /// reaches the database inside the periodic or logout Character.Save, so an
+    /// abrupt server stop discarded every accept/drop/complete since the last
+    /// tick (aaemu-cluster#81). These transitions are rare, so a direct write each is
+    /// negligible load; the periodic save remains the safety net.
+    /// </summary>
+    private void FlushQuest(Quest quest)
+    {
+        try
+        {
+            using var connection = MySQL.CreateConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText =
+                "REPLACE INTO quests(`id`,`template_id`,`data`,`status`,`owner`) VALUES(@id,@template_id,@data,@status,@owner)";
+            command.Parameters.AddWithValue("@id", quest.Id);
+            command.Parameters.AddWithValue("@template_id", quest.TemplateId);
+            command.Parameters.AddWithValue("@data", quest.WriteData());
+            command.Parameters.AddWithValue("@status", (byte)quest.Status);
+            command.Parameters.AddWithValue("@owner", Owner.Id);
+            command.ExecuteNonQuery();
+        }
+        catch (Exception e)
+        {
+            Logger.Warn(e, $"Failed to write-through quest {quest.TemplateId} for {Owner.Name} ({Owner.Id})");
+        }
+    }
+
+    /// <summary>
+    /// Immediately deletes the row of a dropped or completed quest. See FlushQuest.
+    /// </summary>
+    private void FlushRemovedQuest(uint templateId)
+    {
+        try
+        {
+            using var connection = MySQL.CreateConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM quests WHERE `owner` = @owner AND `template_id` = @template_id";
+            command.Parameters.AddWithValue("@owner", Owner.Id);
+            command.Parameters.AddWithValue("@template_id", templateId);
+            command.ExecuteNonQuery();
+        }
+        catch (Exception e)
+        {
+            Logger.Warn(e, $"Failed to write-through quest removal {templateId} for {Owner.Name} ({Owner.Id})");
+        }
+    }
+
+    /// <summary>
+    /// Immediately persists one completed-quests bit block. See FlushQuest.
+    /// </summary>
+    private void FlushCompletedQuestBlock(CompletedQuest block)
+    {
+        try
+        {
+            var body = new byte[8];
+            block.Body.CopyTo(body, 0);
+
+            using var connection = MySQL.CreateConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "REPLACE INTO completed_quests(`id`,`data`,`owner`) VALUES(@id,@data,@owner)";
+            command.Parameters.AddWithValue("@id", block.Id);
+            command.Parameters.AddWithValue("@data", body);
+            command.Parameters.AddWithValue("@owner", Owner.Id);
+            command.ExecuteNonQuery();
+        }
+        catch (Exception e)
+        {
+            Logger.Warn(e, $"Failed to write-through completed-quest block {block.Id} for {Owner.Name} ({Owner.Id})");
         }
     }
 

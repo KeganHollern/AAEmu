@@ -20,6 +20,7 @@ using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Buffs;
 using AAEmu.Game.Models.Game.Static;
@@ -1924,6 +1925,27 @@ public partial class Character : Unit, ICharacter
         return "";
     }
 
+    /// <summary>
+    /// Returns a UI-option value as it should be sent to the client. For the
+    /// quest-log state (ui_data type 5) this synthesizes a checked entry for
+    /// every active quest the player never explicitly toggled, because the
+    /// client restores the journal checkboxes exclusively from this blob and
+    /// only ever records entries on a physical checkbox click. Without this,
+    /// accepted quests always came back unchecked after a relog (aaemu-cluster#81).
+    /// </summary>
+    public string GetOptionForClient(ushort key)
+    {
+        var value = GetOption(key);
+        if (key != QuestTrackerUiData.UiDataType || string.IsNullOrEmpty(value))
+            return value;
+
+        var activeQuests = Quests?.ActiveQuests;
+        if (activeQuests == null || activeQuests.Count == 0)
+            return value;
+
+        return QuestTrackerUiData.EnsureActiveQuestsChecked(value, activeQuests.Keys);
+    }
+
     public void PushSubscriber(IDisposable disposable)
     {
         Subscribers.Add(disposable);
@@ -1931,7 +1953,7 @@ public partial class Character : Unit, ICharacter
 
     public void SendOption(ushort key)
     {
-        Connection.SendPacket(new SCResponseUIDataPacket(Id, key, GetOption(key)));
+        Connection.SendPacket(new SCResponseUIDataPacket(Id, key, GetOptionForClient(key)));
     }
 
     /// <summary>
