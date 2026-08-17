@@ -56,6 +56,13 @@ public class WaterBodyArea
     [JsonIgnore]
     public Vector3 FlowVelocity { get; set; }
 
+    /// <summary>
+    /// CryPhysics flow vector at each native river-contour vertex. The river strip triangulation
+    /// interpolates these vectors at the query point so curved rivers follow their local tangent.
+    /// </summary>
+    [JsonIgnore]
+    public List<Vector3> FlowContour { get; set; }
+
     [JsonIgnore]
     public Vector3 SurfacePlaneNormal { get; set; }
 
@@ -79,6 +86,7 @@ public class WaterBodyArea
         AreaType = WaterBodyAreaType.Polygon;
         Points = [];
         BorderPoints = [];
+        FlowContour = [];
         FlowAxis = Vector2.UnitX;
     }
 
@@ -88,6 +96,7 @@ public class WaterBodyArea
         Name = name;
         Points = [];
         BorderPoints = [];
+        FlowContour = [];
         FlowAxis = Vector2.UnitX;
     }
 
@@ -248,7 +257,7 @@ public class WaterBodyArea
         {
             var insideRiver = PointInsidePolygon2D(x, y);
             if (insideRiver)
-                flowVector = FlowVelocity;
+                flowVector = TryGetNativeRiverFlow(x, y, out var localFlow) ? localFlow : FlowVelocity;
             return insideRiver;
         }
 
@@ -300,6 +309,106 @@ public class WaterBodyArea
         }
 
         return inside;
+    }
+
+    /// <summary>
+    /// Reproduces CryEngine's <c>SetRiverPhysicsArea</c>: orient the contour counter-clockwise,
+    /// derive a tangent velocity along each bank, then use the same paired-bank triangle strip.
+    /// </summary>
+    internal void InitializeNativeRiverFlow(float streamSpeed)
+    {
+        FlowContour = [];
+        if (AreaType != WaterBodyAreaType.River || Points is not { Count: > 3 } || (Points.Count & 1) != 0)
+            return;
+
+        if (GetSignedArea2D(Points) <= 0f)
+            Points.Reverse();
+
+        var count = Points.Count;
+        var half = count / 2;
+        FlowContour = new List<Vector3>(new Vector3[count]);
+
+        for (var i = 0; i < half; i++)
+        {
+            var tangent = i switch
+            {
+                0 => Points[i + 1] - Points[i],
+                _ when i == half - 1 => Points[i] - Points[i - 1],
+                _ => Points[i + 1] - Points[i - 1]
+            };
+            FlowContour[i] = NormalizeOrZero(tangent) * streamSpeed;
+        }
+
+        for (var i = 0; i < half; i++)
+        {
+            var index = count - 1 - i;
+            var tangent = i switch
+            {
+                0 => Points[index - 1] - Points[index],
+                _ when i == half - 1 => Points[index] - Points[index + 1],
+                _ => Points[index - 1] - Points[index + 1]
+            };
+            FlowContour[index] = NormalizeOrZero(tangent) * streamSpeed;
+        }
+    }
+
+    private bool TryGetNativeRiverFlow(float x, float y, out Vector3 flow)
+    {
+        flow = Vector3.Zero;
+        if (Points is not { Count: > 3 } || FlowContour == null || FlowContour.Count != Points.Count ||
+            (Points.Count & 1) != 0)
+            return false;
+
+        var count = Points.Count;
+        var half = count / 2;
+        for (var i = 0; i < half - 1; i++)
+        {
+            var oppositeNext = count - 2 - i;
+            var opposite = count - 1 - i;
+            if (TryInterpolateTriangleFlow(x, y, i, i + 1, oppositeNext, out flow) ||
+                TryInterpolateTriangleFlow(x, y, oppositeNext, opposite, i, out flow))
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool TryInterpolateTriangleFlow(float x, float y, int ia, int ib, int ic, out Vector3 flow)
+    {
+        flow = Vector3.Zero;
+        var a = Points[ia];
+        var b = Points[ib];
+        var c = Points[ic];
+        var denominator = (b.Y - c.Y) * (a.X - c.X) + (c.X - b.X) * (a.Y - c.Y);
+        if (MathF.Abs(denominator) <= 1e-12f)
+            return false;
+
+        var wa = ((b.Y - c.Y) * (x - c.X) + (c.X - b.X) * (y - c.Y)) / denominator;
+        var wb = ((c.Y - a.Y) * (x - c.X) + (a.X - c.X) * (y - c.Y)) / denominator;
+        var wc = 1f - wa - wb;
+        const float edgeTolerance = 1e-5f;
+        if (wa < -edgeTolerance || wb < -edgeTolerance || wc < -edgeTolerance)
+            return false;
+
+        flow = FlowContour[ia] * wa + FlowContour[ib] * wb + FlowContour[ic] * wc;
+        return true;
+    }
+
+    private static double GetSignedArea2D(List<Vector3> points)
+    {
+        var twiceArea = 0d;
+        for (var i = 0; i < points.Count; i++)
+        {
+            var next = (i + 1) % points.Count;
+            twiceArea += (double)points[i].X * points[next].Y - (double)points[next].X * points[i].Y;
+        }
+        return twiceArea * 0.5d;
+    }
+
+    private static Vector3 NormalizeOrZero(Vector3 value)
+    {
+        var lengthSquared = value.LengthSquared();
+        return lengthSquared > 1e-12f ? value / MathF.Sqrt(lengthSquared) : Vector3.Zero;
     }
 
     private float GetPolygonSurfaceHeight(float x, float y)
