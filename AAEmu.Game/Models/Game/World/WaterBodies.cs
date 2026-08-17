@@ -27,6 +27,16 @@ public class WaterBodies
     [JsonIgnore]
     private int _indexedAreaCount;
 
+    /// <summary>
+    /// Static waterfall brushes are transition markers only. They must never participate in
+    /// <see cref="IsWater"/> or <see cref="GetWaterSurface"/> as flat water volumes.
+    /// </summary>
+    [JsonIgnore]
+    private List<WaterfallArea> _waterfalls = [];
+
+    [JsonIgnore]
+    private Dictionary<(int cx, int cy), List<uint>> _waterfallIndexByCell = new();
+
     // Max height (m) above world.xml sea: Cry Ocean rows with SurfaceHeight in this band are skipped (same open sea as IsWater for Z<=OceanLevel).
     private const float TemplateSeaDuplicateSurfaceMarginMeters = 1f;
 
@@ -224,6 +234,29 @@ public class WaterBodies
         }
     }
 
+    /// <summary>Caller must hold <see cref="_lock"/>.</summary>
+    private void WaterfallSpatialIndexAddUnderLock(WaterfallArea waterfall)
+    {
+        _waterfallIndexByCell ??= new();
+        var minCx = (int)MathF.Floor(waterfall.Min.X / SpatialCellSize);
+        var maxCx = (int)MathF.Floor(waterfall.Max.X / SpatialCellSize);
+        var minCy = (int)MathF.Floor(waterfall.Min.Y / SpatialCellSize);
+        var maxCy = (int)MathF.Floor(waterfall.Max.Y / SpatialCellSize);
+
+        for (var cx = minCx; cx <= maxCx; cx++)
+        for (var cy = minCy; cy <= maxCy; cy++)
+        {
+            var key = (cx, cy);
+            if (!_waterfallIndexByCell.TryGetValue(key, out var list))
+            {
+                list = [];
+                _waterfallIndexByCell[key] = list;
+            }
+
+            list.Add(waterfall.Id);
+        }
+    }
+
     /// <summary>Clears ingested areas and the spatial index (e.g. <see cref="WorldInstance.ReloadWaterFromLoadedCells"/>).</summary>
     internal void ClearIngestedAreas()
     {
@@ -232,6 +265,9 @@ public class WaterBodies
             Areas.Clear();
             _areaIndexByCell?.Clear();
             _indexedAreaCount = 0;
+            _waterfalls ??= [];
+            _waterfalls.Clear();
+            _waterfallIndexByCell?.Clear();
         }
     }
 
@@ -253,6 +289,51 @@ public class WaterBodies
     {
         lock (_lock)
             return [.. Areas];
+    }
+
+    /// <summary>Returns a stable snapshot for diagnostics and tests.</summary>
+    public List<WaterfallArea> GetWaterfallsSnapshot()
+    {
+        lock (_lock)
+            return _waterfalls is null ? [] : [.. _waterfalls];
+    }
+
+    /// <summary>
+    /// Finds waterfall transition brushes intersecting a world-space box. The spatial index keeps
+    /// this query proportional to nearby scenery rather than all waterfall meshes in the world.
+    /// </summary>
+    internal List<WaterfallArea> GetWaterfallsIntersecting(
+        float minX, float minY, float minZ, float maxX, float maxY, float maxZ)
+    {
+        lock (_lock)
+        {
+            if (_waterfalls is null || _waterfalls.Count == 0 || _waterfallIndexByCell is null)
+                return [];
+
+            var minCx = (int)MathF.Floor(minX / SpatialCellSize);
+            var maxCx = (int)MathF.Floor(maxX / SpatialCellSize);
+            var minCy = (int)MathF.Floor(minY / SpatialCellSize);
+            var maxCy = (int)MathF.Floor(maxY / SpatialCellSize);
+            var seen = new HashSet<uint>();
+            var result = new List<WaterfallArea>();
+
+            for (var cx = minCx; cx <= maxCx; cx++)
+            for (var cy = minCy; cy <= maxCy; cy++)
+            {
+                if (!_waterfallIndexByCell.TryGetValue((cx, cy), out var ids))
+                    continue;
+                foreach (var id in ids)
+                {
+                    if (!seen.Add(id))
+                        continue;
+                    var waterfall = _waterfalls[(int)id];
+                    if (waterfall.Intersects(minX, minY, minZ, maxX, maxY, maxZ))
+                        result.Add(waterfall);
+                }
+            }
+
+            return result;
+        }
     }
 
     /// <summary>
@@ -443,8 +524,11 @@ public class WaterBodies
 
     private void AddObjectDataFromWorldCell(ObjectDataBase prefab, Vector3 cellOffset, WorldCell worldCell, int prefabIdx)
     {
-        if (prefab is ObjectDataType1Brush)
+        if (prefab is ObjectDataType1Brush brush)
+        {
+            AddWaterfallBrush(brush, cellOffset, worldCell, prefabIdx);
             return;
+        }
         if (prefab is ObjectDataType6Voxel)
             return;
 
@@ -467,6 +551,44 @@ public class WaterBodies
                 AddPolygonFromPhysicsContour(water, cellOffset,
                     $"Ocean_C{worldCell.CellX}-{worldCell.CellY}_{prefabIdx}");
                 break;
+        }
+    }
+
+    private void AddWaterfallBrush(ObjectDataType1Brush brush, Vector3 cellOffset, WorldCell worldCell, int prefabIdx)
+    {
+        var assets = worldCell.LoadedObjectDat?.AssetPathsList;
+        if (assets is null || brush.PathId < 0 || brush.PathId >= assets.Count)
+            return;
+
+        var assetPath = assets[brush.PathId]?.Name;
+        if (string.IsNullOrWhiteSpace(assetPath) ||
+            !assetPath.Contains("waterfall", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        // Brush bounds in object.dat are cell-local. Preserve their full vertical extent: the top
+        // aligns with the source river and the bottom identifies the receiving-water search band.
+        var start = brush.StartPos + cellOffset;
+        var end = brush.EndPos + cellOffset;
+        var min = Vector3.Min(start, end);
+        var max = Vector3.Max(start, end);
+        if (!float.IsFinite(min.X) || !float.IsFinite(min.Y) || !float.IsFinite(min.Z) ||
+            !float.IsFinite(max.X) || !float.IsFinite(max.Y) || !float.IsFinite(max.Z) ||
+            max.X - min.X < 0.1f || max.Y - min.Y < 0.1f || max.Z - min.Z < 0.5f)
+            return;
+
+        lock (_lock)
+        {
+            _waterfalls ??= [];
+            var waterfall = new WaterfallArea
+            {
+                Id = (uint)_waterfalls.Count,
+                Name = $"Waterfall_C{worldCell.CellX}-{worldCell.CellY}_{prefabIdx}",
+                AssetPath = assetPath,
+                Min = min,
+                Max = max
+            };
+            _waterfalls.Add(waterfall);
+            WaterfallSpatialIndexAddUnderLock(waterfall);
         }
     }
 

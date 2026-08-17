@@ -18,12 +18,14 @@ public static class WaterDebugSnapshot
         var template = world.Template;
         var oceanTpl = template.OceanLevel;
         List<WaterBodyArea> areasSnapshot;
+        List<WaterfallArea> waterfallsSnapshot;
         lock (w._lock)
         {
             areasSnapshot = [.. w.Areas];
         }
+        waterfallsSnapshot = w.GetWaterfallsSnapshot();
 
-        yield return $"[waterprobe] Water.OceanLevel={w.OceanLevel} (template {oceanTpl}), areas={areasSnapshot.Count}";
+        yield return $"[waterprobe] Water.OceanLevel={w.OceanLevel} (template {oceanTpl}), areas={areasSnapshot.Count}, waterfalls={waterfallsSnapshot.Count}";
         yield return $"[waterprobe] Pos ({pos.X:F2}, {pos.Y:F2}, {pos.Z:F2})";
 
         var isW = world.IsWater(pos, out var flow);
@@ -96,6 +98,18 @@ public static class WaterDebugSnapshot
             var vertOk = pos.Z <= zMax && pos.Z >= zMin;
             yield return $"{tag} id={a.Id} ~ {shortName} dist={dist:F2} bbox={bb}{rwExtra}{spExtra}{axisExtra}{polyExtra} surfZ={sPt.Z:F3} depth={a.Depth:F3} [zMin,zMax]=[{zMin:F3},{zMax:F3}] vertOk={vertOk} flowLen={fSurf.Length():F3}";
         }
+
+        var nearbyWaterfalls = waterfallsSnapshot
+            .Select(f => (Area: f, DistSq: DistSqPointToBox(px, py, f.Min, f.Max)))
+            .OrderBy(x => x.DistSq)
+            .Take(3);
+        foreach (var item in nearbyWaterfalls)
+        {
+            var f = item.Area;
+            yield return $"[WF] id={f.Id} ~ {f.Name} dist={MathF.Sqrt(item.DistSq):F2} " +
+                         $"xy=[{f.Min.X:F1},{f.Min.Y:F1}]..[{f.Max.X:F1},{f.Max.Y:F1}] " +
+                         $"z=[{f.Min.Z:F1},{f.Max.Z:F1}]";
+        }
     }
 
     public static string CaptureOneLine(WorldInstance world, Vector3 pos)
@@ -139,6 +153,15 @@ public static class WaterDebugSnapshot
     {
         var nx = Math.Clamp(px, r.Left, r.Right);
         var ny = Math.Clamp(py, r.Top, r.Bottom);
+        var dx = px - nx;
+        var dy = py - ny;
+        return dx * dx + dy * dy;
+    }
+
+    private static float DistSqPointToBox(float px, float py, Vector3 min, Vector3 max)
+    {
+        var nx = Math.Clamp(px, min.X, max.X);
+        var ny = Math.Clamp(py, min.Y, max.Y);
         var dx = px - nx;
         var dy = py - ny;
         return dx * dx + dy * dy;

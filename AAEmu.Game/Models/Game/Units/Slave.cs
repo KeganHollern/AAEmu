@@ -90,6 +90,12 @@ public class Slave : Unit
     public float ShoreGroundDamageSecondsAccumulator { get; set; }
     /// <summary>Set during ship vs cliff/doodad/barrier resolve when hull overlap was actively corrected this tick.</summary>
     public bool StaticObstacleHullDamageContactActive { get; set; }
+    /// <summary>
+    /// True while a naval hull is in a controlled waterfall flight. Terrain-heightmap,
+    /// buoyancy, propulsion, and ordinary hull contacts are temporarily suppressed until the
+    /// lower-water capture or recovery completes.
+    /// </summary>
+    public bool WaterfallTransitActive { get; set; }
     /// <summary>Seconds accumulated toward periodic hull damage while against static obstacles (see <see cref="TickStaticObstacleHullDamage(System.TimeSpan)"/>).</summary>
     public float StaticObstacleHullDamageSecondsAccumulator { get; set; }
     /// <summary>Continuous time without static-obstacle contact; used to reset <see cref="StaticObstacleHullDamageSecondsAccumulator"/> after a gap.</summary>

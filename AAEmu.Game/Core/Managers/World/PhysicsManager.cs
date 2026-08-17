@@ -59,6 +59,7 @@ public class PhysicsManager
     private readonly ShipDoodadInteraction _shipDoodad = new();
     private readonly ShipStaticBarrierInteraction _shipStaticBarriers = new();
     private readonly ShipCliffInteraction _shipCliff = new();
+    private readonly ShipWaterfallInteraction _shipWaterfall = new();
 
     /// <summary>Physics-thread loop counter for throttling <see cref="Slave.CreateWaterAndLandSurfaceCache"/>.</summary>
     private ulong _physicsLoopIndex;
@@ -268,16 +269,24 @@ public class PhysicsManager
 
                                 // Sync transform
                                 SyncTransformWithRigidBody(slave);
-                                // Do physics tick
-                                BoatPhysicsTick(slave, physicsTotalDelta);
-                                var dtSec = (float)physicsTotalDelta.TotalSeconds;
-                                var recoilDv = ShipHarpoonRopeController.TickTensionTearAndGetHullRecoilDeltaV(slave, dtSec);
-                                if (slave.RigidBody != null && (recoilDv.X * recoilDv.X + recoilDv.Y * recoilDv.Y) > 1e-8f)
+
+                                // A waterfall flight is ballistic. Do not let shore damping, cached
+                                // source-water buoyancy, propulsion, or tow recoil rewrite it.
+                                if (!slave.WaterfallTransitActive)
+                                    BoatPhysicsTick(slave, physicsTotalDelta);
+                                var waterfallActive = _shipWaterfall.Update(slave, physicsTotalDelta);
+
+                                if (!waterfallActive)
                                 {
-                                    // RigidBody horizontal plane is XZ; rigid-body Z maps to world Y (see AddShip and SyncTransformWithRigidBody).
-                                    _ = new OneShotVelocityKick(_physWorld, slave.RigidBody, new JVector(recoilDv.X, 0f, recoilDv.Y));
+                                    var dtSec = (float)physicsTotalDelta.TotalSeconds;
+                                    var recoilDv = ShipHarpoonRopeController.TickTensionTearAndGetHullRecoilDeltaV(slave, dtSec);
+                                    if (slave.RigidBody != null && (recoilDv.X * recoilDv.X + recoilDv.Y * recoilDv.Y) > 1e-8f)
+                                    {
+                                        // RigidBody horizontal plane is XZ; rigid-body Z maps to world Y (see AddShip and SyncTransformWithRigidBody).
+                                        _ = new OneShotVelocityKick(_physWorld, slave.RigidBody, new JVector(recoilDv.X, 0f, recoilDv.Y));
+                                    }
+                                    _shipShore.ResolveTerrainContacts(slave, physicsTotalDelta, _physWorld);
                                 }
-                                _shipShore.ResolveTerrainContacts(slave, physicsTotalDelta, _physWorld);
                                 shipsThisTick.Add(slave);
                             }
                         }
@@ -314,7 +323,8 @@ public class PhysicsManager
                     {
                         try
                         {
-                            slave.ShipController?.ApplyForceAndTorque(slave, physicsTotalDelta);
+                            if (!slave.WaterfallTransitActive)
+                                slave.ShipController?.ApplyForceAndTorque(slave, physicsTotalDelta);
                         }
                         catch (Exception slaveException)
                         {
@@ -322,9 +332,19 @@ public class PhysicsManager
                         }
                     }
 
+                    // Ordinary overlap/tow resolvers derive propulsion speed from rigid velocity.
+                    // Keep ballistic waterfall hulls out until lower-water capture has restored the
+                    // water-relative frame.
+                    var contactShipsThisTick = new List<Slave>(shipsThisTick.Count);
+                    foreach (var slave in shipsThisTick)
+                    {
+                        if (!slave.WaterfallTransitActive)
+                            contactShipsThisTick.Add(slave);
+                    }
+
                     try
                     {
-                        _shipShip.ResolveAllPairs(shipsThisTick, physicsTotalDelta);
+                        _shipShip.ResolveAllPairs(contactShipsThisTick, physicsTotalDelta);
                     }
                     catch (Exception e)
                     {
@@ -336,7 +356,7 @@ public class PhysicsManager
                         foreach (var slave in shipsThisTick)
                             slave.StaticObstacleHullDamageContactActive = false;
 
-                        _shipDoodad.ResolveAll(SimulationWorld, shipsThisTick, physicsTotalDelta);
+                        _shipDoodad.ResolveAll(SimulationWorld, contactShipsThisTick, physicsTotalDelta);
                     }
                     catch (Exception e)
                     {
@@ -347,7 +367,7 @@ public class PhysicsManager
                     {
                         if (AppConfiguration.Instance.World.GeoDataMode && SimulationWorld.ShipStaticBarriers != null)
                         {
-                            foreach (var slave in shipsThisTick)
+                            foreach (var slave in contactShipsThisTick)
                             {
                                 if (slave.ParentWorld?.Id != SimulationWorld.Id || slave.RigidBody is null)
                                     continue;
@@ -356,7 +376,7 @@ public class PhysicsManager
                                 ShipStaticBarrierBaiIngestor.EnsureCell(SimulationWorld, cellX, cellY);
                             }
 
-                            _shipStaticBarriers.ResolveAll(SimulationWorld, shipsThisTick, physicsTotalDelta);
+                            _shipStaticBarriers.ResolveAll(SimulationWorld, contactShipsThisTick, physicsTotalDelta);
                         }
                     }
                     catch (Exception e)
@@ -366,7 +386,7 @@ public class PhysicsManager
 
                     try
                     {
-                        _shipCliff.ResolveAll(SimulationWorld, shipsThisTick, physicsTotalDelta);
+                        _shipCliff.ResolveAll(SimulationWorld, contactShipsThisTick, physicsTotalDelta);
                     }
                     catch (Exception e)
                     {
@@ -377,7 +397,7 @@ public class PhysicsManager
                     // hulls are often in that overlap band, which zeroed the basis hull’s tow impulse if tow ran first.
                     try
                     {
-                        ShipHarpoonTowPhysics.ApplyShipPairHarpoonTowImpulses(shipsThisTick, (float)physicsTotalDelta.TotalSeconds);
+                        ShipHarpoonTowPhysics.ApplyShipPairHarpoonTowImpulses(contactShipsThisTick, (float)physicsTotalDelta.TotalSeconds);
                     }
                     catch (Exception e)
                     {
@@ -525,6 +545,7 @@ public class PhysicsManager
             _bodies.Remove(rigidBody);
             _shipControllers.Remove(slaveId, out _);
             _waterLandCacheStamp.Remove(slaveId);
+            _shipWaterfall.Remove(slaveRef);
 
             ShipTuningDebug.DespawnAll(slaveId);
 
