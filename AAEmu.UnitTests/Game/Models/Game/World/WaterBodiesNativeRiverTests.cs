@@ -43,6 +43,21 @@ public class WaterBodiesNativeRiverTests
     }
 
     [Test]
+    public async Task AddFromCellData_CurvedRiver_InterpolatesLocalNativeFlow()
+    {
+        var riverObject = CreateWaterObject(WaterObjectVolumeType.River, 2f, CreateRiverContour());
+        var water = CreateWaterBodiesWithObject(riverObject);
+
+        _ = water.GetWaterSurface(new Vector3(17f, 12f, 10f), out var downstreamFlow);
+
+        // The serialized render quad points east, but the physics contour bends north-east here.
+        // CryPhysics interpolates the per-bank tangent vectors rather than using one volume-wide axis.
+        await Assert.That(downstreamFlow.Length()).IsEqualTo(2f).Within(0.05f);
+        await Assert.That(downstreamFlow.X).IsEqualTo(1.834f).Within(0.02f);
+        await Assert.That(downstreamFlow.Y).IsEqualTo(0.772f).Within(0.02f);
+    }
+
+    [Test]
     public async Task AddFromCellData_OddRiverContour_PreservesPhysicalAreaAndFlow()
     {
         List<Vector3> contour =

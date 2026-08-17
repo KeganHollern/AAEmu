@@ -516,6 +516,7 @@ public class WaterBodies
         var horizontalFlow = new Vector2(river.FlowVelocity.X, river.FlowVelocity.Y);
         if (horizontalFlow.LengthSquared() > 1e-12f)
             river.FlowAxis = Vector2.Normalize(horizontalFlow);
+        river.InitializeNativeRiverFlow(water.Speed);
         river.UpdateBounds();
 
         // This contour is an explicit client physics area. Do not discard narrow/short river
@@ -524,8 +525,8 @@ public class WaterBodies
     }
 
     /// <summary>
-    /// ArcheAge r208022 uses the CryEngine 3 river contract: stream speed is uniform along the
-    /// river render quad's initial vector. Points 0/1 form the first cross-section and 2/3 the next.
+    /// Fallback direction for malformed/legacy river contours. Valid native rivers use the
+    /// per-vertex flow field initialized from their physics contour.
     /// </summary>
     private static Vector3 GetNativeRiverFlowVelocity(ObjectDataType11Water water, Vector3 cellOffset)
     {
