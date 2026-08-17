@@ -221,7 +221,18 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
                 target.SendPacket(new SCTeamPingPosPacket(true, activeTeam.PingPosition, 0));
                 activeTeam.BroadcastPacket(new SCTeamMemberJoinedPacket(activeTeam.Id, newTeamMember, party), target.Id);
 
-                // Make sure team-mates outside render distance learn each other's ObjId
+                // Joiner gets an immediate bulk snapshot of every existing member
+                // (zone/HP/MP/position/ObjId) instead of waiting for each mate's
+                // first movement broadcast — mirrors the UpdateAtLogin reconnect flow.
+                var existingMembers = activeTeam.Members
+                    .Where(m => m?.Character != null && m.Character.Id != target.Id)
+                    .ToArray();
+                if (existingMembers.Length > 0)
+                    target.SendPacket(new SCTeamRemoteMembersExPacket(existingMembers));
+
+                // Bind member↔ObjId on every client, including in-range mates (issue
+                // aaemu-cluster#11: joining next to each other left the new pair
+                // unbound, so they never rendered on the minimap until a relog).
                 RefreshTeamMemberObjIds(activeTeam, target);
             }
         }
@@ -302,7 +313,9 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
             OwnerId = activeInvitation.Owner.Id,
             IsParty = activeInvitation.IsParty
         };
-        if (newTeam.AddMember(activeInvitation.Owner).Item1 == null || newTeam.AddMember(activeInvitation.Target).Item1 == null) return;
+        var (ownerMember, _) = newTeam.AddMember(activeInvitation.Owner);
+        var (targetMember, _) = newTeam.AddMember(activeInvitation.Target);
+        if (ownerMember == null || targetMember == null) return;
 
         _activeTeams.TryAdd(newTeam.Id, newTeam);
 
@@ -322,8 +335,13 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
         activeInvitation.Owner.Events?.OnTeamJoin(activeInvitation, new OnTeamJoinArgs { Team = newTeam, Player = activeInvitation.Owner });
         activeInvitation.Target.Events?.OnTeamJoin(activeInvitation, new OnTeamJoinArgs { Team = newTeam, Player = activeInvitation.Target });
 
-        // Owner and target may be out of each other's render distance — make sure
-        // both clients know each other's ObjId.
+        // Give both founding members each other's snapshot and member↔ObjId binding
+        // immediately. The binding is required even when they stand next to each
+        // other: the world spawn flow streams the unit but never pushes the
+        // team-frame mapping, so without this neither player rendered on the
+        // other's minimap until a relog forced a refresh (aaemu-cluster#11).
+        activeInvitation.Owner.SendPacket(new SCTeamRemoteMembersExPacket([targetMember]));
+        activeInvitation.Target.SendPacket(new SCTeamRemoteMembersExPacket([ownerMember]));
         RefreshTeamMemberObjIds(newTeam, activeInvitation.Target);
     }
 
@@ -471,11 +489,12 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
                 chatManager.GetRaidChat(activeTeam).JoinChannel(m.Character);
         }
 
-        // Once the party becomes a raid, members spread out across the world, so the
-        // client must know everyone's ObjId for the raid UI even when out of render.
-        // Walk the upper-triangle pairs so each (a,b) pair is refreshed exactly once
-        // (avoids the O(N²) duplicate-send problem of calling RefreshTeamMemberObjIds
-        // per member, which would send both directions for every pair twice).
+        // Once the party becomes a raid, the raid UI re-keys every member slot, so
+        // each client needs everyone's ObjId (in-range or not — the world spawn
+        // flow never pushes the team-frame mapping). Walk the upper-triangle pairs
+        // so each (a,b) pair is refreshed exactly once (avoids the O(N²)
+        // duplicate-send problem of calling RefreshTeamMemberObjIds per member,
+        // which would send both directions for every pair twice).
         RefreshAllTeamMemberObjIds(activeTeam);
         // TODO: Handle raids in dungeons
     }
@@ -679,17 +698,16 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
             activeTeam.BroadcastPacket(new SCTeamRemoteMembersExPacket([reconnectingMember]), unit.Id);
         }
 
-        // Reconnect: force the ObjId refresh on EVERY online team-mate, not just
-        // the out-of-render ones. SetOffline's SCTeamMemberDisconnectedPacket
-        // carries WritePerson(IsOnline ? ObjId : 0) — i.e. ObjId = 0 after the
-        // P1 setter-order fix — so each team-mate's raid-frame slot for this
-        // player is currently keyed to 0. The reconnecting player gets the
-        // SAME ObjId back via Character.UsedCharacterObjIds, but the in-range
-        // world Spawn flow does not push the raid-frame re-mapping on its own;
-        // without an explicit SCRefreshTeamMemberPacket the next click-to-
-        // follow fires CSMoveUnitPacket(target=0) and the server logs
-        // "Invalid target".
-        RefreshTeamMemberObjIds(activeTeam, unit, force: true);
+        // Reconnect: refresh the ObjId mapping on EVERY online team-mate.
+        // SetOffline's SCTeamMemberDisconnectedPacket carries
+        // WritePerson(IsOnline ? ObjId : 0) — i.e. ObjId = 0 — so each team-mate's
+        // raid-frame slot for this player is currently keyed to 0. The
+        // reconnecting player gets the SAME ObjId back via
+        // Character.UsedCharacterObjIds, but the in-range world Spawn flow does
+        // not push the raid-frame re-mapping on its own; without an explicit
+        // SCRefreshTeamMemberPacket the next click-to-follow fires
+        // CSMoveUnitPacket(target=0) and the server logs "Invalid target".
+        RefreshTeamMemberObjIds(activeTeam, unit);
 
         if (!activeTeam.IsParty)
             chatManager.GetRaidChat(activeTeam).JoinChannel(unit);
@@ -896,13 +914,16 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
     }
 
     /// <summary>
-    /// Send <see cref="SCRefreshTeamMemberPacket"/> in both directions so every
-    /// existing team-mate learns the new member's ObjId. By default skips pairs
-    /// already in render distance (those learn the ObjId via the world spawn
-    /// flow); pass <paramref name="force"/> = <c>true</c> on reconnect, where the
-    /// in-range world flow doesn't reliably overwrite cached raid-frame ObjIds.
+    /// Send <see cref="SCRefreshTeamMemberPacket"/> in both directions so
+    /// <paramref name="newMember"/> and every existing online team-mate learn each
+    /// other's ObjId. Always sent regardless of render distance: the world spawn
+    /// flow streams the unit itself but never pushes the team-frame member↔ObjId
+    /// mapping, so in-range mates would otherwise stay unbound — party members
+    /// standing next to each other never appeared on the minimap until a relog
+    /// forced this refresh (aaemu-cluster#11), and reconnecting players left
+    /// raid-frame slots keyed to ObjId 0.
     /// </summary>
-    private static void RefreshTeamMemberObjIds(Team team, Character newMember, bool force = false)
+    private static void RefreshTeamMemberObjIds(Team team, Character newMember)
     {
         if (team == null || newMember == null) return;
 
@@ -911,20 +932,19 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
             if (m?.Character == null || m.Character.Id == newMember.Id || !m.Character.IsOnline)
                 continue;
 
-            if (!force && AreInRenderDistance(m.Character, newMember))
-                continue;
-
             m.Character.SendPacket(new SCRefreshTeamMemberPacket(team.Id, newMember.Id, newMember.ObjId));
             newMember.SendPacket(new SCRefreshTeamMemberPacket(team.Id, m.Character.Id, m.Character.ObjId));
         }
     }
 
     /// <summary>
-    /// Refresh ObjIds for every out-of-render-distance pair in the team exactly once.
-    /// Used by <see cref="ConvertToRaid"/> where the whole team needs to learn each
-    /// other's ObjIds; iterating with <see cref="RefreshTeamMemberObjIds"/> per member
-    /// would double every pair (O(N²) duplicates — ~4,900 redundant packets for a
-    /// 50-member raid). Upper-triangle traversal (i &lt; j) avoids that.
+    /// Refresh ObjIds for every pair in the team exactly once, regardless of render
+    /// distance (see <see cref="RefreshTeamMemberObjIds"/> for why in-range pairs
+    /// need it too). Used by <see cref="ConvertToRaid"/> where the whole team needs
+    /// to learn each other's ObjIds; iterating with
+    /// <see cref="RefreshTeamMemberObjIds"/> per member would double every pair
+    /// (O(N²) duplicates — ~4,900 redundant packets for a 50-member raid).
+    /// Upper-triangle traversal (i &lt; j) avoids that.
     /// </summary>
     private static void RefreshAllTeamMemberObjIds(Team team)
     {
@@ -941,8 +961,6 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
         {
             for (var j = i + 1; j < online.Count; j++)
             {
-                if (AreInRenderDistance(online[i], online[j]))
-                    continue;
                 online[i].SendPacket(new SCRefreshTeamMemberPacket(team.Id, online[j].Id, online[j].ObjId));
                 online[j].SendPacket(new SCRefreshTeamMemberPacket(team.Id, online[i].Id, online[i].ObjId));
             }
