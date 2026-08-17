@@ -56,6 +56,6 @@ public class SphereQuestSupplementTests
         // Component 7764 is quest 1650's QuestActObjSphere component; the sphere is
         // centered on Vorden's (npc 3535) spawn outside Blackreath Keep.
         await Assert.That(entry.ComponentId).IsEqualTo(7764u);
-        await Assert.That(entry.Radius).IsEqualTo(30f);
+        await Assert.That(entry.Radius).IsEqualTo(10f);
     }
 }
