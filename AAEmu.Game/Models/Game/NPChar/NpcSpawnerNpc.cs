@@ -120,7 +120,12 @@ public class NpcSpawnerNpc : Spawner<Npc>
         }
 
         npc.Spawner = npcSpawner;
-        npc.Spawner.RespawnTime = (int)Random.Shared.Next(npc.Spawner.Template.SpawnDelayMin, npc.Spawner.Template.SpawnDelayMax);
+        // aaemu-cluster#92 (#96): only the main world auto-respawns NPCs on death. Instance worlds
+        // (dungeons) otherwise endlessly respawned cleared packs every SpawnDelay seconds; their
+        // repopulation is owned by the dungeon script instead.
+        npc.Spawner.RespawnTime = npcSpawner.ParentWorld.Id == WorldManager.DefaultInstanceId
+            ? (int)Random.Shared.Next(npc.Spawner.Template.SpawnDelayMin, npc.Spawner.Template.SpawnDelayMax)
+            : 0;
         npc.Spawn();
 
         var world = WorldManager.Instance.GetWorld(npc.Transform.InstanceId);

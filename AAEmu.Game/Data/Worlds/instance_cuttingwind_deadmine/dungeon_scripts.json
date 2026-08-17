@@ -1,0 +1,39 @@
+[
+    {
+        "Name": "Iron Bridge collapse spawns the slime pack and cinematic Nerta (aaemu-cluster#94/#95/#97)",
+        "OnDoodadPhase": { "DoodadTemplateId": 5058, "FuncGroupId": 13148 },
+        "Actions": [
+            { "ActivateNpcSpawners": [13392, 13436] }
+        ]
+    },
+    {
+        "Name": "All blocked geysers mined -> Sharpwind Lake starts rising (aaemu-cluster#98)",
+        "OnAllDoodadsPhase": { "DoodadTemplateId": 5064, "FuncGroupIds": [13161, 13163] },
+        "Actions": [
+            { "ChangeDoodadPhase": { "DoodadTemplateId": 5063, "FuncGroupId": 14184 } }
+        ]
+    },
+    {
+        "Name": "Water fully risen -> flush slimes and cinematic Nerta, retire geysers (aaemu-cluster#96/#97/#98)",
+        "OnDoodadPhase": { "DoodadTemplateId": 5063, "FuncGroupId": 13159 },
+        "Actions": [
+            { "DespawnNpcSpawners": [13392, 13436] },
+            { "ChangeDoodadPhase": { "DoodadTemplateId": 5064, "FuncGroupId": 13163 } }
+        ]
+    },
+    {
+        "Name": "Boss Nerta engages when the party reaches her hall (aaemu-cluster#97)",
+        "OnPlayerEnterArea": { "X": 512.0, "Y": 326.0, "Z": 165.8, "Radius": 30.0 },
+        "Actions": [
+            { "DespawnNpcSpawners": [13436] },
+            { "ActivateNpcSpawners": [13437] }
+        ]
+    },
+    {
+        "Name": "Okape the Slayer engages when the party reaches his cavern",
+        "OnPlayerEnterArea": { "X": 611.3, "Y": 642.1, "Z": 140.0, "Radius": 35.0 },
+        "Actions": [
+            { "ActivateNpcSpawners": [13452] }
+        ]
+    }
+]

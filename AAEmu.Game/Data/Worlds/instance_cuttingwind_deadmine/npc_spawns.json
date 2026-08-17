@@ -397,6 +397,7 @@
   },
   {
     "UnitId": 12188,
+    "NpcSpawnerIds": [13452],
     "Position": {
       "X": 611.3,
       "Y": 642.1,
@@ -424,6 +425,7 @@
   },
   {
     "UnitId": 12146,
+    "NpcSpawnerIds": [13436],
     "Position": {
       "X": 672.5,
       "Y": 323.9,
@@ -433,6 +435,7 @@
   },
   {
     "UnitId": 11362,
+    "NpcSpawnerIds": [13437],
     "Position": {
       "X": 514,
       "Y": 330,
@@ -440,17 +443,9 @@
       "Yaw": 92.8
     }
   },
-  {
-    "UnitId": 11362,
-    "Position": {
-      "X": 509.8,
-      "Y": 321.4,
-      "Z": 165.7,
-      "Yaw": 75.9
-    }
-  },
-  {
+    {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 545.5,
       "Y": 413.4,
@@ -460,6 +455,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 552.7,
       "Y": 409.2,
@@ -469,6 +465,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 549.2,
       "Y": 400.6,
@@ -478,6 +475,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 542.8,
       "Y": 404.6,
@@ -487,6 +485,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 543.3,
       "Y": 413.9,
@@ -496,6 +495,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 540.3,
       "Y": 393.2,
@@ -505,6 +505,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 536.8,
       "Y": 407.7,
@@ -514,6 +515,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 532.1,
       "Y": 394.5,
@@ -523,6 +525,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 541.4,
       "Y": 400.9,
@@ -532,6 +535,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 531.3,
       "Y": 400.7,
@@ -541,6 +545,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 676.2,
       "Y": 332.8,
@@ -550,6 +555,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 685.6,
       "Y": 334,
@@ -559,6 +565,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 692.4,
       "Y": 324.5,
@@ -568,6 +575,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 689.1,
       "Y": 314.1,
@@ -577,6 +585,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 679.4,
       "Y": 309.9,
@@ -586,6 +595,7 @@
   },
   {
     "UnitId": 11361,
+    "NpcSpawnerIds": [13392],
     "Position": {
       "X": 667.6,
       "Y": 314.9,

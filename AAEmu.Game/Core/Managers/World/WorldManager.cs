@@ -172,7 +172,9 @@ public class WorldManager(
             foreach (var slave in world.GetAllSlaves())
                 slave.OnActiveRegionTick(delta);
 
-            var npcSpawners = world.SpawnManager.GetAllSpawners();
+            // aaemu-cluster#92 (#97): tickable spawners include pinned event spawners that are
+            // currently active; those previously only ever spawned through spawner effects.
+            var npcSpawners = world.SpawnManager.GetAllTickableSpawners();
 
             // Spawner filtering
             if (sw.ElapsedMilliseconds > 50)
@@ -180,7 +182,7 @@ public class WorldManager(
                 Logger.Debug($"Processed in world {world.Template.Name} {npcSpawners.Count} spawners...");
             }
 
-            var activeSpawners = npcSpawners.Values.SelectMany(x => x)
+            var activeSpawners = npcSpawners
                 .Where(spawner => spawner.Template != null && IsSpawnerActive(spawner))
                 .ToList();
 
@@ -205,7 +207,9 @@ public class WorldManager(
 
     private bool IsSpawnerActive(NpcSpawner spawner)
     {
-        return spawner.IsPlayerInSpawnRadius();
+        // aaemu-cluster#92 (#94): runtime-deactivated spawners (activation_state=f staging rows or
+        // Deactivate()d by a dungeon script) must not tick at all.
+        return spawner.IsActive && spawner.IsPlayerInSpawnRadius();
     }
 
     /// <summary>
@@ -506,6 +510,11 @@ public class WorldManager(
         }
 
         world.InitWaterFromTemplate();
+        // aaemu-cluster#92 (#93): cell object.dat water is normally pushed into live instances when
+        // a cell first loads — instances created AFTER that (every dungeon run but the first per
+        // boot) would otherwise start with empty water areas and players would take fall damage in
+        // the pools again. Rebuild from the template's already-loaded cells for this new instance.
+        world.ReloadWaterFromLoadedCells();
         world.InitShipStaticBarriers();
 
         // Create and start the actual physics engine
@@ -531,6 +540,10 @@ public class WorldManager(
         world.TransferManager = new TransferManager();
         world.TransferManager.Load();
         world.TransferManager.Initialize(); // starts tick
+
+        // Data-driven dungeon/world event scripts (aaemu-cluster#92); null for
+        // worlds without a dungeon_scripts.json
+        world.ScriptController = Models.Game.World.Scripting.WorldScriptController.TryCreate(world);
 
         // world.SpawnManager.SpawnAll();
 

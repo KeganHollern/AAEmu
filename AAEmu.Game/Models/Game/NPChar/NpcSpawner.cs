@@ -49,6 +49,89 @@ public class NpcSpawner : Spawner<Npc>
     private readonly Dictionary<int, SpawnerPlayerInRadiusCache> _playerInRadiusCache = new();
 
     /// <summary>
+    /// Runtime activation override set by Activate()/Deactivate(); null means "follow the authored
+    /// template activation_state". Kept as a nullable override because Template is only assigned
+    /// after cloning in SpawnManager.AddNpcSpawner. (aaemu-cluster#92, #94/#97)
+    /// </summary>
+    private bool? _isActiveOverride;
+
+    /// <summary>
+    /// Whether this spawner is allowed to spawn NPCs. Initialized from the authored compact-row
+    /// npc_spawners.activation_state; dungeon scripts and spawner effects toggle it at runtime via
+    /// Activate()/Deactivate(). (aaemu-cluster#92, #94/#97)
+    /// </summary>
+    public bool IsActive => _isActiveOverride ?? Template?.ActivationState ?? true;
+
+    /// <summary>
+    /// True only when a dungeon script or spawner effect explicitly called Activate() at runtime.
+    /// Pinned event spawners tick solely on this, never on the authored template flag, so
+    /// pre-existing pinned world data keeps its effect-driven-only behavior. (aaemu-cluster#92 review)
+    /// </summary>
+    public bool IsRuntimeActivated => _isActiveOverride == true;
+
+    /// <summary>
+    /// Marks a dump-bound spawner as active regardless of its authored activation_state. Unpinned
+    /// world dumps are the placement authority: 160+ main-world npc templates sit on all-inactive
+    /// compact rows and have always spawned; only pinned entries opt into real activation
+    /// semantics. (aaemu-cluster#92, #94 + review)
+    /// </summary>
+    internal void ForceLegacyActive()
+    {
+        lock (_spawnLock)
+        {
+            _isActiveOverride = true;
+        }
+    }
+
+    /// <summary>
+    /// Enables spawning and clears leftover scheduling flags so the next world tick (or an
+    /// immediate ForceSpawn) is not blocked by state from a previous window. (aaemu-cluster#92, #94/#97)
+    /// </summary>
+    public void Activate()
+    {
+        lock (_spawnLock)
+        {
+            _isActiveOverride = true;
+            IsSpawnScheduled = false;
+            IsDespawnScheduled = false;
+        }
+    }
+
+    /// <summary>
+    /// Disables spawning; NPCs that are already alive stay up until DespawnAll() or a regular
+    /// despawn removes them. (aaemu-cluster#92, #94/#97)
+    /// </summary>
+    public void Deactivate()
+    {
+        lock (_spawnLock)
+        {
+            _isActiveOverride = false;
+        }
+    }
+
+    /// <summary>
+    /// Immediately despawns every live NPC of this spawner without scheduling respawns.
+    /// (aaemu-cluster#92, #94/#97)
+    /// </summary>
+    public void DespawnAll()
+    {
+        lock (_spawnLock)
+        {
+            foreach (var key in SpawnedNpcs.Keys.ToList())
+            {
+                if (!SpawnedNpcs.TryGetValue(key, out var npcs))
+                    continue;
+
+                foreach (var npc in npcs.ToList())
+                    Despawn(npc);
+            }
+
+            // Drop pending respawn bookkeeping so nothing pops back up after the wipe.
+            Interlocked.Exchange(ref _scheduledCount, 0);
+        }
+    }
+
+    /// <summary>
     /// Initializes the list of SpawnableNpcs based on Template.Npcs.
     /// </summary>
     internal void InitializeSpawnableNpcs(NpcSpawnerTemplate template)
@@ -76,6 +159,11 @@ public class NpcSpawner : Spawner<Npc>
         {
             lock (_spawnLock)
             {
+                // aaemu-cluster#92 (#94): inactive spawners (activation_state=f staging rows, or
+                // ones a dungeon script deactivated) must not tick until Activate() is called.
+                if (!IsActive)
+                    return;
+
                 var didAction = false;
 
                 if (CanDespawnNpcs())
@@ -178,6 +266,13 @@ public class NpcSpawner : Spawner<Npc>
         if (Template == null)
         {
             Logger.Warn($"[Spawn [SpawnerId={SpawnerId}, UnitId={UnitId}] Template is null. Cannot determine if NPC can be spawned.");
+            return false;
+        }
+
+        if (!IsActive)
+        {
+            // aaemu-cluster#92 (#94): spawner is deactivated (staging row or script-controlled);
+            // only ForceSpawn/Activate may bring it back.
             return false;
         }
 
