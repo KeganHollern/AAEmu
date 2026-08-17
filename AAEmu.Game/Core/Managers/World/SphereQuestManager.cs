@@ -1,5 +1,8 @@
 ﻿using System.Globalization;
 using System.Numerics;
+
+using AAEmu.Commons.IO;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.GameData;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models.Game.Char;
@@ -332,7 +335,58 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
             }
         }
 
+        LoadSupplementalQuestSpheres(worldTemplate, sphereQuests);
+
         return sphereQuests;
+    }
+
+    /// <summary>
+    /// Merges hand-authored trigger spheres from Data/Worlds/{world}/quest_spheres.json
+    /// into the spheres parsed from the client packs. The packs only contain the
+    /// quest-sign hint circles; 22 quest components (e.g. quest 1650 "Borrowed
+    /// Bravery", aaemu-cluster#78) have no client-side sphere at all — retail used
+    /// server-only trigger volumes for those — so without a supplement their sphere
+    /// objective can never fire and the quest cannot be completed. Positions in the
+    /// supplement are world coordinates; no zone conversion is applied.
+    /// </summary>
+    private static void LoadSupplementalQuestSpheres(WorldTemplate worldTemplate, Dictionary<uint, List<SphereQuest>> sphereQuests)
+    {
+        var fileName = Path.Combine(FileManager.AppPath, "Data", "Worlds", worldTemplate.Name, "quest_spheres.json");
+        if (!File.Exists(fileName))
+            return;
+
+        var contents = FileManager.GetFileContents(fileName);
+        if (string.IsNullOrWhiteSpace(contents))
+        {
+            Logger.Warn($"File {fileName} is empty.");
+            return;
+        }
+
+        if (!JsonHelper.TryDeserializeObject(contents, out List<QuestSphereSupplement> supplements, out var exception))
+        {
+            Logger.Error($"Failed to parse {fileName}: {exception}");
+            return;
+        }
+
+        foreach (var supplement in supplements)
+        {
+            var sphere = new SphereQuest
+            {
+                WorldId = worldTemplate.Name,
+                ZoneId = supplement.ZoneId,
+                QuestId = supplement.QuestId,
+                ComponentId = supplement.ComponentId,
+                Xyz = new Vector3(supplement.X, supplement.Y, supplement.Z),
+                Radius = supplement.Radius
+            };
+
+            if (sphereQuests.TryGetValue(sphere.ComponentId, out var existing))
+                existing.Add(sphere);
+            else
+                sphereQuests.Add(sphere.ComponentId, [sphere]);
+        }
+
+        Logger.Info($"Loaded {supplements.Count} supplemental quest sphere(s) from {fileName}");
     }
 
     public static List<SphereQuest> GetSpheresForQuest(uint questSphereQuestId)

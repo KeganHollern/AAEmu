@@ -1,0 +1,12 @@
+[
+    {
+        "Name": "Borrowed Bravery (1650): deliver the Lost Swimwear to Vorden outside Blackreath Keep; sphere 650 has no client quest_sign_sphere entry, centered on Vorden (npc 3535) spawn",
+        "QuestId": 1650,
+        "ComponentId": 7764,
+        "ZoneId": 9,
+        "X": 14254.55,
+        "Y": 15001.14,
+        "Z": 121.79874,
+        "Radius": 30.0
+    }
+]
