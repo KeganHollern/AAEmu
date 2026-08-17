@@ -1,7 +1,9 @@
 {
     "Dungeons": {
         "AutoCleanupAfterKick": true,
-		"AutoTeamDisbandKickTime": 15,
+        "AutoTeamDisbandKickTime": 15,
+        "CreationLimit": 3,
+        "CreationWindowMinutes": 15,
         "AutoCreate": [
             {
                 "Id": 1,

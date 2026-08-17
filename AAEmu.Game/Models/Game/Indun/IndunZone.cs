@@ -39,7 +39,8 @@ public class IndunZone
     /// </summary>
     public uint ItemId { get; init; }
     /// <summary>
-    /// Minimum time in seconds between repeat dungeon creations by the same player
+    /// Legacy per-zone item restoration interval from the compact data.
+    /// Player-created dungeon throttling is configured in <see cref="DungeonsConfig"/>.
     /// </summary>
     public uint RestoreItemTime { get; init; }
     /// <summary>
@@ -54,12 +55,6 @@ public class IndunZone
     /// Does this dungeon have a channel select
     /// </summary>
     public bool SelectChannel { get; init; }
-
-    /// <summary>
-    /// Maximum number of times a player can entry this instance (0 = can't enter).
-    /// In later versions this field is actually stored in the compact.
-    /// </summary>
-    public uint EnterCount { get; set; } = 1000;
 
     /// <summary>
     /// Cached localized name of this dungeon
