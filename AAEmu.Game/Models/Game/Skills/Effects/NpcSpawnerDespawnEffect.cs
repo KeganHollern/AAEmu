@@ -29,7 +29,12 @@ public class NpcSpawnerDespawnEffect : EffectTemplate
 
         foreach (var spawner in spawners)
         {
-            spawner.Deactivate();
+            // Deactivate only event-managed spawners (authored activation_state=f) so a ticking
+            // one does not immediately repopulate. Always-active world spawners are only cleared:
+            // permanently darkening a normal overworld spawn point from a one-shot skill effect
+            // would leave it dead until restart. (aaemu-cluster#92 review)
+            if (spawner.Template?.ActivationState == false)
+                spawner.Deactivate();
             spawner.DespawnAll();
             Logger.Debug($"NpcSpawnerDespawnEffect id={Id}, Npc unitId={spawner.UnitId} spawnerId={SpawnerId}");
         }

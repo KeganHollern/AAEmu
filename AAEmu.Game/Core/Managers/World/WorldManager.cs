@@ -510,6 +510,11 @@ public class WorldManager(
         }
 
         world.InitWaterFromTemplate();
+        // aaemu-cluster#92 (#93): cell object.dat water is normally pushed into live instances when
+        // a cell first loads — instances created AFTER that (every dungeon run but the first per
+        // boot) would otherwise start with empty water areas and players would take fall damage in
+        // the pools again. Rebuild from the template's already-loaded cells for this new instance.
+        world.ReloadWaterFromLoadedCells();
         world.InitShipStaticBarriers();
 
         // Create and start the actual physics engine

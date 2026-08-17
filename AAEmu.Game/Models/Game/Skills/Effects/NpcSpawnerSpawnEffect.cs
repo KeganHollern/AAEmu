@@ -33,12 +33,17 @@ public class NpcSpawnerSpawnEffect : EffectTemplate
         {
             foreach (var spawner in spawners)
             {
-                // aaemu-cluster#92 (#99): the effect's activation_state drives the runtime gate so
-                // the spawner keeps (or stops) ticking after this one-shot spawn.
-                if (ActivationState)
-                    spawner.Activate();
-                else
-                    spawner.Deactivate();
+                // aaemu-cluster#92 (#99): the effect's activation_state drives the runtime gate,
+                // but only for event-managed spawners (authored activation_state=f). Permanently
+                // toggling a normal always-active world spawner from a one-shot skill effect would
+                // leave it dark (or force it hot) until restart. (review)
+                if (spawner.Template?.ActivationState == false)
+                {
+                    if (ActivationState)
+                        spawner.Activate();
+                    else
+                        spawner.Deactivate();
+                }
 
                 // spawn in the same world as for caster
                 spawner.Position.WorldId = caster.Transform.WorldId;

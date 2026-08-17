@@ -73,7 +73,10 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
                 else if (worldInstance.DungeonInstance.IsAbandoned)
                 {
                     Logger.Warn($"Removing abandoned empty dungeon {worldInstance}");
-                    worldInstance.DungeonInstance.DestroyDungeon();
+                    // TryDestroyAbandoned re-checks under the dungeon lock so a player queueing
+                    // right now either lands first (no longer abandoned) or is refused and falls
+                    // through to a fresh instance. (aaemu-cluster#92, #102)
+                    worldInstance.DungeonInstance.TryDestroyAbandoned();
                 }
             }
         }
@@ -185,6 +188,11 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
         var possibleTargetInstances = GetExistingDungeonsByZoneKey(targetZone.ZoneKey);
         foreach (var possibleTargetInstance in possibleTargetInstances)
         {
+            // Skip instances that are torn down (or being torn down by the sweep) — their World
+            // reference may already be null. (aaemu-cluster#92, #102)
+            if (possibleTargetInstance.IsDestroyed || possibleTargetInstance.World == null)
+                continue;
+
             // If queued for this dungeon, let them wait
             if (possibleTargetInstance.EnterRequests.Contains(character))
             {
@@ -209,7 +217,7 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             // Unbind them and destroy the ones that sit empty so they cannot leak until the 24h expiry.
             foreach (var possibleTargetInstance in possibleTargetInstances)
             {
-                if (possibleTargetInstance.IsSystem || possibleTargetInstance.IsTeamOwned)
+                if (possibleTargetInstance.IsDestroyed || possibleTargetInstance.IsSystem || possibleTargetInstance.IsTeamOwned)
                     continue;
                 if (possibleTargetInstance.GetCharacterOwner?.Id != character.Id)
                     continue;
@@ -227,7 +235,8 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             // this also covers PartyOnly dungeons like Sharpwind Mines
             foreach (var possibleTargetInstance in possibleTargetInstances)
             {
-                if (possibleTargetInstance.IsSystem || !possibleTargetInstance.IsTeamOwned)
+                if (possibleTargetInstance.IsDestroyed || possibleTargetInstance.World == null ||
+                    possibleTargetInstance.IsSystem || !possibleTargetInstance.IsTeamOwned)
                     continue;
                 if (possibleTargetInstance.GetOwnerTeam?.Id != team.Id)
                     continue;
@@ -239,7 +248,11 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
                     return false;
                 }
 
-                return possibleTargetInstance.QueuePlayer(character);
+                // A false return can also mean the sweep destroyed this instance between our check
+                // and the queue attempt; fall through to creating a fresh one. (aaemu-cluster#92, #102)
+                if (possibleTargetInstance.QueuePlayer(character))
+                    return true;
+                break;
             }
         }
         else
@@ -247,7 +260,8 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
             // 3 - Solo players may only reuse the dungeon they own themselves
             foreach (var possibleTargetInstance in possibleTargetInstances)
             {
-                if (possibleTargetInstance.IsSystem || possibleTargetInstance.IsTeamOwned)
+                if (possibleTargetInstance.IsDestroyed || possibleTargetInstance.World == null ||
+                    possibleTargetInstance.IsSystem || possibleTargetInstance.IsTeamOwned)
                     continue;
                 if (possibleTargetInstance.GetCharacterOwner?.Id != character.Id)
                     continue;
@@ -259,7 +273,9 @@ public class IndunManager(ITickManager tickManager, IWorldManager worldManager, 
                     return false;
                 }
 
-                return possibleTargetInstance.QueuePlayer(character);
+                if (possibleTargetInstance.QueuePlayer(character))
+                    return true;
+                break;
             }
         }
 

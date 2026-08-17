@@ -165,6 +165,29 @@ public class Dungeon
     public bool IsAbandoned => !IsSystem && !HasPlayers && EnterRequests.Count == 0 && IsPastEmptyGrace(_emptySince, DateTime.UtcNow);
 
     /// <summary>
+    /// Latched once destruction starts so entry paths can refuse and the sweep cannot race a
+    /// re-entering player into a world that is tearing down. (aaemu-cluster#92, #102)
+    /// </summary>
+    public bool IsDestroyed { get; private set; }
+
+    /// <summary>
+    /// Atomically re-checks abandonment under the dungeon lock and latches destruction before
+    /// tearing the world down, so a QueuePlayer racing the periodic sweep either lands before the
+    /// latch (and the dungeon is no longer abandoned) or is refused. (aaemu-cluster#92, #102)
+    /// </summary>
+    public bool TryDestroyAbandoned()
+    {
+        lock (_lock)
+        {
+            if (IsDestroyed || !IsAbandoned)
+                return false;
+            IsDestroyed = true;
+        }
+
+        return DestroyDungeon();
+    }
+
+    /// <summary>
     /// Returns true when the given empty-since timestamp is older than the empty-instance grace
     /// period. Kept static/pure so it can be unit tested. (aaemu-cluster#92, #102)
     /// </summary>
@@ -194,6 +217,15 @@ public class Dungeon
     /// <param name="character"></param>
     public bool QueuePlayer(Character character)
     {
+        lock (_lock)
+        {
+            // aaemu-cluster#92 (#102): refuse entry into a dungeon that is being destroyed by the
+            // abandoned-instance sweep; the caller falls through to creating a fresh instance.
+            if (IsDestroyed)
+                return false;
+            _emptySince = null;
+        }
+
         if (EnterRequests.Contains(character))
             return true;
 
@@ -324,6 +356,11 @@ public class Dungeon
     /// </summary>
     public bool DestroyDungeon()
     {
+        lock (_lock)
+        {
+            IsDestroyed = true;
+        }
+
         Logger.Info($"[Dungeon] instanceId={_zoneInstanceId?.InstanceId}, zoneId={_zoneInstanceId?.ZoneId}: Destroying dungeon...");
 
         TickManager.Instance.OnTick.UnSubscribe(AreaClearTick);

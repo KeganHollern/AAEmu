@@ -714,9 +714,11 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
         ScriptController?.Dispose();
         ScriptController = null;
 
-        // Stop the per-instance area-trigger tick before objects tear down (aaemu-cluster#95).
+        // Stop the per-instance area-trigger tick before objects tear down. The registry is NOT
+        // nulled: its Dispose is sticky, and re-creating it here would let a straggling
+        // DoodadFuncTimerTask firing after teardown re-arm a sensor and re-subscribe a TickManager
+        // tick that pins this dead instance forever. (aaemu-cluster#95 + review)
         _doodadAreaTriggers?.Dispose();
-        _doodadAreaTriggers = null;
 
         // Stop respawn system (check for null as SpawnManager may not be initialized in tests)
         if (SpawnManager == null)

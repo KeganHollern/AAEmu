@@ -118,10 +118,19 @@ public class SpawnManager(WorldInstance parentWorld)
                         var template = NpcGameData.Instance.GetNpcSpawnerTemplate(id);
                         spawner.ParentWorld = World;
                         spawner.InitializeSpawnableNpcs(template);
-                        spawner.NpcSpawnerIds.Add(id);
+                        // Own list per clone: Clone() is a MemberwiseClone, so Add() on the shared
+                        // list would make every sibling clone match every sibling's template id in
+                        // spawner lookups. (aaemu-cluster#92 review)
+                        spawner.NpcSpawnerIds = [id];
                         spawner.Id = _nextId;
                         spawner.SpawnerId = id;
                         spawner.Template = template;
+                        // aaemu-cluster#92 (#94): dump-bound world content predates activation
+                        // semantics — the dump is the placement authority (160+ main-world npc
+                        // templates sit on all-inactive compact rows and must keep spawning like
+                        // they always did). Only PINNED entries opt into real activation staging.
+                        if (template?.ActivationState == false)
+                            spawner.ForceLegacyActive();
                         foreach (var n in spawner.Template.Npcs)
                         {
                             n.Position = spawner.Position;
@@ -1179,8 +1188,10 @@ public class SpawnManager(WorldInstance parentWorld)
 
     /// <summary>
     /// Gets every spawner the world tick should process: all normal world spawners plus pinned
-    /// event spawners that are currently active. Pinned entries (explicit NpcSpawnerIds in the
-    /// world spawn JSON) previously never ticked at all. (aaemu-cluster#92, #97)
+    /// event spawners that a dungeon script or spawner effect explicitly activated at runtime.
+    /// Template-active pinned entries intentionally do NOT tick on their own: pinned data in other
+    /// shipped worlds (howling_abyss, nachashgar, arche_mall) has always been effect-driven only,
+    /// and letting it tick would pre-spawn wave/event NPCs. (aaemu-cluster#92, #97 + review)
     /// </summary>
     public List<NpcSpawner> GetAllTickableSpawners()
     {
@@ -1194,7 +1205,7 @@ public class SpawnManager(WorldInstance parentWorld)
             {
                 foreach (var spawner in spawners)
                 {
-                    if (spawner.IsActive)
+                    if (spawner.IsRuntimeActivated)
                         result.Add(spawner);
                 }
             }
@@ -1234,9 +1245,9 @@ public class SpawnManager(WorldInstance parentWorld)
 
         return ret;
 
-        bool Matches(NpcSpawner spawner) =>
-            spawner.Template?.Id == spawnerTemplateId ||
-            spawner.NpcSpawnerIds?.Contains(spawnerTemplateId) == true;
+        // Template.Id only: NpcSpawnerIds is bookkeeping, and clones bound to sibling templates of
+        // the same dump point must not cross-match (aaemu-cluster#92 review).
+        bool Matches(NpcSpawner spawner) => spawner.Template?.Id == spawnerTemplateId;
     }
 
     public List<NpcSpawner> GetNpcSpawner(uint spawnerId)

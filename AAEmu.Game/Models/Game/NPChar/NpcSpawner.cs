@@ -63,6 +63,27 @@ public class NpcSpawner : Spawner<Npc>
     public bool IsActive => _isActiveOverride ?? Template?.ActivationState ?? true;
 
     /// <summary>
+    /// True only when a dungeon script or spawner effect explicitly called Activate() at runtime.
+    /// Pinned event spawners tick solely on this, never on the authored template flag, so
+    /// pre-existing pinned world data keeps its effect-driven-only behavior. (aaemu-cluster#92 review)
+    /// </summary>
+    public bool IsRuntimeActivated => _isActiveOverride == true;
+
+    /// <summary>
+    /// Marks a dump-bound spawner as active regardless of its authored activation_state. Unpinned
+    /// world dumps are the placement authority: 160+ main-world npc templates sit on all-inactive
+    /// compact rows and have always spawned; only pinned entries opt into real activation
+    /// semantics. (aaemu-cluster#92, #94 + review)
+    /// </summary>
+    internal void ForceLegacyActive()
+    {
+        lock (_spawnLock)
+        {
+            _isActiveOverride = true;
+        }
+    }
+
+    /// <summary>
     /// Enables spawning and clears leftover scheduling flags so the next world tick (or an
     /// immediate ForceSpawn) is not blocked by state from a previous window. (aaemu-cluster#92, #94/#97)
     /// </summary>

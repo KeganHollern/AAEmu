@@ -41,6 +41,9 @@ public class DoodadAreaTriggerRegistry(WorldInstance owner) : IDisposable
     private readonly object _lock = new();
     private readonly Dictionary<uint, ArmedTrigger> _armedByObjId = new();
     private bool _tickSubscribed;
+    /// <summary>Sticky: once disposed the registry never arms or subscribes again, so a straggling
+    /// post-teardown DoChangePhase cannot resurrect the tick and pin a dead instance. (review)</summary>
+    private bool _disposed;
 
     /// <summary>
     /// Re-evaluates arming for the doodad's current phase; called at the end of every
@@ -56,6 +59,8 @@ public class DoodadAreaTriggerRegistry(WorldInstance owner) : IDisposable
         var funcs = doodad.CurrentFuncs; // snapshot; the setter swaps the list reference atomically
         lock (_lock)
         {
+            if (_disposed)
+                return;
             _armedByObjId.Remove(doodad.ObjId);
             if (funcs == null)
                 return;
@@ -187,7 +192,7 @@ public class DoodadAreaTriggerRegistry(WorldInstance owner) : IDisposable
     /// <summary>Tick starts with the first armed sensor; caller must hold <see cref="_lock"/>.</summary>
     private void EnsureTickSubscribedUnderLock()
     {
-        if (_tickSubscribed)
+        if (_tickSubscribed || _disposed)
             return;
         _tickSubscribed = true;
         TickManager.Instance.OnTick.Subscribe(Tick, TimeSpan.FromMilliseconds(500), true);
@@ -197,6 +202,7 @@ public class DoodadAreaTriggerRegistry(WorldInstance owner) : IDisposable
     {
         lock (_lock)
         {
+            _disposed = true;
             _armedByObjId.Clear();
             if (!_tickSubscribed)
                 return;
