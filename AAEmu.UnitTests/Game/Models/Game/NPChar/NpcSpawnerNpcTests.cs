@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.World.Transform;
 
@@ -8,12 +9,12 @@ namespace AAEmu.UnitTests.Game.Models.Game.NPChar;
 public class NpcSpawnerNpcTests
 {
     [Test]
-    public async Task CreateRuntimeSpawnPosition_GroundWithinTolerance_ChangesOnlyRuntimeCopy()
+    public async Task CreateRuntimeSpawnPosition_TerrainGroundWithinTolerance_ChangesOnlyRuntimeCopy()
     {
         var authored = CreateAuthoredPosition();
         var authoredSnapshot = authored.Clone();
 
-        var runtime = NpcSpawnerNpc.CreateRuntimeSpawnPosition(authored, authored.Z + 0.5f);
+        var runtime = NpcSpawnerNpc.CreateRuntimeSpawnPosition(authored, TerrainSurface(authored.Z + 0.5f));
 
         await Assert.That(runtime).IsNotSameReferenceAs(authored);
         await Assert.That(runtime.Z).IsEqualTo(authored.Z + 0.5f);
@@ -22,11 +23,26 @@ public class NpcSpawnerNpcTests
     }
 
     [Test]
-    public async Task CreateRuntimeSpawnPosition_GroundAtToleranceBoundary_PreservesAuthoredHeight()
+    public async Task CreateRuntimeSpawnPosition_TerrainGroundAtToleranceBoundary_PreservesAuthoredHeight()
     {
         var authored = CreateAuthoredPosition();
 
-        var runtime = NpcSpawnerNpc.CreateRuntimeSpawnPosition(authored, authored.Z + 1f);
+        var runtime = NpcSpawnerNpc.CreateRuntimeSpawnPosition(authored, TerrainSurface(authored.Z + 1f));
+
+        await Assert.That(runtime.Z).IsEqualTo(authored.Z);
+        await Assert.That(authored.Z).IsEqualTo(30.75f);
+    }
+
+    [Test]
+    public async Task CreateRuntimeSpawnPosition_NavigationNodeGround_PreservesAuthoredHeight()
+    {
+        // aaemu-cluster#92 (V11): indoor nav-node heights are coarse voxel samples; snapping spawn Z
+        // onto them lifted the Sharpwind researchers off the floor and clients bounced them.
+        var authored = CreateAuthoredPosition();
+
+        var runtime = NpcSpawnerNpc.CreateRuntimeSpawnPosition(authored, new GroundSurfaceResult(
+            authored.Z + 0.5f, GroundSurfaceSource.NavigationNode,
+            GroundSurfaceDecision.NavigationHeightPreserved, GroundSurfaceFailure.None, null));
 
         await Assert.That(runtime.Z).IsEqualTo(authored.Z);
         await Assert.That(authored.Z).IsEqualTo(30.75f);
@@ -42,6 +58,12 @@ public class NpcSpawnerNpcTests
 
         await Assert.That(runtime).IsNotSameReferenceAs(authored);
         await Assert.That(authored.Z).IsEqualTo(30.75f);
+    }
+
+    private static GroundSurfaceResult TerrainSurface(float height)
+    {
+        return new GroundSurfaceResult(height, GroundSurfaceSource.Terrain,
+            GroundSurfaceDecision.TerrainOnly, GroundSurfaceFailure.None, null);
     }
 
     [Test]

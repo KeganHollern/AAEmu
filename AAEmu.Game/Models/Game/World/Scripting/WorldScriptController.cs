@@ -3,6 +3,7 @@ using System.Numerics;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.World.Transform;
 
 using NLog;
 
@@ -53,6 +54,7 @@ public sealed class WorldScriptController
     private void Start()
     {
         _world.DoodadPhaseChanged += OnDoodadPhaseChanged;
+        _world.NpcKilled += OnNpcKilled;
         if (_rules.Exists(r => r.OnPlayerEnterArea != null))
         {
             TickManager.Instance.OnTick.Subscribe(AreaTick, TimeSpan.FromMilliseconds(AreaTickMs), true);
@@ -73,6 +75,7 @@ public sealed class WorldScriptController
         }
 
         _world.DoodadPhaseChanged -= OnDoodadPhaseChanged;
+        _world.NpcKilled -= OnNpcKilled;
         if (_tickSubscribed)
             TickManager.Instance.OnTick.UnSubscribe(AreaTick);
     }
@@ -91,7 +94,8 @@ public sealed class WorldScriptController
 
                 if (rule.OnDoodadPhase != null &&
                     rule.OnDoodadPhase.DoodadTemplateId == doodad.TemplateId &&
-                    rule.OnDoodadPhase.FuncGroupId == funcGroupId)
+                    rule.OnDoodadPhase.FuncGroupId == funcGroupId &&
+                    IsNear(rule.OnDoodadPhase.Near, doodad))
                 {
                     Fire(rule);
                     continue;
@@ -105,6 +109,33 @@ public sealed class WorldScriptController
                 }
             }
         }
+    }
+
+    private void OnNpcKilled(NPChar.Npc npc)
+    {
+        lock (_sync)
+        {
+            if (_disposed)
+                return;
+
+            foreach (var rule in _rules)
+            {
+                if (_fired.Contains(rule))
+                    continue;
+
+                if (rule.OnNpcKilled != null && rule.OnNpcKilled.NpcTemplateIds.Contains(npc.TemplateId))
+                    Fire(rule);
+            }
+        }
+    }
+
+    /// <summary>Null or zero-radius filters match everything.</summary>
+    private static bool IsNear(WorldScriptArea near, Doodad doodad)
+    {
+        if (near == null || near.Radius <= 0)
+            return true;
+        var pos = doodad.Transform?.World?.Position ?? Vector3.Zero;
+        return Vector3.DistanceSquared(pos, new Vector3(near.X, near.Y, near.Z)) <= near.Radius * near.Radius;
     }
 
     /// <summary>
@@ -212,7 +243,32 @@ public sealed class WorldScriptController
                     continue;
                 if (doodad.FuncGroupId == action.ChangeDoodadPhase.FuncGroupId)
                     continue;
+                if (!IsNear(action.ChangeDoodadPhase.Near, doodad))
+                    continue;
                 doodad.DoChangePhase(null, (int)action.ChangeDoodadPhase.FuncGroupId);
+            }
+        }
+
+        if (action.SpawnDoodads != null)
+        {
+            foreach (var spawn in action.SpawnDoodads)
+            {
+                var spawner = new DoodadSpawner
+                {
+                    ParentWorld = _world,
+                    UnitId = spawn.TemplateId,
+                    Position = new WorldSpawnPosition
+                    {
+                        WorldId = _world.Id,
+                        X = spawn.X,
+                        Y = spawn.Y,
+                        Z = spawn.Z,
+                        Yaw = spawn.Yaw
+                    }
+                };
+                var doodad = spawner.Spawn(0);
+                if (doodad == null)
+                    Logger.Warn($"World script SpawnDoodads: template {spawn.TemplateId} failed to spawn in {_world.Template?.Name} ({_world.Id})");
             }
         }
 
@@ -240,6 +296,11 @@ public sealed class WorldScriptController
             return;
         }
 
-        npc.BroadcastPacket(new Core.Packets.G2C.SCChatBubblePacket(npc.ObjId, 1, 1, 0, say.Text), true);
+        if (say.BubbleId > 0)
+            // Retail bubble row: send the id with empty text; the client renders its localized line
+            // exactly like the BubbleEffect skill path does. (aaemu-cluster#92)
+            npc.BroadcastPacket(new Core.Packets.G2C.SCChatBubblePacket(npc.ObjId, 1, 2, say.BubbleId, string.Empty), true);
+        else
+            npc.BroadcastPacket(new Core.Packets.G2C.SCChatBubblePacket(npc.ObjId, 1, 1, 0, say.Text), true);
     }
 }

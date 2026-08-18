@@ -185,6 +185,27 @@ public class Gimmick : Unit
         BroadcastPacket(new SCChatMessagePacket(ChatType.System, $"Gimmick {ObjId} used skill {skillId}"), false);
     }
 
+    /// <summary>
+    /// Called by GimmickMovementFreeFall when a falling gimmick reaches the ground: fires the
+    /// template's collision skill (e.g. the Colossus rock crash) and removes gimmicks flagged to
+    /// disappear on impact, honoring their fade-out duration. (aaemu-cluster#92)
+    /// </summary>
+    /// <param name="impactSpeed">Downward speed at the moment of impact</param>
+    public void OnGroundCollision(float impactSpeed)
+    {
+        if (Template == null)
+            return;
+
+        if (Template.CollisionSkillId > 0 && !Template.CollisionUnitOnly && impactSpeed >= Template.CollisionMinSpeed)
+            DoGimmickSkill(Template.CollisionSkillId);
+
+        if (Template.DisappearByCollision && Despawn <= DateTime.MinValue)
+        {
+            Despawn = DateTime.UtcNow.AddMilliseconds(Template.FadeOutDuration);
+            ParentWorld.SpawnManager.AddDespawn(this);
+        }
+    }
+
     public void GimmickTick(TimeSpan delta)
     {
         LastLifeTime = TotalLifeTime;
@@ -204,7 +225,8 @@ public class Gimmick : Unit
 
         var deltaTime = (float)delta.TotalSeconds;
         var deltaPosition = Transform.World.Position - LastPos;
-        Vel = deltaPosition * deltaTime;
+        // Velocity is distance over time; this used to multiply and always reported ~0 (aaemu-cluster#92)
+        Vel = deltaTime > 0f ? deltaPosition / deltaTime : Vector3.Zero;
         AngVel = new Vector3(0f, 0f, 0f);
 
         // Time += (uint)delta.Milliseconds;

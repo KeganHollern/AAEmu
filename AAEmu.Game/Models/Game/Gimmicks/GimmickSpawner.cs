@@ -54,7 +54,7 @@ public class GimmickSpawner : Spawner<Gimmick>
     {
         // DefaultConstructor for JSON reading
     }
-    public GimmickSpawner(WorldInstance parentWorld, SpawnGimmickEffect sgEffect, BaseUnit caster)
+    public GimmickSpawner(WorldInstance parentWorld, SpawnGimmickEffect sgEffect, BaseUnit caster, BaseUnit target = null)
     {
         ParentWorld = parentWorld;
         GimmickId = sgEffect.GimmickId;
@@ -75,9 +75,19 @@ public class GimmickSpawner : Spawner<Gimmick>
         Count = 1;
 
         var gimmick = ParentWorld.GimmickManager.Create(GimmickId);
+        if (gimmick == null)
+        {
+            Logger.Warn($"SpawnGimmickEffect: gimmick template {GimmickId} does not exist");
+            return;
+        }
         gimmick.Spawner = this;
         gimmick.Spawner.RespawnTime = 0; // don't respawn
-        gimmick.Transform = caster.Transform.CloneDetached(gimmick);
+        // Offsets with offset_from_source=false are anchored on the effect's target (e.g. Nerta's
+        // bombs drop from above the player), not on the caster (aaemu-cluster#92)
+        var anchor = OffsetFromSource || target?.Transform == null ? caster : target;
+        gimmick.Transform = anchor.Transform.CloneDetached(gimmick);
+        // The anchor unit stands on the ground, so its height is where a falling gimmick lands
+        var groundZ = gimmick.Transform.World.Position.Z;
         gimmick.EntityGuid = 0;
         gimmick.SpawnerUnitId = caster.ObjId;
         gimmick.GrasperUnitId = 0;
@@ -87,12 +97,9 @@ public class GimmickSpawner : Spawner<Gimmick>
                 var (newX0, newY0, newZ0) = PositionAndRotation.AddDistanceToFront(1, 1, gimmick.Transform.World.Position, gimmick.Transform.World.Position);
                 gimmick.Transform.World.Position = new Vector3(newX0, newY0, newZ0);
                 break;
-            case OffsetCoordinateType.Unk1:
-                break;
+            case OffsetCoordinateType.Unk1: // world-axis offset, previously dropped (aaemu-cluster#92)
             case OffsetCoordinateType.Unk2:
                 gimmick.Transform.Local.AddDistance(OffsetX, OffsetY, OffsetZ);
-                //var (newX, newY, newZ) = PositionAndRotation.AddDistanceToFront(1, 1, gimmick.Transform.World.Position, gimmick.Transform.World.Position);
-                //gimmick.Transform.World.Position = new Vector3(newX, newY, newZ + OffsetZ);
                 break;
             case OffsetCoordinateType.Unk3:
                 break;
@@ -102,7 +109,12 @@ public class GimmickSpawner : Spawner<Gimmick>
 #pragma warning restore CA2208 // Instantiate argument exceptions correctly
         }
 
+        // Give the gimmick its initial throw velocity so clients render the toss/fall (aaemu-cluster#92)
+        gimmick.Vel = new Vector3(VelocityX, VelocityY, VelocityZ);
         gimmick.SetScale(Scale);
+        // No physics engine for gimmicks: animate the drop server-side (aaemu-cluster#92)
+        if ((gimmick.Template?.Gravity ?? 0f) > 0f)
+            gimmick.MovementHandler = new GimmickMovementFreeFall(gimmick, groundZ);
         gimmick.Spawn(); // добавляем в мир
         ParentWorld.GimmickManager.AddActiveGimmick(gimmick);
 
