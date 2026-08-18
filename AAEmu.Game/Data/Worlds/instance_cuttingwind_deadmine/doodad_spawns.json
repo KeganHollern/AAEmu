@@ -146,10 +146,10 @@
     {
         "UnitId": 5063,
         "Position": {
-            "X": 683.0,
-            "Y": 324.0,
+            "X": 652.0,
+            "Y": 302.0,
             "Z": 145.0
         },
-        "Comment": "Sharpwind Lake (aaemu-cluster#98): pool doodad missing from the capture dump. Drives the water-rise phases; authored at the geyser-pit pool center. Base surface Z=145, phase 13158 raises +22 to ~167 = Iron Bridge deck level."
+        "Comment": "Sharpwind Lake (aaemu-cluster#98): pool doodad missing from the capture dump. Anchored at the pit's SW corner - the client water prefab (cuttingwind.water1, 65x69 quad) is corner-origin extending +X/+Y, so a center anchor rendered the pool offset into one quadrant (validation round 2). Base surface Z=145; phase 13158 raises +22 to ~167 = Iron Bridge deck."
     }
 ]

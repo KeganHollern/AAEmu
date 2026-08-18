@@ -215,5 +215,31 @@ public sealed class WorldScriptController
                 doodad.DoChangePhase(null, (int)action.ChangeDoodadPhase.FuncGroupId);
             }
         }
+
+        if (action.Say != null)
+        {
+            if (action.Say.DelaySeconds > 0)
+                TaskManager.Instance.Schedule(new Tasks.World.WorldScriptSayTask(_world, action.Say),
+                    TimeSpan.FromSeconds(action.Say.DelaySeconds));
+            else
+                SayNow(_world, action.Say);
+        }
+    }
+
+    /// <summary>
+    /// Shows a chat bubble above a live NPC of the template. Fails soft when the NPC is not
+    /// (yet) in the world — event-spawned NPCs appear on the next world tick, which is why
+    /// scripted lines usually carry a small DelaySeconds. (aaemu-cluster#92 validation)
+    /// </summary>
+    internal static void SayNow(WorldInstance world, WorldScriptSay say)
+    {
+        var npc = world.GetNpcByTemplateId(say.NpcTemplateId);
+        if (npc == null || npc.IsDead)
+        {
+            Logger.Warn($"World script Say: npc {say.NpcTemplateId} not alive in {world.Template?.Name} ({world.Id})");
+            return;
+        }
+
+        npc.BroadcastPacket(new Core.Packets.G2C.SCChatBubblePacket(npc.ObjId, 1, 1, 0, say.Text), true);
     }
 }

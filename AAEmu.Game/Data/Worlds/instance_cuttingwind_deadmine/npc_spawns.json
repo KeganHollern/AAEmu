@@ -416,6 +416,8 @@
   },
   {
     "UnitId": 12109,
+    "NpcSpawnerIds": [13388],
+    "StartInactive": true,
     "Position": {
       "X": 718.8,
       "Y": 327,

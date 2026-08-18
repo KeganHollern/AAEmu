@@ -69,6 +69,21 @@ public class WorldScriptAction
 
     /// <summary>Move every live doodad of the template to the func group.</summary>
     public WorldScriptDoodadPhase ChangeDoodadPhase { get; set; }
+
+    /// <summary>Show a chat bubble above a live NPC of the template (optionally delayed).</summary>
+    public WorldScriptSay Say { get; set; }
+}
+
+/// <summary>
+/// A scripted NPC line. Retail delivered these beats from XL server scripts that never shipped;
+/// the text here is authored (approximated) per dungeon. Rendered as a chat bubble above the NPC
+/// via SCChatBubblePacket. (aaemu-cluster#92 validation: silent Allistair/Nerta beats)
+/// </summary>
+public class WorldScriptSay
+{
+    public uint NpcTemplateId { get; set; }
+    public string Text { get; set; }
+    public float DelaySeconds { get; set; }
 }
 
 public static class WorldScriptTemplate

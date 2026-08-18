@@ -55,9 +55,15 @@ public class DoodadFuncWaterVolume : DoodadPhaseFuncTemplate
         var area = world.Water.GetNearestArea(pos, AreaSearchDistanceMeters);
         if (area == null)
         {
-            area = world.Water.AddSquareArea($"WaterVolume_{owner.TemplateId}_{owner.ObjId}", pos,
+            // Corner-anchored, not centered: the client's water prefabs (e.g. Sharpwind's
+            // cuttingwind.water1, a 65x69 quad) keep their origin at a corner and extend +X/+Y,
+            // so a doodad authored at that anchor must produce server water with the same
+            // footprint or swim/breath checks disagree with the visual (aaemu-cluster#92
+            // validation: the pit water rendered offset into one quadrant).
+            var center = pos + new System.Numerics.Vector3(SyntheticAreaSizeMeters / 2f, SyntheticAreaSizeMeters / 2f, 0f);
+            area = world.Water.AddSquareArea($"WaterVolume_{owner.TemplateId}_{owner.ObjId}", center,
                 SyntheticAreaSizeMeters, SyntheticAreaDepthMeters);
-            Logger.Info($"DoodadFuncWaterVolume: created synthetic area '{area.Name}' at {pos} in {world}; raising by {LevelChange} over {Duration}s");
+            Logger.Info($"DoodadFuncWaterVolume: created synthetic area '{area.Name}' anchored at {pos} in {world}; raising by {LevelChange} over {Duration}s");
         }
         else
         {

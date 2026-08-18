@@ -1,9 +1,18 @@
 [
     {
-        "Name": "Iron Bridge collapse spawns the slime pack and cinematic Nerta (aaemu-cluster#94/#95/#97)",
+        "Name": "Allistair greets the party at the entrance (aaemu-cluster#92 validation: silent beats; line approximated)",
+        "OnPlayerEnterArea": { "X": 796.3, "Y": 325.4, "Z": 249.5, "Radius": 18.0 },
+        "Actions": [
+            { "Say": { "NpcTemplateId": 12108, "Text": "You made it! The Blackbeard Thieves have overrun the mine. Stay close to the rails and watch your footing.", "DelaySeconds": 1.5 } }
+        ]
+    },
+    {
+        "Name": "Iron Bridge collapse spawns the slime pack, cinematic Nerta, and Allistair's pit-edge variant (aaemu-cluster#94/#95/#97)",
         "OnDoodadPhase": { "DoodadTemplateId": 5058, "FuncGroupId": 13148 },
         "Actions": [
-            { "ActivateNpcSpawners": [13392, 13436] }
+            { "ActivateNpcSpawners": [13392, 13436, 13388] },
+            { "Say": { "NpcTemplateId": 12146, "Text": "Ha! Enjoy the drop? This flooded pit will be your grave. Slimes — finish them!", "DelaySeconds": 4.0 } },
+            { "Say": { "NpcTemplateId": 12109, "Text": "Are you two alright down there?! That bridge was rigged! Clear out the slimes and break the blocked geysers — the water will carry you back up!", "DelaySeconds": 9.0 } }
         ]
     },
     {
@@ -26,7 +35,8 @@
         "OnPlayerEnterArea": { "X": 512.0, "Y": 326.0, "Z": 165.8, "Radius": 30.0 },
         "Actions": [
             { "DespawnNpcSpawners": [13436] },
-            { "ActivateNpcSpawners": [13437] }
+            { "ActivateNpcSpawners": [13437] },
+            { "Say": { "NpcTemplateId": 11362, "Text": "So the rats survived the flood. I am Nerta — and this mine is MINE!", "DelaySeconds": 3.0 } }
         ]
     },
     {
