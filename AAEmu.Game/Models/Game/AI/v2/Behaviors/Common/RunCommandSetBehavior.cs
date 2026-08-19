@@ -25,6 +25,18 @@ public class RunCommandSetBehavior : BaseCombatBehavior
         if (Ai.AiCurrentCommandRunTime > TimeSpan.Zero)
         {
             Ai.AiCurrentCommandRunTime -= delta;
+            if (Ai.AiCurrentCommandRunTime <= TimeSpan.Zero)
+            {
+                // aaemu-cluster#92: the wait belonging to the command we already executed has
+                // elapsed, so consume it. Advancing used to rely on the runtime landing NEGATIVE;
+                // a wait that is an exact multiple of the tick delta (Timeout 1s at 100ms ticks, or
+                // a 1000ms skill cooldown) lands on exactly zero, and the command was then executed
+                // a second time, re-arming its own wait forever. Timeout has no failure path, so a
+                // scripted sequence stalled on its first pause and never reached its later beats.
+                Ai.AiCurrentCommand = null;
+                Ai.AiCurrentCommandRunTime = TimeSpan.Zero;
+            }
+
             return;
         }
 
@@ -80,22 +92,35 @@ public class RunCommandSetBehavior : BaseCombatBehavior
                 Logger.Warn($"AI Command: {aiCommand.CmdId} not implemented, NPC {Ai.Owner.ObjId} ({Ai.Owner.TemplateId}), CommandSet {aiCommand.CmdSetId}, P1 {aiCommand.Param1}, P2 {aiCommand.Param2}");
                 break;
             case AiCommandCategory.FollowPath:
-                Ai.LoadAiPathPoints(Ai.AiFileName, aiCommand.Param1 == 1);
-                if (aiCommand.Param1 == 1)
                 {
-                    Ai.PathHandler.AiPathPointsRemaining.Enqueue(new AiPathPoint { Position = Vector3.Zero, Action = AiPathPointAction.ReturnToCommandSet, Param = string.Empty });
-                }
-                Ai.GoToFollowPath();
-                if (aiCommand.Param1 == 1)
-                {
-                    Ai.AiFileName = aiCommand.Param2;
-                }
-                else
-                {
-                    Ai.AiFileName2 = aiCommand.Param2;
-                }
+                    // aaemu-cluster#92: a queued FollowPath has to load ITS OWN path file. The name used to
+                    // be read before it was assigned, so the command loaded the previous command's path -
+                    // or, for the first FollowPath in a set, an empty name (no points at all).
+                    // Param1 selects the path slot: 1 = primary (walked once, then back to the command set),
+                    // anything else = secondary (kept as the looping patrol route).
+                    var isPrimaryPath = aiCommand.Param1 == 1;
+                    var pathFileName = aiCommand.Param2;
+                    if (isPrimaryPath)
+                        Ai.AiFileName = pathFileName;
+                    else
+                        Ai.AiFileName2 = pathFileName;
 
-                break;
+                    if (!Ai.LoadAiPathPoints(pathFileName, isPrimaryPath))
+                    {
+                        // Nothing to walk: stay in the command set so the remaining commands still run
+                        // instead of stranding the NPC in FollowPath forever.
+                        Logger.Warn($"AI Command: {aiCommand.CmdId} has no usable path points, NPC {Ai.Owner.ObjId} ({Ai.Owner.TemplateId}), CommandSet {aiCommand.CmdSetId}, P1 {aiCommand.Param1}, P2 {aiCommand.Param2}");
+                        break;
+                    }
+
+                    if (isPrimaryPath)
+                    {
+                        Ai.PathHandler.AiPathPointsRemaining.Enqueue(new AiPathPoint { Position = Vector3.Zero, Action = AiPathPointAction.ReturnToCommandSet, Param = string.Empty });
+                    }
+
+                    Ai.GoToFollowPath();
+                    break;
+                }
             case AiCommandCategory.UseSkill:
                 Ai.AiSkillId = aiCommand.Param1;
                 var owner = Ai.Owner; // capture once to avoid race with concurrent unit despawn
@@ -108,7 +133,18 @@ public class RunCommandSetBehavior : BaseCombatBehavior
                 break;
             case AiCommandCategory.Timeout:
                 Ai.AiTimeOut = aiCommand.Param1;
-                Ai.AiCurrentCommandRunTime = TimeSpan.FromMilliseconds(Ai.AiTimeOut); // This feels like this should be max cooldown remaining for all skills for param 1
+                // ai_commands.param1 is SECONDS, not milliseconds: XL's own rows spell it out
+                // ("2 sec", "2sec", "3 sec", "5 sec", "10 sec" all appear as param1 values), and the
+                // range is 1-60. Applying it as milliseconds made every scripted pause a no-op, so
+                // Sharpwind set 185's authored 1s dialogue beats collapsed and only looked spaced
+                // because BubbleEffect.Apply blocks its thread for >=1250ms per line.
+                //
+                // The cast itself parks nothing here: GetAttackDelay is called with
+                // includeCooldown=false and additionalDelay=0, which reduces to
+                // CastingTime * CastTimeMul, and these line skills have casting_time 0 (their
+                // cooldown_time 1000 is deliberately excluded). So the authored value alone paces
+                // the beat. (aaemu-cluster#92)
+                Ai.AiCurrentCommandRunTime = TimeSpan.FromSeconds(Ai.AiTimeOut);
                 break;
             default:
                 throw new NotSupportedException(nameof(aiCommand.CmdId));

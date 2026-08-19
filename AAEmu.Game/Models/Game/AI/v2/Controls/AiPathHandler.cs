@@ -1,5 +1,6 @@
 ﻿using System.Globalization;
 using System.Numerics;
+using AAEmu.Game.Models.Game.AI.Utils;
 using AAEmu.Game.Models.Game.AI.v2.Framework;
 using AAEmu.Game.Utils;
 
@@ -26,14 +27,22 @@ public class AiPathHandler(NpcAi aiOwner)
     public float AiPathSpeed { get; set; } = 1f;
 
     /// <summary>
-    /// Stance to use when moving on the Path; 5-walk, 4-run, 3-stand still
+    /// Stance to use when moving on the Path; 5-walk, 4-run, 3-stand still.
+    /// Null means "derive it from the actual movement speed" (aaemu-cluster#92); a path file's
+    /// ActorFlags action sets it explicitly.
     /// </summary>
-    public byte AiPathActorFlags { get; set; } = 4;
+    public byte? AiPathActorFlags { get; set; }
 
     /// <summary>
     /// Currently targeted position for path movement
     /// </summary>
     public Vector3 TargetPosition { get; set; } = Vector3.Zero;
+
+    /// <summary>
+    /// Smallest horizontal radius that counts as "reached this waypoint". Small NPCs have a Scale below
+    /// the distance a single step covers, which used to make waypoint advance unreachable.
+    /// </summary>
+    private const float MinWaypointArrivalRadius = 0.5f;
 
     /// <summary>
     /// Does path movement and dequeuing as needed
@@ -52,8 +61,11 @@ public class AiPathHandler(NpcAi aiOwner)
             }
         }
 
-        // Are we there yet?
-        if (TargetPosition != Vector3.Zero && MathUtil.CalculateDistance(TargetPosition, Owner.Owner.Transform.World.Position, true) < Owner.Owner.Template.Scale)
+        // Are we there yet? aaemu-cluster#92: horizontal test with a vertical guard, the 3D test used to
+        // be defeated forever by a sub-meter floor disagreement (and by Scale < one movement step).
+        var arrivalRadius = Math.Max(Owner.Owner.Template.Scale, MinWaypointArrivalRadius);
+        if (TargetPosition != Vector3.Zero &&
+            AiUtils.HasReachedPathWaypoint(Owner.Owner.Transform.World.Position, TargetPosition, arrivalRadius))
         {
             TargetPosition = Vector3.Zero;
         }
@@ -98,10 +110,12 @@ public class AiPathHandler(NpcAi aiOwner)
         if (TargetPosition != Vector3.Zero)
         {
             var moveSpeed = Owner.GetRealMovementSpeed(AiPathSpeed);
-            // var moveFlags = Owner.GetRealMovementFlags(moveSpeed);
-            moveSpeed *= delta.Milliseconds / 1000.0;
-            Owner.Owner.MoveTowards(TargetPosition, (float)moveSpeed, AiPathActorFlags);
-            // Owner.Owner.MoveTowards(TargetPosition, AiPathSpeed * Owner.Owner.BaseMoveSpeed * (delta.Milliseconds / 1000.0f), AiPathStanceFlags);
+            // aaemu-cluster#92: unless the path file names its own ActorFlags, the gait has to follow the
+            // speed we actually move at, otherwise a 1 m/s scripted walk was broadcast as a run.
+            var moveFlags = AiPathActorFlags ?? Owner.GetRealMovementFlags(moveSpeed);
+            var stepDistance = moveSpeed * delta.Milliseconds / 1000.0;
+            Owner.Owner.MoveTowards(TargetPosition, (float)stepDistance, moveFlags, arrivalRadius,
+                authoredPathZ: true, speedMetersPerSecond: (float)moveSpeed);
 
             // Move the idle "home" location along with the path, so it doesn't immediately trigger a return to home state when going into combat
             Owner.IdlePosition = Owner.Owner.Transform.World.Position;

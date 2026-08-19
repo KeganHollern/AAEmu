@@ -3,12 +3,15 @@
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.AI.Utils;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
+using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Models.Tasks.Npcs;
 using AAEmu.Game.Models.Tasks.UnitMove;
 using AAEmu.Game.Utils;
@@ -66,6 +69,7 @@ public class Simulation : Patrol
 
     private readonly float RangeToCheckPoint = 0.5f; // дистанция до чекпоинта при которой считается , что мы достигли оного
     private readonly int MoveTrigerDelay = 1000;     // срабатывание таймера на движение  0,8 сек
+    private const float MoveStepInterval = 100f;     // milliseconds between two movement steps
 
     private uint SkillId { get; set; }
     private uint Timeout { get; set; }
@@ -102,15 +106,17 @@ public class Simulation : Patrol
 
     //***************************************************************
     /// <summary>
-    /// Ориентация на местности: Проверка находится ли заданная точка в пределах досягаемости
+    /// Ориентация на местности: Проверка находится ли заданная точка в пределах досягаемости.
+    /// aaemu-cluster#92: horizontal, with a generous vertical guard, so an authored route always advances
+    /// even when the server and the client disagree about the exact floor height.
     /// </summary>
     /// <param name="npc"></param>
     /// <param name="target"></param>
     /// <param name="distance"></param>
     /// <returns></returns>
-    public static bool PosInRange(Npc npc, Vector3 target, int distance)
+    public static bool PosInRange(Npc npc, Vector3 target, float distance)
     {
-        return MathUtil.CalculateDistance(npc.Transform.World.Position, target, true) <= distance;
+        return AiUtils.HasReachedPathWaypoint(npc.Transform.World.Position, target, distance);
     }
     //***************************************************************
     public string GetValue(string valName)
@@ -275,6 +281,14 @@ public class Simulation : Patrol
         //Logger.Warn("trying to get on the path...");
         //Character.SendMessage("[MoveTo] trying to get on the path...");
         // first go to the closest checkpoint
+        // aaemu-cluster#92: a scripted walk is not a combat move; broadcast it in the relaxed/idle pose,
+        // matching what FollowPathBehavior does for AI-driven routes.
+        if (!npc.IsInBattle)
+        {
+            npc.CurrentGameStance = GameStanceType.Relaxed;
+            npc.CurrentAlertness = MoveTypeAlertness.Idle;
+        }
+
         npc.BroadcastPacket(new SCUnitModelPostureChangedPacket(npc, npc.AnimActionId, false), true);
         Path = GetPaths(MoveFileName);
 
@@ -356,9 +370,8 @@ public class Simulation : Patrol
         if (!(sim ?? this).MoveToPathEnabled)
             return;
 
-        var move = false;
-        var distance = npc.BaseMoveSpeed * (100 / 1000.0f);
-        distance *= npc.MoveSpeedMul; // Apply speed modifier
+        var speed = npc.BaseMoveSpeed * npc.MoveSpeedMul; // m/s, stance aware
+        var distance = speed * (MoveStepInterval / 1000.0f);
         if (distance < 0.01f)
         {
             // take the next point to move to it
@@ -366,11 +379,8 @@ public class Simulation : Patrol
             return;
         }
 
-        var dist = MathUtil.CalculateDistance(npc.Transform.World.Position, target, true);
-        if (dist > RangeToCheckPoint)
-        {
-            move = true;
-        }
+        // aaemu-cluster#92: horizontal arrival test; a 3D one stalls forever on a floor disagreement
+        var move = !AiUtils.HasReachedPathWaypoint(npc.Transform.World.Position, target, RangeToCheckPoint);
         if (move)
         {
             // moving to the point #
@@ -394,11 +404,15 @@ public class Simulation : Patrol
             // TODO: Implement proper use for Transform.World.AddDistanceToFront)
             var (newX, newY, newZ) = PositionAndRotation.AddDistanceToFront(travelDist, targetDist, npc.Transform.Local.Position, target);
 
-            newZ = WorldManager.Instance.GetReferenceHeight(npc.Ai, newX, newY, newZ, npc.Transform.ZoneId);
+            // aaemu-cluster#92: authored waypoint Z wins over the geodata resolver on a recorded route
+            newZ = AiUtils.ResolveAuthoredPathHeight(npc, newX, newY, newZ);
             npc.Transform.Local.SetPosition(newX, newY, newZ);
 
             var angle = MathUtil.CalculateAngleFrom(npc.Transform.Local.Position, target);
-            var (velX, velY) = MathUtil.AddDistanceToFront(4000, 0, 0, (float)angle.DegToRad());
+            // aaemu-cluster#92: broadcast the speed we actually walk at, so the client animates the gait
+            // instead of extrapolating a hardcoded ~2 m/s and getting snapped back every step
+            var (velX, velY) = MathUtil.AddDistanceToFront(PhysicsManager.EncodeMovementVelocity(speed), 0, 0,
+                (float)angle.DegToRad());
             npc.Transform.Local.SetRotationDegree(0f, 0f, (float)angle - 90);
             var (rx, ry, rz) = npc.Transform.Local.ToRollPitchYawSBytesMovement();
 
@@ -410,12 +424,16 @@ public class Simulation : Patrol
             moveType.RotationX = rx;
             moveType.RotationY = ry;
             moveType.RotationZ = rz;
-            moveType.ActorFlags = (byte)(RunningMode ? 4 : 5); // 5-walk, 4-run, 3-stand still
-            moveType.Flags = 0;
+            // aaemu-cluster#92: the gait has to match the speed we actually move at. Without
+            // MoveTypeFlags.Moving the client never starts a locomotion animation: it kept the idle pose,
+            // slid the model between the broadcast positions and let its own gravity drop it back down.
+            // RunningMode is an explicit "run" order (/moveto run), otherwise follow the real speed
+            moveType.ActorFlags = RunningMode ? (byte)4 : npc.Ai?.GetRealMovementFlags(speed) ?? (byte)5; // 5-walk, 4-run, 3-stand still
+            moveType.Flags = MoveTypeFlags.Moving | (npc.IsInBattle ? MoveTypeFlags.InCombat : 0);
 
             moveType.DeltaMovement = new sbyte[3];
             moveType.DeltaMovement[0] = 0;
-            moveType.DeltaMovement[1] = (sbyte)(RunningMode ? 127 : 63);
+            moveType.DeltaMovement[1] = 127;
             moveType.DeltaMovement[2] = 0;
             moveType.Stance = npc.CurrentGameStance;    // COMBAT = 0x0, IDLE = 0x1
             moveType.Alertness = npc.CurrentAlertness; // IDLE = 0x0, ALERT = 0x1, COMBAT = 0x2
@@ -441,7 +459,7 @@ public class Simulation : Patrol
         }
     }*/
 
-    private void RepeatMove(Simulation sim, Npc npc, Vector3 target, double time = 100)
+    private void RepeatMove(Simulation sim, Npc npc, Vector3 target, double time = MoveStepInterval)
     {
         TaskManager.Instance.Schedule(new Move(sim ?? this, npc, target.X, target.Y, target.Z), TimeSpan.FromMilliseconds(time));
     }

@@ -147,6 +147,31 @@ public class WorldScriptTemplateTests
         await Assert.That(entrance.OnPlayerEnterArea).IsNotNull();
         // The sequence owns the whole beat, so no hand-timed bubbles may remain on this rule.
         await Assert.That(entrance.Actions.Any(a => a.Say != null)).IsFalse();
+        // Live run: he spawned in the same second the rule fired, so the client had not rendered
+        // him when the first line played. The start must lag the spawn.
+        await Assert.That(run.DelaySeconds).IsGreaterThanOrEqualTo(3f);
+        // Live run: a stalled walk never reached the set's self-despawn and left a permanent ghost
+        // at the ledge, which also blocks the hand-off illusion. Keep a backstop despawn.
+        var backstop = entrance.Actions.Single(a => a.CastSkill != null).CastSkill;
+        await Assert.That(backstop.NpcTemplateId).IsEqualTo(12108u);
+        await Assert.That(backstop.SkillId).IsEqualTo(19430u);
+        await Assert.That(backstop.DelaySeconds).IsGreaterThan(run.DelaySeconds);
+    }
+
+    [Test]
+    public async Task PoolGreeterSpawnsAtZoneIn()
+    {
+        var contents = await File.ReadAllTextAsync(Path.Combine(WorldDir, "npc_spawns.json"));
+        JsonHelper.TryDeserializeObject(contents, out List<PinProbe> spawns, out _);
+
+        // Allistair 12109 stands at the pit pool from zone-in and greets the party after the drop.
+        // Both of his compact spawner rows are activation_state='t', so pinning him to the staging
+        // row left him dormant: the live run logged "npc 12109 not alive" and the whole pool beat,
+        // plus his presence by the water, silently never happened. He must stay unpinned so the
+        // selector binds his active 1:1 row, exactly like 12108 (which spawned correctly).
+        var greeter = spawns.Single(s => s.UnitId == 12109);
+        await Assert.That(greeter.NpcSpawnerIds).IsNull();
+        await Assert.That(greeter.StartInactive).IsFalse();
     }
 
     [Test]
@@ -209,5 +234,6 @@ public class WorldScriptTemplateTests
     {
         public uint UnitId { get; set; }
         public List<uint> NpcSpawnerIds { get; set; }
+        public bool StartInactive { get; set; }
     }
 }

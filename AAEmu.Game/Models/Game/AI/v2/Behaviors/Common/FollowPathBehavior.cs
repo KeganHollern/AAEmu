@@ -27,9 +27,11 @@ public class FollowPathBehavior : BaseCombatBehavior
         }
         Ai.Param = Ai.Owner.Template.AiParams;
 
+        // aaemu-cluster#92: path movement is driven by Ai.PathHandler in Tick(). The legacy Simulation
+        // route used to be started here as well, but GoToPath() toggles MoveToPathEnabled, so this call
+        // actually broadcast a StopMovement the moment a queued FollowPath began - and when it did move,
+        // it fought the path handler for the same NPC.
         Ai.Owner.IsInPatrol = true;
-        Ai.Owner.Simulation.MoveToPathEnabled = true;
-        Ai.Owner.Simulation.GoToPath(Ai.Owner, true);
 
         _enter = true;
     }
@@ -63,9 +65,18 @@ public class FollowPathBehavior : BaseCombatBehavior
             return;
         }
 
-        if (!Ai.PathHandler.RunCurrentPath(delta))
+        var hasPathMovementLeft = Ai.PathHandler.RunCurrentPath(delta);
+
+        // aaemu-cluster#92: a ReturnToCommandSet path point switches behavior from inside RunCurrentPath.
+        // The idle fallbacks below would immediately kick the NPC out of the command set it just resumed,
+        // so the queued commands after the FollowPath (typically the self-despawn skill) never ran.
+        if (!ReferenceEquals(Ai.GetCurrentBehavior(), this))
+            return;
+
+        if (!hasPathMovementLeft)
         {
             Ai.GoToIdle();
+            return;
         }
 
         if (Ai.PathHandler.TargetPosition == Vector3.Zero && Ai.PathHandler.AiPathPoints.Count <= 0 && Ai.PathHandler.AiPathPointsRemaining.Count <= 0)
@@ -125,6 +136,9 @@ public class FollowPathBehavior : BaseCombatBehavior
 
     public override void Exit()
     {
+        // aaemu-cluster#92: StopMove() used to clear this as a side effect of the removed Simulation call.
+        // It has to be released here, or the NPC would refuse every later scripted route.
+        Ai.Owner.IsInPatrol = false;
         _enter = false;
     }
 

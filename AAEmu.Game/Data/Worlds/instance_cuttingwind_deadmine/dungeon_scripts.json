@@ -12,7 +12,14 @@
                 "RunCommandSet": {
                     "NpcTemplateId": 12108,
                     "CommandSetId": 185,
-                    "DelaySeconds": 0.5
+                    "DelaySeconds": 3.5
+                }
+            },
+            {
+                "CastSkill": {
+                    "NpcTemplateId": 12108,
+                    "SkillId": 19430,
+                    "DelaySeconds": 30.0
                 }
             }
         ]
