@@ -289,7 +289,7 @@ public sealed class WorldScriptController
     /// </summary>
     internal static void SayNow(WorldInstance world, WorldScriptSay say)
     {
-        var npc = world.GetNpcByTemplateId(say.NpcTemplateId);
+        var npc = FindSpeaker(world, say);
         if (npc == null || npc.IsDead)
         {
             Logger.Warn($"World script Say: npc {say.NpcTemplateId} not alive in {world.Template?.Name} ({world.Id})");
@@ -302,5 +302,35 @@ public sealed class WorldScriptController
             npc.BroadcastPacket(new Core.Packets.G2C.SCChatBubblePacket(npc.ObjId, 1, 2, say.BubbleId, string.Empty), true);
         else
             npc.BroadcastPacket(new Core.Packets.G2C.SCChatBubblePacket(npc.ObjId, 1, 1, 0, say.Text), true);
+    }
+
+    /// <summary>
+    /// Picks the NPC that speaks a line. With a Near filter, the live NPC of the template closest
+    /// to that point wins — a template with several placements (the four Sharpwind researchers)
+    /// would otherwise speak from an arbitrary one, possibly out of the player's view.
+    /// (aaemu-cluster#92)
+    /// </summary>
+    private static NPChar.Npc FindSpeaker(WorldInstance world, WorldScriptSay say)
+    {
+        if (say.Near == null)
+            return world.GetNpcByTemplateId(say.NpcTemplateId);
+
+        var center = new Vector3(say.Near.X, say.Near.Y, say.Near.Z);
+        NPChar.Npc best = null;
+        var bestDistance = float.MaxValue;
+        foreach (var npc in world.GetAllNpcs())
+        {
+            if (npc.TemplateId != say.NpcTemplateId || npc.IsDead)
+                continue;
+
+            var distance = Vector3.DistanceSquared(npc.Transform?.World?.Position ?? Vector3.Zero, center);
+            if (distance >= bestDistance)
+                continue;
+
+            bestDistance = distance;
+            best = npc;
+        }
+
+        return best;
     }
 }

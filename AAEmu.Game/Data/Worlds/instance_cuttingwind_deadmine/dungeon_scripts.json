@@ -1,135 +1,465 @@
 [
     {
         "Name": "Allistair greets the party at the mine mouth and jumps first (retail bubbles 2147-2149)",
-        "OnPlayerEnterArea": { "X": 749.7, "Y": 325.8, "Z": 248.2, "Radius": 14.0 },
+        "OnPlayerEnterArea": {
+            "X": 749.7,
+            "Y": 325.8,
+            "Z": 248.2,
+            "Radius": 14.0
+        },
         "Actions": [
-            { "Say": { "NpcTemplateId": 12108, "BubbleId": 2147, "DelaySeconds": 0.5 } },
-            { "Say": { "NpcTemplateId": 12108, "BubbleId": 2148, "DelaySeconds": 2.5 } },
-            { "Say": { "NpcTemplateId": 12108, "BubbleId": 2149, "DelaySeconds": 6.5 } }
+            {
+                "Say": {
+                    "NpcTemplateId": 12108,
+                    "BubbleId": 2147,
+                    "DelaySeconds": 0.5
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12108,
+                    "BubbleId": 2148,
+                    "DelaySeconds": 2.5
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12108,
+                    "BubbleId": 2149,
+                    "DelaySeconds": 6.5
+                }
+            }
         ]
     },
     {
         "Name": "Allistair regroups the party at the pit pool and leads toward the iron bridge (retail bubbles 2150-2152)",
-        "OnPlayerEnterArea": { "X": 724.0, "Y": 327.0, "Z": 167.8, "Radius": 14.0 },
+        "OnPlayerEnterArea": {
+            "X": 724.0,
+            "Y": 327.0,
+            "Z": 167.8,
+            "Radius": 14.0
+        },
         "Actions": [
-            { "Say": { "NpcTemplateId": 12109, "BubbleId": 2150, "DelaySeconds": 0.5 } },
-            { "Say": { "NpcTemplateId": 12109, "BubbleId": 2151, "DelaySeconds": 3.5 } },
-            { "Say": { "NpcTemplateId": 12109, "BubbleId": 2152, "DelaySeconds": 7.0 } }
+            {
+                "Say": {
+                    "NpcTemplateId": 12109,
+                    "BubbleId": 2150,
+                    "DelaySeconds": 0.5
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12109,
+                    "BubbleId": 2151,
+                    "DelaySeconds": 3.5
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12109,
+                    "BubbleId": 2152,
+                    "DelaySeconds": 7.0
+                }
+            }
         ]
     },
     {
         "Name": "Iron Bridge collapse spawns the slime pack and cinematic Nerta; Allistair is cut off on the high side (aaemu-cluster#94/#95/#97; retail bubbles 2169/2170/2181 + 2173/2175)",
-        "OnDoodadPhase": { "DoodadTemplateId": 5058, "FuncGroupId": 13148 },
+        "OnDoodadPhase": {
+            "DoodadTemplateId": 5058,
+            "FuncGroupId": 13148
+        },
         "Actions": [
-            { "ActivateNpcSpawners": [13392, 13436] },
-            { "Say": { "NpcTemplateId": 12109, "BubbleId": 2169, "DelaySeconds": 1.0 } },
-            { "Say": { "NpcTemplateId": 12146, "BubbleId": 2173, "DelaySeconds": 3.5 } },
-            { "Say": { "NpcTemplateId": 12109, "BubbleId": 2170, "DelaySeconds": 6.0 } },
-            { "Say": { "NpcTemplateId": 12146, "BubbleId": 2175, "DelaySeconds": 9.0 } },
-            { "Say": { "NpcTemplateId": 12109, "BubbleId": 2181, "DelaySeconds": 12.5 } }
+            {
+                "ActivateNpcSpawners": [
+                    13392,
+                    13436
+                ]
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12109,
+                    "BubbleId": 2169,
+                    "DelaySeconds": 1.0
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12146,
+                    "BubbleId": 2173,
+                    "DelaySeconds": 3.5
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12109,
+                    "BubbleId": 2170,
+                    "DelaySeconds": 6.0
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12146,
+                    "BubbleId": 2175,
+                    "DelaySeconds": 9.0
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12109,
+                    "BubbleId": 2181,
+                    "DelaySeconds": 12.5
+                }
+            }
         ]
     },
     {
         "Name": "All blocked geysers mined -> Sharpwind Lake starts rising (aaemu-cluster#98)",
-        "OnAllDoodadsPhase": { "DoodadTemplateId": 5064, "FuncGroupIds": [13161, 13163] },
+        "OnAllDoodadsPhase": {
+            "DoodadTemplateId": 5064,
+            "FuncGroupIds": [
+                13161,
+                13163
+            ]
+        },
         "Actions": [
-            { "ChangeDoodadPhase": { "DoodadTemplateId": 5063, "FuncGroupId": 14184 } }
+            {
+                "ChangeDoodadPhase": {
+                    "DoodadTemplateId": 5063,
+                    "FuncGroupId": 14184
+                }
+            }
         ]
     },
     {
         "Name": "Water fully risen -> flush slimes and cinematic Nerta, retire geysers (aaemu-cluster#96/#97/#98)",
-        "OnDoodadPhase": { "DoodadTemplateId": 5063, "FuncGroupId": 13159 },
+        "OnDoodadPhase": {
+            "DoodadTemplateId": 5063,
+            "FuncGroupId": 13159
+        },
         "Actions": [
-            { "DespawnNpcSpawners": [13392, 13436] },
-            { "ChangeDoodadPhase": { "DoodadTemplateId": 5064, "FuncGroupId": 13163 } }
+            {
+                "DespawnNpcSpawners": [
+                    13392,
+                    13436
+                ]
+            },
+            {
+                "ChangeDoodadPhase": {
+                    "DoodadTemplateId": 5064,
+                    "FuncGroupId": 13163
+                }
+            }
         ]
     },
     {
         "Name": "Vera falls -> boss Nerta and Allistair's hideout clone appear (retail chain: np_skill 19485 NpcSpawnerSpawnEffect points at legacy spawner ids; bubbles 2189/2190)",
-        "OnNpcKilled": { "NpcTemplateIds": [12150] },
+        "OnNpcKilled": {
+            "NpcTemplateIds": [
+                12150
+            ]
+        },
         "Actions": [
-            { "ActivateNpcSpawners": [13437, 13389] },
-            { "Say": { "NpcTemplateId": 11362, "BubbleId": 2189, "DelaySeconds": 2.5 } },
-            { "Say": { "NpcTemplateId": 11362, "BubbleId": 2190, "DelaySeconds": 6.0 } }
+            {
+                "ActivateNpcSpawners": [
+                    13437,
+                    13389
+                ]
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 11362,
+                    "BubbleId": 2189,
+                    "DelaySeconds": 2.5
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 11362,
+                    "BubbleId": 2190,
+                    "DelaySeconds": 6.0
+                }
+            }
         ]
     },
     {
         "Name": "Nerta dies -> Allistair points the party at the lion gate (retail bubbles 2191/2192/2194/2195; her own 2193 death cry comes from np_skill 19491)",
-        "OnNpcKilled": { "NpcTemplateIds": [11362] },
+        "OnNpcKilled": {
+            "NpcTemplateIds": [
+                11362
+            ]
+        },
         "Actions": [
-            { "Say": { "NpcTemplateId": 12110, "BubbleId": 2191, "DelaySeconds": 2.5 } },
-            { "Say": { "NpcTemplateId": 12110, "BubbleId": 2192, "DelaySeconds": 6.0 } },
-            { "Say": { "NpcTemplateId": 12110, "BubbleId": 2194, "DelaySeconds": 10.0 } },
-            { "Say": { "NpcTemplateId": 12110, "BubbleId": 2195, "DelaySeconds": 14.0 } }
+            {
+                "Say": {
+                    "NpcTemplateId": 12110,
+                    "BubbleId": 2191,
+                    "DelaySeconds": 2.5
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12110,
+                    "BubbleId": 2192,
+                    "DelaySeconds": 6.0
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12110,
+                    "BubbleId": 2194,
+                    "DelaySeconds": 10.0
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12110,
+                    "BubbleId": 2195,
+                    "DelaySeconds": 14.0
+                }
+            }
         ]
     },
     {
         "Name": "Lion Statue used -> Guild Storage Door opens, warehouse Allistair appears (retail logic-family pulse 483/56; bubbles 2196/2197)",
-        "OnDoodadPhase": { "DoodadTemplateId": 5602, "FuncGroupId": 14421 },
+        "OnDoodadPhase": {
+            "DoodadTemplateId": 5602,
+            "FuncGroupId": 14421
+        },
         "Actions": [
-            { "ChangeDoodadPhase": { "DoodadTemplateId": 5541, "FuncGroupId": 14298 } },
-            { "ActivateNpcSpawners": [13390] },
-            { "Say": { "NpcTemplateId": 12111, "BubbleId": 2196, "DelaySeconds": 3.0 } },
-            { "Say": { "NpcTemplateId": 12111, "BubbleId": 2197, "DelaySeconds": 7.5 } }
+            {
+                "ChangeDoodadPhase": {
+                    "DoodadTemplateId": 5541,
+                    "FuncGroupId": 14298
+                }
+            },
+            {
+                "ActivateNpcSpawners": [
+                    13390
+                ]
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12111,
+                    "BubbleId": 2196,
+                    "DelaySeconds": 3.0
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12111,
+                    "BubbleId": 2197,
+                    "DelaySeconds": 7.5
+                }
+            }
         ]
     },
     {
         "Name": "Warehouse ambush beat at the schematics chest (retail bubbles 2199-2204)",
-        "OnPlayerEnterArea": { "X": 462.5, "Y": 337.0, "Z": 168.2, "Radius": 9.0 },
+        "OnPlayerEnterArea": {
+            "X": 462.5,
+            "Y": 337.0,
+            "Z": 168.2,
+            "Radius": 9.0
+        },
         "Actions": [
-            { "Say": { "NpcTemplateId": 12111, "BubbleId": 2199, "DelaySeconds": 0.5 } },
-            { "Say": { "NpcTemplateId": 12111, "BubbleId": 2200, "DelaySeconds": 3.0 } },
-            { "Say": { "NpcTemplateId": 12111, "BubbleId": 2201, "DelaySeconds": 6.0 } },
-            { "Say": { "NpcTemplateId": 12111, "BubbleId": 2202, "DelaySeconds": 9.0 } },
-            { "Say": { "NpcTemplateId": 12111, "BubbleId": 2203, "DelaySeconds": 13.0 } },
-            { "Say": { "NpcTemplateId": 12111, "BubbleId": 2204, "DelaySeconds": 16.0 } }
+            {
+                "Say": {
+                    "NpcTemplateId": 12111,
+                    "BubbleId": 2199,
+                    "DelaySeconds": 0.5
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12111,
+                    "BubbleId": 2200,
+                    "DelaySeconds": 3.0
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12111,
+                    "BubbleId": 2201,
+                    "DelaySeconds": 6.0
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12111,
+                    "BubbleId": 2202,
+                    "DelaySeconds": 9.0
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12111,
+                    "BubbleId": 2203,
+                    "DelaySeconds": 13.0
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12111,
+                    "BubbleId": 2204,
+                    "DelaySeconds": 16.0
+                }
+            }
         ]
     },
     {
         "Name": "Allistair calls out the odd wall (retail bubbles 2206/2207)",
-        "OnPlayerEnterArea": { "X": 467.0, "Y": 346.0, "Z": 168.0, "Radius": 7.0 },
+        "OnPlayerEnterArea": {
+            "X": 467.0,
+            "Y": 346.0,
+            "Z": 168.0,
+            "Radius": 7.0
+        },
         "Actions": [
-            { "Say": { "NpcTemplateId": 12111, "BubbleId": 2206, "DelaySeconds": 0.5 } },
-            { "Say": { "NpcTemplateId": 12111, "BubbleId": 2207, "DelaySeconds": 3.5 } }
+            {
+                "Say": {
+                    "NpcTemplateId": 12111,
+                    "BubbleId": 2206,
+                    "DelaySeconds": 0.5
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12111,
+                    "BubbleId": 2207,
+                    "DelaySeconds": 3.5
+                }
+            }
         ]
     },
     {
         "Name": "Warehouse powder keg used -> wall #1 blasts open, the fuse catches Allistair (retail: keg detonate 18717 skill-hits Rock 5280; bubble 2208)",
-        "OnDoodadPhase": { "DoodadTemplateId": 5282, "FuncGroupId": 13669, "Near": { "X": 462.9, "Y": 338.4, "Z": 168.0, "Radius": 12.0 } },
+        "OnDoodadPhase": {
+            "DoodadTemplateId": 5282,
+            "FuncGroupId": 13669,
+            "Near": {
+                "X": 462.9,
+                "Y": 338.4,
+                "Z": 168.0,
+                "Radius": 12.0
+            }
+        },
         "Actions": [
-            { "ChangeDoodadPhase": { "DoodadTemplateId": 5280, "FuncGroupId": 13666, "Near": { "X": 467.0, "Y": 349.0, "Z": 168.0, "Radius": 10.0 } } },
-            { "Say": { "NpcTemplateId": 12111, "BubbleId": 2208, "DelaySeconds": 1.5 } }
+            {
+                "ChangeDoodadPhase": {
+                    "DoodadTemplateId": 5280,
+                    "FuncGroupId": 13666,
+                    "Near": {
+                        "X": 467.0,
+                        "Y": 349.0,
+                        "Z": 168.0,
+                        "Radius": 10.0
+                    }
+                }
+            },
+            {
+                "Say": {
+                    "NpcTemplateId": 12111,
+                    "BubbleId": 2208,
+                    "DelaySeconds": 1.5
+                }
+            }
         ]
     },
     {
         "Name": "Hidden-cavern powder keg used -> wall #2 blasts open toward Okape's lair",
-        "OnDoodadPhase": { "DoodadTemplateId": 5282, "FuncGroupId": 13669, "Near": { "X": 618.0, "Y": 460.0, "Z": 149.3, "Radius": 12.0 } },
+        "OnDoodadPhase": {
+            "DoodadTemplateId": 5282,
+            "FuncGroupId": 13669,
+            "Near": {
+                "X": 618.0,
+                "Y": 460.0,
+                "Z": 149.3,
+                "Radius": 12.0
+            }
+        },
         "Actions": [
-            { "ChangeDoodadPhase": { "DoodadTemplateId": 5280, "FuncGroupId": 13666, "Near": { "X": 617.5, "Y": 466.0, "Z": 149.6, "Radius": 10.0 } } }
+            {
+                "ChangeDoodadPhase": {
+                    "DoodadTemplateId": 5280,
+                    "FuncGroupId": 13666,
+                    "Near": {
+                        "X": 617.5,
+                        "Y": 466.0,
+                        "Z": 149.6,
+                        "Radius": 10.0
+                    }
+                }
+            }
         ]
     },
     {
         "Name": "Researchers warn about the rampaging Colossus (retail bubble 2210)",
-        "OnPlayerEnterArea": { "X": 610.0, "Y": 437.0, "Z": 151.3, "Radius": 16.0 },
+        "OnPlayerEnterArea": {
+            "X": 610.0,
+            "Y": 437.0,
+            "Z": 151.3,
+            "Radius": 16.0
+        },
         "Actions": [
-            { "Say": { "NpcTemplateId": 12153, "BubbleId": 2210, "DelaySeconds": 0.5 } }
+            {
+                "Say": {
+                    "NpcTemplateId": 12153,
+                    "BubbleId": 2210,
+                    "DelaySeconds": 0.5,
+                    "Near": {
+                        "X": 610.0,
+                        "Y": 437.0,
+                        "Z": 151.3,
+                        "Radius": 40.0
+                    }
+                }
+            }
         ]
     },
     {
         "Name": "Okape the Slayer engages as the party enters his lair (his OnSpawn skill 19535 plays the retail intro cinema id_262_01)",
-        "OnPlayerEnterArea": { "X": 612.0, "Y": 610.0, "Z": 140.0, "Radius": 25.0 },
+        "OnPlayerEnterArea": {
+            "X": 612.0,
+            "Y": 610.0,
+            "Z": 140.0,
+            "Radius": 25.0
+        },
         "Actions": [
-            { "ActivateNpcSpawners": [13452] }
+            {
+                "ActivateNpcSpawners": [
+                    13452
+                ]
+            }
         ]
     },
     {
         "Name": "Okape dies -> dungeon exit portal and his log appear (retail: on-death skill 19755 'Okape's Destiny' created the exit; quest 4892 reads the log 6197)",
-        "OnNpcKilled": { "NpcTemplateIds": [12188, 11364] },
+        "OnNpcKilled": {
+            "NpcTemplateIds": [
+                12188,
+                11364
+            ]
+        },
         "Actions": [
-            { "SpawnDoodads": [
-                { "TemplateId": 5919, "X": 609.5, "Y": 646.5, "Z": 140.0, "Yaw": 0.0 },
-                { "TemplateId": 6197, "X": 613.5, "Y": 644.0, "Z": 140.1, "Yaw": 30.0 }
-            ] }
+            {
+                "SpawnDoodads": [
+                    {
+                        "TemplateId": 5919,
+                        "X": 609.5,
+                        "Y": 646.5,
+                        "Z": 140.0,
+                        "Yaw": 0.0
+                    },
+                    {
+                        "TemplateId": 6197,
+                        "X": 613.5,
+                        "Y": 644.0,
+                        "Z": 140.1,
+                        "Yaw": 30.0
+                    }
+                ]
+            }
         ]
     }
 ]

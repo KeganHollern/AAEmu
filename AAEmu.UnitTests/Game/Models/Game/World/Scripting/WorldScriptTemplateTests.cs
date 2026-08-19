@@ -132,6 +132,28 @@ public class WorldScriptTemplateTests
     }
 
     [Test]
+    public async Task MultiPlacementSpeakersAreDisambiguated()
+    {
+        var rules = LoadRules();
+        var spawnContents = await File.ReadAllTextAsync(Path.Combine(WorldDir, "npc_spawns.json"));
+        JsonHelper.TryDeserializeObject(spawnContents, out List<PinProbe> spawns, out _);
+
+        // SayNow resolves a template with no Near filter through GetNpcByTemplateId, whose
+        // ConcurrentDictionary order is arbitrary. Any speaker with several placements (the four
+        // Sharpwind researchers) must therefore carry a Near filter or the bubble can appear over
+        // an NPC far from the player who tripped the trigger.
+        foreach (var say in rules.SelectMany(r => r.Actions).Where(a => a.Say != null).Select(a => a.Say))
+        {
+            var placements = spawns.Count(s => s.UnitId == say.NpcTemplateId);
+            if (placements > 1)
+            {
+                await Assert.That(say.Near).IsNotNull();
+                await Assert.That(say.Near.Radius).IsGreaterThan(0);
+            }
+        }
+    }
+
+    [Test]
     public async Task StagedNpcPlacementsStayPinnedToEventSpawners()
     {
         var contents = await File.ReadAllTextAsync(Path.Combine(WorldDir, "npc_spawns.json"));

@@ -186,17 +186,45 @@ public class Gimmick : Unit
     }
 
     /// <summary>
-    /// Called by GimmickMovementFreeFall when a falling gimmick reaches the ground: fires the
-    /// template's collision skill (e.g. the Colossus rock crash) and removes gimmicks flagged to
-    /// disappear on impact, honoring their fade-out duration. (aaemu-cluster#92)
+    /// True while the template authors a delayed skill (<c>skill_delay</c>) that has not gone off
+    /// yet. <see cref="DoGimmickSkill"/> latches once, which makes the collision skill and the
+    /// delayed skill mutually exclusive, so anything that fires early silently cancels the fuse.
+    /// (aaemu-cluster#92)
+    /// </summary>
+    internal bool IsFusePending => Template?.SkillDelay > 0 && Template.SkillId > 0 && !SkillStarted;
+
+    /// <summary>
+    /// Whether a ground impact is allowed to drive this gimmick's collision reaction. It is not when
+    /// the template only reacts to units (<c>collision_unit_only</c>: gimmick 5 'Roll Fire Boulder',
+    /// 7 'mine', 11 'flower bomb'), nor while a fuse is still pending (gimmick 30 and the
+    /// 'Harpoon Bomb'/'Launch Secret Weapon' family author <c>collision_skill_id == skill_id</c> with
+    /// <c>skill_delay=10000</c>, so reacting on impact would re-time a player ability from 10s to
+    /// ~1.7s and its <c>disappear_by_collision</c> despawn would delete the gimmick before the fuse
+    /// ran at all). Those gimmicks still fall visibly; they just keep their authored timing.
+    /// (aaemu-cluster#92)
+    /// </summary>
+    internal bool GroundCollisionReactionAllowed =>
+        Template != null && !Template.CollisionUnitOnly && !IsFusePending;
+
+    /// <summary>
+    /// Called by <see cref="GimmickMovementFreeFall"/> when a falling gimmick reaches its landing
+    /// plane: fires the template's collision skill (e.g. the Colossus rock crash) and removes
+    /// gimmicks flagged to disappear on impact, honoring their fade-out duration. (aaemu-cluster#92)
     /// </summary>
     /// <param name="impactSpeed">Downward speed at the moment of impact</param>
     public void OnGroundCollision(float impactSpeed)
     {
-        if (Template == null)
+        if (!GroundCollisionReactionAllowed)
+        {
+            Logger.Trace("Gimmick {0} (template {1}) ignores ground impact at {2:0.00} m/s: {3}",
+                ObjId, TemplateId, impactSpeed,
+                Template == null ? "no template"
+                : Template.CollisionUnitOnly ? "collision_unit_only"
+                : "skill_delay fuse still pending");
             return;
+        }
 
-        if (Template.CollisionSkillId > 0 && !Template.CollisionUnitOnly && impactSpeed >= Template.CollisionMinSpeed)
+        if (Template.CollisionSkillId > 0 && impactSpeed >= Template.CollisionMinSpeed)
             DoGimmickSkill(Template.CollisionSkillId);
 
         if (Template.DisappearByCollision && Despawn <= DateTime.MinValue)
@@ -204,6 +232,22 @@ public class Gimmick : Unit
             Despawn = DateTime.UtcNow.AddMilliseconds(Template.FadeOutDuration);
             ParentWorld.SpawnManager.AddDespawn(this);
         }
+    }
+
+    /// <summary>
+    /// Velocity to report to clients for this tick. A movement handler that parked the object owns
+    /// its velocity: <see cref="MoveAlongZAxis"/> deliberately zeroes an elevator on its arrival
+    /// tick, and reporting the finite-difference value instead would have clients dead-reckon the
+    /// platform past its stop for the whole <see cref="WaitTime"/>, during which
+    /// <see cref="TimeLeft"/> suppresses every corrective packet. (aaemu-cluster#92)
+    /// </summary>
+    internal Vector3 ResolveReportedVelocity(Vector3 deltaPosition, float deltaTime)
+    {
+        if (MovementHandler is not null && !IsMoving)
+            return Vector3.Zero;
+
+        // Velocity is distance over time; this used to multiply and always reported ~0 (aaemu-cluster#92)
+        return deltaTime > 0f ? deltaPosition / deltaTime : Vector3.Zero;
     }
 
     public void GimmickTick(TimeSpan delta)
@@ -225,8 +269,7 @@ public class Gimmick : Unit
 
         var deltaTime = (float)delta.TotalSeconds;
         var deltaPosition = Transform.World.Position - LastPos;
-        // Velocity is distance over time; this used to multiply and always reported ~0 (aaemu-cluster#92)
-        Vel = deltaTime > 0f ? deltaPosition / deltaTime : Vector3.Zero;
+        Vel = ResolveReportedVelocity(deltaPosition, deltaTime);
         AngVel = new Vector3(0f, 0f, 0f);
 
         // Time += (uint)delta.Milliseconds;

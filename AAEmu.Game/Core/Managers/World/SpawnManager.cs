@@ -1163,6 +1163,11 @@ public class SpawnManager(WorldInstance parentWorld)
                 {
                     if (obj.Despawn >= DateTime.UtcNow)
                         continue;
+                    // GimmickSpawner.Despawn owns the ObjId release for the gimmicks it retires,
+                    // because the life-time and debug despawn paths call it directly and never reach
+                    // this loop. Releasing it again here would hand the same id out twice.
+                    // (aaemu-cluster#92)
+                    var objIdReleasedBySpawner = false;
                     if (obj is Npc { Spawner: not null } npc)
                         npc.Spawner.Despawn(npc);
                     else if (obj is Doodad { Spawner: not null } doodadWithSpawner)
@@ -1170,7 +1175,10 @@ public class SpawnManager(WorldInstance parentWorld)
                     else if (obj is Transfer { Spawner: not null } transfer)
                         transfer.Spawner.Despawn(transfer);
                     else if (obj is Gimmick { Spawner: not null } gimmick)
+                    {
+                        objIdReleasedBySpawner = gimmick.Respawn == DateTime.MinValue && gimmick.ObjId > 0;
                         gimmick.Spawner.Despawn(gimmick);
+                    }
                     else if (obj is Slave slave) // slaves don't have a spawner, but this is used for delayed despawn of un-summoned boats
                         slave.Delete();
                     else if (obj is Doodad doodadWithNoSpawner)
@@ -1178,7 +1186,8 @@ public class SpawnManager(WorldInstance parentWorld)
                     else
                         obj.Delete();
 
-                    ObjectIdManager.Instance.ReleaseId(obj.ObjId);
+                    if (!objIdReleasedBySpawner)
+                        ObjectIdManager.Instance.ReleaseId(obj.ObjId);
                     RemoveDespawn(obj);
                 }
             }

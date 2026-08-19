@@ -27,6 +27,23 @@ public class CinemalEffect : EffectTemplate
             return;
         }
 
+        if (CinemaId == 0)
+        {
+            // cinema_effects row without a cinema (e.g. the test row pointing at the absent id 1)
+            Logger.Trace("CinemalEffect: no cinema id, skipping");
+            return;
+        }
+
+        if (character.CurrentlyPlayingCinemaId != 0)
+        {
+            // A cinema is already running for this player. Overwriting the marker would make
+            // QuestActObjCinema.OnCinemaEnded reject the client's completion and silently drop that
+            // quest objective, and wide AoE cinema skills (19535 covers 200m) can easily land
+            // mid-cinema. Let the running one finish. (aaemu-cluster#92)
+            Logger.Debug($"CinemalEffect: {character.Name} is already playing cinema {character.CurrentlyPlayingCinemaId}, not starting {CinemaId}");
+            return;
+        }
+
         character.CurrentlyPlayingCinemaId = CinemaId;
         character.SendPacket(new SCPlaySequencePacket(CinemaId));
         Logger.Info($"CinemalEffect: playing cinema {CinemaId} for {character.Name}");

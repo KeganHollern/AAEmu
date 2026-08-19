@@ -14,5 +14,10 @@ public class CSCompletedCinemaPacket() : GamePacket(CSOffsets.CSCompletedCinemaP
 
         WorldManager.ResendVisibleObjectsToCharacter(Connection.ActiveChar);
         Connection.ActiveChar.Events.OnCinemaEnded(Connection.ActiveChar, new OnCinemaEndedArgs { CinemaId = Connection.ActiveChar.CurrentlyPlayingCinemaId });
+
+        // Clear the in-progress marker so a later cinema is not mistaken for one already playing.
+        // Quest cinemas self-clear in QuestActObjCinema.OnCinemaEnded, but skill-driven ones
+        // (CinemalEffect) had no owner to reset it. (aaemu-cluster#92)
+        Connection.ActiveChar.CurrentlyPlayingCinemaId = 0;
     }
 }

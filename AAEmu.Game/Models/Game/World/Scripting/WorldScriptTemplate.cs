@@ -118,6 +118,12 @@ public class WorldScriptSay
     /// <summary>Authored fallback text, used only when BubbleId is 0.</summary>
     public string Text { get; set; }
 
+    /// <summary>
+    /// Optional speaker filter: with several live NPCs of the template (e.g. the four Sharpwind
+    /// researchers), speak from the one nearest this point instead of an arbitrary one.
+    /// </summary>
+    public WorldScriptArea Near { get; set; }
+
     public float DelaySeconds { get; set; }
 }
 
