@@ -135,9 +135,15 @@ public class RunCommandSetBehavior : BaseCombatBehavior
                 Ai.AiTimeOut = aiCommand.Param1;
                 // ai_commands.param1 is SECONDS, not milliseconds: XL's own rows spell it out
                 // ("2 sec", "2sec", "3 sec", "5 sec", "10 sec" all appear as param1 values), and the
-                // range is 1-60. Treating them as milliseconds made every scripted pause a no-op, so
-                // dialogue beats only appeared spaced because skill cooldowns happened to cover them
-                // — e.g. Sharpwind set 185's three lines are authored 1s apart. (aaemu-cluster#92)
+                // range is 1-60. Applying it as milliseconds made every scripted pause a no-op, so
+                // Sharpwind set 185's authored 1s dialogue beats collapsed and only looked spaced
+                // because BubbleEffect.Apply blocks its thread for >=1250ms per line.
+                //
+                // The cast itself parks nothing here: GetAttackDelay is called with
+                // includeCooldown=false and additionalDelay=0, which reduces to
+                // CastingTime * CastTimeMul, and these line skills have casting_time 0 (their
+                // cooldown_time 1000 is deliberately excluded). So the authored value alone paces
+                // the beat. (aaemu-cluster#92)
                 Ai.AiCurrentCommandRunTime = TimeSpan.FromSeconds(Ai.AiTimeOut);
                 break;
             default:
