@@ -90,6 +90,51 @@ public class WorldScriptAction
 
     /// <summary>Show a chat bubble above a live NPC of the template (optionally delayed).</summary>
     public WorldScriptSay Say { get; set; }
+
+    /// <summary>
+    /// Make a live NPC cast a skill on itself. This is how retail's own scripted sequences are
+    /// driven: the skill carries an NpcControlEffect whose RunCommandSet points at an
+    /// ai_command_sets row, and the engine then executes that set's UseSkill / Timeout / FollowPath
+    /// commands in order (lines, pauses, walks, self-despawn). Prefer this over hand-timed Say
+    /// chains — the choreography, its beat spacing and its localized lines all ship in the compact.
+    /// (aaemu-cluster#92)
+    /// </summary>
+    public WorldScriptCastSkill CastSkill { get; set; }
+
+    /// <summary>
+    /// Play a retail ai_command_sets sequence on a live NPC: the set's own UseSkill / Timeout /
+    /// FollowPath commands, in retail's order and with retail's beat spacing. Preferred over both
+    /// hand-timed Say chains and CastSkill, because the skills that carry these sets in retail also
+    /// carry KillNpcWithoutCorpse payloads aimed at spawn-slave NPCs we do not spawn.
+    /// (aaemu-cluster#92)
+    /// </summary>
+    public WorldScriptCommandSet RunCommandSet { get; set; }
+}
+
+public class WorldScriptCommandSet
+{
+    public uint NpcTemplateId { get; set; }
+
+    /// <summary>ai_command_sets id (e.g. 185 = 칼바람폐광_알리스테어0, the mine-mouth sequence).</summary>
+    public uint CommandSetId { get; set; }
+
+    /// <summary>Optional actor filter when the template has several live placements.</summary>
+    public WorldScriptArea Near { get; set; }
+
+    public float DelaySeconds { get; set; }
+}
+
+public class WorldScriptCastSkill
+{
+    public uint NpcTemplateId { get; set; }
+
+    /// <summary>Skill the NPC casts on itself; usually one carrying a RunCommandSet NpcControlEffect.</summary>
+    public uint SkillId { get; set; }
+
+    /// <summary>Optional speaker/actor filter when the template has several live placements.</summary>
+    public WorldScriptArea Near { get; set; }
+
+    public float DelaySeconds { get; set; }
 }
 
 public class WorldScriptDoodadSpawn

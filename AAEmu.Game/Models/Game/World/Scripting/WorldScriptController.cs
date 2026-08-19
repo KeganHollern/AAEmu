@@ -280,6 +280,57 @@ public sealed class WorldScriptController
             else
                 SayNow(_world, action.Say);
         }
+
+        if (action.CastSkill != null)
+        {
+            if (action.CastSkill.DelaySeconds > 0)
+                TaskManager.Instance.Schedule(new Tasks.World.WorldScriptCastSkillTask(_world, action.CastSkill),
+                    TimeSpan.FromSeconds(action.CastSkill.DelaySeconds));
+            else
+                CastNow(_world, action.CastSkill);
+        }
+
+        if (action.RunCommandSet != null)
+        {
+            if (action.RunCommandSet.DelaySeconds > 0)
+                TaskManager.Instance.Schedule(new Tasks.World.WorldScriptCommandSetTask(_world, action.RunCommandSet),
+                    TimeSpan.FromSeconds(action.RunCommandSet.DelaySeconds));
+            else
+                RunCommandSetNow(_world, action.RunCommandSet);
+        }
+    }
+
+    /// <summary>
+    /// Plays a retail ai_command_sets sequence on a live NPC by applying a fresh
+    /// <see cref="Skills.Effects.NpcControlEffect"/> in RunCommandSet mode — the same code path
+    /// retail's own trigger skills use, minus their KillNpcWithoutCorpse payloads (those name
+    /// spawn-slave NPCs this server does not spawn, and the engine's implementation vanishes the
+    /// caster regardless of the named victim). A fresh instance is used deliberately: the
+    /// DB-loaded effect templates keep per-cast state in instance fields. (aaemu-cluster#92)
+    /// </summary>
+    internal static void RunCommandSetNow(WorldInstance world, WorldScriptCommandSet run)
+    {
+        var npc = FindNpc(world, run.NpcTemplateId, run.Near);
+        if (npc == null || npc.IsDead)
+        {
+            Logger.Warn($"World script RunCommandSet: npc {run.NpcTemplateId} not alive in {world.Template?.Name} ({world.Id})");
+            return;
+        }
+
+        var commands = GameData.AiGameData.Instance.GetAiCommands(run.CommandSetId);
+        if (commands is not { Count: > 0 })
+        {
+            Logger.Warn($"World script RunCommandSet: ai_command_sets {run.CommandSetId} is empty or missing");
+            return;
+        }
+
+        var control = new Skills.Effects.NpcControlEffect
+        {
+            CategoryId = AI.Enums.NpcControlCategory.RunCommandSet,
+            ParamInt = run.CommandSetId
+        };
+        control.Apply(npc, null, npc, null, null, null, null, DateTime.UtcNow);
+        Logger.Info($"World script RunCommandSet: npc {run.NpcTemplateId} running set {run.CommandSetId} ({commands.Count} command(s)) in {world.Template?.Name} ({world.Id})");
     }
 
     /// <summary>
@@ -289,7 +340,7 @@ public sealed class WorldScriptController
     /// </summary>
     internal static void SayNow(WorldInstance world, WorldScriptSay say)
     {
-        var npc = FindSpeaker(world, say);
+        var npc = FindNpc(world, say.NpcTemplateId, say.Near);
         if (npc == null || npc.IsDead)
         {
             Logger.Warn($"World script Say: npc {say.NpcTemplateId} not alive in {world.Template?.Name} ({world.Id})");
@@ -305,22 +356,52 @@ public sealed class WorldScriptController
     }
 
     /// <summary>
-    /// Picks the NPC that speaks a line. With a Near filter, the live NPC of the template closest
-    /// to that point wins — a template with several placements (the four Sharpwind researchers)
-    /// would otherwise speak from an arbitrary one, possibly out of the player's view.
-    /// (aaemu-cluster#92)
+    /// Makes a live NPC cast a skill on itself, the way <see cref="AI.v2.Behaviors.Common.SpawningBehavior"/>
+    /// runs OnSpawn skills. Retail's scripted sequences hang off skills like this: the skill's
+    /// NpcControlEffect RunCommandSet hands an ai_command_sets row to the AI, which then plays the
+    /// set's lines, pauses, walks and self-despawn in retail's own order. (aaemu-cluster#92)
     /// </summary>
-    private static NPChar.Npc FindSpeaker(WorldInstance world, WorldScriptSay say)
+    internal static void CastNow(WorldInstance world, WorldScriptCastSkill cast)
     {
-        if (say.Near == null)
-            return world.GetNpcByTemplateId(say.NpcTemplateId);
+        var npc = FindNpc(world, cast.NpcTemplateId, cast.Near);
+        if (npc == null || npc.IsDead)
+        {
+            Logger.Warn($"World script CastSkill: npc {cast.NpcTemplateId} not alive in {world.Template?.Name} ({world.Id})");
+            return;
+        }
 
-        var center = new Vector3(say.Near.X, say.Near.Y, say.Near.Z);
+        var skillTemplate = SkillManager.Instance.GetSkillTemplate(cast.SkillId);
+        if (skillTemplate == null)
+        {
+            Logger.Warn($"World script CastSkill: skill {cast.SkillId} does not exist");
+            return;
+        }
+
+        var caster = Skills.SkillCaster.GetByType(Skills.SkillCasterType.Unit);
+        caster.ObjId = npc.ObjId;
+        var target = Skills.SkillCastTarget.GetByType(Skills.SkillCastTargetType.Unit);
+        target.ObjId = npc.ObjId;
+
+        new Skills.Skill(skillTemplate).Use(npc, caster, target, null, true, out _);
+        Logger.Info($"World script CastSkill: npc {cast.NpcTemplateId} cast {cast.SkillId} in {world.Template?.Name} ({world.Id})");
+    }
+
+    /// <summary>
+    /// Picks the NPC that acts. With a Near filter, the live NPC of the template closest to that
+    /// point wins — a template with several placements (the four Sharpwind researchers) would
+    /// otherwise be chosen arbitrarily, possibly out of the player's view. (aaemu-cluster#92)
+    /// </summary>
+    private static NPChar.Npc FindNpc(WorldInstance world, uint templateId, WorldScriptArea near)
+    {
+        if (near == null)
+            return world.GetNpcByTemplateId(templateId);
+
+        var center = new Vector3(near.X, near.Y, near.Z);
         NPChar.Npc best = null;
         var bestDistance = float.MaxValue;
         foreach (var npc in world.GetAllNpcs())
         {
-            if (npc.TemplateId != say.NpcTemplateId || npc.IsDead)
+            if (npc.TemplateId != templateId || npc.IsDead)
                 continue;
 
             var distance = Vector3.DistanceSquared(npc.Transform?.World?.Position ?? Vector3.Zero, center);

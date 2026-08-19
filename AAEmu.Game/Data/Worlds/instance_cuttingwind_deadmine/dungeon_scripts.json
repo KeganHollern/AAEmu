@@ -1,6 +1,6 @@
 [
     {
-        "Name": "Allistair greets the party at the mine mouth and jumps first (retail bubbles 2147-2149)",
+        "Name": "Allistair's retail entrance sequence: ai_command_set 185 (칼바람폐광_알리스테어0) plays lines 2147-2149 on retail's 1s beats, walks aipath_alistair0_0 into the shaft ahead of the party, then self-despawns via 19430",
         "OnPlayerEnterArea": {
             "X": 749.7,
             "Y": 325.8,
@@ -9,24 +9,10 @@
         },
         "Actions": [
             {
-                "Say": {
+                "RunCommandSet": {
                     "NpcTemplateId": 12108,
-                    "BubbleId": 2147,
+                    "CommandSetId": 185,
                     "DelaySeconds": 0.5
-                }
-            },
-            {
-                "Say": {
-                    "NpcTemplateId": 12108,
-                    "BubbleId": 2148,
-                    "DelaySeconds": 2.5
-                }
-            },
-            {
-                "Say": {
-                    "NpcTemplateId": 12108,
-                    "BubbleId": 2149,
-                    "DelaySeconds": 6.5
                 }
             }
         ]
