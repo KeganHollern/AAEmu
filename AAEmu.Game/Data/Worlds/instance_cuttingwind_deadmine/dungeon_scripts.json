@@ -25,7 +25,7 @@
         ]
     },
     {
-        "Name": "Allistair regroups the party at the pit pool and leads toward the iron bridge (retail bubbles 2150-2152)",
+        "Name": "Allistair leads from the pool toward the iron bridge: retail set 188 (칼바람폐광_알리스테어1; lines 2150-2152 with the aipath_alistair1 walk between them)",
         "OnPlayerEnterArea": {
             "X": 724.0,
             "Y": 327.0,
@@ -34,30 +34,16 @@
         },
         "Actions": [
             {
-                "Say": {
+                "RunCommandSet": {
                     "NpcTemplateId": 12109,
-                    "BubbleId": 2150,
+                    "CommandSetId": 188,
                     "DelaySeconds": 0.5
-                }
-            },
-            {
-                "Say": {
-                    "NpcTemplateId": 12109,
-                    "BubbleId": 2151,
-                    "DelaySeconds": 3.5
-                }
-            },
-            {
-                "Say": {
-                    "NpcTemplateId": 12109,
-                    "BubbleId": 2152,
-                    "DelaySeconds": 7.0
                 }
             }
         ]
     },
     {
-        "Name": "Iron Bridge collapse spawns the slime pack and cinematic Nerta; Allistair is cut off on the high side (aaemu-cluster#94/#95/#97; retail bubbles 2169/2170/2181 + 2173/2175)",
+        "Name": "Iron Bridge collapse: cinematic Nerta spawns (her OnSpawn auto-runs set 193: taunts 2173/2175, despawn); Allistair runs retail set 192 (trap lines 2169/2170); slimes attack only AFTER her sequence ends; set 195 (2181 + self-despawn) closes his beat (aaemu-cluster#92/#94/#95/#97)",
         "OnDoodadPhase": {
             "DoodadTemplateId": 5058,
             "FuncGroupId": 13148
@@ -65,43 +51,27 @@
         "Actions": [
             {
                 "ActivateNpcSpawners": [
-                    13392,
                     13436
                 ]
             },
             {
-                "Say": {
+                "RunCommandSet": {
                     "NpcTemplateId": 12109,
-                    "BubbleId": 2169,
+                    "CommandSetId": 192,
                     "DelaySeconds": 1.0
                 }
             },
             {
-                "Say": {
-                    "NpcTemplateId": 12146,
-                    "BubbleId": 2173,
-                    "DelaySeconds": 3.5
-                }
+                "ActivateNpcSpawners": [
+                    13392
+                ],
+                "DelaySeconds": 13.0
             },
             {
-                "Say": {
+                "RunCommandSet": {
                     "NpcTemplateId": 12109,
-                    "BubbleId": 2170,
-                    "DelaySeconds": 6.0
-                }
-            },
-            {
-                "Say": {
-                    "NpcTemplateId": 12146,
-                    "BubbleId": 2175,
-                    "DelaySeconds": 9.0
-                }
-            },
-            {
-                "Say": {
-                    "NpcTemplateId": 12109,
-                    "BubbleId": 2181,
-                    "DelaySeconds": 12.5
+                    "CommandSetId": 195,
+                    "DelaySeconds": 14.0
                 }
             }
         ]
@@ -146,7 +116,7 @@
         ]
     },
     {
-        "Name": "Vera falls -> boss Nerta and Allistair's hideout clone appear (retail chain: np_skill 19485 NpcSpawnerSpawnEffect points at legacy spawner ids; bubbles 2189/2190)",
+        "Name": "Vera falls -> boss Nerta appears; her OnSpawn (19484) auto-runs retail set 197 (taunts 2189/2190), so no scripted lines here",
         "OnNpcKilled": {
             "NpcTemplateIds": [
                 12150
@@ -155,28 +125,13 @@
         "Actions": [
             {
                 "ActivateNpcSpawners": [
-                    13437,
-                    13389
+                    13437
                 ]
-            },
-            {
-                "Say": {
-                    "NpcTemplateId": 11362,
-                    "BubbleId": 2189,
-                    "DelaySeconds": 2.5
-                }
-            },
-            {
-                "Say": {
-                    "NpcTemplateId": 11362,
-                    "BubbleId": 2190,
-                    "DelaySeconds": 6.0
-                }
             }
         ]
     },
     {
-        "Name": "Nerta dies -> Allistair points the party at the lion gate (retail bubbles 2191/2192/2194/2195; her own 2193 death cry comes from np_skill 19491)",
+        "Name": "Nerta dies -> hideout Allistair 12110 appears; his OnSpawn (19488) auto-runs retail set 198 (2191/2192 gate hints, 2194/2195 lion-eye hints), which retail staged on HER death, not Vera's",
         "OnNpcKilled": {
             "NpcTemplateIds": [
                 11362
@@ -184,32 +139,9 @@
         },
         "Actions": [
             {
-                "Say": {
-                    "NpcTemplateId": 12110,
-                    "BubbleId": 2191,
-                    "DelaySeconds": 2.5
-                }
-            },
-            {
-                "Say": {
-                    "NpcTemplateId": 12110,
-                    "BubbleId": 2192,
-                    "DelaySeconds": 6.0
-                }
-            },
-            {
-                "Say": {
-                    "NpcTemplateId": 12110,
-                    "BubbleId": 2194,
-                    "DelaySeconds": 10.0
-                }
-            },
-            {
-                "Say": {
-                    "NpcTemplateId": 12110,
-                    "BubbleId": 2195,
-                    "DelaySeconds": 14.0
-                }
+                "ActivateNpcSpawners": [
+                    13389
+                ]
             }
         ]
     },

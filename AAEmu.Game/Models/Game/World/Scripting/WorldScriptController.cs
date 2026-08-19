@@ -198,7 +198,15 @@ public sealed class WorldScriptController
         {
             try
             {
-                Execute(action);
+                if (action.DelaySeconds > 0)
+                    // Deferred against the world, not this controller: if the instance is torn down
+                    // before the delay elapses, the world's collections are empty and the action
+                    // no-ops instead of touching a disposed dungeon. (aaemu-cluster#92: retail runs
+                    // the bridge slimes only after cinematic Nerta's sequence finishes.)
+                    TaskManager.Instance.Schedule(new Tasks.World.WorldScriptActionTask(_world, action),
+                        TimeSpan.FromSeconds(action.DelaySeconds));
+                else
+                    ExecuteAction(_world, action);
             }
             catch (Exception e)
             {
@@ -207,19 +215,19 @@ public sealed class WorldScriptController
         }
     }
 
-    private void Execute(WorldScriptAction action)
+    internal static void ExecuteAction(WorldInstance world, WorldScriptAction action)
     {
         if (action.ActivateNpcSpawners != null)
         {
             foreach (var spawnerTemplateId in action.ActivateNpcSpawners)
-                foreach (var spawner in _world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(spawnerTemplateId))
+                foreach (var spawner in world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(spawnerTemplateId))
                     spawner.Activate();
         }
 
         if (action.DeactivateNpcSpawners != null)
         {
             foreach (var spawnerTemplateId in action.DeactivateNpcSpawners)
-                foreach (var spawner in _world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(spawnerTemplateId))
+                foreach (var spawner in world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(spawnerTemplateId))
                     spawner.Deactivate();
         }
 
@@ -227,7 +235,7 @@ public sealed class WorldScriptController
         {
             foreach (var spawnerTemplateId in action.DespawnNpcSpawners)
             {
-                foreach (var spawner in _world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(spawnerTemplateId))
+                foreach (var spawner in world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(spawnerTemplateId))
                 {
                     spawner.Deactivate();
                     spawner.DespawnAll();
@@ -237,7 +245,7 @@ public sealed class WorldScriptController
 
         if (action.ChangeDoodadPhase != null)
         {
-            foreach (var doodad in _world.GetAllDoodads())
+            foreach (var doodad in world.GetAllDoodads())
             {
                 if (doodad.TemplateId != action.ChangeDoodadPhase.DoodadTemplateId)
                     continue;
@@ -255,11 +263,11 @@ public sealed class WorldScriptController
             {
                 var spawner = new DoodadSpawner
                 {
-                    ParentWorld = _world,
+                    ParentWorld = world,
                     UnitId = spawn.TemplateId,
                     Position = new WorldSpawnPosition
                     {
-                        WorldId = _world.Id,
+                        WorldId = world.Id,
                         X = spawn.X,
                         Y = spawn.Y,
                         Z = spawn.Z,
@@ -268,35 +276,35 @@ public sealed class WorldScriptController
                 };
                 var doodad = spawner.Spawn(0);
                 if (doodad == null)
-                    Logger.Warn($"World script SpawnDoodads: template {spawn.TemplateId} failed to spawn in {_world.Template?.Name} ({_world.Id})");
+                    Logger.Warn($"World script SpawnDoodads: template {spawn.TemplateId} failed to spawn in {world.Template?.Name} ({world.Id})");
             }
         }
 
         if (action.Say != null)
         {
             if (action.Say.DelaySeconds > 0)
-                TaskManager.Instance.Schedule(new Tasks.World.WorldScriptSayTask(_world, action.Say),
+                TaskManager.Instance.Schedule(new Tasks.World.WorldScriptSayTask(world, action.Say),
                     TimeSpan.FromSeconds(action.Say.DelaySeconds));
             else
-                SayNow(_world, action.Say);
+                SayNow(world, action.Say);
         }
 
         if (action.CastSkill != null)
         {
             if (action.CastSkill.DelaySeconds > 0)
-                TaskManager.Instance.Schedule(new Tasks.World.WorldScriptCastSkillTask(_world, action.CastSkill),
+                TaskManager.Instance.Schedule(new Tasks.World.WorldScriptCastSkillTask(world, action.CastSkill),
                     TimeSpan.FromSeconds(action.CastSkill.DelaySeconds));
             else
-                CastNow(_world, action.CastSkill);
+                CastNow(world, action.CastSkill);
         }
 
         if (action.RunCommandSet != null)
         {
             if (action.RunCommandSet.DelaySeconds > 0)
-                TaskManager.Instance.Schedule(new Tasks.World.WorldScriptCommandSetTask(_world, action.RunCommandSet),
+                TaskManager.Instance.Schedule(new Tasks.World.WorldScriptCommandSetTask(world, action.RunCommandSet),
                     TimeSpan.FromSeconds(action.RunCommandSet.DelaySeconds));
             else
-                RunCommandSetNow(_world, action.RunCommandSet);
+                RunCommandSetNow(world, action.RunCommandSet);
         }
     }
 

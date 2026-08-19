@@ -5,7 +5,9 @@ using AAEmu.Game.Models.Game.AI.Enums;
 using AAEmu.Game.Models.Game.AI.v2.Controls;
 using AAEmu.Game.Models.Game.AI.v2.Params;
 using AAEmu.Game.Models.Game.Models;
+using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Static;
+using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Movements;
 
@@ -128,22 +130,22 @@ public class RunCommandSetBehavior : BaseCombatBehavior
                 if (owner != null && skillTemplate != null && owner.UseSkill(Ai.AiSkillId, owner.CurrentTarget as Unit ?? owner) == SkillResult.Success)
                 {
                     var coolDown = SkillManager.GetAttackDelay(skillTemplate, owner, false, 0.0);
-                    Ai.AiCurrentCommandRunTime = TimeSpan.FromMilliseconds(coolDown);
+                    // aaemu-cluster#92: a line must stay on screen long enough to read before the NEXT
+                    // command replaces or interrupts it. Retail relied on the walk/wait between line
+                    // skills for this; sets like 192 have no Timeout at all (the walk was the pause),
+                    // and players reported the long entrance line being replaced too fast. So a cast
+                    // that shows a chat bubble parks that bubble's reading time (66.7ms/char, the same
+                    // sizing BubbleEffect uses) as its own execution time.
+                    Ai.AiCurrentCommandRunTime = TimeSpan.FromMilliseconds(Math.Max(coolDown, ResolveBubbleDisplayMs(skillTemplate)));
                 }
                 break;
             case AiCommandCategory.Timeout:
                 Ai.AiTimeOut = aiCommand.Param1;
                 // ai_commands.param1 is SECONDS, not milliseconds: XL's own rows spell it out
                 // ("2 sec", "2sec", "3 sec", "5 sec", "10 sec" all appear as param1 values), and the
-                // range is 1-60. Applying it as milliseconds made every scripted pause a no-op, so
-                // Sharpwind set 185's authored 1s dialogue beats collapsed and only looked spaced
-                // because BubbleEffect.Apply blocks its thread for >=1250ms per line.
-                //
-                // The cast itself parks nothing here: GetAttackDelay is called with
-                // includeCooldown=false and additionalDelay=0, which reduces to
-                // CastingTime * CastTimeMul, and these line skills have casting_time 0 (their
-                // cooldown_time 1000 is deliberately excluded). So the authored value alone paces
-                // the beat. (aaemu-cluster#92)
+                // range is 1-60. Applying it as milliseconds made every scripted pause a no-op.
+                // This wait is ON TOP of whatever the previous command parked (a spoken line's
+                // reading time): the authored Timeout is the dramatic pause, not the read time.
                 Ai.AiCurrentCommandRunTime = TimeSpan.FromSeconds(Ai.AiTimeOut);
                 break;
             default:
@@ -167,6 +169,26 @@ public class RunCommandSetBehavior : BaseCombatBehavior
 
         if (Ai.AiCurrentCommandRunTime == TimeSpan.Zero)
             Ai.AiCurrentCommandRunTime = TimeSpan.FromSeconds(-1);
+    }
+
+    /// <summary>
+    /// Longest reading time among the chat bubbles a skill shows, in milliseconds; 0 when it shows
+    /// none. Sized exactly like BubbleEffect's display time so the served pacing and the client-side
+    /// bubble lifetime agree. (aaemu-cluster#92)
+    /// </summary>
+    internal static double ResolveBubbleDisplayMs(SkillTemplate skillTemplate)
+    {
+        var displayMs = 0d;
+        foreach (var skillEffect in skillTemplate.Effects)
+        {
+            if (skillEffect?.Template is BubbleEffect bubble)
+            {
+                var text = LocalizationManager.Instance.Get("bubble_effects", "speech", bubble.Id, string.Empty);
+                displayMs = Math.Max(displayMs, BubbleEffect.ResolveDisplayMs(text));
+            }
+        }
+
+        return displayMs;
     }
 
 }
