@@ -82,12 +82,19 @@ public class WorldScriptTemplateTests
     {
         var rules = LoadRules();
 
-        // Vera's death stages boss Nerta and the hideout Allistair (retail NpcSpawnerSpawnEffect
-        // rows point at legacy spawner ids absent from this compact, so the script owns the chain).
+        // Vera's death stages boss Nerta ONLY — her OnSpawn skill 19484 auto-runs retail set 197
+        // (taunts), and hideout Allistair 12110 belongs to NERTA's death: his OnSpawn set 198 opens
+        // with "You killed Nerta? Amazing!", which would be nonsense while she still lives.
         var vera = rules.Single(r => r.OnNpcKilled != null && r.OnNpcKilled.NpcTemplateIds.Contains(12150u));
-        var staged = vera.Actions.SelectMany(a => a.ActivateNpcSpawners ?? []).ToList();
-        await Assert.That(staged.Contains(13437u)).IsTrue();
-        await Assert.That(staged.Contains(13389u)).IsTrue();
+        var veraStaged = vera.Actions.SelectMany(a => a.ActivateNpcSpawners ?? []).ToList();
+        await Assert.That(veraStaged.Contains(13437u)).IsTrue();
+        await Assert.That(veraStaged.Contains(13389u)).IsFalse();
+        await Assert.That(vera.Actions.Any(a => a.Say != null)).IsFalse();
+
+        var nerta = rules.Single(r => r.OnNpcKilled != null && r.OnNpcKilled.NpcTemplateIds.Contains(11362u));
+        var nertaStaged = nerta.Actions.SelectMany(a => a.ActivateNpcSpawners ?? []).ToList();
+        await Assert.That(nertaStaged.Contains(13389u)).IsTrue();
+        await Assert.That(nerta.Actions.Any(a => a.Say != null)).IsFalse();
 
         // Okape's death (either variant) spawns the exit portal 5919 and his log 6197 — retail
         // did this from on-death skill 19755 "Okape's Destiny", whose effect rows never shipped.
@@ -124,11 +131,46 @@ public class WorldScriptTemplateTests
         var rules = LoadRules();
 
         // Every scripted line references a retail bubble_effects row so clients render their own
-        // locale; authored Text is reserved for beats with no retail line (none currently).
+        // locale. Only beats with NO auto-firing retail command set may use Say at all (warehouse
+        // segment: 12111 has no np_skills; researcher warning: set 205 auto-fires into an empty
+        // instance at world load, so the area-timed Say is the delivery).
         var says = rules.SelectMany(r => r.Actions).Where(a => a.Say != null).Select(a => a.Say).ToList();
-        await Assert.That(says.Count).IsGreaterThanOrEqualTo(20);
+        await Assert.That(says.Count).IsGreaterThanOrEqualTo(10);
         foreach (var say in says)
             await Assert.That(say.BubbleId).IsGreaterThan(0u);
+    }
+
+    [Test]
+    public async Task BridgeCollapsePlaysRetailSequenceThenSlimes()
+    {
+        var rules = LoadRules();
+        var bridge = rules.Single(r => r.OnDoodadPhase is { DoodadTemplateId: 5058u });
+
+        // Cinematic Nerta immediately (her OnSpawn auto-runs set 193: taunts + despawn) …
+        var immediate = bridge.Actions.Single(a => a.ActivateNpcSpawners?.Contains(13436u) == true);
+        await Assert.That(immediate.DelaySeconds).IsEqualTo(0f);
+        // … Allistair's trap lines from retail set 192 …
+        var trap = bridge.Actions.Single(a => a.RunCommandSet is { CommandSetId: 192u });
+        await Assert.That(trap.RunCommandSet.NpcTemplateId).IsEqualTo(12109u);
+        // … the slime pack only AFTER her ~12s sequence finishes …
+        var slimes = bridge.Actions.Single(a => a.ActivateNpcSpawners?.Contains(13392u) == true);
+        await Assert.That(slimes.DelaySeconds).IsGreaterThanOrEqualTo(12f);
+        // … and set 195 (2181 + his self-despawn) closes the beat after she is gone.
+        var farewell = bridge.Actions.Single(a => a.RunCommandSet is { CommandSetId: 195u });
+        await Assert.That(farewell.RunCommandSet.DelaySeconds).IsGreaterThanOrEqualTo(slimes.DelaySeconds);
+        // No hand-timed lines remain: sets 192/193/195 own every line of this beat.
+        await Assert.That(bridge.Actions.Any(a => a.Say != null)).IsFalse();
+    }
+
+    [Test]
+    public async Task PoolGreetingUsesRetailCommandSet()
+    {
+        var rules = LoadRules();
+        var pool = rules.Single(r => r.Actions.Any(a => a.RunCommandSet is { CommandSetId: 188u }));
+
+        await Assert.That(pool.OnPlayerEnterArea).IsNotNull();
+        await Assert.That(pool.Actions.Single(a => a.RunCommandSet != null).RunCommandSet.NpcTemplateId).IsEqualTo(12109u);
+        await Assert.That(pool.Actions.Any(a => a.Say != null)).IsFalse();
     }
 
     [Test]

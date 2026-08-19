@@ -109,6 +109,14 @@ public class WorldScriptAction
     /// (aaemu-cluster#92)
     /// </summary>
     public WorldScriptCommandSet RunCommandSet { get; set; }
+
+    /// <summary>
+    /// Defers this whole action after the rule fires. Retail staged some events strictly after a
+    /// scripted sequence elsewhere finished (the bridge slimes attack only once cinematic Nerta has
+    /// taunted and despawned); the delay expresses that ordering. Runs against the world, so it
+    /// no-ops if the instance was torn down meanwhile. (aaemu-cluster#92)
+    /// </summary>
+    public float DelaySeconds { get; set; }
 }
 
 public class WorldScriptCommandSet

@@ -103,9 +103,10 @@ public sealed class ScriptedCommandSetWalkTests
         await Assert.That(MathF.Abs(position.X - finalWaypoint.X)).IsLessThan(1f);
         await Assert.That(MathF.Abs(position.Y - finalWaypoint.Y)).IsLessThan(1f);
         await Assert.That(MathF.Abs(position.Z - finalWaypoint.Z)).IsLessThan(0.05f);
-        // Walked, relaxed, and with the moving flag set for the whole route
+        // Jogged (the route's Speed 2 action doubles the pace, so the derived gait is run),
+        // relaxed, and with the moving flag set for the whole route
         var walkMove = npc.Movements[^1];
-        await Assert.That(walkMove.ActorFlags).IsEqualTo((byte)5);
+        await Assert.That(walkMove.ActorFlags).IsEqualTo((byte)4);
         await Assert.That(walkMove.Stance).IsEqualTo(GameStanceType.Relaxed);
         await Assert.That(walkMove.Alertness).IsEqualTo(MoveTypeAlertness.Idle);
     }

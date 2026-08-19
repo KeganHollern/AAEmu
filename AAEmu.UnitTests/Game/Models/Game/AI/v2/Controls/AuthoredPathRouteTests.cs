@@ -113,14 +113,16 @@ public sealed class AuthoredPathRouteTests
             ai.PathHandler.RunCurrentPath(TimeSpan.FromMilliseconds(100));
 
         var move = npc.Movements[^1];
-        // 1 m/s route speed is a walk (5), not the hardcoded run (4) the handler used to send
+        // The route's authored Speed action doubles the pace (player feedback: the 1x walk read as
+        // too slow), and the gait must FOLLOW that speed: 2 m/s derives run (4), not walk (5).
         await Assert.That(ai.PathHandler.AiPathActorFlags).IsNull();
-        await Assert.That(move.ActorFlags).IsEqualTo((byte)5);
+        await Assert.That(ai.PathHandler.AiPathSpeed).IsEqualTo(2f);
+        await Assert.That(move.ActorFlags).IsEqualTo((byte)4);
         await Assert.That(move.Flags.HasFlag(MoveTypeFlags.Moving)).IsTrue();
         await Assert.That(move.DeltaMovement[1]).IsEqualTo((sbyte)127);
-        // 1 m/s at 2048 wire units per m/s
+        // 2 m/s at 2048 wire units per m/s
         var velocity = MathF.Sqrt((move.VelX * (float)move.VelX) + (move.VelY * (float)move.VelY));
-        await Assert.That(velocity).IsEqualTo(2048f).Within(2f);
+        await Assert.That(velocity).IsEqualTo(4096f).Within(4f);
         // Descends towards the recorded floor instead of being pinned to the navigation node above it
         await Assert.That(npc.Transform.World.Position.Z).IsLessThan(NavigationZ);
         await Assert.That(npc.Transform.World.Position.Z).IsGreaterThanOrEqualTo(Route.Min(p => p.Position.Z));
@@ -145,10 +147,12 @@ public sealed class AuthoredPathRouteTests
 
         var expected = AiPathsManager.Instance.LoadAiPathPoints(AlistairRoute);
         var other = AiPathsManager.Instance.LoadAiPathPoints(OtherRoute);
-        await Assert.That(expected.Count).IsNotEqualTo(other.Count);
+        // Routes are distinguished by content, not count (both files may have the same row count).
+        await Assert.That(expected[0].Position).IsNotEqualTo(other[0].Position);
         await Assert.That(ai.AiFileName).IsEqualTo(AlistairRoute);
         // Queued route points plus the ReturnToCommandSet marker that resumes the command set
         await Assert.That(ai.PathHandler.AiPathPointsRemaining.Count).IsEqualTo(expected.Count + 1);
+        await Assert.That(ai.PathHandler.AiPathPointsRemaining.First().Position).IsEqualTo(expected[0].Position);
         await Assert.That(ai.PathHandler.AiPathPointsRemaining.Last().Action)
             .IsEqualTo(AiPathPointAction.ReturnToCommandSet);
         await Assert.That(ai.WentToFollowPath).IsTrue();
