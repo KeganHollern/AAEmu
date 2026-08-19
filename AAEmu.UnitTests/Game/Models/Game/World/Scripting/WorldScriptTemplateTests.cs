@@ -132,6 +132,24 @@ public class WorldScriptTemplateTests
     }
 
     [Test]
+    public async Task EntranceUsesRetailCommandSetNotHandTimedBubbles()
+    {
+        var rules = LoadRules();
+
+        // Retail's mine-mouth sequence is ai_command_sets 185 (칼바람폐광_알리스테어0): three lines on
+        // 1s beats, FollowPath aipath_alistair0_0 down the shaft ahead of the party, then a
+        // self-despawn. Driving the set keeps retail's ordering, spacing and movement; the previous
+        // hand-timed Say chain had invented delays and no movement at all.
+        var entrance = rules.Single(r => r.Actions.Any(a => a.RunCommandSet is { CommandSetId: 185u }));
+        var run = entrance.Actions.Single(a => a.RunCommandSet != null).RunCommandSet;
+
+        await Assert.That(run.NpcTemplateId).IsEqualTo(12108u);
+        await Assert.That(entrance.OnPlayerEnterArea).IsNotNull();
+        // The sequence owns the whole beat, so no hand-timed bubbles may remain on this rule.
+        await Assert.That(entrance.Actions.Any(a => a.Say != null)).IsFalse();
+    }
+
+    [Test]
     public async Task MultiPlacementSpeakersAreDisambiguated()
     {
         var rules = LoadRules();
