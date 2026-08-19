@@ -62,51 +62,63 @@ public class NpcControlEffect : EffectTemplate
                 case NpcControlCategory.RunCommandSet:
                     {
                         var cmds = AiGameData.Instance.GetAiCommands(ParamInt);
-                        if (cmds is { Count: > 0 })
-                        {
-                            targetNpc.Ai?.EnqueueAiCommands(cmds);
+                        if (cmds is not { Count: > 0 })
+                            break;
 
-                            foreach (var aiCommands in cmds)
+                        // aaemu-cluster#92: the AI command queue is the sequencer. Starting the Simulation
+                        // walk here ran the set's FollowPath in parallel with the queue, so an NPC walked
+                        // away during its first dialogue line instead of after it, and then fought the
+                        // queued FollowPath for control. Only NPCs without an AI to enqueue onto still need
+                        // the immediate walk.
+                        if (targetNpc.Ai != null)
+                        {
+                            targetNpc.Ai.EnqueueAiCommands(cmds);
+                            break;
+                        }
+
+                        foreach (var aiCommands in cmds)
+                        {
+                            switch (aiCommands.CmdId)
                             {
-                                switch (aiCommands.CmdId)
-                                {
-                                    case AiCommandCategory.FollowUnit:
-                                        break;
-                                    case AiCommandCategory.FollowPath:
-                                        if (string.IsNullOrEmpty(fileName))
-                                        {
-                                            fileName = aiCommands.Param2;
-                                        }
-                                        else
-                                        {
-                                            fileName2 = aiCommands.Param2;
-                                        }
-                                        break;
-                                    case AiCommandCategory.UseSkill:
-                                        skillId = aiCommands.Param1;
-                                        break;
-                                    case AiCommandCategory.Timeout:
-                                        timeout = aiCommands.Param1;
-                                        break;
-                                    default:
-                                        throw new NotSupportedException(nameof(aiCommands.CmdId));
-                                }
-                            }
-                            if (!string.IsNullOrEmpty(fileName))
-                            {
-                                if (targetNpc.IsInPatrol) { return; }
-                                targetNpc.IsInPatrol = true;
-                                if (targetNpc.Simulation != null)
-                                {
-                                    targetNpc.Simulation.RunningMode = false;
-                                    targetNpc.Simulation.Cycle = false;
-                                    targetNpc.Simulation.MoveToPathEnabled = false;
-                                    targetNpc.Simulation.MoveFileName = fileName;
-                                    targetNpc.Simulation.MoveFileName2 = fileName2;
-                                    targetNpc.Simulation.GoToPath(targetNpc, true, skillId, timeout);
-                                }
+                                case AiCommandCategory.FollowUnit:
+                                    break;
+                                case AiCommandCategory.FollowPath:
+                                    if (string.IsNullOrEmpty(fileName))
+                                    {
+                                        fileName = aiCommands.Param2;
+                                    }
+                                    else
+                                    {
+                                        fileName2 = aiCommands.Param2;
+                                    }
+                                    break;
+                                case AiCommandCategory.UseSkill:
+                                    skillId = aiCommands.Param1;
+                                    break;
+                                case AiCommandCategory.Timeout:
+                                    timeout = aiCommands.Param1;
+                                    break;
+                                default:
+                                    throw new NotSupportedException(nameof(aiCommands.CmdId));
                             }
                         }
+
+                        if (string.IsNullOrEmpty(fileName))
+                            break;
+                        if (targetNpc.IsInPatrol)
+                            break;
+
+                        targetNpc.IsInPatrol = true;
+                        if (targetNpc.Simulation != null)
+                        {
+                            targetNpc.Simulation.RunningMode = false;
+                            targetNpc.Simulation.Cycle = false;
+                            targetNpc.Simulation.MoveToPathEnabled = false;
+                            targetNpc.Simulation.MoveFileName = fileName;
+                            targetNpc.Simulation.MoveFileName2 = fileName2;
+                            targetNpc.Simulation.GoToPath(targetNpc, true, skillId, timeout);
+                        }
+
                         break;
                     }
                 default:

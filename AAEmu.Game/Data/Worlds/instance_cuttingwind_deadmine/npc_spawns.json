@@ -418,9 +418,6 @@
  },
  {
   "UnitId": 12109,
-  "NpcSpawnerIds": [
-   13388
-  ],
   "Position": {
    "X": 718.8,
    "Y": 327,
