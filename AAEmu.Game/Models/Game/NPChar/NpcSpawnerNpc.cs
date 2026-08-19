@@ -1,4 +1,5 @@
 ﻿using AAEmu.Commons.Utils;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Units.Route;
@@ -95,14 +96,14 @@ public class NpcSpawnerNpc : Spawner<Npc>
 
         Logger.Trace($"Spawn npc templateId {MemberId} objId {npc.ObjId} from spawnerId {NpcSpawnerTemplateId} at Position: {npcSpawner.Position}");
 
-        float? sampledGroundZ = null;
-        if (!npc.CanFly && npcSpawner.ParentWorld.Template.GeoData.TryGetGroundHeight(
-                npcSpawner.Position.AsPositionVector(), out var groundZ))
+        GroundSurfaceResult? groundSurface = null;
+        if (!npc.CanFly && npcSpawner.ParentWorld.Template.GeoData.TryGetGroundSurface(
+                npcSpawner.Position.AsPositionVector(), out var sampledSurface))
         {
-            sampledGroundZ = groundZ;
+            groundSurface = sampledSurface;
         }
 
-        var runtimeSpawnPosition = CreateRuntimeSpawnPosition(npcSpawner.Position, sampledGroundZ);
+        var runtimeSpawnPosition = CreateRuntimeSpawnPosition(npcSpawner.Position, groundSurface);
         npc.Transform.ApplyWorldSpawnPosition(runtimeSpawnPosition);
         if (npc.Transform == null)
         {
@@ -142,11 +143,17 @@ public class NpcSpawnerNpc : Spawner<Npc>
         return npcs;
     }
 
-    internal static WorldSpawnPosition CreateRuntimeSpawnPosition(WorldSpawnPosition authoredPosition, float? sampledGroundZ)
+    internal static WorldSpawnPosition CreateRuntimeSpawnPosition(WorldSpawnPosition authoredPosition, GroundSurfaceResult? groundSurface)
     {
         var runtimePosition = authoredPosition.Clone();
-        if (sampledGroundZ.HasValue && Math.Abs(authoredPosition.Z - sampledGroundZ.Value) < 1f)
-            runtimePosition.Z = sampledGroundZ.Value;
+        // aaemu-cluster#92 (V11): only snap spawn Z to terrain-derived surfaces. Indoor/instance ground
+        // resolves to the nearest voxelized BAI navigation node, which can sit up to ~1m above the real
+        // collision floor (e.g. the Sharpwind dig-site rubble). Snapping onto that lifted the researcher
+        // NPCs off the floor and made clients visibly bounce them; the capture-dump Z is where the retail
+        // server actually stood the NPC, so keep it unless authoritative interpolated terrain says otherwise.
+        if (groundSurface is { Source: GroundSurfaceSource.Terrain } surface &&
+            Math.Abs(authoredPosition.Z - surface.Height) < 1f)
+            runtimePosition.Z = surface.Height;
 
         return runtimePosition;
     }

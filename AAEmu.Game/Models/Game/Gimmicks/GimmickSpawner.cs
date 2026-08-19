@@ -54,7 +54,7 @@ public class GimmickSpawner : Spawner<Gimmick>
     {
         // DefaultConstructor for JSON reading
     }
-    public GimmickSpawner(WorldInstance parentWorld, SpawnGimmickEffect sgEffect, BaseUnit caster)
+    public GimmickSpawner(WorldInstance parentWorld, SpawnGimmickEffect sgEffect, BaseUnit caster, BaseUnit target = null)
     {
         ParentWorld = parentWorld;
         GimmickId = sgEffect.GimmickId;
@@ -75,9 +75,19 @@ public class GimmickSpawner : Spawner<Gimmick>
         Count = 1;
 
         var gimmick = ParentWorld.GimmickManager.Create(GimmickId);
+        if (gimmick == null)
+        {
+            Logger.Warn($"SpawnGimmickEffect: gimmick template {GimmickId} does not exist");
+            return;
+        }
         gimmick.Spawner = this;
         gimmick.Spawner.RespawnTime = 0; // don't respawn
-        gimmick.Transform = caster.Transform.CloneDetached(gimmick);
+        // Offsets with offset_from_source=false are anchored on the effect's target (e.g. Nerta's
+        // bombs drop from above the player), not on the caster (aaemu-cluster#92)
+        var anchor = OffsetFromSource || target?.Transform == null ? caster : target;
+        gimmick.Transform = anchor.Transform.CloneDetached(gimmick);
+        var anchorZ = gimmick.Transform.World.Position.Z;
+        var anchorYaw = gimmick.Transform.World.Rotation.Z;
         gimmick.EntityGuid = 0;
         gimmick.SpawnerUnitId = caster.ObjId;
         gimmick.GrasperUnitId = 0;
@@ -87,12 +97,9 @@ public class GimmickSpawner : Spawner<Gimmick>
                 var (newX0, newY0, newZ0) = PositionAndRotation.AddDistanceToFront(1, 1, gimmick.Transform.World.Position, gimmick.Transform.World.Position);
                 gimmick.Transform.World.Position = new Vector3(newX0, newY0, newZ0);
                 break;
-            case OffsetCoordinateType.Unk1:
-                break;
+            case OffsetCoordinateType.Unk1: // world-axis offset, previously dropped (aaemu-cluster#92)
             case OffsetCoordinateType.Unk2:
                 gimmick.Transform.Local.AddDistance(OffsetX, OffsetY, OffsetZ);
-                //var (newX, newY, newZ) = PositionAndRotation.AddDistanceToFront(1, 1, gimmick.Transform.World.Position, gimmick.Transform.World.Position);
-                //gimmick.Transform.World.Position = new Vector3(newX, newY, newZ + OffsetZ);
                 break;
             case OffsetCoordinateType.Unk3:
                 break;
@@ -102,7 +109,23 @@ public class GimmickSpawner : Spawner<Gimmick>
 #pragma warning restore CA2208 // Instantiate argument exceptions correctly
         }
 
+        // Resolve the landing plane from geodata under the gimmick's FINAL position. The anchor's
+        // own Z is not a landing plane: a negative offset_z starts the gimmick below the caster's
+        // feet (skill 13430 'Bombard' at -3.0, skill 15339 'Fireball' at -2.0), and casters on a
+        // ship deck, a ledge or a glider are not standing on the surface the gimmick drops onto.
+        // (aaemu-cluster#92)
+        var groundZ = ResolveLandingPlane(gimmick.Transform.World.Position, anchorZ);
+
+        // Give the gimmick its initial throw velocity so clients render the toss/fall (aaemu-cluster#92)
+        gimmick.Vel = ResolveInitialVelocity(VelocityCoordinateId, new Vector3(VelocityX, VelocityY, VelocityZ), anchorYaw);
         gimmick.SetScale(Scale);
+        // No physics engine for gimmicks: animate the drop server-side, but only when the gimmick
+        // actually starts above its landing plane. A gimmick spawned at or below the plane has
+        // nothing to fall through, and an instant "landing" would preempt its authored skill_delay
+        // fuse and teleport it back up to the caster. (aaemu-cluster#92)
+        if ((gimmick.Template?.Gravity ?? 0f) > 0f &&
+            GimmickMovementFreeFall.ShouldSimulate(gimmick.Transform.World.Position.Z, groundZ))
+            gimmick.MovementHandler = new GimmickMovementFreeFall(gimmick, groundZ);
         gimmick.Spawn(); // добавляем в мир
         ParentWorld.GimmickManager.AddActiveGimmick(gimmick);
 
@@ -110,6 +133,43 @@ public class GimmickSpawner : Spawner<Gimmick>
         {
             npc.Gimmick = gimmick;
         }
+    }
+
+    /// <summary>
+    /// Landing plane for a skill-spawned gimmick: the ground that geodata reports under the
+    /// gimmick's own final position, falling back to the anchor unit's height when geodata cannot
+    /// answer (no heightmap loaded, position off-map). Sampling at the anchor's pre-offset Z would
+    /// place gimmicks with a negative offset_z below their own landing plane. (aaemu-cluster#92)
+    /// </summary>
+    private float ResolveLandingPlane(Vector3 finalPosition, float anchorZ)
+    {
+        if (ParentWorld?.Template?.GeoData?.TryGetGroundHeight(finalPosition, out var sampledZ) == true &&
+            float.IsFinite(sampledZ))
+            return sampledZ;
+
+        return anchorZ;
+    }
+
+    /// <summary>
+    /// Initial throw velocity in world axes. velocity_coordiate_id 0 is already world-relative,
+    /// everything else is relative to the anchor's facing (77 of 109 spawn_gimmick_effects rows),
+    /// so rotate the horizontal pair by the anchor's yaw exactly like
+    /// <see cref="PositionAndRotation.AddDistanceToRight"/> (X = right) combined with
+    /// <see cref="PositionAndRotation.AddDistanceToFront"/> (Y = front). Without this, Nerta's
+    /// mirrored bombs (rows 154/155, velocity_x +3/-3) fan out along world north instead of across
+    /// her facing. (aaemu-cluster#92)
+    /// </summary>
+    internal static Vector3 ResolveInitialVelocity(VelocityCoordinateType coordinateType, Vector3 velocity, float anchorYaw)
+    {
+        if (coordinateType == VelocityCoordinateType.Unk0)
+            return velocity;
+
+        var sin = MathF.Sin(anchorYaw);
+        var cos = MathF.Cos(anchorYaw);
+        return new Vector3(
+            velocity.X * cos - velocity.Y * sin,
+            velocity.X * sin + velocity.Y * cos,
+            velocity.Z);
     }
 
     public GimmickSpawner(WorldInstance parentWorld)

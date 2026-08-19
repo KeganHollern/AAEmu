@@ -268,6 +268,33 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
     }
 
     /// <summary>
+    /// Raised (null-safe) from <see cref="NPChar.Npc.DoDie"/> for NPCs dying in this world.
+    /// Dungeon world scripts subscribe to drive retail kill-chains (mini-boss death spawns the
+    /// boss; final boss death spawns the exit portal). aaemu-cluster#92.
+    /// </summary>
+    public event Action<NPChar.Npc> NpcKilled;
+
+    /// <summary>
+    /// Invoker for <see cref="NpcKilled"/>. Subscriber exceptions are contained here because a
+    /// broken script must not abort the NPC death path. aaemu-cluster#92.
+    /// </summary>
+    public void RaiseNpcKilled(NPChar.Npc npc)
+    {
+        var handlers = NpcKilled;
+        if (handlers == null)
+            return;
+
+        try
+        {
+            handlers(npc);
+        }
+        catch (Exception e)
+        {
+            Logger.Error(e, $"NpcKilled subscriber threw for npc {npc?.TemplateId} in {this}");
+        }
+    }
+
+    /// <summary>
     /// Gets height at target position using the template's terrain surface
     /// </summary>
     /// <param name="x"></param>

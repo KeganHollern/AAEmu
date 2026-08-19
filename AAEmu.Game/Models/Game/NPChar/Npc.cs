@@ -839,6 +839,10 @@ public partial class Npc : Unit
     {
         DeadTime = DateTime.UtcNow;
 
+        // Notify the world's script controller (dungeon kill-chains). Contained invoker;
+        // runs before loot/exp so script staging (e.g. exit portal) is prompt. aaemu-cluster#92.
+        ParentWorld?.RaiseNpcKilled(this);
+
         var eligiblePlayers = new HashSet<Character>();
         if (CharacterTagging.TagTeam != 0)
         {

@@ -32,6 +32,9 @@ public class WorldScriptRule
     /// <summary>Fires when any player is within Radius of the point.</summary>
     public WorldScriptArea OnPlayerEnterArea { get; set; }
 
+    /// <summary>Fires when an NPC of one of the templates dies in this world (aaemu-cluster#92: retail boss chains).</summary>
+    public WorldScriptNpcKilled OnNpcKilled { get; set; }
+
     /// <summary>Actions executed, in order, when the condition first holds.</summary>
     public List<WorldScriptAction> Actions { get; set; } = [];
 }
@@ -40,6 +43,18 @@ public class WorldScriptDoodadPhase
 {
     public uint DoodadTemplateId { get; set; }
     public uint FuncGroupId { get; set; }
+
+    /// <summary>
+    /// Optional spatial filter: only doodads within Radius of the point match. Needed when one
+    /// template has several placements with different roles (e.g. the two Sharpwind powder-keg
+    /// clusters each opening their own Rock wall). Null/zero radius = any placement.
+    /// </summary>
+    public WorldScriptArea Near { get; set; }
+}
+
+public class WorldScriptNpcKilled
+{
+    public List<uint> NpcTemplateIds { get; set; } = [];
 }
 
 public class WorldScriptAllDoodadsPhase
@@ -67,8 +82,49 @@ public class WorldScriptAction
     /// <summary>npc_spawners template ids to deactivate AND despawn immediately.</summary>
     public List<uint> DespawnNpcSpawners { get; set; }
 
-    /// <summary>Move every live doodad of the template to the func group.</summary>
+    /// <summary>Move every live doodad of the template (optionally Near-filtered) to the func group.</summary>
     public WorldScriptDoodadPhase ChangeDoodadPhase { get; set; }
+
+    /// <summary>Spawn doodads at fixed positions (aaemu-cluster#92: retail spawned e.g. the exit portal on the final boss's death).</summary>
+    public List<WorldScriptDoodadSpawn> SpawnDoodads { get; set; }
+
+    /// <summary>Show a chat bubble above a live NPC of the template (optionally delayed).</summary>
+    public WorldScriptSay Say { get; set; }
+}
+
+public class WorldScriptDoodadSpawn
+{
+    public uint TemplateId { get; set; }
+    public float X { get; set; }
+    public float Y { get; set; }
+    public float Z { get; set; }
+    public float Yaw { get; set; }
+}
+
+/// <summary>
+/// A scripted NPC line rendered as a chat bubble above the NPC via SCChatBubblePacket.
+/// Prefer BubbleId: it references a retail bubble_effects row, which the client renders in the
+/// player's own locale (retail delivered these beats from XL server AI scripts that never
+/// shipped; the bubble text itself DID ship in the client). Text is a fallback for beats that
+/// have no retail bubble row. (aaemu-cluster#92)
+/// </summary>
+public class WorldScriptSay
+{
+    public uint NpcTemplateId { get; set; }
+
+    /// <summary>Retail bubble_effects id; when set, the client shows its own localized line.</summary>
+    public uint BubbleId { get; set; }
+
+    /// <summary>Authored fallback text, used only when BubbleId is 0.</summary>
+    public string Text { get; set; }
+
+    /// <summary>
+    /// Optional speaker filter: with several live NPCs of the template (e.g. the four Sharpwind
+    /// researchers), speak from the one nearest this point instead of an arbitrary one.
+    /// </summary>
+    public WorldScriptArea Near { get; set; }
+
+    public float DelaySeconds { get; set; }
 }
 
 public static class WorldScriptTemplate

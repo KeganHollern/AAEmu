@@ -14,8 +14,17 @@ public class GimmickMovementFloatToSurface(Gimmick owner) : GimmickMovementHandl
         // Expected Upwards distance
         var movement = 2.5f * (float)delta.TotalSeconds; // maximum movement needed to do the 100m in 40 seconds
         var checkPos = owner.Transform.World.Position + new Vector3(0f, 0f, movement + 1f);
-        // Check if the new location is still inside water and apply if it is
+        // Check if the new location is still inside water and apply if it is. Motion state is
+        // uniform across handlers: GimmickTick only reports a velocity while IsMoving, so settle
+        // explicitly once the chest has broken the surface. (aaemu-cluster#92)
         if (WorldManager.Instance.GetWorld(owner.Transform.InstanceId)?.Water?.IsWater(checkPos, out _) ?? false)
+        {
             owner.Transform.Local.Translate(0f, 0f, movement);
+            owner.IsMoving = true;
+        }
+        else
+        {
+            owner.IsMoving = false;
+        }
     }
 }

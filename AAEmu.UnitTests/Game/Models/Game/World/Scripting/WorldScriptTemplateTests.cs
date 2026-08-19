@@ -43,6 +43,7 @@ public class WorldScriptTemplateTests
             if (rule.OnDoodadPhase != null) conditions++;
             if (rule.OnAllDoodadsPhase != null) conditions++;
             if (rule.OnPlayerEnterArea != null) conditions++;
+            if (rule.OnNpcKilled != null) conditions++;
 
             await Assert.That(conditions).IsEqualTo(1);
             await Assert.That(rule.Actions).IsNotNull();
@@ -77,6 +78,82 @@ public class WorldScriptTemplateTests
     }
 
     [Test]
+    public async Task RetailKillChainsAreWired()
+    {
+        var rules = LoadRules();
+
+        // Vera's death stages boss Nerta and the hideout Allistair (retail NpcSpawnerSpawnEffect
+        // rows point at legacy spawner ids absent from this compact, so the script owns the chain).
+        var vera = rules.Single(r => r.OnNpcKilled != null && r.OnNpcKilled.NpcTemplateIds.Contains(12150u));
+        var staged = vera.Actions.SelectMany(a => a.ActivateNpcSpawners ?? []).ToList();
+        await Assert.That(staged.Contains(13437u)).IsTrue();
+        await Assert.That(staged.Contains(13389u)).IsTrue();
+
+        // Okape's death (either variant) spawns the exit portal 5919 and his log 6197 — retail
+        // did this from on-death skill 19755 "Okape's Destiny", whose effect rows never shipped.
+        var okape = rules.Single(r => r.OnNpcKilled != null && r.OnNpcKilled.NpcTemplateIds.Contains(12188u));
+        await Assert.That(okape.OnNpcKilled.NpcTemplateIds.Contains(11364u)).IsTrue();
+        var spawned = okape.Actions.SelectMany(a => a.SpawnDoodads ?? []).Select(s => s.TemplateId).ToList();
+        await Assert.That(spawned.Contains(5919u)).IsTrue();
+        await Assert.That(spawned.Contains(6197u)).IsTrue();
+    }
+
+    [Test]
+    public async Task KegWallRulesAreSpatiallyDisambiguated()
+    {
+        var rules = LoadRules();
+
+        // Both walls use Rock 5280 and both keg clusters use Powder Keg 5282: the trigger and the
+        // phase-change action MUST carry Near filters or one keg would open every wall.
+        var kegRules = rules.Where(r => r.OnDoodadPhase is { DoodadTemplateId: 5282u }).ToList();
+        await Assert.That(kegRules.Count).IsEqualTo(2);
+        foreach (var rule in kegRules)
+        {
+            await Assert.That(rule.OnDoodadPhase.Near).IsNotNull();
+            await Assert.That(rule.OnDoodadPhase.Near.Radius).IsGreaterThan(0);
+            var change = rule.Actions.Single(a => a.ChangeDoodadPhase != null).ChangeDoodadPhase;
+            await Assert.That(change.DoodadTemplateId).IsEqualTo(5280u);
+            await Assert.That(change.Near).IsNotNull();
+            await Assert.That(change.Near.Radius).IsGreaterThan(0);
+        }
+    }
+
+    [Test]
+    public async Task RetailBeatsUseClientLocalizedBubbles()
+    {
+        var rules = LoadRules();
+
+        // Every scripted line references a retail bubble_effects row so clients render their own
+        // locale; authored Text is reserved for beats with no retail line (none currently).
+        var says = rules.SelectMany(r => r.Actions).Where(a => a.Say != null).Select(a => a.Say).ToList();
+        await Assert.That(says.Count).IsGreaterThanOrEqualTo(20);
+        foreach (var say in says)
+            await Assert.That(say.BubbleId).IsGreaterThan(0u);
+    }
+
+    [Test]
+    public async Task MultiPlacementSpeakersAreDisambiguated()
+    {
+        var rules = LoadRules();
+        var spawnContents = await File.ReadAllTextAsync(Path.Combine(WorldDir, "npc_spawns.json"));
+        JsonHelper.TryDeserializeObject(spawnContents, out List<PinProbe> spawns, out _);
+
+        // SayNow resolves a template with no Near filter through GetNpcByTemplateId, whose
+        // ConcurrentDictionary order is arbitrary. Any speaker with several placements (the four
+        // Sharpwind researchers) must therefore carry a Near filter or the bubble can appear over
+        // an NPC far from the player who tripped the trigger.
+        foreach (var say in rules.SelectMany(r => r.Actions).Where(a => a.Say != null).Select(a => a.Say))
+        {
+            var placements = spawns.Count(s => s.UnitId == say.NpcTemplateId);
+            if (placements > 1)
+            {
+                await Assert.That(say.Near).IsNotNull();
+                await Assert.That(say.Near.Radius).IsGreaterThan(0);
+            }
+        }
+    }
+
+    [Test]
     public async Task StagedNpcPlacementsStayPinnedToEventSpawners()
     {
         var contents = await File.ReadAllTextAsync(Path.Combine(WorldDir, "npc_spawns.json"));
@@ -87,6 +164,9 @@ public class WorldScriptTemplateTests
         var slimes = spawns.Where(s => s.UnitId == 11361).ToList();
         await Assert.That(slimes.Count).IsEqualTo(16);
         await Assert.That(slimes.All(s => s.NpcSpawnerIds is [13392u])).IsTrue();
+        // Allistair's staged segment clones pinned to their retail inactive spawners.
+        await Assert.That(spawns.Single(s => s.UnitId == 12110).NpcSpawnerIds is [13389u]).IsTrue();
+        await Assert.That(spawns.Single(s => s.UnitId == 12111).NpcSpawnerIds is [13390u]).IsTrue();
         // Exactly one boss Nerta point, pinned to the inactive boss spawner.
         var boss = spawns.Where(s => s.UnitId == 11362).ToList();
         await Assert.That(boss.Count).IsEqualTo(1);
