@@ -2,11 +2,13 @@
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
 
 using MySql.Data.MySqlClient;
@@ -71,6 +73,19 @@ public class CharacterMates(Character owner)
         var itemTemplate = (SummonMateTemplate)ItemManager.Instance.GetTemplate(item.TemplateId);
         var npcId = itemTemplate.NpcId;
         var template = NpcManager.Instance.GetTemplate(npcId);
+        var actorModel = ModelManager.Instance.GetActorModel(template.ModelId);
+        if (!MateSpawnPositionResolver.TryResolve(
+                Owner.Transform.World,
+                0f,
+                3f,
+                actorModel,
+                Owner.ParentWorld.Template.GeoData,
+                out var spawnPosition))
+        {
+            Owner.SendErrorMessage(ErrorMessageType.MateCannotSpawnNoSpace);
+            return;
+        }
+
         var tlId = (ushort)TlIdManager.Instance.GetNextId();
         var objId = ObjectIdManager.Instance.GetNextId();
         var mateDbInfo = GetMateInfo(skillData.ItemId) ?? CreateNewMate(skillData.ItemId, template);
@@ -99,6 +114,7 @@ public class CharacterMates(Character owner)
         };
 
         mount.Transform = Owner.Transform.CloneDetached(mount);
+        mount.Transform.Local.SetPosition(spawnPosition.Position, spawnPosition.Rotation);
         SusManager.Instance.ResetAnalyzeMountDeltaMovement(mount.Id);
 
         foreach (var skill in MateGameData.Instance.GetMateSkills(npcId))
@@ -121,7 +137,6 @@ public class CharacterMates(Character owner)
         mount.Hp = Math.Min(mount.Hp, mount.MaxHp);
         mount.Mp = Math.Min(mount.Mp, mount.MaxMp);
 
-        mount.Transform.Local.AddDistanceToFront(3f);
         //Logger.Warn($"Spawn the pet:{mount.ObjId} X={mount.Transform.World.Position.X} Y={mount.Transform.World.Position.Y}");
         Owner.ParentWorld.MateManager.AddActiveMateAndSpawn(Owner, mount, item);
         mount.PostUpdateCurrentHp(mount, 0, mount.Hp, KillReason.Unknown);

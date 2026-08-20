@@ -95,7 +95,8 @@ public class ModelManager : Singleton<ModelManager>, IModelManager
                             Id = reader.GetUInt32("id"),
                             Radius = reader.GetFloat("radius"),
                             Height = reader.GetFloat("height"),
-                            MovementId = reader.GetInt32("movement_id")
+                            MovementId = reader.GetInt32("movement_id"),
+                            UnderwaterCreature = reader.GetBoolean("underwater_creature")
                         };
 
                         _models["ActorModel"].TryAdd(model.Id, model);
