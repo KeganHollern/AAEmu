@@ -1,6 +1,7 @@
-using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models;
 using Microsoft.Extensions.Options;
+using Newtonsoft.Json;
 
 namespace AAEmu.UnitTests.Game.Core.Managers
 {
@@ -96,6 +97,20 @@ namespace AAEmu.UnitTests.Game.Core.Managers
             await Assert.That(_manager.GetLevel("npc", "save")).IsEqualTo(100);
             await Assert.That(_manager.GetLevel("npc", "spawn")).IsEqualTo(100);
             await Assert.That(_manager.GetLevel("npc", "remove")).IsEqualTo(100);
+        }
+
+        [Test]
+        public async Task GetLevel_DoodadPlacementProductionPolicy_RequiresAdmin()
+        {
+            var configPath = Path.Combine(AppContext.BaseDirectory, "Configurations", "AccessLevels.json");
+            var productionConfig = JsonConvert.DeserializeObject<AppConfiguration>(
+                await File.ReadAllTextAsync(configPath));
+            var manager = new AccessLevelManager(Options.Create(productionConfig));
+
+            manager.Load();
+
+            await Assert.That(manager.GetLevel("doodad", "edit", "nearest", "5541")).IsEqualTo(100);
+            await Assert.That(manager.GetLevel("doodad", "place", "nearest", "5541")).IsEqualTo(100);
         }
 
         [Test]
