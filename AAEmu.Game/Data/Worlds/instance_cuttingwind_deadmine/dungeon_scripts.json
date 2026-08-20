@@ -258,16 +258,13 @@
         ]
     },
     {
-        "Name": "Warehouse powder keg used -> wall #1 blasts open, the fuse catches Allistair (retail: keg detonate 18717 skill-hits Rock 5280; bubble 2208)",
-        "OnDoodadPhase": {
-            "DoodadTemplateId": 5282,
-            "FuncGroupId": 13669,
-            "Near": {
-                "X": 462.9,
-                "Y": 338.4,
-                "Z": 168.0,
-                "Radius": 12.0
-            }
+        "Name": "Powder keg carried to the hall doorway -> wall #1 blasts open, the fuse catches Allistair (retail set 201 fired off the detonation; the shipped drop skill has no effect rows, so arrival-while-carrying keg item 25002 is the trigger; bubble 2208)",
+        "OnPlayerEnterArea": {
+            "X": 520.3,
+            "Y": 357.9,
+            "Z": 165.5,
+            "Radius": 8.0,
+            "RequiresItemId": 25002
         },
         "Actions": [
             {
@@ -286,22 +283,19 @@
                 "Say": {
                     "NpcTemplateId": 12111,
                     "BubbleId": 2208,
-                    "DelaySeconds": 1.5
+                    "DelaySeconds": 1.0
                 }
             }
         ]
     },
     {
-        "Name": "Hidden-cavern powder keg used -> wall #2 blasts open toward Okape's lair",
-        "OnDoodadPhase": {
-            "DoodadTemplateId": 5282,
-            "FuncGroupId": 13669,
-            "Near": {
-                "X": 618.0,
-                "Y": 460.0,
-                "Z": 149.3,
-                "Radius": 12.0
-            }
+        "Name": "Powder keg carried to the hidden-cavern wall -> wall #2 blasts open toward Okape's lair (carry keg 25002 to the blocked gap)",
+        "OnPlayerEnterArea": {
+            "X": 617.5,
+            "Y": 466.0,
+            "Z": 149.6,
+            "Radius": 8.0,
+            "RequiresItemId": 25002
         },
         "Actions": [
             {
