@@ -113,16 +113,22 @@ public sealed class AuthoredPathRouteTests
             ai.PathHandler.RunCurrentPath(TimeSpan.FromMilliseconds(100));
 
         var move = npc.Movements[^1];
-        // The route's authored Speed action doubles the pace (player feedback: the 1x walk read as
-        // too slow), and the gait must FOLLOW that speed: 2 m/s derives run (4), not walk (5).
+        // The route's authored Speed action is an ABSOLUTE pace in m/s (AiPathHandler assigns it
+        // directly and GetRealMovementSpeed only applies MoveSpeedMul bonuses) — player-tuned to
+        // 5.8 m/s. Gait must FOLLOW the speed: above walking pace derives run (4), not walk (5).
+        // Expectations derive from the path file so pace retuning stays data-only.
+        var authoredSpeed = float.Parse(
+            Route.First(p => p.Action == AiPathPointAction.Speed).Param,
+            System.Globalization.CultureInfo.InvariantCulture);
+        await Assert.That(authoredSpeed).IsGreaterThan(1f);
         await Assert.That(ai.PathHandler.AiPathActorFlags).IsNull();
-        await Assert.That(ai.PathHandler.AiPathSpeed).IsEqualTo(2f);
+        await Assert.That(ai.PathHandler.AiPathSpeed).IsEqualTo(authoredSpeed);
         await Assert.That(move.ActorFlags).IsEqualTo((byte)4);
         await Assert.That(move.Flags.HasFlag(MoveTypeFlags.Moving)).IsTrue();
         await Assert.That(move.DeltaMovement[1]).IsEqualTo((sbyte)127);
-        // 2 m/s at 2048 wire units per m/s
+        // authored m/s at 2048 wire units per m/s (probe NPC has no MoveSpeedMul bonus)
         var velocity = MathF.Sqrt((move.VelX * (float)move.VelX) + (move.VelY * (float)move.VelY));
-        await Assert.That(velocity).IsEqualTo(4096f).Within(4f);
+        await Assert.That(velocity).IsEqualTo(2048f * authoredSpeed).Within(12f);
         // Descends towards the recorded floor instead of being pinned to the navigation node above it
         await Assert.That(npc.Transform.World.Position.Z).IsLessThan(NavigationZ);
         await Assert.That(npc.Transform.World.Position.Z).IsGreaterThanOrEqualTo(Route.Min(p => p.Position.Z));
