@@ -446,10 +446,12 @@ public class WaterBodies
     /// <summary>
     /// Raises (or drains, negative <paramref name="deltaZ"/>) an area's surface continuously over
     /// <paramref name="durationSeconds"/>, interpolated on every read by wall-clock time. The client
-    /// lerps its own water volume from the doodad phase model, so the server surface must move
-    /// continuously too: the old 1 s stepped WaterSurfaceChangeTask jumped by more than the 0.35 m
-    /// underwater-state hysteresis in Character.SetPosition, flipping SCUnderWaterPacket once per
-    /// step and bouncing swimming players between swim and fall for the whole rise. aaemu-cluster#92.
+    /// RENDERS the doodad water rising continuously, so the server surface used by ships and
+    /// fall-damage checks must move continuously too (the old 1 s stepped WaterSurfaceChangeTask
+    /// jumped past the 0.35 m underwater hysteresis every step). The client's PHYSICS volume does
+    /// not move at all during the animation — the risen/drained volume is a separate prefab that
+    /// only spawns with the next doodad phase — so the character underwater/breath probe reads the
+    /// animation-start surface instead: <see cref="TryGetGameplaySurface"/>. aaemu-cluster#92.
     /// </summary>
     public bool AnimateAreaSurface(uint areaId, float deltaZ, float durationSeconds)
     {
@@ -512,7 +514,7 @@ public class WaterBodies
         {
             AdvanceSurfaceAnimationsUnderLock();
             EnsureSpatialIndexUnderLock();
-            if (TrySelectAreaUnderLock(point, requireAtOrBelowSurface: true, out _, out flowDirection))
+            if (TrySelectAreaUnderLock(point, requireAtOrBelowSurface: true, out _, out flowDirection, out _))
                 return true;
         }
 
@@ -529,7 +531,7 @@ public class WaterBodies
             AdvanceSurfaceAnimationsUnderLock();
             EnsureSpatialIndexUnderLock();
             if (TrySelectAreaUnderLock(point, requireAtOrBelowSurface: false, out var surfacePoint,
-                    out flowDirection))
+                    out flowDirection, out _))
                 return surfacePoint.Z;
         }
 
@@ -537,14 +539,70 @@ public class WaterBodies
     }
 
     /// <summary>
+    /// Character underwater/breath probe: is <paramref name="point"/> inside gameplay water, and
+    /// which surface governs the submersion band. While a surface animation runs
+    /// (DoodadFuncWaterVolume) the client's swimmable volume is still the phase-START one — the
+    /// risen/drained volume is a separate prefab entity that only spawns with the next doodad
+    /// phase (Sharpwind: cuttingwind.water1 at +0 m vs water2 at +22 m; the rise itself is a pure
+    /// render effect) — so the gameplay surface is the animation-start surface, not the
+    /// render-tracking animated surface served by <see cref="GetWaterSurface"/>. Declaring a
+    /// floor-walker underwater in water the client does not have yet bobbed her and drained
+    /// breath for the whole Sharpwind rise; drying out a swimmer the client still holds in
+    /// pre-drain high water would hand out free breath (Howling Abyss drains). Non-animating
+    /// areas and the open sea behave exactly like <see cref="IsWater(Vector3, out Vector3)"/> +
+    /// <see cref="GetWaterSurface"/>. aaemu-cluster#92.
+    /// </summary>
+    public bool TryGetGameplaySurface(Vector3 point, out float gameplaySurfaceZ)
+    {
+        lock (_lock)
+        {
+            AdvanceSurfaceAnimationsUnderLock();
+            EnsureSpatialIndexUnderLock();
+            if (TrySelectAreaUnderLock(point, requireAtOrBelowSurface: false, out var surfacePoint, out _,
+                    out var areaId))
+            {
+                gameplaySurfaceZ = surfacePoint.Z - GetAppliedAnimationDeltaUnderLock(areaId);
+                // The bottom (animated surface − depth) is animation-invariant: RaiseAreaSurface
+                // moves Depth together with the surface, so this is also the phase-start bottom.
+                var bottomZ = surfacePoint.Z - Areas[(int)areaId].Depth;
+                return point.Z >= bottomZ && point.Z <= gameplaySurfaceZ;
+            }
+        }
+
+        gameplaySurfaceZ = OceanLevel;
+        return point.Z <= OceanLevel;
+    }
+
+    /// <summary>
+    /// Caller must hold <see cref="_lock"/> and have advanced animations. Net surface delta the
+    /// live animations have already applied to <paramref name="areaId"/> (0 when none): current
+    /// surface − this delta = the animation-start (client physics) surface.
+    /// </summary>
+    private float GetAppliedAnimationDeltaUnderLock(uint areaId)
+    {
+        if (_surfaceAnimations is not { Count: > 0 })
+            return 0f;
+
+        var applied = 0f;
+        foreach (var animation in _surfaceAnimations)
+        {
+            if (animation.AreaId == areaId)
+                applied += animation.AppliedDeltaZ;
+        }
+
+        return applied;
+    }
+
+    /// <summary>
     /// Selects the smallest containing physical water area, matching CryPhysics overlap priority.
     /// Caller must hold <see cref="_lock"/> and have ensured the spatial index.
     /// </summary>
     private bool TrySelectAreaUnderLock(Vector3 point, bool requireAtOrBelowSurface, out Vector3 chosenSurface,
-        out Vector3 chosenFlow)
+        out Vector3 chosenFlow, out uint chosenAreaId)
     {
         chosenSurface = Vector3.Zero;
         chosenFlow = Vector3.Zero;
+        chosenAreaId = uint.MaxValue;
 
         var cx = (int)MathF.Floor(point.X / SpatialCellSize);
         var cy = (int)MathF.Floor(point.Y / SpatialCellSize);
@@ -554,7 +612,6 @@ public class WaterBodies
         var found = false;
         var smallestFootprint = float.PositiveInfinity;
         var nearestSurfaceDistance = float.PositiveInfinity;
-        var chosenId = uint.MaxValue;
 
         foreach (var areaId in inCell)
         {
@@ -572,13 +629,13 @@ public class WaterBodies
             if (footprint > smallestFootprint ||
                 (MathF.Abs(footprint - smallestFootprint) <= 1e-4f &&
                  (surfaceDistance > nearestSurfaceDistance ||
-                  (MathF.Abs(surfaceDistance - nearestSurfaceDistance) <= 1e-4f && area.Id >= chosenId))))
+                  (MathF.Abs(surfaceDistance - nearestSurfaceDistance) <= 1e-4f && area.Id >= chosenAreaId))))
                 continue;
 
             found = true;
             smallestFootprint = footprint;
             nearestSurfaceDistance = surfaceDistance;
-            chosenId = area.Id;
+            chosenAreaId = area.Id;
             chosenSurface = surfacePoint;
             chosenFlow = flow;
         }

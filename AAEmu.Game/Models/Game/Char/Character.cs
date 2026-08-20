@@ -1693,18 +1693,32 @@ public partial class Character : Unit, ICharacter
             }
         }
 
-        // Breath must match actual water volume (same as physics IsWater): comparing only Z to GetWaterSurface
-        // triggers false underwater state when XY projects onto a river polygon but Z is outside the water slab (e.g. bridge).
-        if (world == null || !world.IsWater(probePos))
+        // Underwater/breath must follow the CLIENT's physics water, not the render-tracking
+        // animated surface: while a doodad water animation runs (DoodadFuncWaterVolume) the
+        // client's swimmable volume is still the phase-START one — the risen volume is a separate
+        // prefab entity that only spawns with the next phase (Sharpwind: cuttingwind.water1 →
+        // water2 at +22 m) — so declaring a floor-walker underwater in water the client does not
+        // have yet bobbed her and drained breath for the whole rise (aaemu-cluster#92 round 2).
+        // TryGetGameplaySurface also keeps the slab bounds so a bridge over a river never counts
+        // as underwater; IsWater/GetWaterSurface stay animated for ships and fall damage.
+        bool inGameplayWater;
+        float gameplaySurface;
+        if (world == null)
         {
-            if (IsUnderWater)
-                IsUnderWater = false;
+            inGameplayWater = false;
+            gameplaySurface = 0f;
+        }
+        else if (world.Water != null)
+        {
+            inGameplayWater = world.Water.TryGetGameplaySurface(probePos, out gameplaySurface);
         }
         else
         {
-            var waterSurface = world.Water?.GetWaterSurface(probePos, out _) ?? world.Template.OceanLevel;
-            IsUnderWater = GetIsUnderWaterState(IsUnderWater, probePos.Z, waterSurface);
+            gameplaySurface = world.Template.OceanLevel;
+            inGameplayWater = probePos.Z <= gameplaySurface;
         }
+
+        IsUnderWater = inGameplayWater && GetIsUnderWaterState(IsUnderWater, probePos.Z, gameplaySurface);
 
         // Connection.ActiveChar.SendMessage("Move New Pos: {0}", Transform.ToString());
 
@@ -1726,12 +1740,14 @@ public partial class Character : Unit, ICharacter
     }
 
     /// <summary>
-    /// Pure underwater-state decision for a probe position against the server water surface.
-    /// The state flips ~2 m below the surface with 0.35 m of hysteresis so a swimmer bobbing at
-    /// the surface does not flap SCUnderWaterPacket. The surface itself must move continuously
-    /// (WaterBodies.AnimateAreaSurface): any surface step larger than the hysteresis re-flips the
-    /// state without the character moving — that 1 Hz toggle is what bounced players between swim
-    /// and fall in the rising Sharpwind pit (aaemu-cluster#92).
+    /// Pure underwater-state decision for a probe position against the gameplay water surface
+    /// (WaterBodies.TryGetGameplaySurface — the surface the client's physics volume is using).
+    /// The state flips ~2 m below that surface with 0.35 m of hysteresis so a swimmer bobbing at
+    /// the surface does not flap SCUnderWaterPacket. The fed surface must never step by more than
+    /// the hysteresis while the character is still: a 1 Hz stepped surface re-flipped the state
+    /// each second and bounced players between swim and fall in the rising Sharpwind pit
+    /// (aaemu-cluster#92 round 1); feeding the animated surface at all declared floor-walkers
+    /// underwater in water the client did not have yet (round 2).
     /// </summary>
     internal static bool GetIsUnderWaterState(bool wasUnderWater, float probeZ, float waterSurfaceZ)
     {
