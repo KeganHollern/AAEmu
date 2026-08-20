@@ -178,11 +178,15 @@ public sealed class WorldScriptController
                 foreach (var character in characters)
                 {
                     var pos = character?.Transform?.World?.Position ?? Vector3.Zero;
-                    if (Vector3.DistanceSquared(pos, center) <= area.Radius * area.Radius)
-                    {
-                        Fire(rule);
-                        break;
-                    }
+                    if (Vector3.DistanceSquared(pos, center) > area.Radius * area.Radius)
+                        continue;
+                    // Item-gated areas: only a player actually carrying the item arms the rule
+                    // (the Sharpwind powder keg brought to its blocked doorway). aaemu-cluster#92.
+                    if (area.RequiresItemId > 0 && character.Inventory.GetItemsCount(area.RequiresItemId) <= 0)
+                        continue;
+
+                    Fire(rule);
+                    break;
                 }
             }
         }

@@ -69,6 +69,14 @@ public class WorldScriptArea
     public float Y { get; set; }
     public float Z { get; set; }
     public float Radius { get; set; }
+
+    /// <summary>
+    /// When set (as an area trigger), only a player CARRYING this item template arms the rule —
+    /// e.g. the Sharpwind powder keg (25002) blowing its Rock wall open only when brought to the
+    /// blocked doorway. Retail's own carry→place→detonate chain shipped without effect rows for the
+    /// drop skill, so arrival-while-carrying is the server-visible equivalent. (aaemu-cluster#92)
+    /// </summary>
+    public uint RequiresItemId { get; set; }
 }
 
 public class WorldScriptAction

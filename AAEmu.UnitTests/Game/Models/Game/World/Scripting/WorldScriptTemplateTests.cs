@@ -106,23 +106,32 @@ public class WorldScriptTemplateTests
     }
 
     [Test]
-    public async Task KegWallRulesAreSpatiallyDisambiguated()
+    public async Task KegWallsBlowOnlyWhenTheKegIsCarriedThere()
     {
         var rules = LoadRules();
 
-        // Both walls use Rock 5280 and both keg clusters use Powder Keg 5282: the trigger and the
-        // phase-change action MUST carry Near filters or one keg would open every wall.
-        var kegRules = rules.Where(r => r.OnDoodadPhase is { DoodadTemplateId: 5282u }).ToList();
-        await Assert.That(kegRules.Count).IsEqualTo(2);
-        foreach (var rule in kegRules)
+        // Live run: triggering the blast on keg PICKUP played the fuse line ("I thought the fuse
+        // would be longer") in the warehouse and opened a wall 60m away, sight unseen. Retail
+        // detonated at the wall; the shipped drop skill has no effect rows, so the server-visible
+        // equivalent is arriving at the blocked gap while CARRYING keg item 25002. Both walls share
+        // Rock template 5280, so each rule's phase change must also be Near-scoped to its own wall.
+        var wallRules = rules.Where(r => r.OnPlayerEnterArea is { RequiresItemId: 25002u }).ToList();
+        await Assert.That(wallRules.Count).IsEqualTo(2);
+        foreach (var rule in wallRules)
         {
-            await Assert.That(rule.OnDoodadPhase.Near).IsNotNull();
-            await Assert.That(rule.OnDoodadPhase.Near.Radius).IsGreaterThan(0);
+            await Assert.That(rule.OnPlayerEnterArea.Radius).IsGreaterThan(0);
             var change = rule.Actions.Single(a => a.ChangeDoodadPhase != null).ChangeDoodadPhase;
             await Assert.That(change.DoodadTemplateId).IsEqualTo(5280u);
+            await Assert.That(change.FuncGroupId).IsEqualTo(13666u);
             await Assert.That(change.Near).IsNotNull();
             await Assert.That(change.Near.Radius).IsGreaterThan(0);
+            // The blast area and its wall must be the same place.
+            var area = rule.OnPlayerEnterArea;
+            var dx = area.X - change.Near.X; var dy = area.Y - change.Near.Y;
+            await Assert.That(MathF.Sqrt((dx * dx) + (dy * dy))).IsLessThan(3f);
         }
+        // No rule may fire off the keg doodad's pickup phase anymore.
+        await Assert.That(rules.Any(r => r.OnDoodadPhase is { DoodadTemplateId: 5282u })).IsFalse();
     }
 
     [Test]
