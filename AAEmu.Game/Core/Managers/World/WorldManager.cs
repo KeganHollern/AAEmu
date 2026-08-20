@@ -777,7 +777,21 @@ public class WorldManager(
     /// </summary>
     public bool TryGetHeight(uint zoneKey, float x, float y, float z, out float height)
     {
+        return TryGetGroundSurface(zoneKey, x, y, z, out height, out _);
+    }
+
+    /// <summary>
+    /// Tries to resolve a ground height like <see cref="TryGetHeight(uint,float,float,float,out float)"/>,
+    /// but also reports where the height came from. Indoors the geodata resolver answers with the nearest
+    /// voxelized BAI navigation node (<see cref="GroundSurfaceSource.NavigationNode"/>), which is coarse
+    /// topology rather than the real collision floor; callers that ground units every step need to know
+    /// the difference (aaemu-cluster#92).
+    /// </summary>
+    private bool TryGetGroundSurface(uint zoneKey, float x, float y, float z, out float height,
+        out GroundSurfaceSource source)
+    {
         height = 0f;
+        source = GroundSurfaceSource.None;
         if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(z))
             return false;
 
@@ -787,15 +801,21 @@ public class WorldManager(
 
         if (AppConfiguration.Instance.World?.GeoDataMode == true &&
             world.GeoData is not null &&
-            world.GeoData.TryGetGroundHeight(new Vector3(x, y, z), out height))
+            world.GeoData.TryGetGroundSurface(new Vector3(x, y, z), out var surface))
         {
+            height = surface.Height;
+            source = surface.Source;
             return true;
         }
 
         if (!AppConfiguration.Instance.HeightMapsEnable)
             return false;
 
-        return world.TryGetHeight(x, y, out height);
+        if (!world.TryGetHeight(x, y, out height))
+            return false;
+
+        source = GroundSurfaceSource.Terrain;
+        return true;
     }
 
     /// <summary>
@@ -841,6 +861,15 @@ public class WorldManager(
         return world.TryGetHeight(worldPosition.X, worldPosition.Y, out height);
     }
 
+    /// <summary>
+    /// Largest vertical gap over which a navigation-sourced height is still considered "same floor" as a
+    /// ground-truth anchor (the NPC's retail-capture home Z or its chase target's client-authoritative Z).
+    /// aaemu-cluster#92: indoor BAI nodes measure up to ~0.85m above the real brush floor in Sharpwind
+    /// Mines; anything beyond this band is a genuinely different level (stairs, ledges) where the nav node
+    /// is the only data the server has.
+    /// </summary>
+    public const float NavigationAnchorTolerance = 1.5f;
+
     public float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId)
     {
         float finalHeight;
@@ -868,12 +897,42 @@ public class WorldManager(
                 return finalHeight;
         }
 
-        // 3. Terrain height retrieval
-        if (TryGetHeight(zoneId, x, y, z, out finalHeight))
-            return finalHeight;
+        // 3. Surface retrieval. Terrain-sourced heights are authoritative (outdoor slopes keep working);
+        //    navigation-sourced heights are only a coarse hint and get re-anchored to ground truth.
+        if (TryGetGroundSurface(zoneId, x, y, z, out finalHeight, out var source))
+        {
+            return source == GroundSurfaceSource.Terrain
+                ? finalHeight
+                : AnchorNavigationSourcedHeight(ai, finalHeight);
+        }
 
         // 4. Take the default height
         return ai.HomePosition.Z;
+    }
+
+    /// <summary>
+    /// Grounds a navigation-sourced height against the real floors the server actually knows about.
+    /// aaemu-cluster#92: indoor ad-hoc movement (roam/chase/return/A* combat points) re-snaps Z every step,
+    /// and the nearest BAI node can float above the brush floor - the client grounds the model, the server
+    /// re-asserts nav Z, and the NPC visibly bobs. Two anchors are trustworthy: the chase target's Z
+    /// (client-authoritative collision floor) and the NPC's home Z (the retail capture floor). When the nav
+    /// answer is within <see cref="NavigationAnchorTolerance"/> of an anchor it is the same floor measured
+    /// badly, so the anchor wins; otherwise the NPC really is on another level and nav Z stands.
+    /// </summary>
+    private static float AnchorNavigationSourcedHeight(NpcAi ai, float navigationHeight)
+    {
+        if (ai.Owner.CurrentTarget is { } target && !ReferenceEquals(target, ai.Owner))
+        {
+            var targetZ = target.Transform.World.Position.Z;
+            if (Math.Abs(navigationHeight - targetZ) <= NavigationAnchorTolerance)
+                return targetZ;
+        }
+
+        var homeZ = ai.HomePosition.Z;
+        if (Math.Abs(navigationHeight - homeZ) <= NavigationAnchorTolerance)
+            return homeZ;
+
+        return navigationHeight;
     }
 
     /// <summary>
