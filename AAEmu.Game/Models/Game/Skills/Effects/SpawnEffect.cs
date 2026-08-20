@@ -115,6 +115,19 @@ public class SpawnEffect : EffectTemplate
 
                     var positionSource = PosDirId == 1 ? target ?? caster : caster;
                     var orientationSource = OriDirId == 1 ? target ?? caster : caster;
+                    var actorModel = ModelManager.Instance.GetActorModel(template.ModelId);
+                    if (!MateSpawnPositionResolver.TryResolve(
+                            positionSource.Transform.World,
+                            PosAngle.DegToRad(),
+                            PosDistance,
+                            actorModel,
+                            player.ParentWorld.Template.GeoData,
+                            out var spawnPosition))
+                    {
+                        player.SendErrorMessage(ErrorMessageType.MateCannotSpawnNoSpace);
+                        break;
+                    }
+
                     var objId = ObjectIdManager.Instance.GetNextId();
                     var tlId = (ushort)TlIdManager.Instance.GetNextId();
                     var mate = new AAEmu.Game.Models.Game.Units.Mate
@@ -140,8 +153,7 @@ public class SpawnEffect : EffectTemplate
                     };
 
                     mate.Transform = positionSource.Transform.CloneDetached(mate);
-                    mate.Transform.Local.Rotate(0f, 0f, PosAngle.DegToRad());
-                    mate.Transform.Local.AddDistanceToFront(PosDistance);
+                    mate.Transform.Local.SetPosition(spawnPosition.Position, spawnPosition.Rotation);
                     mate.Transform.Local.SetZRotation(orientationSource.Transform.World.Rotation.Z + OriAngle.DegToRad());
                     foreach (var mateSkill in MateGameData.Instance.GetMateSkills(template.Id))
                         mate.Skills.Add(mateSkill);
