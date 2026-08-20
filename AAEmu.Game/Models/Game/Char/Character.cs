@@ -1703,16 +1703,7 @@ public partial class Character : Unit, ICharacter
         else
         {
             var waterSurface = world.Water?.GetWaterSurface(probePos, out _) ?? world.Template.OceanLevel;
-
-            const float surfaceBand = 2f;
-            const float hysteresis = 0.35f;
-            var enterThreshold = waterSurface - surfaceBand;
-            var exitThreshold = waterSurface - surfaceBand + hysteresis;
-
-            if (!IsUnderWater && probePos.Z < enterThreshold)
-                IsUnderWater = true;
-            else if (IsUnderWater && probePos.Z > exitThreshold)
-                IsUnderWater = false;
+            IsUnderWater = GetIsUnderWaterState(IsUnderWater, probePos.Z, waterSurface);
         }
 
         // Connection.ActiveChar.SendMessage("Move New Pos: {0}", Transform.ToString());
@@ -1732,6 +1723,28 @@ public partial class Character : Unit, ICharacter
         if (Transform.ZoneId == lastZoneKey)
             return;
         OnZoneChange(lastZoneKey, Transform.ZoneId);
+    }
+
+    /// <summary>
+    /// Pure underwater-state decision for a probe position against the server water surface.
+    /// The state flips ~2 m below the surface with 0.35 m of hysteresis so a swimmer bobbing at
+    /// the surface does not flap SCUnderWaterPacket. The surface itself must move continuously
+    /// (WaterBodies.AnimateAreaSurface): any surface step larger than the hysteresis re-flips the
+    /// state without the character moving — that 1 Hz toggle is what bounced players between swim
+    /// and fall in the rising Sharpwind pit (aaemu-cluster#92).
+    /// </summary>
+    internal static bool GetIsUnderWaterState(bool wasUnderWater, float probeZ, float waterSurfaceZ)
+    {
+        const float surfaceBand = 2f;
+        const float hysteresis = 0.35f;
+        var enterThreshold = waterSurfaceZ - surfaceBand;
+        var exitThreshold = waterSurfaceZ - surfaceBand + hysteresis;
+
+        if (!wasUnderWater && probeZ < enterThreshold)
+            return true;
+        if (wasUnderWater && probeZ > exitThreshold)
+            return false;
+        return wasUnderWater;
     }
 
     private CancellationTokenSource _unreleasedZoneTransportedOut;

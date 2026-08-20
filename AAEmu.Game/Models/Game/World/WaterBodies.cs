@@ -268,6 +268,7 @@ public class WaterBodies
             _waterfalls ??= [];
             _waterfalls.Clear();
             _waterfallIndexByCell?.Clear();
+            _surfaceAnimations?.Clear();
         }
     }
 
@@ -288,7 +289,10 @@ public class WaterBodies
     public List<WaterBodyArea> GetAreasSnapshot()
     {
         lock (_lock)
+        {
+            AdvanceSurfaceAnimationsUnderLock();
             return [.. Areas];
+        }
     }
 
     /// <summary>Returns a stable snapshot for diagnostics and tests.</summary>
@@ -345,6 +349,7 @@ public class WaterBodies
     {
         lock (_lock)
         {
+            AdvanceSurfaceAnimationsUnderLock();
             WaterBodyArea best = null;
             var bestDist = maxDistance;
             foreach (var area in Areas)
@@ -399,18 +404,103 @@ public class WaterBodies
     public bool RaiseAreaSurface(uint areaId, float deltaZ)
     {
         lock (_lock)
+            return RaiseAreaSurfaceUnderLock(areaId, deltaZ);
+    }
+
+    /// <summary>Caller must hold <see cref="_lock"/>. See <see cref="RaiseAreaSurface"/>.</summary>
+    private bool RaiseAreaSurfaceUnderLock(uint areaId, float deltaZ)
+    {
+        if (areaId >= Areas.Count)
+            return false;
+
+        var area = Areas[(int)areaId];
+        for (var i = 0; i < area.Points.Count; i++)
+            area.Points[i] = area.Points[i] with { Z = area.Points[i].Z + deltaZ };
+        if (MathF.Abs(area.SurfacePlaneNormal.Z) > 1e-6f)
+            area.SurfacePlaneD -= area.SurfacePlaneNormal.Z * deltaZ;
+        area.Depth = MathF.Max(0f, area.Depth + deltaZ);
+        area.UpdateBounds();
+        return true;
+    }
+
+    /// <summary>Time-based surface change applied lazily by readers under <see cref="_lock"/>.</summary>
+    private sealed class SurfaceAnimation
+    {
+        public uint AreaId;
+        public float TotalDeltaZ;
+        public float AppliedDeltaZ;
+        public long StartTimestamp;
+        public float DurationSeconds;
+    }
+
+    /// <summary>Live surface animations; null/empty outside a DoodadFuncWaterVolume rise (hot reload can leave this null).</summary>
+    [JsonIgnore]
+    private List<SurfaceAnimation> _surfaceAnimations;
+
+    /// <summary>Clock for surface animations; tests inject FakeTimeProvider. Null (default, hot reload) → system clock.</summary>
+    [JsonIgnore]
+    internal TimeProvider AnimationTimeProvider { get; set; }
+
+    private TimeProvider AnimationClock => AnimationTimeProvider ?? TimeProvider.System;
+
+    /// <summary>
+    /// Raises (or drains, negative <paramref name="deltaZ"/>) an area's surface continuously over
+    /// <paramref name="durationSeconds"/>, interpolated on every read by wall-clock time. The client
+    /// lerps its own water volume from the doodad phase model, so the server surface must move
+    /// continuously too: the old 1 s stepped WaterSurfaceChangeTask jumped by more than the 0.35 m
+    /// underwater-state hysteresis in Character.SetPosition, flipping SCUnderWaterPacket once per
+    /// step and bouncing swimming players between swim and fall for the whole rise. aaemu-cluster#92.
+    /// </summary>
+    public bool AnimateAreaSurface(uint areaId, float deltaZ, float durationSeconds)
+    {
+        lock (_lock)
         {
             if (areaId >= Areas.Count)
                 return false;
+            if (deltaZ == 0f)
+                return true;
+            if (!float.IsFinite(durationSeconds) || durationSeconds <= 0f)
+                return RaiseAreaSurfaceUnderLock(areaId, deltaZ);
 
-            var area = Areas[(int)areaId];
-            for (var i = 0; i < area.Points.Count; i++)
-                area.Points[i] = area.Points[i] with { Z = area.Points[i].Z + deltaZ };
-            if (MathF.Abs(area.SurfacePlaneNormal.Z) > 1e-6f)
-                area.SurfacePlaneD -= area.SurfacePlaneNormal.Z * deltaZ;
-            area.Depth = MathF.Max(0f, area.Depth + deltaZ);
-            area.UpdateBounds();
+            _surfaceAnimations ??= [];
+            _surfaceAnimations.Add(new SurfaceAnimation
+            {
+                AreaId = areaId,
+                TotalDeltaZ = deltaZ,
+                StartTimestamp = AnimationClock.GetTimestamp(),
+                DurationSeconds = durationSeconds
+            });
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Caller must hold <see cref="_lock"/>. Applies the elapsed fraction of every live surface
+    /// animation so readers always see the current interpolated surface; finished (or orphaned)
+    /// animations are removed.
+    /// </summary>
+    private void AdvanceSurfaceAnimationsUnderLock()
+    {
+        if (_surfaceAnimations is not { Count: > 0 })
+            return;
+
+        var clock = AnimationClock;
+        for (var i = _surfaceAnimations.Count - 1; i >= 0; i--)
+        {
+            var animation = _surfaceAnimations[i];
+            var elapsedSeconds = (float)clock.GetElapsedTime(animation.StartTimestamp).TotalSeconds;
+            var fraction = Math.Clamp(elapsedSeconds / animation.DurationSeconds, 0f, 1f);
+            var pending = animation.TotalDeltaZ * fraction - animation.AppliedDeltaZ;
+            if (pending != 0f && !RaiseAreaSurfaceUnderLock(animation.AreaId, pending))
+            {
+                // Area disappeared (e.g. water reload); drop the animation.
+                _surfaceAnimations.RemoveAt(i);
+                continue;
+            }
+
+            animation.AppliedDeltaZ += pending;
+            if (fraction >= 1f)
+                _surfaceAnimations.RemoveAt(i);
         }
     }
 
@@ -420,6 +510,7 @@ public class WaterBodies
 
         lock (_lock)
         {
+            AdvanceSurfaceAnimationsUnderLock();
             EnsureSpatialIndexUnderLock();
             if (TrySelectAreaUnderLock(point, requireAtOrBelowSurface: true, out _, out flowDirection))
                 return true;
@@ -435,6 +526,7 @@ public class WaterBodies
 
         lock (_lock)
         {
+            AdvanceSurfaceAnimationsUnderLock();
             EnsureSpatialIndexUnderLock();
             if (TrySelectAreaUnderLock(point, requireAtOrBelowSurface: false, out var surfacePoint,
                     out flowDirection))
