@@ -1,4 +1,4 @@
-﻿﻿using AAEmu.Game.Models.Game.DoodadObj.Templates;
+﻿using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
@@ -19,11 +19,14 @@ public class DoodadFuncWaterVolume : DoodadPhaseFuncTemplate
 
     /// <summary>
     /// aaemu-cluster#92 / #98 / #93: raises (or drains, for negative LevelChange) the server-side
-    /// water nearest to the owning doodad over Duration seconds. The client renders its own water
-    /// from the doodad model and lerps it continuously; WaterBodies.AnimateAreaSurface interpolates
-    /// the server surface the same way, so IsWater, swimming and fall-damage checks agree with what
-    /// players see at every moment of the rise (a stepped server surface flipped the underwater
-    /// state per step and bounced swimming players — Sharpwind Mines flooding pools).
+    /// water nearest to the owning doodad over Duration seconds. The client RENDERS the rise as a
+    /// continuous lerp, and WaterBodies.AnimateAreaSurface moves the server surface the same way
+    /// so ship buoyancy and fall-damage checks agree with the visual at every moment. The client's
+    /// PHYSICS volume however stays at the phase-start extent for the whole animation — the risen
+    /// volume is a separate prefab that only spawns with the next doodad phase (cuttingwind.water1
+    /// → water2), so players cannot swim in the not-yet-risen column; the character
+    /// underwater/breath probe therefore reads the phase-start surface
+    /// (WaterBodies.TryGetGameplaySurface) and floor-walkers stay dry until the rise completes.
     /// </summary>
     public override bool Use(BaseUnit caster, Doodad owner)
     {
