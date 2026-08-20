@@ -1386,6 +1386,15 @@ public class SpawnManager(WorldInstance parentWorld)
     }
 
     /// <summary>
+    /// Returns true only when the exact spawner instance came from this world's authored doodad registry.
+    /// </summary>
+    public bool IsAuthoredDoodadSpawner(DoodadSpawner spawner)
+    {
+        return spawner != null && spawner.Id != 0 && ReferenceEquals(spawner.ParentWorld, World) &&
+               DoodadSpawners.TryGetValue(spawner.Id, out var registered) && ReferenceEquals(registered, spawner);
+    }
+
+    /// <summary>
     /// Gets a list of all Treasure Chests in the world that can be dug up
     /// </summary>
     /// <returns></returns>
