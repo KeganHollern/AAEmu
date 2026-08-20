@@ -235,10 +235,10 @@
     {
         "Name": "Allistair calls out the odd wall (retail bubbles 2206/2207)",
         "OnPlayerEnterArea": {
-            "X": 467.0,
-            "Y": 346.0,
-            "Z": 168.0,
-            "Radius": 7.0
+            "X": 520.3,
+            "Y": 357.9,
+            "Z": 165.5,
+            "Radius": 9.0
         },
         "Actions": [
             {
@@ -275,9 +275,9 @@
                     "DoodadTemplateId": 5280,
                     "FuncGroupId": 13666,
                     "Near": {
-                        "X": 467.0,
-                        "Y": 349.0,
-                        "Z": 168.0,
+                        "X": 520.3,
+                        "Y": 357.9,
+                        "Z": 165.5,
                         "Radius": 10.0
                     }
                 }
