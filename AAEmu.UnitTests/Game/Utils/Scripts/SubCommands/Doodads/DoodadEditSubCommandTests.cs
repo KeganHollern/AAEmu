@@ -10,6 +10,7 @@ using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Scripts.Commands;
 using AAEmu.Game.Scripts.SubCommands.Doodads;
 using AAEmu.Game.Utils;
+using AAEmu.Game.Utils.Scripts;
 using Newtonsoft.Json.Linq;
 
 namespace AAEmu.UnitTests.Game.Utils.Scripts.SubCommands.Doodads;
