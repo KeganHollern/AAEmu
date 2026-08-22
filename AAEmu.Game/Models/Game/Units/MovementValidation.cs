@@ -21,7 +21,7 @@ namespace AAEmu.Game.Models.Game.Units;
 /// </summary>
 public static class MovementValidation
 {
-    protected static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
+    private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     /// <summary>
     /// Maximum accepted horizontal speed in m/s. Deliberately generous compared
