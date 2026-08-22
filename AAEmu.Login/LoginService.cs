@@ -14,6 +14,7 @@ public sealed class LoginService(
     IInternalNetwork internalNetwork,
     ILoginReadiness loginReadiness,
     IClientCompactProvider clientCompactProvider,
+    IClientContentBundleProvider clientContentBundleProvider,
     IMySqlConnectionFactory connectionFactory,
     IOptions<DBConnectionsConfig> dbConnectionsConfig,
     ILogger<LoginService> logger) : IHostedService, IDisposable
@@ -39,6 +40,7 @@ public sealed class LoginService(
         requestController.Initialize();
         gameController.Load();
         await clientCompactProvider.InitializeAsync(cancellationToken);
+        await clientContentBundleProvider.InitializeAsync(cancellationToken);
         internalNetwork.Start();
         loginReadiness.MarkInitialized();
     }
