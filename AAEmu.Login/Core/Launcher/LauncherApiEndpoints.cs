@@ -1,7 +1,8 @@
-using System.Net;
+﻿using System.Net;
 using AAEmu.Login.Core.Controllers;
+using AAEmu.Login.Models;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 using MySql.Data.MySqlClient;
 
@@ -62,6 +63,16 @@ public static class LauncherApiEndpoints
         group.MapGet("/assets/client.sqlite3", DownloadClientCompactAsync)
             .RequireRateLimiting("launcher-download");
         group.MapPost("/launch-tickets", CreateLaunchTicketAsync).RequireRateLimiting("launcher-login");
+
+        var options = app.Services.GetRequiredService<IOptions<LauncherApiOptions>>().Value;
+        if (options.ContentV2.Enabled)
+        {
+            var content = app.MapGroup("/launcher/v2");
+            content.MapGet("/manifest", GetContentManifestAsync);
+            content.MapGet("/manifest.minisig", GetContentMinisigAsync);
+            content.MapGet("/assets/{sha256}", DownloadContentAssetAsync)
+                .RequireRateLimiting("launcher-download");
+        }
 
         // In-game web test page (aaemu-cluster#26): the ArcheAge client's embedded
         // Awesomium browser (Chromium ~18) opens the TrionWeb base URLs and appends
@@ -227,6 +238,67 @@ public static class LauncherApiEndpoints
             enableRangeProcessing: true);
     }
 
+    private static async Task<IResult> GetContentManifestAsync(
+        HttpContext context,
+        ILoginReadiness readiness,
+        ILauncherSessionService sessionService,
+        IClientContentBundleProvider contentProvider,
+        CancellationToken cancellationToken)
+    {
+        var principal = await AuthenticateAsync(context, sessionService, cancellationToken);
+        if (principal is null)
+            return Results.Unauthorized();
+        if (!readiness.IsInitialized || !contentProvider.IsAvailable)
+            return Maintenance();
+
+        return Results.File(
+            contentProvider.ManifestBytes.ToArray(),
+            "application/json",
+            entityTag: ContentEntityTag(contentProvider.ManifestSha256));
+    }
+
+    private static async Task<IResult> GetContentMinisigAsync(
+        HttpContext context,
+        ILoginReadiness readiness,
+        ILauncherSessionService sessionService,
+        IClientContentBundleProvider contentProvider,
+        CancellationToken cancellationToken)
+    {
+        var principal = await AuthenticateAsync(context, sessionService, cancellationToken);
+        if (principal is null)
+            return Results.Unauthorized();
+        if (!readiness.IsInitialized || !contentProvider.IsAvailable)
+            return Maintenance();
+
+        return Results.File(
+            contentProvider.MinisigBytes.ToArray(),
+            "application/octet-stream",
+            entityTag: ContentEntityTag(contentProvider.MinisigSha256));
+    }
+
+    private static async Task<IResult> DownloadContentAssetAsync(
+        string sha256,
+        HttpContext context,
+        ILoginReadiness readiness,
+        ILauncherSessionService sessionService,
+        IClientContentBundleProvider contentProvider,
+        CancellationToken cancellationToken)
+    {
+        var principal = await AuthenticateAsync(context, sessionService, cancellationToken);
+        if (principal is null)
+            return Results.Unauthorized();
+        if (!readiness.IsInitialized || !contentProvider.IsAvailable)
+            return Maintenance();
+        if (!IsLowerSha256(sha256) || !contentProvider.TryGetAsset(sha256, out var asset))
+            return Results.NotFound();
+
+        return Results.Stream(
+            asset.OpenReadStream(),
+            "application/octet-stream",
+            entityTag: ContentEntityTag(asset.Sha256),
+            enableRangeProcessing: true);
+    }
+
     private static async Task<IResult> CreateLaunchTicketAsync(
         HttpContext context,
         ILoginReadiness readiness,
@@ -264,6 +336,15 @@ public static class LauncherApiEndpoints
         session.RefreshToken,
         session.RefreshTokenExpiresAt,
         session.Principal.Username);
+
+    private static EntityTagHeaderValue ContentEntityTag(string sha256) =>
+        new($"\"sha256-{sha256}\"");
+
+    private static bool IsLowerSha256(string? value)
+    {
+        return value is { Length: 64 }
+               && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+    }
 
     private static IResult InvalidCredentials() => Results.Json(
         new { error = "invalid_credentials" }, statusCode: StatusCodes.Status401Unauthorized);

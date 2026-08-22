@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace AAEmu.Login.Models;
 
@@ -24,4 +24,17 @@ public sealed class LauncherApiOptions
 
     [Range(30, 600)]
     public int LaunchTicketLifetimeSeconds { get; set; } = 180;
+
+    public LauncherContentV2Options ContentV2 { get; set; } = new();
+}
+
+public sealed class LauncherContentV2Options
+{
+    public bool Enabled { get; set; }
+
+    public string ReleasePath { get; set; } = string.Empty;
+
+    public string ExpectedManifestSha256 { get; set; } = new('0', 64);
+
+    public string ExpectedMinisigSha256 { get; set; } = new('0', 64);
 }

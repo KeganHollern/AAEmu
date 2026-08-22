@@ -1,6 +1,6 @@
-# Native launcher API
+﻿# Native launcher API
 
-Issue: `KeganHollern/aaemu-cluster#17`
+Issues: `KeganHollern/aaemu-cluster#17`, `KeganHollern/aaemu-cluster#70`
 
 AAEmu.Login hosts the authenticated HTTP API used by the native Rust/Tauri
 launcher. TLS terminates at the deployment ingress; the Login pod continues to
@@ -32,7 +32,8 @@ this migration is an operator-controlled prerequisite for enabling the API.
 
 ## Endpoints
 
-All routes use the `/launcher/v1` prefix.
+Session, account, compact, and launch-ticket routes use the `/launcher/v1`
+prefix and remain unchanged.
 
 | Method and path | Authentication | Purpose |
 | --- | --- | --- |
@@ -49,6 +50,29 @@ The manifest and download refer only to the fixed, verified
 `Data/client.sqlite3` baked into the Login image. There is no caller-selected
 filesystem path. Startup verifies the file's SQLite header, exact configured
 size, and SHA-256 before marking Login ready.
+
+When `LauncherApi.ContentV2.Enabled` is true, Login also maps these authenticated
+raw-byte routes:
+
+| Method and path | Authentication | Purpose |
+| --- | --- | --- |
+| `GET /launcher/v2/manifest` | bearer access token | Return the pinned canonical signed-manifest bytes unchanged |
+| `GET /launcher/v2/manifest.minisig` | bearer access token | Return the pinned detached Minisign bytes unchanged |
+| `GET /launcher/v2/assets/<sha256>` | bearer access token | Stream a manifest-listed representation with HTTP Range support |
+
+The v2 provider loads one fixed release directory once during startup. It
+bounds and pins the raw manifest and signature, rejects duplicate JSON keys,
+builds a lowercase content-hash allowlist from `representation.blob`, verifies
+every listed blob's exact size and SHA-256, and rejects missing or extra blob
+entries. It retains the exact verified file handles for delivery, so a later
+pathname replacement cannot change the bytes served under a pinned ETag. Route
+text is never used as a filesystem path. The v2 routes are not mapped while the
+feature is disabled.
+
+Production CI verifies the detached Minisign signature before a release can be
+selected. Login deliberately does not sign, execute, parse sparse payloads, or
+install content; it pins and serves reviewed immutable bytes. The Rust launcher
+is the runtime signature and metadata trust consumer.
 
 Play tickets are random 64-character hexadecimal values. The native launcher
 places one in the existing Trion ticket password field. Login atomically
@@ -80,6 +104,22 @@ set all of the following from reviewed image metadata:
 
 Token and ticket lifetimes have conservative defaults and can be overridden
 through the remaining `LauncherApi` options.
+
+V2 delivery remains disabled until a reviewed signed release is present. An
+enabled deployment must also set:
+
+- `LauncherApi__ContentV2__Enabled=true`
+- `LauncherApi__ContentV2__ReleasePath=Data/client-patches/releases/<sequence>`
+- `LauncherApi__ContentV2__ExpectedManifestSha256=<exact lowercase SHA-256>`
+- `LauncherApi__ContentV2__ExpectedMinisigSha256=<exact lowercase SHA-256>`
+
+Production activation must bake that release directory into the Login image's
+read-only root filesystem; a writable content mount is not an accepted release
+configuration.
+
+Enabling v2 requires the parent launcher API. Missing content, a zero/uppercase
+pin, a reparse/symlinked path component, a digest mismatch, or an invalid blob
+catalog fails startup and readiness. The provider never hot-reloads a release.
 
 The native launcher API and Korea challenge/second-factor authentication are
 mutually exclusive. Login refuses startup when both are enabled; the v1 native

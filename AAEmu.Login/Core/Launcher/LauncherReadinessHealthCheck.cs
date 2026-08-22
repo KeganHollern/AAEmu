@@ -1,5 +1,5 @@
+﻿using AAEmu.Login.Models;
 using AAEmu.Login.Utils;
-using AAEmu.Login.Models;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
@@ -9,6 +9,7 @@ public sealed class LauncherReadinessHealthCheck(
     ILoginReadiness readiness,
     IMySqlConnectionFactory connectionFactory,
     IClientCompactProvider compactProvider,
+    IClientContentBundleProvider contentBundleProvider,
     IOptions<LauncherApiOptions> options) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context,
@@ -18,6 +19,8 @@ public sealed class LauncherReadinessHealthCheck(
             return HealthCheckResult.Unhealthy("Login initialization has not completed");
         if (options.Value.Enabled && !compactProvider.IsAvailable)
             return HealthCheckResult.Unhealthy("Launcher client compact is unavailable");
+        if (options.Value.ContentV2.Enabled && !contentBundleProvider.IsAvailable)
+            return HealthCheckResult.Unhealthy("Launcher v2 content bundle is unavailable");
 
         try
         {
