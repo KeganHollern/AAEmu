@@ -2851,6 +2851,8 @@ public partial class Character : Unit, ICharacter
             Appellations?.Save(connection, transaction);
             // Save active buffs that should persist across logout (SaveRuleId > 0)
             Buffs?.SaveActiveBuffs(connection, transaction, Id);
+            // Save still-active skill cooldowns so relogging cannot reset them
+            Cooldowns.Save(connection, transaction, Id);
             Portals?.Save(connection, transaction);
             Friends?.Save(connection, transaction);
             Blocked?.Save(connection, transaction);
