@@ -31,10 +31,7 @@ public class SpawnGimmickEffect : EffectTemplate
         CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time,
         CompressedGamePackets packetBuilder = null)
     {
-        var casterUnit = (Unit)caster;
-
-        if (casterUnit == null)
-        // if (casterUnit?.CurrentTarget == null)
+        if (caster is not Unit casterUnit)
             return;
 
         //if (npc.Gimmick != null)
@@ -42,12 +39,17 @@ public class SpawnGimmickEffect : EffectTemplate
 
         Logger.Trace($"SpawnGimmickEffect GimmickId={GimmickId}, scale={Scale}, skill={(castObj as CastSkill)?.SkillId}");
 
-        var spawner = new GimmickSpawner(caster.ParentWorld, this, caster);
-
-        // casterUnit.Gimmick = spawner.Spawn(0);
+        // Pass the target so offset_from_source=false gimmicks anchor above it (aaemu-cluster#92)
+        _ = new GimmickSpawner(caster.ParentWorld, this, caster, target);
 
         if (casterUnit.Gimmick == null)
             return;
+
+        if (target is Character targetCharacter)
+        {
+            casterUnit.Gimmick.CurrentTarget = targetCharacter;
+            return;
+        }
 
         if (casterUnit is { CurrentTarget: Character character })
         {

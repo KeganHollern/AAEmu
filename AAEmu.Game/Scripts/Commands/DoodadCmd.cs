@@ -20,6 +20,7 @@ public class DoodadCmd : SubCommandBase, ICommand
         Register(new DoodadChainSubCommand(), "chain");
         Register(new DoodadPhaseSubCommand(), "phase", "setphase");
         Register(new DoodadSaveSubCommand(), "save");
+        Register(new DoodadEditSubCommand(), "edit", "place");
         Register(new DoodadPositionSubCommand(), "position", "pos");
         Register(new DoodadSpawnSubCommand(), "spawn");
         Register(new DoodadRemoveSubCommand(), "remove");

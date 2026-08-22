@@ -108,7 +108,8 @@ public class SpawnManager(WorldInstance parentWorld)
                     foreach (var id in gameDataNpcSpawnerIds)
                         candidateTemplates.Add(NpcGameData.Instance.GetNpcSpawnerTemplate(id));
 
-                    var selectedIds = SelectSpawnerTemplateIds(candidateTemplates);
+                    var selectedIds = SelectSpawnerTemplateIds(candidateTemplates,
+                        id => GameScheduleManager.Instance.CheckSpawnerInScheduleSpawners((int)id));
                     if (selectedIds.Count == 0)
                         selectedIds = gameDataNpcSpawnerIds; // no template resolvable: keep legacy ids so the usual warnings surface
 
@@ -169,6 +170,12 @@ public class SpawnManager(WorldInstance parentWorld)
                     // aaemu-cluster#92 (#97): without this the tick path warned
                     // "No spawnable NPCs available" because only ForceSpawn initialized the list.
                     npcSpawner.InitializeSpawnableNpcs(npcSpawner.Template);
+
+                    // aaemu-cluster#92 (validation round 2): lets the dungeon script stage an NPC
+                    // whose authored spawner row is active — e.g. Allistair's pit variant pops up
+                    // only after the bridge collapse instead of standing there from the start.
+                    if (npcSpawner.StartInactive)
+                        npcSpawner.Deactivate();
                 }
 
                 spawners.Add(npcSpawner);
@@ -180,23 +187,51 @@ public class SpawnManager(WorldInstance parentWorld)
 
     /// <summary>
     /// Picks the compact npc_spawners templates an unpinned world spawn point should bind to.
-    /// A member with a single authored template keeps it as-is (legacy behavior); with several
-    /// templates only the active ones (activation_state=t) are bound, because the inactive rows
-    /// are staging variants meant to be enabled by scripts. When none are active we fall back to
-    /// binding everything so the data problem stays visible. (aaemu-cluster#92, #94)
+    /// A member with a single authored template keeps it as-is (legacy behavior). With several
+    /// templates: inactive rows are dropped (staging variants enabled by scripts), schedule- or
+    /// time-window-gated rows are all kept (they only run in their window), and of the remaining
+    /// free-running rows exactly ONE is bound — binding them all stacked identical NPCs on every
+    /// dump point (aaemu-cluster#92 validation: Allistair x2, Blackbeard trash x3). The
+    /// Autocreated editor row is preferred because it is the 1:1 default for the dumped npc;
+    /// named Normal rows are hand-authored variants of the same npc at the same spot. When none
+    /// are active we fall back to binding everything so the data problem stays visible.
+    /// (aaemu-cluster#92, #94 + validation round 2)
     /// </summary>
-    internal static List<uint> SelectSpawnerTemplateIds(IReadOnlyList<NpcSpawnerTemplate> templates)
+    internal static List<uint> SelectSpawnerTemplateIds(IReadOnlyList<NpcSpawnerTemplate> templates, Func<uint, bool> hasSchedule = null)
     {
         var known = templates.Where(t => t != null).ToList();
         if (known.Count <= 1)
             return known.Select(t => t.Id).ToList();
 
-        var activeIds = known.Where(t => t.ActivationState).Select(t => t.Id).ToList();
-        if (activeIds.Count > 0)
-            return activeIds;
+        var active = known.Where(t => t.ActivationState).ToList();
+        if (active.Count == 0)
+        {
+            Logger.Warn($"SelectSpawnerTemplateIds: member has {known.Count} spawner templates but none are active; binding all of them (ids={string.Join(",", known.Select(t => t.Id))})");
+            return known.Select(t => t.Id).ToList();
+        }
 
-        Logger.Warn($"SelectSpawnerTemplateIds: member has {known.Count} spawner templates but none are active; binding all of them (ids={string.Join(",", known.Select(t => t.Id))})");
-        return known.Select(t => t.Id).ToList();
+        var result = new List<uint>();
+        NpcSpawnerTemplate freeRunning = null;
+        foreach (var template in active)
+        {
+            var gated = (hasSchedule?.Invoke(template.Id) ?? false) ||
+                        Math.Abs(template.StartTime - template.EndTime) > 0.001f;
+            if (gated)
+            {
+                result.Add(template.Id);
+                continue;
+            }
+
+            if (freeRunning == null ||
+                (freeRunning.NpcSpawnerCategoryId != NpcSpawnerCategory.Autocreated &&
+                 template.NpcSpawnerCategoryId == NpcSpawnerCategory.Autocreated))
+                freeRunning = template;
+        }
+
+        if (freeRunning != null)
+            result.Add(freeRunning.Id);
+
+        return result;
     }
 
     /// <summary>
@@ -1128,6 +1163,11 @@ public class SpawnManager(WorldInstance parentWorld)
                 {
                     if (obj.Despawn >= DateTime.UtcNow)
                         continue;
+                    // GimmickSpawner.Despawn owns the ObjId release for the gimmicks it retires,
+                    // because the life-time and debug despawn paths call it directly and never reach
+                    // this loop. Releasing it again here would hand the same id out twice.
+                    // (aaemu-cluster#92)
+                    var objIdReleasedBySpawner = false;
                     if (obj is Npc { Spawner: not null } npc)
                         npc.Spawner.Despawn(npc);
                     else if (obj is Doodad { Spawner: not null } doodadWithSpawner)
@@ -1135,7 +1175,10 @@ public class SpawnManager(WorldInstance parentWorld)
                     else if (obj is Transfer { Spawner: not null } transfer)
                         transfer.Spawner.Despawn(transfer);
                     else if (obj is Gimmick { Spawner: not null } gimmick)
+                    {
+                        objIdReleasedBySpawner = gimmick.Respawn == DateTime.MinValue && gimmick.ObjId > 0;
                         gimmick.Spawner.Despawn(gimmick);
+                    }
                     else if (obj is Slave slave) // slaves don't have a spawner, but this is used for delayed despawn of un-summoned boats
                         slave.Delete();
                     else if (obj is Doodad doodadWithNoSpawner)
@@ -1143,7 +1186,8 @@ public class SpawnManager(WorldInstance parentWorld)
                     else
                         obj.Delete();
 
-                    ObjectIdManager.Instance.ReleaseId(obj.ObjId);
+                    if (!objIdReleasedBySpawner)
+                        ObjectIdManager.Instance.ReleaseId(obj.ObjId);
                     RemoveDespawn(obj);
                 }
             }
@@ -1339,6 +1383,15 @@ public class SpawnManager(WorldInstance parentWorld)
     public bool RemoveNpcEventSpawners(byte from)
     {
         return NpcEventSpawners.Remove(from, out _);
+    }
+
+    /// <summary>
+    /// Returns true only when the exact spawner instance came from this world's authored doodad registry.
+    /// </summary>
+    public bool IsAuthoredDoodadSpawner(DoodadSpawner spawner)
+    {
+        return spawner != null && spawner.Id != 0 && ReferenceEquals(spawner.ParentWorld, World) &&
+               DoodadSpawners.TryGetValue(spawner.Id, out var registered) && ReferenceEquals(registered, spawner);
     }
 
     /// <summary>

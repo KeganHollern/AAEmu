@@ -43,6 +43,7 @@ public class WorldScriptTemplateTests
             if (rule.OnDoodadPhase != null) conditions++;
             if (rule.OnAllDoodadsPhase != null) conditions++;
             if (rule.OnPlayerEnterArea != null) conditions++;
+            if (rule.OnNpcKilled != null) conditions++;
 
             await Assert.That(conditions).IsEqualTo(1);
             await Assert.That(rule.Actions).IsNotNull();
@@ -77,6 +78,176 @@ public class WorldScriptTemplateTests
     }
 
     [Test]
+    public async Task RetailKillChainsAreWired()
+    {
+        var rules = LoadRules();
+
+        // Vera's death stages boss Nerta ONLY — her OnSpawn skill 19484 auto-runs retail set 197
+        // (taunts), and hideout Allistair 12110 belongs to NERTA's death: his OnSpawn set 198 opens
+        // with "You killed Nerta? Amazing!", which would be nonsense while she still lives.
+        var vera = rules.Single(r => r.OnNpcKilled != null && r.OnNpcKilled.NpcTemplateIds.Contains(12150u));
+        var veraStaged = vera.Actions.SelectMany(a => a.ActivateNpcSpawners ?? []).ToList();
+        await Assert.That(veraStaged.Contains(13437u)).IsTrue();
+        await Assert.That(veraStaged.Contains(13389u)).IsFalse();
+        await Assert.That(vera.Actions.Any(a => a.Say != null)).IsFalse();
+
+        var nerta = rules.Single(r => r.OnNpcKilled != null && r.OnNpcKilled.NpcTemplateIds.Contains(11362u));
+        var nertaStaged = nerta.Actions.SelectMany(a => a.ActivateNpcSpawners ?? []).ToList();
+        await Assert.That(nertaStaged.Contains(13389u)).IsTrue();
+        await Assert.That(nerta.Actions.Any(a => a.Say != null)).IsFalse();
+
+        // Okape's death (either variant) spawns the exit portal 5919 and his log 6197 — retail
+        // did this from on-death skill 19755 "Okape's Destiny", whose effect rows never shipped.
+        var okape = rules.Single(r => r.OnNpcKilled != null && r.OnNpcKilled.NpcTemplateIds.Contains(12188u));
+        await Assert.That(okape.OnNpcKilled.NpcTemplateIds.Contains(11364u)).IsTrue();
+        var spawned = okape.Actions.SelectMany(a => a.SpawnDoodads ?? []).Select(s => s.TemplateId).ToList();
+        await Assert.That(spawned.Contains(5919u)).IsTrue();
+        await Assert.That(spawned.Contains(6197u)).IsTrue();
+    }
+
+    [Test]
+    public async Task KegWallsBlowOnlyWhenTheKegIsCarriedThere()
+    {
+        var rules = LoadRules();
+
+        // Live run: triggering the blast on keg PICKUP played the fuse line ("I thought the fuse
+        // would be longer") in the warehouse and opened a wall 60m away, sight unseen. Retail
+        // detonated at the wall; the shipped drop skill has no effect rows, so the server-visible
+        // equivalent is arriving at the blocked gap while CARRYING keg item 25002. Both walls share
+        // Rock template 5280, so each rule's phase change must also be Near-scoped to its own wall.
+        var wallRules = rules.Where(r => r.OnPlayerEnterArea is { RequiresItemId: 25002u }).ToList();
+        await Assert.That(wallRules.Count).IsEqualTo(2);
+        foreach (var rule in wallRules)
+        {
+            await Assert.That(rule.OnPlayerEnterArea.Radius).IsGreaterThan(0);
+            var change = rule.Actions.Single(a => a.ChangeDoodadPhase != null).ChangeDoodadPhase;
+            await Assert.That(change.DoodadTemplateId).IsEqualTo(5280u);
+            await Assert.That(change.FuncGroupId).IsEqualTo(13666u);
+            await Assert.That(change.Near).IsNotNull();
+            await Assert.That(change.Near.Radius).IsGreaterThan(0);
+            // The blast area and its wall must be the same place.
+            var area = rule.OnPlayerEnterArea;
+            var dx = area.X - change.Near.X; var dy = area.Y - change.Near.Y;
+            await Assert.That(MathF.Sqrt((dx * dx) + (dy * dy))).IsLessThan(3f);
+        }
+        // No rule may fire off the keg doodad's pickup phase anymore.
+        await Assert.That(rules.Any(r => r.OnDoodadPhase is { DoodadTemplateId: 5282u })).IsFalse();
+    }
+
+    [Test]
+    public async Task RetailBeatsUseClientLocalizedBubbles()
+    {
+        var rules = LoadRules();
+
+        // Every scripted line references a retail bubble_effects row so clients render their own
+        // locale. Only beats with NO auto-firing retail command set may use Say at all (warehouse
+        // segment: 12111 has no np_skills; researcher warning: set 205 auto-fires into an empty
+        // instance at world load, so the area-timed Say is the delivery).
+        var says = rules.SelectMany(r => r.Actions).Where(a => a.Say != null).Select(a => a.Say).ToList();
+        await Assert.That(says.Count).IsGreaterThanOrEqualTo(10);
+        foreach (var say in says)
+            await Assert.That(say.BubbleId).IsGreaterThan(0u);
+    }
+
+    [Test]
+    public async Task BridgeCollapsePlaysRetailSequenceThenSlimes()
+    {
+        var rules = LoadRules();
+        var bridge = rules.Single(r => r.OnDoodadPhase is { DoodadTemplateId: 5058u });
+
+        // Cinematic Nerta immediately (her OnSpawn auto-runs set 193: taunts + despawn) …
+        var immediate = bridge.Actions.Single(a => a.ActivateNpcSpawners?.Contains(13436u) == true);
+        await Assert.That(immediate.DelaySeconds).IsEqualTo(0f);
+        // … Allistair's trap lines from retail set 192 …
+        var trap = bridge.Actions.Single(a => a.RunCommandSet is { CommandSetId: 192u });
+        await Assert.That(trap.RunCommandSet.NpcTemplateId).IsEqualTo(12109u);
+        // … the slime pack only AFTER her ~12s sequence finishes …
+        var slimes = bridge.Actions.Single(a => a.ActivateNpcSpawners?.Contains(13392u) == true);
+        await Assert.That(slimes.DelaySeconds).IsGreaterThanOrEqualTo(12f);
+        // … and set 195 (2181 + his self-despawn) closes the beat after she is gone.
+        var farewell = bridge.Actions.Single(a => a.RunCommandSet is { CommandSetId: 195u });
+        await Assert.That(farewell.RunCommandSet.DelaySeconds).IsGreaterThanOrEqualTo(slimes.DelaySeconds);
+        // No hand-timed lines remain: sets 192/193/195 own every line of this beat.
+        await Assert.That(bridge.Actions.Any(a => a.Say != null)).IsFalse();
+    }
+
+    [Test]
+    public async Task PoolGreetingUsesRetailCommandSet()
+    {
+        var rules = LoadRules();
+        var pool = rules.Single(r => r.Actions.Any(a => a.RunCommandSet is { CommandSetId: 188u }));
+
+        await Assert.That(pool.OnPlayerEnterArea).IsNotNull();
+        await Assert.That(pool.Actions.Single(a => a.RunCommandSet != null).RunCommandSet.NpcTemplateId).IsEqualTo(12109u);
+        await Assert.That(pool.Actions.Any(a => a.Say != null)).IsFalse();
+    }
+
+    [Test]
+    public async Task EntranceUsesRetailCommandSetNotHandTimedBubbles()
+    {
+        var rules = LoadRules();
+
+        // Retail's mine-mouth sequence is ai_command_sets 185 (칼바람폐광_알리스테어0): three lines on
+        // 1s beats, FollowPath aipath_alistair0_0 down the shaft ahead of the party, then a
+        // self-despawn. Driving the set keeps retail's ordering, spacing and movement; the previous
+        // hand-timed Say chain had invented delays and no movement at all.
+        var entrance = rules.Single(r => r.Actions.Any(a => a.RunCommandSet is { CommandSetId: 185u }));
+        var run = entrance.Actions.Single(a => a.RunCommandSet != null).RunCommandSet;
+
+        await Assert.That(run.NpcTemplateId).IsEqualTo(12108u);
+        await Assert.That(entrance.OnPlayerEnterArea).IsNotNull();
+        // The sequence owns the whole beat, so no hand-timed bubbles may remain on this rule.
+        await Assert.That(entrance.Actions.Any(a => a.Say != null)).IsFalse();
+        // Live run: he spawned in the same second the rule fired, so the client had not rendered
+        // him when the first line played. The start must lag the spawn.
+        await Assert.That(run.DelaySeconds).IsGreaterThanOrEqualTo(3f);
+        // Live run: a stalled walk never reached the set's self-despawn and left a permanent ghost
+        // at the ledge, which also blocks the hand-off illusion. Keep a backstop despawn.
+        var backstop = entrance.Actions.Single(a => a.CastSkill != null).CastSkill;
+        await Assert.That(backstop.NpcTemplateId).IsEqualTo(12108u);
+        await Assert.That(backstop.SkillId).IsEqualTo(19430u);
+        await Assert.That(backstop.DelaySeconds).IsGreaterThan(run.DelaySeconds);
+    }
+
+    [Test]
+    public async Task PoolGreeterSpawnsAtZoneIn()
+    {
+        var contents = await File.ReadAllTextAsync(Path.Combine(WorldDir, "npc_spawns.json"));
+        JsonHelper.TryDeserializeObject(contents, out List<PinProbe> spawns, out _);
+
+        // Allistair 12109 stands at the pit pool from zone-in and greets the party after the drop.
+        // Both of his compact spawner rows are activation_state='t', so pinning him to the staging
+        // row left him dormant: the live run logged "npc 12109 not alive" and the whole pool beat,
+        // plus his presence by the water, silently never happened. He must stay unpinned so the
+        // selector binds his active 1:1 row, exactly like 12108 (which spawned correctly).
+        var greeter = spawns.Single(s => s.UnitId == 12109);
+        await Assert.That(greeter.NpcSpawnerIds).IsNull();
+        await Assert.That(greeter.StartInactive).IsFalse();
+    }
+
+    [Test]
+    public async Task MultiPlacementSpeakersAreDisambiguated()
+    {
+        var rules = LoadRules();
+        var spawnContents = await File.ReadAllTextAsync(Path.Combine(WorldDir, "npc_spawns.json"));
+        JsonHelper.TryDeserializeObject(spawnContents, out List<PinProbe> spawns, out _);
+
+        // SayNow resolves a template with no Near filter through GetNpcByTemplateId, whose
+        // ConcurrentDictionary order is arbitrary. Any speaker with several placements (the four
+        // Sharpwind researchers) must therefore carry a Near filter or the bubble can appear over
+        // an NPC far from the player who tripped the trigger.
+        foreach (var say in rules.SelectMany(r => r.Actions).Where(a => a.Say != null).Select(a => a.Say))
+        {
+            var placements = spawns.Count(s => s.UnitId == say.NpcTemplateId);
+            if (placements > 1)
+            {
+                await Assert.That(say.Near).IsNotNull();
+                await Assert.That(say.Near.Radius).IsGreaterThan(0);
+            }
+        }
+    }
+
+    [Test]
     public async Task StagedNpcPlacementsStayPinnedToEventSpawners()
     {
         var contents = await File.ReadAllTextAsync(Path.Combine(WorldDir, "npc_spawns.json"));
@@ -87,6 +258,9 @@ public class WorldScriptTemplateTests
         var slimes = spawns.Where(s => s.UnitId == 11361).ToList();
         await Assert.That(slimes.Count).IsEqualTo(16);
         await Assert.That(slimes.All(s => s.NpcSpawnerIds is [13392u])).IsTrue();
+        // Allistair's staged segment clones pinned to their retail inactive spawners.
+        await Assert.That(spawns.Single(s => s.UnitId == 12110).NpcSpawnerIds is [13389u]).IsTrue();
+        await Assert.That(spawns.Single(s => s.UnitId == 12111).NpcSpawnerIds is [13390u]).IsTrue();
         // Exactly one boss Nerta point, pinned to the inactive boss spawner.
         var boss = spawns.Where(s => s.UnitId == 11362).ToList();
         await Assert.That(boss.Count).IsEqualTo(1);
@@ -111,5 +285,6 @@ public class WorldScriptTemplateTests
     {
         public uint UnitId { get; set; }
         public List<uint> NpcSpawnerIds { get; set; }
+        public bool StartInactive { get; set; }
     }
 }

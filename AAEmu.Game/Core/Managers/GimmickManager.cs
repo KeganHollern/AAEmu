@@ -85,6 +85,8 @@ public class GimmickManager(WorldInstance parentWorld)
             gimmick.MovementHandler = new GimmickMovementFloatToSurface(gimmick);
         }
 
+        // Seed the last-known position so the first tick doesn't compute a bogus velocity from origin (aaemu-cluster#92)
+        gimmick.LastPos = gimmick.Transform.World.Position;
         gimmick.Time = (uint)(DateTime.UtcNow - DateTime.UtcNow.Date).TotalMilliseconds;
         lock (_activeGimmicks)
             _activeGimmicks.TryAdd(gimmick.ObjId, gimmick);

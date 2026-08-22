@@ -106,6 +106,8 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
             
             // Load persistent buffs from database
             character.Buffs.LoadActiveBuffs(character);
+            // Restore persisted skill cooldowns
+            character.Cooldowns.Load(character.Id);
             character.CheckWantedThreshold();
             
             character.UpdateGearBonuses(null, null);

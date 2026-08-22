@@ -41,6 +41,13 @@ public class NpcSpawner : Spawner<Npc>
     public uint Count { get; set; } = 1;
 
     public List<uint> NpcSpawnerIds { get; set; } = [];
+
+    /// <summary>
+    /// World-spawn JSON flag for pinned entries: bind the spawner deactivated even when its
+    /// authored activation_state is true, so a dungeon script controls when the NPC appears
+    /// (e.g. Allistair's pit variant pops up after the bridge collapse). (aaemu-cluster#92)
+    /// </summary>
+    public bool StartInactive { get; set; }
     public NpcSpawnerTemplate Template { get; set; }
     public List<NpcSpawnerNpc> SpawnableNpcs { get; set; } = []; // List of NPCs that can be spawned
     public ConcurrentDictionary<uint, List<Npc>> SpawnedNpcs { get; set; } = new(); // <SpawnerId, List of spawned NPCs>

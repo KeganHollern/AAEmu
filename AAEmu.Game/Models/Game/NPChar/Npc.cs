@@ -4,6 +4,7 @@ using System.Numerics;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.AI.Utils;
 using AAEmu.Game.Models.Game.AI.v2.Behaviors.Common;
 using AAEmu.Game.Models.Game.AI.v2.Framework;
 using AAEmu.Game.Models.Game.Char;
@@ -839,6 +840,10 @@ public partial class Npc : Unit
     {
         DeadTime = DateTime.UtcNow;
 
+        // Notify the world's script controller (dungeon kill-chains). Contained invoker;
+        // runs before loot/exp so script staging (e.g. exit portal) is prompt. aaemu-cluster#92.
+        ParentWorld?.RaiseNpcKilled(this);
+
         var eligiblePlayers = new HashSet<Character>();
         if (CharacterTagging.TagTeam != 0)
         {
@@ -1147,14 +1152,28 @@ public partial class Npc : Unit
     }
 
     /// <summary>
+    /// Movement velocity used when the caller does not know its own speed in m/s.
+    /// </summary>
+    private const short DefaultMovementVelocity = 4000;
+
+    /// <summary>
     /// Moves towards the target position
     /// </summary>
     /// <param name="other">Target position</param>
     /// <param name="distance">Maximum distance to move (before multipliers)</param>
     /// <param name="actorFlags">ActorFlags to use for the movement packet</param>
     /// <param name="rangeTolerance">Makes the function return true if target distance is less than or equil to this value</param>
+    /// <param name="authoredPathZ">
+    /// True when <paramref name="other"/> comes from an authored <c>.path</c> route, in which case the
+    /// recorded waypoint height wins over the geodata resolver (aaemu-cluster#92).
+    /// </param>
+    /// <param name="speedMetersPerSecond">
+    /// Gait speed this movement represents, used to encode the broadcast velocity. Zero keeps the legacy
+    /// fixed velocity used by ad-hoc movement (chasing, roaming, returning home).
+    /// </param>
     /// <returns>True if withing rangeTolerance of other</returns>
-    public bool MoveTowards(Vector3 other, float distance, byte actorFlags = 4, float rangeTolerance = 1f)
+    public bool MoveTowards(Vector3 other, float distance, byte actorFlags = 4, float rangeTolerance = 1f,
+        bool authoredPathZ = false, float speedMetersPerSecond = 0f)
     {
         if ((ActiveSkillController?.State ?? SkillController.SCState.Ended) == SkillController.SCState.Running)
             return false;
@@ -1207,11 +1226,20 @@ public partial class Npc : Unit
 
         // TODO: Implement proper use for Transform.World.AddDistanceToFront
         var (newX, newY, newZ) = World.Transform.PositionAndRotation.AddDistanceToFront(travelDist, targetDist, Transform.Local.Position, other);
-        var targetPositionZ = WorldManager.Instance.GetReferenceHeight(Ai, newX, newY, newZ, Transform.ZoneId);
+        // aaemu-cluster#92: on an authored route the recorded waypoint height is authoritative; only
+        // ad-hoc movement re-grounds every step through the geodata resolver.
+        var targetPositionZ = authoredPathZ
+            ? AiUtils.ResolveAuthoredPathHeight(this, newX, newY, newZ)
+            : WorldManager.Instance.GetReferenceHeight(Ai, newX, newY, newZ, Transform.ZoneId);
         Transform.Local.SetPosition(newX, newY, targetPositionZ);
 
         var angle = MathUtil.CalculateAngleFrom(Transform.Local.Position, other);
-        var (velX, velY) = MathUtil.AddDistanceToFront(4000, 0, 0, (float)angle.DegToRad());
+        // aaemu-cluster#92: tell the client how fast we actually are, so it plays the matching gait
+        // instead of extrapolating a hardcoded ~2 m/s and being snapped back every step.
+        var velocity = speedMetersPerSecond > 0f
+            ? PhysicsManager.EncodeMovementVelocity(speedMetersPerSecond)
+            : DefaultMovementVelocity;
+        var (velX, velY) = MathUtil.AddDistanceToFront(velocity, 0, 0, (float)angle.DegToRad());
         Transform.Local.SetRotationDegree(0f, 0f, (float)angle - 90);
         var (rx, ry, rz) = Transform.Local.ToRollPitchYawSBytesMovement();
 

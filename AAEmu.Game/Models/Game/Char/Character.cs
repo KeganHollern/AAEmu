@@ -1693,27 +1693,32 @@ public partial class Character : Unit, ICharacter
             }
         }
 
-        // Breath must match actual water volume (same as physics IsWater): comparing only Z to GetWaterSurface
-        // triggers false underwater state when XY projects onto a river polygon but Z is outside the water slab (e.g. bridge).
-        if (world == null || !world.IsWater(probePos))
+        // Underwater/breath must follow the CLIENT's physics water, not the render-tracking
+        // animated surface: while a doodad water animation runs (DoodadFuncWaterVolume) the
+        // client's swimmable volume is still the phase-START one — the risen volume is a separate
+        // prefab entity that only spawns with the next phase (Sharpwind: cuttingwind.water1 →
+        // water2 at +22 m) — so declaring a floor-walker underwater in water the client does not
+        // have yet bobbed her and drained breath for the whole rise (aaemu-cluster#92 round 2).
+        // TryGetGameplaySurface also keeps the slab bounds so a bridge over a river never counts
+        // as underwater; IsWater/GetWaterSurface stay animated for ships and fall damage.
+        bool inGameplayWater;
+        float gameplaySurface;
+        if (world == null)
         {
-            if (IsUnderWater)
-                IsUnderWater = false;
+            inGameplayWater = false;
+            gameplaySurface = 0f;
+        }
+        else if (world.Water != null)
+        {
+            inGameplayWater = world.Water.TryGetGameplaySurface(probePos, out gameplaySurface);
         }
         else
         {
-            var waterSurface = world.Water?.GetWaterSurface(probePos, out _) ?? world.Template.OceanLevel;
-
-            const float surfaceBand = 2f;
-            const float hysteresis = 0.35f;
-            var enterThreshold = waterSurface - surfaceBand;
-            var exitThreshold = waterSurface - surfaceBand + hysteresis;
-
-            if (!IsUnderWater && probePos.Z < enterThreshold)
-                IsUnderWater = true;
-            else if (IsUnderWater && probePos.Z > exitThreshold)
-                IsUnderWater = false;
+            gameplaySurface = world.Template.OceanLevel;
+            inGameplayWater = probePos.Z <= gameplaySurface;
         }
+
+        IsUnderWater = inGameplayWater && GetIsUnderWaterState(IsUnderWater, probePos.Z, gameplaySurface);
 
         // Connection.ActiveChar.SendMessage("Move New Pos: {0}", Transform.ToString());
 
@@ -1732,6 +1737,30 @@ public partial class Character : Unit, ICharacter
         if (Transform.ZoneId == lastZoneKey)
             return;
         OnZoneChange(lastZoneKey, Transform.ZoneId);
+    }
+
+    /// <summary>
+    /// Pure underwater-state decision for a probe position against the gameplay water surface
+    /// (WaterBodies.TryGetGameplaySurface — the surface the client's physics volume is using).
+    /// The state flips ~2 m below that surface with 0.35 m of hysteresis so a swimmer bobbing at
+    /// the surface does not flap SCUnderWaterPacket. The fed surface must never step by more than
+    /// the hysteresis while the character is still: a 1 Hz stepped surface re-flipped the state
+    /// each second and bounced players between swim and fall in the rising Sharpwind pit
+    /// (aaemu-cluster#92 round 1); feeding the animated surface at all declared floor-walkers
+    /// underwater in water the client did not have yet (round 2).
+    /// </summary>
+    internal static bool GetIsUnderWaterState(bool wasUnderWater, float probeZ, float waterSurfaceZ)
+    {
+        const float surfaceBand = 2f;
+        const float hysteresis = 0.35f;
+        var enterThreshold = waterSurfaceZ - surfaceBand;
+        var exitThreshold = waterSurfaceZ - surfaceBand + hysteresis;
+
+        if (!wasUnderWater && probeZ < enterThreshold)
+            return true;
+        if (wasUnderWater && probeZ > exitThreshold)
+            return false;
+        return wasUnderWater;
     }
 
     private CancellationTokenSource _unreleasedZoneTransportedOut;
@@ -2822,6 +2851,8 @@ public partial class Character : Unit, ICharacter
             Appellations?.Save(connection, transaction);
             // Save active buffs that should persist across logout (SaveRuleId > 0)
             Buffs?.SaveActiveBuffs(connection, transaction, Id);
+            // Save still-active skill cooldowns so relogging cannot reset them
+            Cooldowns.Save(connection, transaction, Id);
             Portals?.Save(connection, transaction);
             Friends?.Save(connection, transaction);
             Blocked?.Save(connection, transaction);

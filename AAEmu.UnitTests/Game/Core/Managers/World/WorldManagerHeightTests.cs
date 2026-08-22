@@ -113,6 +113,87 @@ public sealed class WorldManagerHeightTests
         await Assert.That(missingTemplate.Cells[0, 0].HeightMap).IsNull();
     }
 
+    // aaemu-cluster#92 regression, shaped by the live Sharpwind Mines dump: the player's /pos on the
+    // floor reads 165.8 while the nearest indoor BAI navigation node answers ~166.5 (+0.7m). Vera's roam
+    // targets stay within leash range of home, so a roaming step must keep the retail-capture home floor
+    // instead of the lifted nav shelf.
+    [Test]
+    public async Task GetReferenceHeight_IndoorNavigationNodeNearHome_ReturnsHomeFloor()
+    {
+        AppConfiguration.Instance.World.GeoDataMode = true;
+        var manager = CreateManagerWithFlatHeightTemplate();
+        AttachNavigationNode(manager, 166.5f, BaiNavigationType.WaypointHuman);
+        var ai = CreateNpcAi(165.8f);
+
+        var height = manager.GetReferenceHeight(ai, 0.5f, 0.5f, 165.8f, 100);
+
+        await Assert.That(height).IsEqualTo(165.8f);
+    }
+
+    [Test]
+    public async Task GetReferenceHeight_IndoorNavigationNodeChase_ReturnsTargetFloor()
+    {
+        AppConfiguration.Instance.World.GeoDataMode = true;
+        var manager = CreateManagerWithFlatHeightTemplate();
+        AttachNavigationNode(manager, 166.5f, BaiNavigationType.WaypointHuman);
+        // Home is another wing of the dungeon; only the chased player's client-authoritative floor
+        // is a valid anchor here.
+        var ai = CreateNpcAi(100f);
+        var target = new Npc();
+        target.Transform.Local.SetPosition(1f, 1f, 165.8f);
+        ai.Owner.CurrentTarget = target;
+
+        var height = manager.GetReferenceHeight(ai, 0.5f, 0.5f, 166.1f, 100);
+
+        await Assert.That(height).IsEqualTo(165.8f);
+    }
+
+    [Test]
+    public async Task GetReferenceHeight_IndoorNavigationNodeFlyingTarget_FallsBackToHomeFloor()
+    {
+        AppConfiguration.Instance.World.GeoDataMode = true;
+        var manager = CreateManagerWithFlatHeightTemplate();
+        AttachNavigationNode(manager, 166.5f, BaiNavigationType.WaypointHuman);
+        var ai = CreateNpcAi(165.8f);
+        var target = new Npc();
+        target.Transform.Local.SetPosition(1f, 1f, 172f);
+        ai.Owner.CurrentTarget = target;
+
+        var height = manager.GetReferenceHeight(ai, 0.5f, 0.5f, 165.8f, 100);
+
+        await Assert.That(height).IsEqualTo(165.8f);
+    }
+
+    [Test]
+    public async Task GetReferenceHeight_IndoorNavigationNodeDifferentLevel_KeepsNavigationHeight()
+    {
+        AppConfiguration.Instance.World.GeoDataMode = true;
+        var manager = CreateManagerWithFlatHeightTemplate();
+        AttachNavigationNode(manager, 166.5f, BaiNavigationType.WaypointHuman);
+        // Home sits a full level below (stairs/ledge); the nav node is the only surface the server has.
+        var ai = CreateNpcAi(158f);
+
+        var height = manager.GetReferenceHeight(ai, 0.5f, 0.5f, 166.5f, 100);
+
+        await Assert.That(height).IsEqualTo(166.5f);
+    }
+
+    private static void AttachNavigationNode(WorldManager manager, float nodeZ, BaiNavigationType navigationType)
+    {
+        var template = manager.GetWorldTemplateByZoneKey(100);
+        var bai = new BaseBaiLoader(template);
+        var netMission = new NetMissionReader(Stream.Null, 1);
+        netMission.NodeDescriptorList.TryAdd(1, new NodeDescriptor(netMission)
+        {
+            Id = 1,
+            Pos = new System.Numerics.Vector3(12f, 5f, nodeZ),
+            NavigationType = navigationType
+        });
+        bai.NetMissionReaders.Add(netMission);
+        template.ZoneBaiLoader.Add(1, bai);
+        template.GeoData = new AiGeoDataManager(template);
+    }
+
     private static WorldManager CreateManagerWithFlatHeightTemplate(bool hasTerrainData = true)
     {
         var manager = new WorldManager(

@@ -1,13 +1,14 @@
 ﻿using System.Numerics;
 
-using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.World;
+
+using Microsoft.Extensions.Time.Testing;
 
 namespace AAEmu.UnitTests.Game.Models.Game.World;
 
 /// <summary>
-/// Covers the instance-world water ingest threshold, the DoodadFuncWaterVolume raise API and its
-/// animation step math (aaemu-cluster#92 / #93 / #98).
+/// Covers the instance-world water ingest threshold, the DoodadFuncWaterVolume raise API and the
+/// continuous surface animation (aaemu-cluster#92 / #93 / #98).
 /// </summary>
 public class WaterBodiesInstanceWaterTests
 {
@@ -92,18 +93,143 @@ public class WaterBodiesInstanceWaterTests
     }
 
     [Test]
-    public async Task WaterVolumeAnimation_StepMath_CoversDurationAndSumsToLevelChange()
+    public async Task AnimateAreaSurface_InterpolatesContinuously_ByElapsedTime()
     {
-        await Assert.That(DoodadFuncWaterVolume.GetAnimationStepCount(30f)).IsEqualTo(30);
-        await Assert.That(DoodadFuncWaterVolume.GetAnimationStepCount(0.5f)).IsEqualTo(1);
-        await Assert.That(DoodadFuncWaterVolume.GetAnimationStepCount(0f)).IsEqualTo(1);
-        await Assert.That(DoodadFuncWaterVolume.GetAnimationStepCount(float.NaN)).IsEqualTo(1);
+        var time = new FakeTimeProvider();
+        var water = new WaterBodies { OceanLevel = 0f, AnimationTimeProvider = time };
+        var area = water.AddSquareArea("Pit", new Vector3(100f, 100f, 100f), 70f, 2f);
+        var probe = new Vector3(100f, 100f, 100f);
 
-        var steps = DoodadFuncWaterVolume.GetAnimationStepCount(10f);
-        var delta = DoodadFuncWaterVolume.GetAnimationStepDelta(3.5f, steps);
-        await Assert.That(delta * steps).IsEqualTo(3.5f).Within(0.0001f);
+        // The Sharpwind flood: +22 m over 22 s (DoodadFuncWaterVolume LevelChange/Duration).
+        await Assert.That(water.AnimateAreaSurface(area.Id, 22f, 22f)).IsTrue();
 
-        // Draining (negative LevelChange) keeps its sign
-        await Assert.That(DoodadFuncWaterVolume.GetAnimationStepDelta(-2f, 4)).IsEqualTo(-0.5f).Within(0.0001f);
+        // No time elapsed -> surface unchanged
+        await Assert.That(water.GetWaterSurface(probe, out _)).IsEqualTo(100f).Within(0.001f);
+
+        time.Advance(TimeSpan.FromSeconds(5.5)); // 25 %
+        await Assert.That(water.GetWaterSurface(probe, out _)).IsEqualTo(105.5f).Within(0.01f);
+
+        time.Advance(TimeSpan.FromSeconds(5.5)); // 50 %
+        await Assert.That(water.GetWaterSurface(probe, out _)).IsEqualTo(111f).Within(0.01f);
+
+        time.Advance(TimeSpan.FromSeconds(19)); // past the end -> clamped at 100 %
+        await Assert.That(water.GetWaterSurface(probe, out _)).IsEqualTo(122f).Within(0.01f);
+
+        time.Advance(TimeSpan.FromSeconds(30)); // the finished animation is dropped, the surface stays
+        await Assert.That(water.GetWaterSurface(probe, out _)).IsEqualTo(122f).Within(0.01f);
+    }
+
+    [Test]
+    public async Task AnimateAreaSurface_MidRise_KeepsOriginalBottomWet()
+    {
+        var time = new FakeTimeProvider();
+        var water = new WaterBodies { OceanLevel = 0f, AnimationTimeProvider = time };
+        var area = water.AddSquareArea("Pit", new Vector3(100f, 100f, 100f), 70f, 2f);
+        water.AnimateAreaSurface(area.Id, 22f, 22f);
+
+        time.Advance(TimeSpan.FromSeconds(11)); // 50 %
+        // The original band (surface 100, depth 2) stays wet halfway through the rise...
+        await Assert.That(water.IsWater(new Vector3(100f, 100f, 98.5f), out _)).IsTrue();
+        // ...the newly flooded column is wet as well...
+        await Assert.That(water.IsWater(new Vector3(100f, 100f, 110f), out _)).IsTrue();
+        // ...but not above the interpolated surface (111 at 50 %)
+        await Assert.That(water.IsWater(new Vector3(100f, 100f, 112f), out _)).IsFalse();
+    }
+
+    [Test]
+    public async Task AnimateAreaSurface_NonPositiveDuration_AppliesImmediately()
+    {
+        var water = new WaterBodies { OceanLevel = 0f, AnimationTimeProvider = new FakeTimeProvider() };
+        var area = water.AddSquareArea("Pit", new Vector3(100f, 100f, 100f), 70f, 2f);
+
+        await Assert.That(water.AnimateAreaSurface(area.Id, 3f, 0f)).IsTrue();
+        await Assert.That(water.GetWaterSurface(new Vector3(100f, 100f, 100f), out _)).IsEqualTo(103f).Within(0.001f);
+    }
+
+    [Test]
+    public async Task AnimateAreaSurface_UnknownArea_ReturnsFalse()
+    {
+        var water = new WaterBodies { OceanLevel = 0f };
+
+        await Assert.That(water.AnimateAreaSurface(42, 5f, 10f)).IsFalse();
+    }
+
+    /// <summary>
+    /// aaemu-cluster#92 round 2: while a surface animation runs, the client's physics volume is
+    /// still the phase-start one (the risen prefab only spawns with the next doodad phase), so the
+    /// gameplay probe must keep the start surface and reject the not-yet-risen column that the
+    /// animated readers (ships, fall damage) already treat as water.
+    /// </summary>
+    [Test]
+    public async Task TryGetGameplaySurface_MidRise_KeepsStartSurface_AndRejectsNotYetRisenColumn()
+    {
+        var time = new FakeTimeProvider();
+        var water = new WaterBodies { OceanLevel = 0f, AnimationTimeProvider = time };
+        var area = water.AddSquareArea("Pit", new Vector3(100f, 100f, 145f), 70f, 2f);
+        water.AnimateAreaSurface(area.Id, 22f, 22f);
+
+        time.Advance(TimeSpan.FromSeconds(11)); // 50 % -> animated surface 156
+
+        // Floor of the original pool: gameplay water, governed by the start surface.
+        await Assert.That(water.TryGetGameplaySurface(new Vector3(100f, 100f, 144f), out var atFloor)).IsTrue();
+        await Assert.That(atFloor).IsEqualTo(145f).Within(0.01f);
+
+        // The flooded-but-not-yet-risen column: animated water, NOT gameplay water.
+        var column = new Vector3(100f, 100f, 150f);
+        await Assert.That(water.IsWater(column, out _)).IsTrue();
+        await Assert.That(water.TryGetGameplaySurface(column, out var atColumn)).IsFalse();
+        await Assert.That(atColumn).IsEqualTo(145f).Within(0.01f);
+
+        time.Advance(TimeSpan.FromSeconds(11)); // animation complete
+
+        await Assert.That(water.TryGetGameplaySurface(column, out var final)).IsTrue();
+        await Assert.That(final).IsEqualTo(167f).Within(0.01f);
+    }
+
+    /// <summary>
+    /// Drain counterpart: mid-drain the gameplay surface stays at the pre-drain level (the client
+    /// still holds the high volume), even for points above the animated surface.
+    /// </summary>
+    [Test]
+    public async Task TryGetGameplaySurface_MidDrain_KeepsPreDrainSurface()
+    {
+        var time = new FakeTimeProvider();
+        var water = new WaterBodies { OceanLevel = 0f, AnimationTimeProvider = time };
+        var area = water.AddSquareArea("BossPool", new Vector3(100f, 100f, 167f), 70f, 24f);
+        water.AnimateAreaSurface(area.Id, -22f, 22f);
+
+        time.Advance(TimeSpan.FromSeconds(11)); // 50 % -> animated surface 156
+
+        var swimmer = new Vector3(100f, 100f, 160f); // above animated, below pre-drain surface
+        await Assert.That(water.IsWater(swimmer, out _)).IsFalse();
+        await Assert.That(water.TryGetGameplaySurface(swimmer, out var midDrain)).IsTrue();
+        await Assert.That(midDrain).IsEqualTo(167f).Within(0.01f);
+
+        time.Advance(TimeSpan.FromSeconds(11)); // drain complete -> surface 145, depth 2
+
+        await Assert.That(water.TryGetGameplaySurface(swimmer, out _)).IsFalse();
+        await Assert.That(water.TryGetGameplaySurface(new Vector3(100f, 100f, 144f), out var final)).IsTrue();
+        await Assert.That(final).IsEqualTo(145f).Within(0.01f);
+    }
+
+    /// <summary>Without an animation the gameplay probe is exactly the IsWater slab + GetWaterSurface pair.</summary>
+    [Test]
+    public async Task TryGetGameplaySurface_StaticAreaAndOcean_MatchAnimatedReaders()
+    {
+        var water = new WaterBodies { OceanLevel = 50f };
+        water.AddSquareArea("Pool", new Vector3(100f, 100f, 100f), 70f, 2f);
+
+        // Inside the slab.
+        await Assert.That(water.TryGetGameplaySurface(new Vector3(100f, 100f, 99f), out var inPool)).IsTrue();
+        await Assert.That(inPool).IsEqualTo(100f).Within(0.001f);
+
+        // Above the surface (bridge case) and below the bottom: not gameplay water.
+        await Assert.That(water.TryGetGameplaySurface(new Vector3(100f, 100f, 101f), out _)).IsFalse();
+        await Assert.That(water.TryGetGameplaySurface(new Vector3(100f, 100f, 97f), out _)).IsFalse();
+
+        // Open sea fallback outside any area.
+        await Assert.That(water.TryGetGameplaySurface(new Vector3(500f, 500f, 49f), out var sea)).IsTrue();
+        await Assert.That(sea).IsEqualTo(50f).Within(0.001f);
+        await Assert.That(water.TryGetGameplaySurface(new Vector3(500f, 500f, 51f), out _)).IsFalse();
     }
 }

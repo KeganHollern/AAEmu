@@ -28,9 +28,19 @@ public class GameObject : IGameObject
             if (value)
             {
                 if (this is Character character)
+                {
                     SusManager.Instance.ResetAnalyzePlayerDeltaMovement(character.Id);
+                    MovementValidation.Reset(character.ObjId);
+                }
+
                 if (this is Units.Mate pet)
+                {
                     SusManager.Instance.ResetAnalyzeMountDeltaMovement(pet.Id);
+                    MovementValidation.Reset(pet.ObjId);
+                }
+
+                if (this is Slave slave)
+                    MovementValidation.Reset(slave.ObjId);
             }
         }
     }
@@ -111,6 +121,18 @@ public class GameObject : IGameObject
         Hide();
         Transform?.DetachAll();
         ParentWorld.RemoveObject(this);
+        switch (this)
+        {
+            case Character character:
+                MovementValidation.Reset(character.ObjId);
+                break;
+            case Units.Mate mate:
+                MovementValidation.Reset(mate.ObjId);
+                break;
+            case Slave slave:
+                MovementValidation.Reset(slave.ObjId);
+                break;
+        }
     }
 
     public virtual void Show()

@@ -36,6 +36,17 @@ public class BaseUnit : GameObject, IBaseUnit
 
     public bool ConditionChance { get; set; }
 
+    /// <summary>
+    /// TlId of the cast whose chat bubbles are currently being staggered, plus the offset already
+    /// handed out inside it. A single cast can carry many BubbleEffects (skill 20308 carries 24) and
+    /// they must appear one after another; separate casts must NOT delay each other, because their
+    /// pacing is owned by the caller (ai_commands Timeout). Compared by value: Skill.cs builds a
+    /// fresh CastSkill per effect. (aaemu-cluster#92)
+    /// </summary>
+    public ushort BubbleCastTlId { get; set; }
+
+    public TimeSpan BubbleCastOffset { get; set; }
+
     public BaseUnit()
     {
         Buffs = new Buffs(this);

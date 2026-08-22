@@ -42,6 +42,8 @@
         "clearcombat": 100,
         "damage": 100,
         "despawnall": 100,
+        "doodad edit": 100,
+        "doodad place": 100,
         "dummy": 100,
         "echo": 100,
         "housebindingmove": 100,
