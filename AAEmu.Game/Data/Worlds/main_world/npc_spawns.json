@@ -199940,10 +199940,15 @@
     },
     {
         "UnitId": 12411,
+        "Title": "Red Dragon",
+        "NpcSpawnerIds": [
+            120194
+        ],
+        "FollowPath": "AIPath_145_ruhasin_131",
         "Position": {
-            "X": 8875.681,
-            "Y": 17696.57,
-            "Z": 110.04855
+            "X": 8875.0,
+            "Y": 17696.0,
+            "Z": 200.0
         }
     },
     {

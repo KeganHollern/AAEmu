@@ -1164,39 +1164,62 @@ public class Skill
             }
         }
 
+        var isSpawnerInteractionTransaction = effectsToApply.Any(e => e.effect.Template is NpcSpawnerSpawnEffect) &&
+                                             effectsToApply.Any(e => e.effect.Template is InteractionEffect);
+        if (isSpawnerInteractionTransaction)
+        {
+            // Event doodads such as the Red Dragon egg must only advance after their one-shot NPC
+            // spawn succeeds. OrderBy is stable, so unrelated effects retain their authored order.
+            effectsToApply = effectsToApply
+                .OrderBy(e => GetEffectApplicationPriority(e.effect.Template))
+                .ToList();
+        }
+
+        var consumptionEffect = SelectConsumptionEffect(
+            effectsToApply.Select(e => e.effect),
+            lastAppliedEffect,
+            isSpawnerInteractionTransaction);
+
         // Handle consumption of items from effects
         // Placed outside the loop to prevent multiple uses
-        if (lastAppliedEffect != null)
+        if (consumptionEffect != null)
         {
             // Consume the item
             if (casterCaster is SkillItem castItem && player != null)
             {
                 var useItem = ItemManager.Instance.GetItemByItemId(castItem.ItemId);
-                if (lastAppliedEffect.ConsumeSourceItem)
-                    consumedItems.Add((useItem, lastAppliedEffect.ConsumeItemCount));
+                if (consumptionEffect.ConsumeSourceItem)
+                    consumedItems.Add((useItem, consumptionEffect.ConsumeItemCount));
                 else
                 {
                     var castItemTemplate = ItemManager.Instance.GetTemplate(castItem.ItemTemplateId);
                     if (castItemTemplate.UseSkillAsReagent)
-                        consumedItems.Add((useItem, lastAppliedEffect.ConsumeItemCount));
+                        consumedItems.Add((useItem, consumptionEffect.ConsumeItemCount));
                 }
             }
 
-            if (player != null && lastAppliedEffect.ConsumeItemId != 0 && lastAppliedEffect.ConsumeItemCount > 0)
+            if (player != null && consumptionEffect.ConsumeItemId != 0 && consumptionEffect.ConsumeItemCount > 0)
             {
-                if (lastAppliedEffect.ConsumeSourceItem)
+                if (consumptionEffect.ConsumeSourceItem)
                 {
-                    consumedItemTemplates.Add((lastAppliedEffect.ConsumeItemId, lastAppliedEffect.ConsumeItemCount));
+                    consumedItemTemplates.Add((consumptionEffect.ConsumeItemId, consumptionEffect.ConsumeItemCount));
                 }
                 else
                 {
-                    var inventory = player.Inventory.CheckItems(SlotType.Inventory, lastAppliedEffect.ConsumeItemId,
-                        lastAppliedEffect.ConsumeItemCount);
-                    var equipment = player.Inventory.CheckItems(SlotType.Equipment, lastAppliedEffect.ConsumeItemId,
-                        lastAppliedEffect.ConsumeItemCount);
+                    var inventory = player.Inventory.CheckItems(SlotType.Inventory, consumptionEffect.ConsumeItemId,
+                        consumptionEffect.ConsumeItemCount);
+                    var equipment = player.Inventory.CheckItems(SlotType.Equipment, consumptionEffect.ConsumeItemId,
+                        consumptionEffect.ConsumeItemCount);
                     if (inventory || equipment)
                     {
-                        consumedItemTemplates.Add((lastAppliedEffect.ConsumeItemId, lastAppliedEffect.ConsumeItemCount));
+                        consumedItemTemplates.Add((consumptionEffect.ConsumeItemId, consumptionEffect.ConsumeItemCount));
+                    }
+                    else
+                    {
+                        player.SkillCancelled = true;
+                        player.SendErrorMessage(ErrorMessageType.NotEnoughRequiredItem, consumptionEffect.ConsumeItemId);
+                        Cancelled = true;
+                        return;
                     }
                 }
             }
@@ -1262,6 +1285,9 @@ public class Skill
         // Apply the effects that need to happen
         foreach (var (target, effect) in effectsToApply)
         {
+            if (Cancelled)
+                break;
+
             // If this item uses Weight, handle the random selector
             // For example NPC /useskill 13834 has multiple bubble chat effects that need to be picked from
             // Probably used for some combat and loot skills as well
@@ -1392,6 +1418,30 @@ public class Skill
                         amount, null);
             }
         }
+    }
+
+    internal static int GetEffectApplicationPriority(EffectTemplate template)
+    {
+        return template switch
+        {
+            NpcSpawnerSpawnEffect => 0,
+            InteractionEffect => 2,
+            _ => 1
+        };
+    }
+
+    internal static SkillEffect SelectConsumptionEffect(
+        IEnumerable<SkillEffect> effects,
+        SkillEffect fallback,
+        bool isSpawnerInteractionTransaction)
+    {
+        if (!isSpawnerInteractionTransaction)
+            return fallback;
+
+        return effects.FirstOrDefault(effect =>
+                   effect.Template is InteractionEffect &&
+                   (effect.ConsumeSourceItem || effect.ConsumeItemId != 0 && effect.ConsumeItemCount > 0))
+               ?? fallback;
     }
 
     /// <summary>

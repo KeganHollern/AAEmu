@@ -51,4 +51,24 @@ public class NpcSpawnerTests
         await Assert.That(clone.IsActive).IsFalse();
         await Assert.That(source.IsActive).IsTrue();
     }
+
+    [Test]
+    public async Task TryForceSpawnOnce_ExistingNpcRejectsDuplicateActivation()
+    {
+        const uint spawnerId = 120194;
+        var existingNpc = new Npc();
+        var spawner = new NpcSpawner
+        {
+            SpawnerId = spawnerId,
+            Template = new NpcSpawnerTemplate()
+        };
+        spawner.SpawnedNpcs.TryAdd(spawnerId, [existingNpc]);
+
+        var spawned = spawner.TryForceSpawnOnce(0, out var result);
+
+        await Assert.That(spawned).IsFalse();
+        await Assert.That(result).IsNull();
+        await Assert.That(spawner.SpawnedNpcs[spawnerId]).Count().IsEqualTo(1);
+        await Assert.That(spawner.SpawnedNpcs[spawnerId][0]).IsSameReferenceAs(existingNpc);
+    }
 }

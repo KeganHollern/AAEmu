@@ -24,7 +24,14 @@ public abstract class BaseCombatBehavior : Behavior
     protected uint _phaseType;
     protected DateTime _combatStartTime;
     protected Queue<AiSkill> _skillQueue;
-    private bool _startingSkillAlreadyUsed;
+    private string _lastAppliedPipeName;
+    private uint _lastAppliedPhaseType = uint.MaxValue;
+
+    protected const string DragonGroundPipeName = "phase_dragon_ground";
+    protected const string DragonHoverPipeName = "phase_dragon_fly_hovering";
+    protected const string DragonPathPipeName = "phase_dragon_fly_path";
+    protected const uint DragonFlightBuffId = 6582;
+    protected const uint DragonGroundBuffId = 6586;
 
     public void MoveInRange(BaseUnit target, TimeSpan delta)
     {
@@ -358,85 +365,103 @@ public abstract class BaseCombatBehavior : Behavior
 
     protected void CheckPipeName()
     {
-        if (_pipeName == "phase_dragon_ground" || _phaseType == 1) // "PHASE_DRAGON_GROUND = 1;"
+        if (string.Equals(_lastAppliedPipeName, _pipeName, StringComparison.Ordinal) &&
+            _lastAppliedPhaseType == _phaseType)
+        {
+            return;
+        }
+
+        _lastAppliedPipeName = _pipeName;
+        _lastAppliedPhaseType = _phaseType;
+
+        if (_pipeName == DragonGroundPipeName || _phaseType == 1) // "PHASE_DRAGON_GROUND = 1;"
         {
             // A ground phase intentionally lands flight-capable NPCs; preserve Z if no surface resolves.
             var position = Ai.Owner.Transform.World.Position;
             if (Ai.Owner.ParentWorld.Template.GeoData.TryGetGroundHeight(position, out var groundZ))
                 Ai.Owner.Transform.Local.SetHeight(groundZ);
         }
-        else if (_pipeName == "phase_dragon_fly_hovering" || _phaseType == 2) // "PHASE_DRAGON_HOVERING = 2;"
+        else if (_pipeName == DragonHoverPipeName || _phaseType == 2) // "PHASE_DRAGON_HOVERING = 2;"
         {
             Ai.Owner.Transform.Local.SetHeight(Ai.Owner.Transform.Local.Position.Z + 15f);
             Ai.Owner.StopMovement();
         }
-        else if (_pipeName == "phase_dragon_fly_path")
-        {
-            Ai.GoToFollowPath();
-        }
     }
 
-    protected bool RefreshSkillQueue(List<AiSkillList> skillLists, AiParams aiParams)
+    protected void ResetPipeNameState()
     {
-        var targetDist = Ai.Owner.GetDistanceTo(Ai.Owner.CurrentTarget);
+        _lastAppliedPipeName = null;
+        _lastAppliedPhaseType = uint.MaxValue;
+    }
+
+    protected AiSkillList SelectAvailableAiSkillList(List<AiSkillList> skillLists, AiSkillList preferred = null)
+    {
         var aiSkillLists = RequestAvailableAiSkillList(skillLists);
-        if (aiSkillLists.Count > 0)
+        if (preferred != null && aiSkillLists.Contains(preferred))
+            return preferred;
+
+        return aiSkillLists.RandomElementByWeight(s => s.Dice);
+    }
+
+    protected bool QueueAiSkillList(AiSkillList selectedSkillList, AiParams aiParams, bool includeStartSkills)
+    {
+        if (selectedSkillList == null)
+            return false;
+
+        var initialQueueCount = _skillQueue.Count;
+        var targetDist = Ai.Owner.GetDistanceTo(Ai.Owner.CurrentTarget);
+
+        if (aiParams != null)
         {
-            // select a set of skills by dice
-            var selectedSkillList = aiSkillLists.RandomElementByWeight(s => s.Dice);
-            if (selectedSkillList != null)
-            {
-                _pipeName = selectedSkillList.PipeName;
-                _phaseType = selectedSkillList.PhaseType;
-                aiParams.RestorationOnReturn = selectedSkillList.Restoration;
-                aiParams.GoReturnState = selectedSkillList.GoReturn;
-
-                Logger.Info($"RefreshSkillQueue: Dice Check: Ai.Owner={Ai.Owner.ObjId}:{Ai.Owner.TemplateId}, healthRange=[{selectedSkillList.HealthRangeMin}.{selectedSkillList.HealthRangeMax}], timeElapsed={(DateTime.UtcNow - _combatStartTime).TotalSeconds}, timeRange=[{selectedSkillList.TimeRangeStart}.{selectedSkillList.TimeRangeEnd}], skills Count={selectedSkillList.SkillLists.Count}, Dice={selectedSkillList.Dice}");
-
-                // add startAiSkill first to the queue if it is available
-                if (selectedSkillList.StartAiSkills.Count > 0 && !_startingSkillAlreadyUsed)
-                {
-                    foreach (var skill in selectedSkillList.StartAiSkills)
-                    {
-                        if (Ai.Owner.Cooldowns.CheckCooldown(skill.SkillId))
-                        {
-                            continue;
-                        }
-                        Logger.Info($"RefreshSkillQueue: Ai.Owner={Ai.Owner.ObjId}:{Ai.Owner.TemplateId}, StartAiSkill={skill.SkillId}");
-                        _skillQueue.Enqueue(skill);
-                        _startingSkillAlreadyUsed = true;
-                    }
-                }
-
-                var availableSkillList = RequestAvailableSkillList(selectedSkillList.SkillLists);
-
-                // then add from skillLists
-                var skillList = availableSkillList.RandomElementByWeight(s => s.Dice);
-                if (skillList == null)
-                    return _skillQueue.Count > 0;
-                Logger.Info($"RefreshSkillQueue: Dice Check: Ai.Owner={Ai.Owner.ObjId}:{Ai.Owner.TemplateId}, healthRange=[{skillList.HealthRangeMin}.{skillList.HealthRangeMax}], timeElapsed={(DateTime.UtcNow - _combatStartTime).TotalSeconds}, timeRange=[{skillList.TimeRangeStart}.{skillList.TimeRangeEnd}], skills Count={skillList.Skills.Count}, Dice={skillList.Dice}");
-
-                foreach (var skill in skillList.Skills)
-                {
-                    if (Ai.Owner.Cooldowns.CheckCooldown(skill.SkillId))
-                    {
-                        continue;
-                    }
-                    var template = SkillManager.Instance.GetSkillTemplate(skill.SkillId);
-                    if (template == null) { continue; }
-                    if (targetDist >= template.MinRange && targetDist <= template.MaxRange || template.TargetType == SkillTargetType.Self)
-                    {
-                        Logger.Info($"RefreshSkillQueue: Ai.Owner={Ai.Owner.ObjId}:{Ai.Owner.TemplateId}, trgDist={targetDist}, rangeDist=[{template.MinRange}.{template.MaxRange}], skill={skill.SkillId}");
-                        _skillQueue.Enqueue(skill);
-                    }
-                    Logger.Info($"RefreshSkillQueue: Ai.Owner={Ai.Owner.ObjId}:{Ai.Owner.TemplateId}, skill={skill.SkillId}");
-                }
-            }
-
-            return _skillQueue.Count > 0;
+            aiParams.RestorationOnReturn = selectedSkillList.Restoration;
+            aiParams.GoReturnState = selectedSkillList.GoReturn;
         }
 
-        if (Ai.Owner.Template.BaseSkillId == 0) { return false; }
+        Logger.Info($"QueueAiSkillList: Ai.Owner={Ai.Owner.ObjId}:{Ai.Owner.TemplateId}, healthRange=[{selectedSkillList.HealthRangeMin}.{selectedSkillList.HealthRangeMax}], timeElapsed={(DateTime.UtcNow - _combatStartTime).TotalSeconds}, timeRange=[{selectedSkillList.TimeRangeStart}.{selectedSkillList.TimeRangeEnd}], skills Count={selectedSkillList.SkillLists.Count}, Dice={selectedSkillList.Dice}");
+
+        if (includeStartSkills)
+        {
+            foreach (var skill in selectedSkillList.StartAiSkills ?? [])
+            {
+                if (Ai.Owner.Cooldowns.CheckCooldown(skill.SkillId))
+                    continue;
+
+                Logger.Info($"QueueAiSkillList: Ai.Owner={Ai.Owner.ObjId}:{Ai.Owner.TemplateId}, StartAiSkill={skill.SkillId}");
+                _skillQueue.Enqueue(skill);
+            }
+        }
+
+        var availableSkillLists = RequestAvailableSkillList(selectedSkillList.SkillLists ?? []);
+        var skillList = availableSkillLists.RandomElementByWeight(s => s.Dice);
+        if (skillList == null)
+            return _skillQueue.Count > initialQueueCount;
+
+        Logger.Info($"QueueAiSkillList: Ai.Owner={Ai.Owner.ObjId}:{Ai.Owner.TemplateId}, healthRange=[{skillList.HealthRangeMin}.{skillList.HealthRangeMax}], timeElapsed={(DateTime.UtcNow - _combatStartTime).TotalSeconds}, timeRange=[{skillList.TimeRangeStart}.{skillList.TimeRangeEnd}], skills Count={skillList.Skills.Count}, Dice={skillList.Dice}");
+
+        foreach (var skill in skillList.Skills)
+        {
+            if (Ai.Owner.Cooldowns.CheckCooldown(skill.SkillId))
+                continue;
+
+            var template = SkillManager.Instance.GetSkillTemplate(skill.SkillId);
+            if (template == null)
+                continue;
+
+            if (targetDist >= template.MinRange && targetDist <= template.MaxRange ||
+                template.TargetType == SkillTargetType.Self)
+            {
+                Logger.Info($"QueueAiSkillList: Ai.Owner={Ai.Owner.ObjId}:{Ai.Owner.TemplateId}, trgDist={targetDist}, rangeDist=[{template.MinRange}.{template.MaxRange}], skill={skill.SkillId}");
+                _skillQueue.Enqueue(skill);
+            }
+        }
+
+        return _skillQueue.Count > initialQueueCount;
+    }
+
+    protected bool QueueBaseSkill()
+    {
+        if (Ai.Owner.Template.BaseSkillId == 0)
+            return false;
 
         var item = new AiSkill
         {
@@ -448,7 +473,7 @@ public abstract class BaseCombatBehavior : Behavior
         return true;
     }
 
-    private List<AiSkillList> RequestAvailableAiSkillList(List<AiSkillList> aiSkillLists)
+    protected List<AiSkillList> RequestAvailableAiSkillList(List<AiSkillList> aiSkillLists)
     {
         var healthRatio = (int)((float)Ai.Owner.Hp / Ai.Owner.MaxHp * 100);
 
@@ -491,7 +516,7 @@ public abstract class BaseCombatBehavior : Behavior
         return availableSkillLists;
     }
 
-    private List<SkillList> RequestAvailableSkillList(List<SkillList> skillLists)
+    protected List<SkillList> RequestAvailableSkillList(List<SkillList> skillLists)
     {
         var healthRatio = (int)((float)Ai.Owner.Hp / Ai.Owner.MaxHp * 100);
 

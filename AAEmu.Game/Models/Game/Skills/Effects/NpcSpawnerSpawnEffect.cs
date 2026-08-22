@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -28,73 +29,91 @@ public class NpcSpawnerSpawnEffect : EffectTemplate
         // effects referencing pinned spawner template ids could not find them before.
         var spawners = caster.ParentWorld.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(SpawnerId);
         if (spawners is not { Count: not 0 })
-            Logger.Info($"NpcSpawnerSpawnEffect: SpawnerId={SpawnerId} not found in spawners.");
-        else
         {
-            foreach (var spawner in spawners)
+            CancelActivation(caster, source, $"SpawnerId={SpawnerId} was not found");
+            return;
+        }
+
+        var spawnedNpcCount = 0;
+        foreach (var spawner in spawners)
+        {
+            // aaemu-cluster#92 (#99): the effect's activation_state drives the runtime gate,
+            // but only for event-managed spawners (authored activation_state=f). Permanently
+            // toggling a normal always-active world spawner from a one-shot skill effect would
+            // leave it dark (or force it hot) until restart. (review)
+            if (spawner.Template?.ActivationState == false)
             {
-                // aaemu-cluster#92 (#99): the effect's activation_state drives the runtime gate,
-                // but only for event-managed spawners (authored activation_state=f). Permanently
-                // toggling a normal always-active world spawner from a one-shot skill effect would
-                // leave it dark (or force it hot) until restart. (review)
-                if (spawner.Template?.ActivationState == false)
+                if (ActivationState)
+                    spawner.Activate();
+                else
+                    spawner.Deactivate();
+            }
+
+            // spawn in the same world as for caster
+            spawner.Position.WorldId = caster.Transform.WorldId;
+            if (!spawner.TryForceSpawnOnce(0, out var npc))
+                continue;
+
+            spawnedNpcCount++;
+            npc.Spawner.RespawnTime = 0; // запретим респавн
+            Logger.Info($"NpcSpawnerSpawnEffect: Do Spawn effect id={Id}, Npc unitId={spawner.UnitId} spawnerId={SpawnerId} worldId={caster.Transform.WorldId}");
+
+            if (UseSummonerAggroTarget)
+            {
+                if (LifeTime == 0)
                 {
-                    if (ActivationState)
-                        spawner.Activate();
-                    else
-                        spawner.Deactivate();
-                }
+                    // Npc attacks Npc for Q3886 & Q3887
+                    var units = WorldManager.GetAround<Npc>(npc, npc.Ai.Owner.Template.SightRangeScale * 30f);
+                    if (units is not { Count: not 0 })
+                        continue;
 
-                // spawn in the same world as for caster
-                spawner.Position.WorldId = caster.Transform.WorldId;
-                var npc = spawner.ForceSpawn(0);
-                if (npc == null)
-                    continue;
-
-                npc.Spawner.RespawnTime = 0; // запретим респавн
-                Logger.Info($"NpcSpawnerSpawnEffect: Do Spawn effect id={Id}, Npc unitId={spawner.UnitId} spawnerId={SpawnerId} worldId={caster.Transform.WorldId}");
-
-                if (UseSummonerAggroTarget)
-                {
-                    if (LifeTime == 0)
+                    foreach (var n in units.Where(n => npc.Ai.Owner.CanAttack(n)))
                     {
-                        // Npc attacks Npc for Q3886 & Q3887
-                        var units = WorldManager.GetAround<Npc>(npc, npc.Ai.Owner.Template.SightRangeScale * 30f);
-                        if (units is not { Count: not 0 })
-                            continue;
-
-                        foreach (var n in units.Where(n => npc.Ai.Owner.CanAttack(n)))
-                        {
-                            Logger.Info($"NpcSpawnerSpawnEffect: npc={n.TemplateId}:{npc.ObjId} attack the npc={npc.TemplateId}:{npc.ObjId}");
-                            npc.Ai.Owner.AddUnitAggro(AggroKind.Damage, n, 1);
-                            npc.Ai.OnAggroTargetChanged();
-
-                            n.Ai.Owner.AddUnitAggro(AggroKind.Damage, npc, 1);
-                        }
-                        //npc.Ai.GoToCombat();
-                    }
-                    else
-                    {
-                        // Npc attacks the character
-                        if (target is Npc targetNpc)
-                        {
-                            npc.Ai.Owner.AddUnitAggro(AggroKind.Damage, targetNpc, 1);
-                        }
-                        else
-                        {
-                            npc.Ai.Owner.AddUnitAggro(AggroKind.Damage, (Unit)caster, 1);
-                        }
-
+                        Logger.Info($"NpcSpawnerSpawnEffect: npc={n.TemplateId}:{npc.ObjId} attack the npc={npc.TemplateId}:{npc.ObjId}");
+                        npc.Ai.Owner.AddUnitAggro(AggroKind.Damage, n, 1);
                         npc.Ai.OnAggroTargetChanged();
-                        //npc.Ai.GoToCombat();
-                    }
-                }
 
-                if (LifeTime > 0)
+                        n.Ai.Owner.AddUnitAggro(AggroKind.Damage, npc, 1);
+                    }
+                    //npc.Ai.GoToCombat();
+                }
+                else
                 {
-                    TaskManager.Instance.Schedule(new NpcSpawnerDoDespawnTask(npc), TimeSpan.FromSeconds(LifeTime));
+                    // Npc attacks the character
+                    if (target is Npc targetNpc)
+                    {
+                        npc.Ai.Owner.AddUnitAggro(AggroKind.Damage, targetNpc, 1);
+                    }
+                    else
+                    {
+                        npc.Ai.Owner.AddUnitAggro(AggroKind.Damage, (Unit)caster, 1);
+                    }
+
+                    npc.Ai.OnAggroTargetChanged();
+                    //npc.Ai.GoToCombat();
                 }
             }
+
+            if (LifeTime > 0)
+            {
+                TaskManager.Instance.Schedule(new NpcSpawnerDoDespawnTask(npc), TimeSpan.FromSeconds(LifeTime));
+            }
+        }
+
+        if (spawnedNpcCount == 0)
+            CancelActivation(caster, source, $"SpawnerId={SpawnerId} already has an active NPC or could not spawn");
+    }
+
+    private static void CancelActivation(BaseUnit caster, EffectSource source, string reason)
+    {
+        Logger.Warn($"NpcSpawnerSpawnEffect: activation cancelled because {reason}.");
+        if (source?.Skill != null)
+            source.Skill.Cancelled = true;
+
+        if (caster is Character character)
+        {
+            character.SkillCancelled = true;
+            character.SendErrorMessage(ErrorMessageType.NotReady);
         }
     }
 }

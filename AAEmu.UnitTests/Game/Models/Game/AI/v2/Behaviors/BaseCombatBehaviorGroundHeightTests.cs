@@ -57,6 +57,20 @@ public class BaseCombatBehaviorGroundHeightTests
         await Assert.That(npc.Transform.Local.Position.Z).IsEqualTo(0f);
     }
 
+    [Test]
+    public async Task CheckPipeName_HoverPhase_AppliesHeightOffsetOnlyOnce()
+    {
+        const float initialHeight = 100f;
+        var template = CreateWorldTemplate(null);
+        var npc = AttachToWorld(new Npc { CanFly = true }, template, new Vector3(0.5f, 0.5f, initialHeight));
+        var behavior = CreateBehavior(npc);
+
+        behavior.CheckPipeName("phase_dragon_fly_hovering", 2);
+        behavior.CheckPipeName("phase_dragon_fly_hovering", 2);
+
+        await Assert.That(npc.Transform.Local.Position.Z).IsEqualTo(initialHeight + 15f);
+    }
+
     private static TestBaseCombatBehavior CreateBehavior(Npc npc)
     {
         var ai = new DummyAiCharacter { Owner = npc };

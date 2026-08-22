@@ -753,6 +753,46 @@ public class NpcSpawner : Spawner<Npc>
     }
 
     /// <summary>
+    /// Atomically performs a one-shot event spawn. Unlike <see cref="ForceSpawn"/>, this method
+    /// refuses to return an NPC that was already alive, allowing interaction effects to distinguish
+    /// a successful activation from a duplicate attempt.
+    /// </summary>
+    public bool TryForceSpawnOnce(uint objId, out Npc npc)
+    {
+        lock (_spawnLock)
+        {
+            npc = null;
+
+            if (Template == null)
+            {
+                Logger.Error($"[Spawn] Can't one-shot spawn npc {UnitId} from spawnerId {Id} - Template is null");
+                return false;
+            }
+
+            if (CurrentSpawnCount > 0)
+                return false;
+
+            if (SpawnableNpcs is not { Count: > 0 })
+                InitializeSpawnableNpcs(Template);
+
+            if (SpawnableNpcs is not { Count: > 0 })
+                return false;
+
+            DoSpawn();
+
+            if (!SpawnedNpcs.TryGetValue(SpawnerId, out var spawned) || spawned.Count == 0)
+                return false;
+
+            npc = spawned[0];
+
+            if (IsSpawnScheduled)
+                IsDespawningScheduleEnabled(SpawnerId);
+
+            return npc != null;
+        }
+    }
+
+    /// <summary>
     /// Despawns the specified NPC.
     /// </summary>
     public override void Despawn(Npc npc)
