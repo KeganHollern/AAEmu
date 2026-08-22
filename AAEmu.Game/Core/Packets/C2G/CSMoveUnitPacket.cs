@@ -3,11 +3,15 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Skills.Buffs;
+using AAEmu.Game.Models.Game.Teleport;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Utils;
+
+using System.Numerics;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -74,13 +78,14 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
         {
             case ShipRequestMoveType srmt:
                 {
-                    // TODO: Validate if we are in the driver seat
                     // We are controlling a ship
                     // Logger.Debug("ShipRequestMoveType - Throttle: {0} - Steering {1}", srmt.Throttle, srmt.Steering);
                     if (targetUnit is not Slave ship)
                         return;
 
-                    // TODO: Validate if targetUnit is actually a ship
+                    // Only the character attached to the driver seat may steer.
+                    if (!IsSlaveDriver(ship, character))
+                        return;
 
                     ship.ThrottleRequest = srmt.Throttle;
                     ship.SteeringRequest = srmt.Steering;
@@ -92,7 +97,6 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                 }
             case VehicleMoveType vmt:
                 {
-                    // TODO: Validate if we are in the driver seat
                     // Steering: Value between -1.0 and +1.0
                     // WheelAngVel: Velocity on individual wheels? (note: cart/wagon has "no wheels")
                     /*
@@ -105,7 +109,14 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                     if (targetUnit is not Slave car)
                         return;
 
-                    // TODO: Validate if targetUnit is a "car"
+                    // Only the character attached to the driver seat may drive.
+                    if (!IsSlaveDriver(car, character))
+                        return;
+
+                    // Vehicles are root objects, so their local position is their world position.
+                    var claimedCarPosition = new Vector3(vmt.X, vmt.Y, vmt.Z);
+                    if (!MovementValidation.TryAccept(car, character, claimedCarPosition, "vehicle"))
+                        return;
 
                     var (rotDegX, rotDegY, rotDegZ) = MathUtil.GetSlaveRotationInDegrees(vmt.RotationX, vmt.RotationY, vmt.RotationZ);
 
@@ -123,10 +134,22 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                     // Its moving Pets, handle Pet XP for moving
                     if (targetUnit is Mate mate)
                     {
+                        // Only the mate's owner may author its movement.
+                        if (mate.OwnerObjId != character.ObjId)
+                        {
+                            Logger.Warn("{Character} tried to move a mate ({ObjId}) they do not own", character.Name, mate.ObjId);
+                            return;
+                        }
+
+                        // Mates are root objects; validate the claimed position before applying it.
+                        var claimedMatePosition = new Vector3(dmt.X, dmt.Y, dmt.Z);
+                        if (!MovementValidation.TryAccept(mate, character, claimedMatePosition, "mate",
+                                dmt.Flags.HasFlag(MoveTypeFlags.HasScTypeAndPhase)))
+                            return;
+
                         // Pet moved
                         RemoveEffects(targetUnit, _moveType);
 
-                        // TODO: Check if we're the owner, or allowed to otherwise control this pet
                         if (dmt.VelX != 0 || dmt.VelY != 0)
                             mate.StartUpdateXp(character);
                         else
@@ -146,8 +169,14 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                     // If controlling character, but it's riding something, sync parent with the mount
                     if (targetUnit is Character player)
                     {
-                        // TODO : check target has Telekinesis buff if target is a player
-                        // Just forward it to the packet, not safe for exploits/hacking
+                        // A client may only author its own character's movement.
+                        // (Telekinesis-style remote movement is not implemented; do not allow hijacks.)
+                        if (player.ObjId != character.ObjId)
+                        {
+                            Logger.Warn("{Character} tried to move another character ({ObjId})", character.Name, player.ObjId);
+                            return;
+                        }
+
                         // We moved
                         RemoveEffects(player, _moveType);
 
@@ -232,10 +261,27 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                     }
                     */
 
-                    if (targetUnit is Character other && other.ObjId != character.ObjId)
+                    // Clients may only author movement for themselves or their own mates;
+                    // anything else (other players, NPCs, slaves) must not be moved from here.
+                    if (targetUnit != character && targetUnit is not Mate)
                     {
-                        // TODO : check target has Telekinesis buff if target is a player
-                        // Just forward it to the packet, not safe for exploits/hacking
+                        Logger.Warn("{Character} tried to move {UnitType} ({ObjId}) they do not control",
+                            character.Name, targetUnit.GetType().Name, targetUnit.ObjId);
+                        return;
+                    }
+
+                    // Validate self-propelled movement before applying it. Attached units
+                    // (standing on vehicles/platforms) are carried and refreshed instead.
+                    if (targetUnit == character)
+                    {
+                        var claimedPosition = new Vector3(dmt.X, dmt.Y, dmt.Z);
+                        if (!MovementValidation.TryAccept(character, character, claimedPosition, "character",
+                                dmt.Flags.HasFlag(MoveTypeFlags.HasScTypeAndPhase)))
+                        {
+                            // Snap the authoring client back to the authoritative position.
+                            RubberbandCharacter(character);
+                            return;
+                        }
                     }
 
                     // Actually update the position
@@ -274,6 +320,31 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
     {
         if (moveType.VelX != 0 || moveType.VelY != 0 || moveType.VelZ != 0)
             unit.Buffs.TriggerRemoveOn(BuffRemoveOn.Move);
+    }
+
+    private static bool IsSlaveDriver(Slave slave, Character character)
+    {
+        if (slave.AttachedCharacters.TryGetValue(AttachPointKind.Driver, out var driver) &&
+            driver.ObjId == character.ObjId)
+            return true;
+
+        Logger.Warn("{Character} tried to control slave {ObjId} without being in the driver seat", character.Name, slave.ObjId);
+        return false;
+    }
+
+    /// <summary>
+    /// Forces the authoring client back to the server's authoritative position after
+    /// a rejected movement request. Uses the same flow as portal teleports so the
+    /// client acknowledges with CSTeleportEndedPacket, which re-enables movement.
+    /// </summary>
+    private static void RubberbandCharacter(Character character)
+    {
+        var world = character.Transform.World;
+        character.DisabledSetPosition = true;
+        MovementValidation.Reset(character.ObjId);
+        character.SendPacket(new SCTeleportUnitPacket(TeleportReason.Lockup, 0,
+            world.Position.X, world.Position.Y, world.Position.Z,
+            world.Rotation.Z.DegToRad()));
     }
 
     internal static bool ShouldIncludeTargetCharacter(Character movementAuthor, BaseUnit targetUnit)
