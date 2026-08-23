@@ -1,0 +1,4 @@
+interface:
+  display_name: "ArcheAge Icon Style"
+  short_description: "Create faithful ArcheAge 1.2-style UI icons"
+  default_prompt: "Use $archeage-icon-style to create a new icon that faithfully matches the ArcheAge 1.2 UI style."
