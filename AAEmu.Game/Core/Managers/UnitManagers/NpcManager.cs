@@ -867,7 +867,11 @@ public class NpcManager(IObjectIdManager objectIdManager, IModelManager modelMan
             Logger.Info("Loading merchant packs...");
             using (var command = connection.CreateCommand())
             {
-                command.CommandText = "SELECT * FROM merchant_goods";
+                command.CommandText = """
+                                      SELECT merchant_goods.*, merchant_packs.kind_id
+                                      FROM merchant_goods
+                                      JOIN merchant_packs ON merchant_packs.id = merchant_goods.merchant_pack_id
+                                      """;
                 command.Prepare();
                 using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
                 {
@@ -875,7 +879,7 @@ public class NpcManager(IObjectIdManager objectIdManager, IModelManager modelMan
                     {
                         var id = reader.GetUInt32("merchant_pack_id");
                         if (!Goods.ContainsKey(id))
-                            Goods.Add(id, new MerchantGoods(id));
+                            Goods.Add(id, new MerchantGoods(id, reader.GetByte("kind_id")));
 
                         var itemId = reader.GetUInt32("item_id");
                         var grade = reader.GetByte("grade_id");

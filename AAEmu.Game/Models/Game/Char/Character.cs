@@ -19,6 +19,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Merchant;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Skills;
@@ -109,6 +110,7 @@ public partial class Character : Unit, ICharacter
     public long Money2 { get; set; }
     public int HonorPoint { get; set; }
     public int VocationPoint { get; set; }
+    public RemoteShopSession ActiveRemoteShop { get; set; }
 
     /// <summary>
     /// Current crime points (/50)

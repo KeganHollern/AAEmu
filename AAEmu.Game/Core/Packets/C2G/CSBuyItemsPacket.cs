@@ -1,12 +1,14 @@
-﻿using AAEmu.Commons.Network;
+using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Merchant;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Utils;
 
@@ -16,154 +18,237 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
 {
     public override void Read(PacketStream stream)
     {
+        var character = Connection.ActiveChar;
         var npcObjId = stream.ReadBc();
-        var npc = Connection.ActiveChar.ParentWorld.GetNpc(npcObjId);
-
+        var npc = npcObjId == 0 ? null : character.ParentWorld.GetNpc(npcObjId);
         var doodadObjId = stream.ReadBc();
-        var doodad =Connection.ActiveChar.ParentWorld.GetDoodad(doodadObjId);
+        var doodad = doodadObjId == 0 ? null : character.ParentWorld.GetDoodad(doodadObjId);
+        var shopId = stream.ReadUInt32();
+        var buyCount = stream.ReadByte();
+        var buyBackCount = stream.ReadByte();
 
-        var unkId = stream.ReadUInt32(); // type(id)?
-
-        var nBuy = stream.ReadByte();
-        var nBuyBack = stream.ReadByte();
-
-        Logger.Debug($"NPCObjId:{npcObjId} DoodadObjId:{doodadObjId} unkId:{unkId} nBuy:{nBuy} nBuyBack{nBuyBack}");
-
-        // If a NPC was provided, check if it's valid
-        if (npcObjId != 0 && (npc == null || !npc.Template.Merchant || npc.Template.MerchantPackId == 0))
-            return;
-        MerchantGoods pack = null;
-        if (npc != null)
-        {
-            var dist = MathUtil.CalculateDistance(Connection.ActiveChar.Transform.World.Position, npc.Transform.World.Position);
-            if (dist > 3f) // 3m should be enough for NPC shops
-            {
-                Connection.ActiveChar.SendErrorMessage(ErrorMessageType.TooFarAway);
-                return;
-            }
-            pack = NpcManager.Instance.GetGoods(npc.Template.MerchantPackId);
-        }
-
-        // If a Doodad was provided, check if we're near it
-        if (doodadObjId != 0)
-        {
-            if (doodad == null)
-                return;
-            var dist = MathUtil.CalculateDistance(Connection.ActiveChar.Transform.World.Position, doodad.Transform.World.Position);
-            if (dist > 3f) // 3m should be enough for these
-            {
-                Connection.ActiveChar.SendErrorMessage(ErrorMessageType.TooFarAway);
-                return;
-            }
-        }
-
-        var money = 0;
-        var honorPoints = 0;
-        var vocationBadges = 0;
-
-        // Get list of items to buy from the shop
-        var itemsBuy = new List<(uint itemId, byte itemGrade, int itemCount)>();
-        for (var i = 0; i < nBuy; i++)
+        var requests = new List<StorePurchaseRequest>(buyCount);
+        for (var i = 0; i < buyCount; i++)
         {
             var itemId = stream.ReadUInt32();
-            var grade = stream.ReadByte();
+            _ = stream.ReadByte(); // The merchant pack, not the client, owns the item grade.
             var count = stream.ReadInt32();
             var currency = (ShopCurrencyType)stream.ReadByte();
-
-            // If using a NPC shop, check if the NPC is selling the specified item
-            if (npcObjId != 0 && (pack == null || !pack.SellsItem(itemId)))
-                continue;
-
-            if (doodadObjId != 0)
-            {
-                // TODO: validate doodad "shop" (mirage furniture for example)
-                // unkId value looks related to the "shop type" for buying, but unsure how it's all linked
-            }
-
-            itemsBuy.Add((itemId, grade, count));
-            var template = ItemManager.Instance.GetTemplate(itemId);
-
-            if (currency == ShopCurrencyType.Money)
-                money += template.Price * count;
-            else if (currency == ShopCurrencyType.Honor)
-                honorPoints += template.HonorPrice * count;
-            else if (currency == ShopCurrencyType.VocationBadges)
-                vocationBadges += template.LivingPointPrice * count;
-            else
-            {
-                Logger.Error("Unknown currency type");
-            }
+            requests.Add(new StorePurchaseRequest(itemId, count, currency));
         }
 
-        // Get a list of items to buy from the buyback window
-        var itemsBuyBack = new Dictionary<Item, int>();
-        for (var i = 0; i < nBuyBack; i++)
+        var buyBackIndices = new List<int>(buyBackCount);
+        for (var i = 0; i < buyBackCount; i++)
+            buyBackIndices.Add(stream.ReadInt32());
+
+        var useAaPoint = stream.ReadBoolean();
+        Logger.Debug(
+            $"NPCObjId:{npcObjId} DoodadObjId:{doodadObjId} ShopId:{shopId} " +
+            $"BuyCount:{buyCount} BuyBackCount:{buyBackCount}");
+
+        if (useAaPoint || buyCount > StorePurchaseValidator.MaxPurchaseLines ||
+            buyBackCount > StorePurchaseValidator.MaxPurchaseLines)
         {
-            var index = stream.ReadInt32();
-            var item = Connection.ActiveChar.BuyBackItems.GetItemBySlot(index);
-            /*
-            if (index >= Connection.ActiveChar.BuyBack.Length)
-                continue;
-
-            var item = Connection.ActiveChar.BuyBack[index];
-            */
-            if (item == null)
-                continue;
-            itemsBuyBack.Add(item, index);
-            money += (int)(item.Template.Refund * ItemManager.Instance.GetGradeTemplate(item.Grade).RefundMultiplier / 100f) *
-                     item.Count;
-        }
-
-        var useAAPoint = stream.ReadBoolean();
-
-        if (money > Connection.ActiveChar.Money &&
-            honorPoints > Connection.ActiveChar.HonorPoint &&
-            vocationBadges > Connection.ActiveChar.VocationPoint)
+            character.SendErrorMessage(ErrorMessageType.StoreInvalidItem);
             return;
-
-        var tasks = new List<ItemTask>();
-        foreach (var (itemId, grade, count) in itemsBuy)
-        {
-            // Omit grade when creating to prevent "cheating" when creating the grade
-            Connection.ActiveChar.Inventory.Bag.AcquireDefaultItem(ItemTaskType.StoreBuy, itemId, count, -1);
-            // Connection.ActiveChar.Inventory.Bag.AcquireDefaultItem(ItemTaskType.StoreBuy, itemId, count, grade);
         }
 
-        foreach (var (item, index) in itemsBuyBack)
+        var now = DateTime.UtcNow;
+        var remotePurchase = false;
+        MerchantGoods pack;
+
+        if (npcObjId != 0)
         {
-            Connection.ActiveChar.Inventory.Bag.AddOrMoveExistingItem(ItemTaskType.StoreBuy, item);
-            tasks.Add(new ItemBuyback(item));
-            /*
-            var res = Connection.ActiveChar.Inventory.AddItem(ItemTaskType.StoreBuy, item);
-            if (res == null)
+            if (doodadObjId != 0 || npc == null || !npc.Template.Merchant ||
+                npc.Template.MerchantPackId == 0 || !IsNear(character, npc))
+                return;
+            pack = NpcManager.Instance.GetGoods(npc.Template.MerchantPackId);
+        }
+        else if (doodadObjId != 0)
+        {
+            if (doodad == null || RemoteShopCatalog.IsRemotePack(shopId) ||
+                !IsNear(character, doodad))
+                return;
+            pack = NpcManager.Instance.GetGoods(shopId);
+        }
+        else
+        {
+            var session = character.ActiveRemoteShop;
+            if (session == null || !session.IsValid(now))
             {
-                ItemManager.Instance.ReleaseId(item.Id);
+                character.ActiveRemoteShop = null;
+                character.SendErrorMessage(ErrorMessageType.StoreHaveProblem);
                 return;
             }
 
-            if (res.Id != item.Id)
-                tasks.Add(new ItemCountUpdate(res, item.Count));
-            else
-                tasks.Add(new ItemBuyback(item));
-            Connection.ActiveChar.BuyBack[index] = null;
-            */
+            remotePurchase = true;
+            pack = NpcManager.Instance.GetGoods(session.MerchantPackId);
         }
 
-        if (honorPoints > 0)
+        if (pack == null)
         {
-            Connection.ActiveChar.ChangeGamePoints(GamePointKind.Honor, -honorPoints);
+            character.SendErrorMessage(ErrorMessageType.StoreHaveProblem);
+            return;
         }
 
-        if (vocationBadges > 0)
+        StorePurchasePlan plan = null;
+        if (requests.Count > 0 &&
+            !StorePurchaseValidator.TryCreatePlan(
+                pack,
+                requests,
+                ItemManager.Instance.GetTemplate,
+                out plan,
+                out var validationError))
         {
-            Connection.ActiveChar.ChangeGamePoints(GamePointKind.Vocation, -vocationBadges);
+            SendPurchaseError(validationError);
+            return;
         }
 
-        if (money > 0)
+        var buyBackItems = new Dictionary<Item, int>();
+        long buyBackCost = 0;
+        if (buyBackIndices.Count > 0)
         {
-            Connection.ActiveChar.ChangeMoney(SlotType.Inventory, -money);
+            if (remotePurchase || npc == null || pack.Currency != ShopCurrencyType.Money)
+            {
+                character.SendErrorMessage(ErrorMessageType.StoreInvalidItem);
+                return;
+            }
+
+            foreach (var index in buyBackIndices)
+            {
+                var item = character.BuyBackItems.GetItemBySlot(index);
+                if (item == null || !buyBackItems.TryAdd(item, index))
+                {
+                    character.SendErrorMessage(ErrorMessageType.StoreInvalidItem);
+                    return;
+                }
+
+                var grade = ItemManager.Instance.GetGradeTemplate(item.Grade);
+                if (grade == null)
+                {
+                    character.SendErrorMessage(ErrorMessageType.StoreInvalidItem);
+                    return;
+                }
+
+                buyBackCost += (long)(item.Template.Refund * grade.RefundMultiplier / 100f) * item.Count;
+                if (buyBackCost > int.MaxValue)
+                {
+                    character.SendErrorMessage(ErrorMessageType.StoreInvalidItem);
+                    return;
+                }
+            }
         }
+
+        if (plan == null && buyBackItems.Count == 0)
+            return;
+
+        var planCost = plan?.Cost ?? default;
+        var totalMoney = (long)planCost.Money + buyBackCost;
+        if (totalMoney > int.MaxValue)
+        {
+            character.SendErrorMessage(ErrorMessageType.StoreInvalidItem);
+            return;
+        }
+
+        var balanceError = StorePurchaseValidator.ValidateBalances(
+            planCost with { Money = (int)totalMoney },
+            character.Money,
+            character.HonorPoint,
+            character.VocationPoint);
+        if (balanceError != StorePurchaseError.None)
+        {
+            SendPurchaseError(balanceError);
+            return;
+        }
+
+        if (!HasInventorySpace(plan?.Items ?? [], buyBackItems.Keys))
+        {
+            character.SendErrorMessage(ErrorMessageType.BagFull);
+            return;
+        }
+
+        foreach (var item in plan?.Items ?? [])
+        {
+            if (!character.Inventory.Bag.AcquireDefaultItem(
+                    ItemTaskType.StoreBuy, item.ItemId, item.Count, item.Grade))
+            {
+                character.SendErrorMessage(ErrorMessageType.BagFull);
+                return;
+            }
+        }
+
+        var tasks = new List<ItemTask>();
+        foreach (var (item, _) in buyBackItems)
+        {
+            if (!character.Inventory.Bag.AddOrMoveExistingItem(ItemTaskType.StoreBuy, item))
+            {
+                character.SendErrorMessage(ErrorMessageType.BagFull);
+                return;
+            }
+            tasks.Add(new ItemBuyback(item));
+        }
+
+        if (planCost.Honor > 0)
+            character.ChangeGamePoints(GamePointKind.Honor, -planCost.Honor);
+        if (planCost.VocationBadges > 0)
+            character.ChangeGamePoints(GamePointKind.Vocation, -planCost.VocationBadges);
+        if (totalMoney > 0)
+            character.ChangeMoney(SlotType.Inventory, -(int)totalMoney);
+
+        if (remotePurchase)
+            character.ActiveRemoteShop = character.ActiveRemoteShop?.Refresh(now);
 
         Connection.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.StoreBuy, tasks, []));
+    }
+
+    private bool HasInventorySpace(
+        IReadOnlyList<StorePurchaseItem> purchaseItems,
+        IEnumerable<Item> buyBackItems)
+    {
+        var bag = Connection.ActiveChar.Inventory.Bag;
+        long requiredSlots = buyBackItems.LongCount();
+
+        foreach (var purchaseItem in purchaseItems)
+        {
+            var template = ItemManager.Instance.GetTemplate(purchaseItem.ItemId);
+            if (template == null || template.MaxCount <= 0)
+                return false;
+
+            bag.GetAllItemsByTemplate(
+                purchaseItem.ItemId,
+                purchaseItem.Grade,
+                out var currentItems,
+                out var currentCount);
+            var existingCapacity = (long)currentItems.Count * template.MaxCount - currentCount;
+            var unitsNeedingSlots = Math.Max(0L, (long)purchaseItem.Count - existingCapacity);
+            requiredSlots += (unitsNeedingSlots + template.MaxCount - 1) / template.MaxCount;
+            if (requiredSlots > bag.FreeSlotCount)
+                return false;
+        }
+
+        return requiredSlots <= bag.FreeSlotCount;
+    }
+
+    private static bool IsNear(Character character, BaseUnit target)
+    {
+        var distance = MathUtil.CalculateDistance(
+            character.Transform.World.Position,
+            target.Transform.World.Position);
+        if (distance <= 3f)
+            return true;
+        character.SendErrorMessage(ErrorMessageType.TooFarAway);
+        return false;
+    }
+
+    private void SendPurchaseError(StorePurchaseError error)
+    {
+        var message = error switch
+        {
+            StorePurchaseError.NotEnoughMoney => ErrorMessageType.NotEnoughMoney,
+            StorePurchaseError.NotEnoughHonor => ErrorMessageType.NotEnoughHonorPoint,
+            StorePurchaseError.NotEnoughVocationBadges => ErrorMessageType.NotEnoughLivingPoint,
+            _ => ErrorMessageType.StoreInvalidItem
+        };
+        Connection.ActiveChar.SendErrorMessage(message);
     }
 }
