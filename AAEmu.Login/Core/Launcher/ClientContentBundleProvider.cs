@@ -20,7 +20,7 @@ public sealed class ClientContentBundleProvider(
     private const int MaxArtifacts = 8;
     private const long MaxFullBlobBytes = 1024L * 1024 * 1024;
     private const long MaxSparseBlobBytes = MaxFullBlobBytes + MaxManifestBytes + 24;
-    private readonly LauncherContentV2Options _options = options.Value.ContentV2;
+    private readonly LauncherApiOptions _options = options.Value;
     private BundleSnapshot? _snapshot;
 
     public bool IsAvailable => _snapshot is not null;
@@ -58,7 +58,7 @@ public sealed class ClientContentBundleProvider(
         if (!_options.Enabled)
             return;
 
-        var releasePath = ResolveReleasePath(_options.ReleasePath);
+        var releasePath = ResolveReleasePath(_options.ContentV2.ReleasePath);
         EnsureRegularDirectory(releasePath, "release directory");
         var blobsPath = Path.Combine(releasePath, "blobs");
         EnsureRegularDirectory(blobsPath, "release blob directory");
@@ -73,8 +73,8 @@ public sealed class ClientContentBundleProvider(
         ValidateManifestEnvelope(manifestBytes);
         var manifestSha256 = Sha256(manifestBytes);
         var minisigSha256 = Sha256(minisigBytes);
-        RequireExpectedDigest(manifestSha256, _options.ExpectedManifestSha256, "manifest");
-        RequireExpectedDigest(minisigSha256, _options.ExpectedMinisigSha256, "signature");
+        RequireExpectedDigest(manifestSha256, _options.ContentV2.ExpectedManifestSha256, "manifest");
+        RequireExpectedDigest(minisigSha256, _options.ContentV2.ExpectedMinisigSha256, "signature");
 
         var declaredAssets = ParseAssetCatalog(manifestBytes);
         ValidateBlobDirectoryClosure(blobsPath, declaredAssets.Keys);

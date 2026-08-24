@@ -15,15 +15,6 @@ public sealed record LauncherTokenResponse(
 
 public sealed record LauncherStatusResponse(bool Available, bool GameAvailable, string? Message = null);
 
-public sealed record LauncherAccountResponse(uint AccountId, string Username);
-
-public sealed record ClientCompactManifestResponse(
-    int SchemaVersion,
-    string ContentVersion,
-    string Sha256,
-    long Size,
-    string DownloadPath);
-
 public sealed record LauncherTicketResponse(string Username, string Ticket, DateTimeOffset ExpiresAt);
 
 public sealed record LauncherSessionPrincipal(ulong SessionId, AccountId AccountId, string Username);

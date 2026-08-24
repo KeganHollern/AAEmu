@@ -13,7 +13,6 @@ public sealed class LoginService(
     IRequestController requestController,
     IInternalNetwork internalNetwork,
     ILoginReadiness loginReadiness,
-    IClientCompactProvider clientCompactProvider,
     IClientContentBundleProvider clientContentBundleProvider,
     IMySqlConnectionFactory connectionFactory,
     IOptions<DBConnectionsConfig> dbConnectionsConfig,
@@ -39,7 +38,6 @@ public sealed class LoginService(
 
         requestController.Initialize();
         gameController.Load();
-        await clientCompactProvider.InitializeAsync(cancellationToken);
         await clientContentBundleProvider.InitializeAsync(cancellationToken);
         internalNetwork.Start();
         loginReadiness.MarkInitialized();

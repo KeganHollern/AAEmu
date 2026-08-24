@@ -20,13 +20,39 @@ namespace AAEmu.UnitTests.Login.Core.Launcher;
 public class LauncherContentEndpointsTests
 {
     [Test]
-    public async Task ContentRoutes_Disabled_AreNotMapped()
+    public async Task Status_ContentUnavailable_ReturnsMaintenance()
     {
-        await using var application = await TestApplication.StartAsync(contentEnabled: false);
+        await using var application = await TestApplication.StartAsync(contentAvailable: false);
 
-        var response = await application.SendAuthenticatedAsync("/launcher/v2/manifest");
+        var response = await application.Client.GetAsync("/launcher/v1/status");
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("\"available\":false");
+    }
+
+    [Test]
+    public async Task Status_ContentAvailable_ReturnsReady()
+    {
+        await using var application = await TestApplication.StartAsync();
+
+        var response = await application.Client.GetAsync("/launcher/v1/status");
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("\"available\":true");
+    }
+
+    [Test]
+    public async Task ObsoleteCompactAndAccountRoutes_AreNotMapped()
+    {
+        await using var application = await TestApplication.StartAsync();
+
+        var account = await application.SendAuthenticatedAsync("/launcher/v1/me");
+        var manifest = await application.SendAuthenticatedAsync("/launcher/v1/manifest");
+        var compact = await application.SendAuthenticatedAsync("/launcher/v1/assets/client.sqlite3");
+
+        await Assert.That(account.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(manifest.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(compact.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
     [Test]
@@ -104,14 +130,12 @@ public class LauncherContentEndpointsTests
         public ClientContentAsset Asset { get; }
         public byte[] AssetBytes { get; }
 
-        public static async Task<TestApplication> StartAsync(bool contentEnabled = true)
+        public static async Task<TestApplication> StartAsync(bool contentAvailable = true)
         {
             var root = Path.Combine(Path.GetTempPath(), $"aaemu-content-http-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
             var assetBytes = Encoding.ASCII.GetBytes("0123456789");
             var sha256 = Convert.ToHexStringLower(SHA256.HashData(assetBytes));
-            var assetPath = Path.Combine(root, sha256);
-            await File.WriteAllBytesAsync(assetPath, assetBytes);
             var asset = new ClientContentAsset(
                 sha256,
                 assetBytes.LongLength,
@@ -119,7 +143,8 @@ public class LauncherContentEndpointsTests
             var contentProvider = new StubContentProvider(
                 Encoding.ASCII.GetBytes("{\"schemaVersion\":2}\n"),
                 Encoding.ASCII.GetBytes("test minisig\n"),
-                asset);
+                asset,
+                contentAvailable);
 
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
@@ -129,10 +154,6 @@ public class LauncherContentEndpointsTests
             builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["LauncherApi:Enabled"] = "true",
-                ["LauncherApi:ClientCompactPath"] = assetPath,
-                ["LauncherApi:ExpectedClientCompactSha256"] = new string('1', 64),
-                ["LauncherApi:ExpectedClientCompactSize"] = "10",
-                ["LauncherApi:ContentV2:Enabled"] = contentEnabled.ToString(),
                 ["LauncherApi:ContentV2:ReleasePath"] = root,
                 ["LauncherApi:ContentV2:ExpectedManifestSha256"] = new string('2', 64),
                 ["LauncherApi:ContentV2:ExpectedMinisigSha256"] = new string('3', 64)
@@ -141,7 +162,6 @@ public class LauncherContentEndpointsTests
             var readiness = new LoginReadiness();
             readiness.MarkInitialized();
             builder.Services.AddSingleton<ILoginReadiness>(readiness);
-            builder.Services.AddSingleton<IClientCompactProvider>(new StubCompactProvider(assetPath));
             builder.Services.AddSingleton<IClientContentBundleProvider>(contentProvider);
             builder.Services.AddSingleton<ILauncherSessionService, StubSessionService>();
             builder.Services.AddSingleton(Mock.Of<ILoginController>().Object);
@@ -207,29 +227,26 @@ public class LauncherContentEndpointsTests
             throw new NotSupportedException();
     }
 
-    private sealed class StubCompactProvider(string path) : IClientCompactProvider
-    {
-        public bool IsAvailable => true;
-        public string FilePath => path;
-        public ClientCompactManifestResponse Manifest { get; } = new(
-            1, new string('1', 64), new string('1', 64), 10, "/launcher/v1/assets/client.sqlite3");
-        public Task InitializeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
     private sealed class StubContentProvider : IClientContentBundleProvider
     {
         private readonly ClientContentAsset _asset;
+        private readonly bool _isAvailable;
 
-        public StubContentProvider(byte[] manifestBytes, byte[] minisigBytes, ClientContentAsset asset)
+        public StubContentProvider(
+            byte[] manifestBytes,
+            byte[] minisigBytes,
+            ClientContentAsset asset,
+            bool isAvailable)
         {
             ManifestBytes = manifestBytes;
             MinisigBytes = minisigBytes;
             ManifestSha256 = Convert.ToHexStringLower(SHA256.HashData(manifestBytes));
             MinisigSha256 = Convert.ToHexStringLower(SHA256.HashData(minisigBytes));
             _asset = asset;
+            _isAvailable = isAvailable;
         }
 
-        public bool IsAvailable => true;
+        public bool IsAvailable => _isAvailable;
         public ReadOnlyMemory<byte> ManifestBytes { get; }
         public ReadOnlyMemory<byte> MinisigBytes { get; }
         public string ManifestSha256 { get; }

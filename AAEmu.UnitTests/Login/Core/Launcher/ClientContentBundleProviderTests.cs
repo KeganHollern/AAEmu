@@ -15,23 +15,15 @@ namespace AAEmu.UnitTests.Login.Core.Launcher;
 public class ClientContentBundleProviderTests
 {
     [Test]
-    public void AddLauncherApi_InvalidV2Activation_FailsOptionsValidation()
+    public void AddLauncherApi_EnabledWithoutPinnedContent_FailsOptionsValidation()
     {
         AssertInvalidOptions(new Dictionary<string, string?>
         {
-            ["LauncherApi:Enabled"] = "false",
-            ["LauncherApi:ContentV2:Enabled"] = "true",
-            ["LauncherApi:ContentV2:ReleasePath"] = "/release",
-            ["LauncherApi:ContentV2:ExpectedManifestSha256"] = new string('1', 64),
-            ["LauncherApi:ContentV2:ExpectedMinisigSha256"] = new string('2', 64)
+            ["LauncherApi:Enabled"] = "true"
         });
         AssertInvalidOptions(new Dictionary<string, string?>
         {
             ["LauncherApi:Enabled"] = "true",
-            ["LauncherApi:ClientCompactPath"] = "/compact",
-            ["LauncherApi:ExpectedClientCompactSha256"] = new string('1', 64),
-            ["LauncherApi:ExpectedClientCompactSize"] = "2",
-            ["LauncherApi:ContentV2:Enabled"] = "true",
             ["LauncherApi:ContentV2:ReleasePath"] = "/release",
             ["LauncherApi:ContentV2:ExpectedManifestSha256"] = new string('0', 64),
             ["LauncherApi:ContentV2:ExpectedMinisigSha256"] = new string('2', 64)
@@ -39,13 +31,12 @@ public class ClientContentBundleProviderTests
     }
 
     [Test]
-    public async Task InitializeAsync_Disabled_DoesNotReadConfiguredPath()
+    public async Task InitializeAsync_LauncherDisabled_DoesNotReadConfiguredPath()
     {
         using var provider = CreateProvider(new LauncherApiOptions
         {
             ContentV2 = new LauncherContentV2Options
             {
-                Enabled = false,
                 ReleasePath = "/definitely/missing"
             }
         });
@@ -312,7 +303,6 @@ public class ClientContentBundleProviderTests
                 Enabled = true,
                 ContentV2 = new LauncherContentV2Options
                 {
-                    Enabled = true,
                     ReleasePath = root,
                     ExpectedManifestSha256 = Sha256(manifestBytes),
                     ExpectedMinisigSha256 = Sha256(minisigBytes)
