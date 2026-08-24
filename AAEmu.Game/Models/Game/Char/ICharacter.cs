@@ -32,6 +32,7 @@ public interface ICharacter : IUnit
     void AddExp(int expDelta, bool shouldAddAbilityExp);
     public bool ChangeMoney(SlotType typeFrom, SlotType typeTo, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney);
     public void ChangeGamePoints(GamePointKind kind, int change);
+    public bool TrySpendGamePoints(GamePointKind kind, int amount);
     public void SetGrowthRate(float value);
     public void SetLootRate(float value);
     public void SetVocationRate(float value);

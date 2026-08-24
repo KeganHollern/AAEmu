@@ -301,7 +301,11 @@ public class ItemContainer
     /// <param name="item">Item Object to add/move to this container</param>
     /// <param name="preferredSlot">preferred slot to place this item in</param>
     /// <returns>Fails on Full Inventory or if target slot is invalid</returns>
-    public bool AddOrMoveExistingItem(ItemTaskType taskType, Item item, int preferredSlot = -1)
+    public bool AddOrMoveExistingItem(
+        ItemTaskType taskType,
+        Item item,
+        int preferredSlot = -1,
+        bool notifyInventory = true)
     {
         if (item == null)
         {
@@ -425,19 +429,19 @@ public class ItemContainer
         // Moved to the end of the method so that the item is already in the inventory
         // Only trigger when moving between containers with different owners except for this being move to Mail container
         //if ((sourceContainer != this) && (item.OwnerId != OwnerId) && (this.ContainerType != SlotType.Mail))
-        if (sourceContainer != this && ContainerType != SlotType.Mail)
+        if (notifyInventory && sourceContainer != this && ContainerType != SlotType.Mail)
         {
             Owner?.Inventory.OnAcquiredItem(item, item.Count);
         }
         else
         // Got attachment from Mail
-        if (item.SlotType == SlotType.Mail && ContainerType != SlotType.Mail)
+        if (notifyInventory && item.SlotType == SlotType.Mail && ContainerType != SlotType.Mail)
         {
             Owner?.Inventory.OnAcquiredItem(item, item.Count);
         }
         else
         // Adding mail attachment
-        if (item.SlotType != SlotType.Mail && ContainerType == SlotType.Mail)
+        if (notifyInventory && item.SlotType != SlotType.Mail && ContainerType == SlotType.Mail)
         {
             Owner?.Inventory.OnConsumedItem(item, item.Count);
         }
@@ -608,7 +612,17 @@ public class ItemContainer
     /// <param name="crafterId"></param>
     /// <param name="preferredSlot"></param>
     /// <returns></returns>
-    public bool AcquireDefaultItemEx(ItemTaskType taskType, uint templateId, int amountToAdd, int gradeToAdd, out List<Item> newItemsList, out List<Item> updatedItemsList, uint crafterId, int preferredSlot = -1)
+    public bool AcquireDefaultItemEx(
+        ItemTaskType taskType,
+        uint templateId,
+        int amountToAdd,
+        int gradeToAdd,
+        out List<Item> newItemsList,
+        out List<Item> updatedItemsList,
+        uint crafterId,
+        int preferredSlot = -1,
+        bool notifyInventory = true,
+        List<GamePacket> deferredSyncPackets = null)
     {
         newItemsList = [];
         updatedItemsList = [];
@@ -664,7 +678,8 @@ public class ItemContainer
                     amountToAdd -= addAmount;
                     itemTasks.Add(new ItemCountUpdate(i, addAmount));
                     updatedItemsList.Add(i);
-                    Owner?.Inventory.OnAcquiredItem(i, addAmount, true);
+                    if (notifyInventory)
+                        Owner?.Inventory.OnAcquiredItem(i, addAmount, true);
                 }
 
                 if (amountToAdd < 0)
@@ -726,13 +741,14 @@ public class ItemContainer
                 }
             }
 
-            if (AddOrMoveExistingItem(ItemTaskType.Invalid, newItem, prefSlot)) // Task set to invalid as we send our own packets inside this function
+            if (AddOrMoveExistingItem(ItemTaskType.Invalid, newItem, prefSlot, notifyInventory)) // Task set to invalid as we send our own packets inside this function
             {
                 itemTasks.Add(new ItemAdd(newItem));
                 newItemsList.Add(newItem);
             }
             else
             {
+                ItemManager.Instance.ReleaseId(newItem.Id);
                 throw new GameException("AcquireDefaultItem(); Unable to add new items"); // Inventory should have enough space, something went wrong
             }
         }
@@ -749,7 +765,10 @@ public class ItemContainer
         {
             if (sync != null)
             {
-                Owner?.SendPacket(sync);
+                if (deferredSyncPackets != null)
+                    deferredSyncPackets.Add(sync);
+                else
+                    Owner?.SendPacket(sync);
             }
         }
 
@@ -901,7 +920,7 @@ public class ItemContainer
             }
         }
 
-        if (itemTasks.Count > 0)
+        if (taskType != ItemTaskType.Invalid && itemTasks.Count > 0)
         {
             Owner?.SendPacket(new SCItemTaskSuccessPacket(taskType, itemTasks, []));
         }

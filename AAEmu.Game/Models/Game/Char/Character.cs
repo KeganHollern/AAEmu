@@ -111,6 +111,7 @@ public partial class Character : Unit, ICharacter
     public int HonorPoint { get; set; }
     public int VocationPoint { get; set; }
     public RemoteShopSession ActiveRemoteShop { get; set; }
+    public object StorePurchaseSyncRoot { get; } = new();
 
     /// <summary>
     /// Current crime points (/50)
@@ -1507,41 +1508,44 @@ public partial class Character : Unit, ICharacter
 
     public bool ChangeMoney(SlotType typeFrom, SlotType typeTo, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney)
     {
-        var itemTasks = new List<ItemTask>();
-        switch (typeFrom)
+        lock (StorePurchaseSyncRoot)
         {
-            case SlotType.Inventory:
-                if (amount > Money)
-                {
-                    SendErrorMessage(ErrorMessageType.NotEnoughMoney);
-                    return false;
-                }
-                Money -= amount;
-                itemTasks.Add(new MoneyChange(-amount));
-                break;
-            case SlotType.Bank:
-                if (amount > Money2)
-                {
-                    SendErrorMessage(ErrorMessageType.NotEnoughMoney);
-                    return false;
-                }
-                Money2 -= amount;
-                itemTasks.Add(new MoneyChangeBank(-amount));
-                break;
+            var itemTasks = new List<ItemTask>();
+            switch (typeFrom)
+            {
+                case SlotType.Inventory:
+                    if (amount > Money)
+                    {
+                        SendErrorMessage(ErrorMessageType.NotEnoughMoney);
+                        return false;
+                    }
+                    Money -= amount;
+                    itemTasks.Add(new MoneyChange(-amount));
+                    break;
+                case SlotType.Bank:
+                    if (amount > Money2)
+                    {
+                        SendErrorMessage(ErrorMessageType.NotEnoughMoney);
+                        return false;
+                    }
+                    Money2 -= amount;
+                    itemTasks.Add(new MoneyChangeBank(-amount));
+                    break;
+            }
+            switch (typeTo)
+            {
+                case SlotType.Inventory:
+                    Money += amount;
+                    itemTasks.Add(new MoneyChange(amount));
+                    break;
+                case SlotType.Bank:
+                    Money2 += amount;
+                    itemTasks.Add(new MoneyChangeBank(amount));
+                    break;
+            }
+            SendPacket(new SCItemTaskSuccessPacket(itemTaskType, itemTasks, []));
+            return true;
         }
-        switch (typeTo)
-        {
-            case SlotType.Inventory:
-                Money += amount;
-                itemTasks.Add(new MoneyChange(amount));
-                break;
-            case SlotType.Bank:
-                Money2 += amount;
-                itemTasks.Add(new MoneyChangeBank(amount));
-                break;
-        }
-        SendPacket(new SCItemTaskSuccessPacket(itemTaskType, itemTasks, []));
-        return true;
     }
 
     public bool AddMoney(SlotType moneyLocation, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney)
@@ -1591,23 +1595,57 @@ public partial class Character : Unit, ICharacter
 
     public void ChangeGamePoints(GamePointKind kind, int change)
     {
-        switch (kind)
+        lock (StorePurchaseSyncRoot)
         {
-            case GamePointKind.Honor:
-                HonorPoint += change;
-                break;
-            case GamePointKind.Vocation:
-                var vocAdd = GetAttribute(UnitAttribute.LivingPointGain, 0f);
-                change = (int)Math.Round(change + vocAdd);
-                var vocMul = GetAttribute(UnitAttribute.LivingPointGainMul, 0f) + 100f;
-                change = (int)Math.Round(change * (vocMul / 100f));
-                VocationPoint += change;
-                break;
-            default:
-                Logger.Error($"ChangeGamePoints - Unknown Game Point Type {kind}");
-                return;
+            switch (kind)
+            {
+                case GamePointKind.Honor:
+                    HonorPoint += change;
+                    break;
+                case GamePointKind.Vocation:
+                    if (change > 0)
+                    {
+                        var vocAdd = GetAttribute(UnitAttribute.LivingPointGain, 0f);
+                        change = (int)Math.Round(change + vocAdd);
+                        var vocMul = GetAttribute(UnitAttribute.LivingPointGainMul, 0f) + 100f;
+                        change = (int)Math.Round(change * (vocMul / 100f));
+                    }
+                    VocationPoint += change;
+                    break;
+                default:
+                    Logger.Error($"ChangeGamePoints - Unknown Game Point Type {kind}");
+                    return;
+            }
+            SendPacket(new SCGamePointChangedPacket((byte)kind, change));
         }
-        SendPacket(new SCGamePointChangedPacket((byte)kind, change));
+    }
+
+    public bool TrySpendGamePoints(GamePointKind kind, int amount)
+    {
+        if (amount <= 0)
+            return false;
+
+        lock (StorePurchaseSyncRoot)
+        {
+            switch (kind)
+            {
+                case GamePointKind.Honor when HonorPoint >= amount:
+                    HonorPoint -= amount;
+                    break;
+                case GamePointKind.Vocation when VocationPoint >= amount:
+                    VocationPoint -= amount;
+                    break;
+                case GamePointKind.Honor:
+                case GamePointKind.Vocation:
+                    return false;
+                default:
+                    Logger.Error($"TrySpendGamePoints - Unknown Game Point Type {kind}");
+                    return false;
+            }
+
+            SendPacket(new SCGamePointChangedPacket((byte)kind, -amount));
+            return true;
+        }
     }
 
     public override int GetAbLevel(AbilityType type)

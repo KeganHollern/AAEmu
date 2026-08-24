@@ -25,6 +25,12 @@ The same validator is used for physical merchants. Remote merchant packs cannot
 be selected through the legacy doodad path. Buyback remains limited to a nearby
 physical money merchant.
 
+Point spending subtracts the exact authoritative price and never applies
+vocation-earning modifiers. Purchase inventory and wallet changes execute under
+a character-local lock. The bag, buyback container, and balances are restored
+if any item grant or currency commit fails, and acquisition events and item
+lifespan packets are deferred until the transaction succeeds.
+
 ## Client desired state
 
 The managed client release adds native store buttons to the Honor Point and

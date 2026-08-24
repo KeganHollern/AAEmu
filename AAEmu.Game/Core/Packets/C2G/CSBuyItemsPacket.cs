@@ -104,11 +104,43 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
             return;
         }
 
+        lock (character.StorePurchaseSyncRoot)
+        {
+            ExecutePurchase(
+                character,
+                pack,
+                plan,
+                buyBackIndices,
+                remotePurchase,
+                npc != null,
+                now);
+        }
+    }
+
+    private void ExecutePurchase(
+        Character character,
+        MerchantGoods pack,
+        StorePurchasePlan plan,
+        List<int> buyBackIndices,
+        bool remotePurchase,
+        bool hasNpc,
+        DateTime now)
+    {
+        if (remotePurchase &&
+            (character.ActiveRemoteShop is not { } session ||
+             !session.IsValid(now) ||
+             session.MerchantPackId != pack.Id))
+        {
+            character.ActiveRemoteShop = null;
+            character.SendErrorMessage(ErrorMessageType.StoreHaveProblem);
+            return;
+        }
+
         var buyBackItems = new Dictionary<Item, int>();
         long buyBackCost = 0;
         if (buyBackIndices.Count > 0)
         {
-            if (remotePurchase || npc == null || pack.Currency != ShopCurrencyType.Money)
+            if (remotePurchase || !hasNpc || pack.Currency != ShopCurrencyType.Money)
             {
                 character.SendErrorMessage(ErrorMessageType.StoreInvalidItem);
                 return;
@@ -167,38 +199,113 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
             return;
         }
 
-        foreach (var item in plan?.Items ?? [])
-        {
-            if (!character.Inventory.Bag.AcquireDefaultItem(
-                    ItemTaskType.StoreBuy, item.ItemId, item.Count, item.Grade))
-            {
-                character.SendErrorMessage(ErrorMessageType.BagFull);
-                return;
-            }
-        }
-
         var tasks = new List<ItemTask>();
-        foreach (var (item, _) in buyBackItems)
+        var acquisitions = new List<ItemAcquisition>();
+        var deferredSyncPackets = new List<GamePacket>();
+        var transaction = new StorePurchaseTransaction(character, ItemManager.Instance.ReleaseId);
+        var transactionResult = transaction.Execute(
+            () => TryGrantItems(
+                character,
+                plan?.Items ?? [],
+                buyBackItems.Keys,
+                tasks,
+                acquisitions,
+                deferredSyncPackets),
+            () => TrySpendCurrency(character, planCost, (int)totalMoney),
+            out var failure);
+
+        switch (transactionResult)
         {
-            if (!character.Inventory.Bag.AddOrMoveExistingItem(ItemTaskType.StoreBuy, item))
-            {
+            case StorePurchaseTransactionResult.InventoryFailed:
                 character.SendErrorMessage(ErrorMessageType.BagFull);
                 return;
-            }
-            tasks.Add(new ItemBuyback(item));
+            case StorePurchaseTransactionResult.CurrencyFailed:
+                SendPurchaseError(GetInsufficientCurrencyError(planCost, (int)totalMoney));
+                return;
+            case StorePurchaseTransactionResult.UnexpectedFailure:
+                Logger.Error(failure, $"Store purchase transaction failed for character {character.Id}");
+                character.SendErrorMessage(ErrorMessageType.StoreHaveProblem);
+                return;
         }
-
-        if (planCost.Honor > 0)
-            character.ChangeGamePoints(GamePointKind.Honor, -planCost.Honor);
-        if (planCost.VocationBadges > 0)
-            character.ChangeGamePoints(GamePointKind.Vocation, -planCost.VocationBadges);
-        if (totalMoney > 0)
-            character.ChangeMoney(SlotType.Inventory, -(int)totalMoney);
 
         if (remotePurchase)
             character.ActiveRemoteShop = character.ActiveRemoteShop?.Refresh(now);
 
         Connection.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.StoreBuy, tasks, []));
+        foreach (var packet in deferredSyncPackets)
+            Connection.SendPacket(packet);
+        foreach (var acquisition in acquisitions)
+            character.Inventory.OnAcquiredItem(acquisition.Item, acquisition.Count, acquisition.OnlyUpdatedCount);
+    }
+
+    private static bool TryGrantItems(
+        Character character,
+        IReadOnlyList<StorePurchaseItem> purchaseItems,
+        IEnumerable<Item> buyBackItems,
+        List<ItemTask> tasks,
+        List<ItemAcquisition> acquisitions,
+        List<GamePacket> deferredSyncPackets)
+    {
+        var bag = character.Inventory.Bag;
+        foreach (var purchaseItem in purchaseItems)
+        {
+            var previousCounts = bag.Items.ToDictionary(item => item, item => item.Count);
+            if (!bag.AcquireDefaultItemEx(
+                    ItemTaskType.Invalid,
+                    purchaseItem.ItemId,
+                    purchaseItem.Count,
+                    purchaseItem.Grade,
+                    out var newItems,
+                    out var updatedItems,
+                    0,
+                    -1,
+                    false,
+                    deferredSyncPackets))
+                return false;
+
+            foreach (var item in updatedItems)
+            {
+                var addedCount = item.Count - previousCounts.GetValueOrDefault(item);
+                tasks.Add(new ItemCountUpdate(item, addedCount));
+                acquisitions.Add(new ItemAcquisition(item, addedCount, true));
+            }
+
+            foreach (var item in newItems)
+            {
+                tasks.Add(new ItemAdd(item));
+                acquisitions.Add(new ItemAcquisition(item, item.Count, false));
+            }
+        }
+
+        foreach (var item in buyBackItems)
+        {
+            if (!bag.AddOrMoveExistingItem(ItemTaskType.Invalid, item, -1, false))
+                return false;
+            tasks.Add(new ItemBuyback(item));
+            acquisitions.Add(new ItemAcquisition(item, item.Count, false));
+        }
+
+        return true;
+    }
+
+    private static bool TrySpendCurrency(
+        Character character,
+        StorePurchaseCost planCost,
+        int totalMoney)
+    {
+        if (planCost.Honor > 0)
+            return character.TrySpendGamePoints(GamePointKind.Honor, planCost.Honor);
+        if (planCost.VocationBadges > 0)
+            return character.TrySpendGamePoints(GamePointKind.Vocation, planCost.VocationBadges);
+        if (totalMoney > 0)
+        {
+            return character.ChangeMoney(
+                SlotType.Inventory,
+                SlotType.None,
+                totalMoney,
+                ItemTaskType.StoreBuy);
+        }
+        return true;
     }
 
     private bool HasInventorySpace(
@@ -251,4 +358,19 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
         };
         Connection.ActiveChar.SendErrorMessage(message);
     }
+
+    private static StorePurchaseError GetInsufficientCurrencyError(
+        StorePurchaseCost cost,
+        int totalMoney)
+    {
+        if (cost.Honor > 0)
+            return StorePurchaseError.NotEnoughHonor;
+        if (cost.VocationBadges > 0)
+            return StorePurchaseError.NotEnoughVocationBadges;
+        if (totalMoney > 0)
+            return StorePurchaseError.NotEnoughMoney;
+        return StorePurchaseError.InvalidItem;
+    }
+
+    private sealed record ItemAcquisition(Item Item, int Count, bool OnlyUpdatedCount);
 }
