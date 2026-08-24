@@ -32,8 +32,7 @@ this migration is an operator-controlled prerequisite for enabling the API.
 
 ## Endpoints
 
-Session, account, compact, and launch-ticket routes use the `/launcher/v1`
-prefix and remain unchanged.
+Session, status, and launch-ticket routes use the `/launcher/v1` prefix.
 
 | Method and path | Authentication | Purpose |
 | --- | --- | --- |
@@ -41,18 +40,9 @@ prefix and remain unchanged.
 | `POST /sessions` | username/password | Create a retained launcher session |
 | `POST /sessions/refresh` | rotating refresh token | Rotate and renew a session |
 | `DELETE /sessions/current` | bearer access token | Revoke the current session |
-| `GET /me` | bearer access token | Return the authenticated account identity |
-| `GET /manifest` | bearer access token | Return the client compact version, size, and SHA-256 |
-| `GET /assets/client.sqlite3` | bearer access token | Stream the baked client compact with HTTP Range support |
 | `POST /launch-tickets` | bearer access token | Mint a short-lived, one-time Trion launch ticket |
 
-The manifest and download refer only to the fixed, verified
-`Data/client.sqlite3` baked into the Login image. There is no caller-selected
-filesystem path. Startup verifies the file's SQLite header, exact configured
-size, and SHA-256 before marking Login ready.
-
-When `LauncherApi.ContentV2.Enabled` is true, Login also maps these authenticated
-raw-byte routes:
+An enabled launcher API also maps these authenticated raw-byte routes:
 
 | Method and path | Authentication | Purpose |
 | --- | --- | --- |
@@ -66,8 +56,7 @@ builds a lowercase content-hash allowlist from `representation.blob`, verifies
 every listed blob's exact size and SHA-256, and rejects missing or extra blob
 entries. It retains the exact verified file handles for delivery, so a later
 pathname replacement cannot change the bytes served under a pinned ETag. Route
-text is never used as a filesystem path. The v2 routes are not mapped while the
-feature is disabled.
+text is never used as a filesystem path.
 
 Production CI verifies the detached Minisign signature before a release can be
 selected. Login deliberately does not sign, execute, parse sparse payloads, or
@@ -87,7 +76,7 @@ dependency failures and unavailable Game registration return 503. The launcher
 must disable both Update and Play and display Maintenance for network errors,
 timeouts, or 5xx responses. A definitive refresh-token 401 signs the user out.
 
-Login and launch-ticket routes are rate limited, and compact downloads have a
+Login and launch-ticket routes are rate limited, and content downloads have a
 global concurrency ceiling. Authentication errors are
 generic and must not reveal whether an account exists or is banned. Tokens,
 passwords, authorization headers, and ticket values must never be logged.
@@ -95,32 +84,25 @@ passwords, authorization headers, and ticket values must never be logged.
 ## Configuration
 
 The `LauncherApi` section is disabled by default. A deployment enabling it must
-set all of the following from reviewed image metadata:
+select a reviewed signed release and set all of the following:
 
 - `LauncherApi__Enabled=true`
-- `LauncherApi__ClientCompactPath=Data/client.sqlite3`
-- `LauncherApi__ExpectedClientCompactSha256=<64 lowercase hex characters>`
-- `LauncherApi__ExpectedClientCompactSize=<exact byte count>`
-
-Token and ticket lifetimes have conservative defaults and can be overridden
-through the remaining `LauncherApi` options.
-
-V2 delivery remains disabled until a reviewed signed release is present. An
-enabled deployment must also set:
-
-- `LauncherApi__ContentV2__Enabled=true`
 - `LauncherApi__ContentV2__ReleasePath=Data/client-patches/releases/<sequence>`
 - `LauncherApi__ContentV2__ExpectedManifestSha256=<exact lowercase SHA-256>`
 - `LauncherApi__ContentV2__ExpectedMinisigSha256=<exact lowercase SHA-256>`
+
+Token and ticket lifetimes have conservative defaults and can be overridden
+through the remaining `LauncherApi` options.
 
 Production activation must bake that release directory into the Login image's
 read-only root filesystem; a writable content mount is not an accepted release
 configuration.
 
-Enabling v2 requires the parent launcher API. Missing content, a zero/uppercase
-pin, a reparse/symlinked path component, a digest mismatch, or an invalid blob
-catalog fails startup and readiness. The provider never hot-reloads a release.
+Missing content, a zero/uppercase pin, a reparse/symlinked path component, a
+digest mismatch, or an invalid blob catalog fails startup and readiness. The
+provider never hot-reloads a release.
 
 The native launcher API and Korea challenge/second-factor authentication are
-mutually exclusive. Login refuses startup when both are enabled; the v1 native
-launcher intentionally supports the deployed EU/Trion authentication path only.
+mutually exclusive. Login refuses startup when both are enabled; native
+launcher sessions intentionally support the deployed EU/Trion authentication
+path only.

@@ -10,14 +10,10 @@
 	"SkipHostResolve": false,
 	"LauncherApi": {
 		"Enabled": false,
-		"ClientCompactPath": "Data/client.sqlite3",
-		"ExpectedClientCompactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
-		"ExpectedClientCompactSize": 1,
 		"AccessTokenLifetimeMinutes": 15,
 		"RefreshTokenLifetimeDays": 30,
 		"LaunchTicketLifetimeSeconds": 180,
 		"ContentV2": {
-			"Enabled": false,
 			"ReleasePath": "",
 			"ExpectedManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
 			"ExpectedMinisigSha256": "0000000000000000000000000000000000000000000000000000000000000000"

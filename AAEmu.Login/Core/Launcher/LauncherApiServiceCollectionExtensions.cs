@@ -11,20 +11,12 @@ public static class LauncherApiServiceCollectionExtensions
             .BindConfiguration(LauncherApiOptions.ConfigurationSectionName)
             .ValidateDataAnnotations()
             .Validate(options => !options.Enabled
-                                 || (!string.Equals(options.ExpectedClientCompactSha256, new string('0', 64),
-                                         StringComparison.Ordinal)
-                                     && options.ExpectedClientCompactSize > 1),
-                "Enabled launcher API requires the expected client compact SHA-256 and size")
-            .Validate(options => !options.ContentV2.Enabled || options.Enabled,
-                "Launcher v2 content requires the launcher API")
-            .Validate(options => !options.ContentV2.Enabled
                                  || (!string.IsNullOrWhiteSpace(options.ContentV2.ReleasePath)
                                      && IsPinnedSha256(options.ContentV2.ExpectedManifestSha256)
                                      && IsPinnedSha256(options.ContentV2.ExpectedMinisigSha256)),
-                "Enabled launcher v2 content requires its release path and lowercase manifest/signature SHA-256 pins");
+                "Enabled launcher API requires a signed content release path and lowercase manifest/signature SHA-256 pins");
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<ILoginReadiness, LoginReadiness>();
-        services.AddSingleton<IClientCompactProvider, ClientCompactProvider>();
         services.AddSingleton<IClientContentBundleProvider, ClientContentBundleProvider>();
         services.AddSingleton<ILauncherSessionService, LauncherSessionService>();
         services.AddSingleton<ILaunchTicketStore, MySqlLaunchTicketStore>();

@@ -1,8 +1,6 @@
 ﻿using System.Net;
 using AAEmu.Login.Core.Controllers;
-using AAEmu.Login.Models;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 using MySql.Data.MySqlClient;
 
@@ -58,21 +56,13 @@ public static class LauncherApiEndpoints
         group.MapPost("/sessions", CreateSessionAsync).RequireRateLimiting("launcher-login");
         group.MapPost("/sessions/refresh", RefreshSessionAsync).RequireRateLimiting("launcher-login");
         group.MapDelete("/sessions/current", RevokeSessionAsync);
-        group.MapGet("/me", GetAccountAsync);
-        group.MapGet("/manifest", GetManifestAsync);
-        group.MapGet("/assets/client.sqlite3", DownloadClientCompactAsync)
-            .RequireRateLimiting("launcher-download");
         group.MapPost("/launch-tickets", CreateLaunchTicketAsync).RequireRateLimiting("launcher-login");
 
-        var options = app.Services.GetRequiredService<IOptions<LauncherApiOptions>>().Value;
-        if (options.ContentV2.Enabled)
-        {
-            var content = app.MapGroup("/launcher/v2");
-            content.MapGet("/manifest", GetContentManifestAsync);
-            content.MapGet("/manifest.minisig", GetContentMinisigAsync);
-            content.MapGet("/assets/{sha256}", DownloadContentAssetAsync)
-                .RequireRateLimiting("launcher-download");
-        }
+        var content = app.MapGroup("/launcher/v2");
+        content.MapGet("/manifest", GetContentManifestAsync);
+        content.MapGet("/manifest.minisig", GetContentMinisigAsync);
+        content.MapGet("/assets/{sha256}", DownloadContentAssetAsync)
+            .RequireRateLimiting("launcher-download");
 
         // In-game web test page (aaemu-cluster#26): the ArcheAge client's embedded
         // Awesomium browser (Chromium ~18) opens the TrionWeb base URLs and appends
@@ -128,9 +118,9 @@ public static class LauncherApiEndpoints
     private static IResult GetStatus(
         ILoginReadiness readiness,
         IGameController gameController,
-        IClientCompactProvider compactProvider)
+        IClientContentBundleProvider contentProvider)
     {
-        if (!readiness.IsInitialized || !compactProvider.IsAvailable)
+        if (!readiness.IsInitialized || !contentProvider.IsAvailable)
         {
             return Results.Json(
                 new LauncherStatusResponse(false, false, "Launcher services are under maintenance"),
@@ -188,54 +178,6 @@ public static class LauncherApiEndpoints
             return Results.Unauthorized();
         await sessionService.RevokeAsync(principal.SessionId, cancellationToken);
         return Results.NoContent();
-    }
-
-    private static async Task<IResult> GetAccountAsync(
-        HttpContext context,
-        ILauncherSessionService sessionService,
-        CancellationToken cancellationToken)
-    {
-        var principal = await AuthenticateAsync(context, sessionService, cancellationToken);
-        return principal is null
-            ? Results.Unauthorized()
-            : Results.Ok(new LauncherAccountResponse(principal.AccountId.Value, principal.Username));
-    }
-
-    private static async Task<IResult> GetManifestAsync(
-        HttpContext context,
-        ILoginReadiness readiness,
-        ILauncherSessionService sessionService,
-        IClientCompactProvider compactProvider,
-        CancellationToken cancellationToken)
-    {
-        var principal = await AuthenticateAsync(context, sessionService, cancellationToken);
-        if (principal is null)
-            return Results.Unauthorized();
-        return readiness.IsInitialized && compactProvider.IsAvailable
-            ? Results.Ok(compactProvider.Manifest)
-            : Maintenance();
-    }
-
-    private static async Task<IResult> DownloadClientCompactAsync(
-        HttpContext context,
-        ILoginReadiness readiness,
-        ILauncherSessionService sessionService,
-        IClientCompactProvider compactProvider,
-        CancellationToken cancellationToken)
-    {
-        var principal = await AuthenticateAsync(context, sessionService, cancellationToken);
-        if (principal is null)
-            return Results.Unauthorized();
-        if (!readiness.IsInitialized || !compactProvider.IsAvailable)
-            return Maintenance();
-
-        var manifest = compactProvider.Manifest;
-        return Results.File(
-            compactProvider.FilePath,
-            "application/vnd.sqlite3",
-            "client.sqlite3",
-            entityTag: new EntityTagHeaderValue($"\"sha256-{manifest.Sha256}\""),
-            enableRangeProcessing: true);
     }
 
     private static async Task<IResult> GetContentManifestAsync(

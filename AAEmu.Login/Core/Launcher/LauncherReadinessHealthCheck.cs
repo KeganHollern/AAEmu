@@ -8,7 +8,6 @@ namespace AAEmu.Login.Core.Launcher;
 public sealed class LauncherReadinessHealthCheck(
     ILoginReadiness readiness,
     IMySqlConnectionFactory connectionFactory,
-    IClientCompactProvider compactProvider,
     IClientContentBundleProvider contentBundleProvider,
     IOptions<LauncherApiOptions> options) : IHealthCheck
 {
@@ -17,10 +16,8 @@ public sealed class LauncherReadinessHealthCheck(
     {
         if (!readiness.IsInitialized)
             return HealthCheckResult.Unhealthy("Login initialization has not completed");
-        if (options.Value.Enabled && !compactProvider.IsAvailable)
-            return HealthCheckResult.Unhealthy("Launcher client compact is unavailable");
-        if (options.Value.ContentV2.Enabled && !contentBundleProvider.IsAvailable)
-            return HealthCheckResult.Unhealthy("Launcher v2 content bundle is unavailable");
+        if (options.Value.Enabled && !contentBundleProvider.IsAvailable)
+            return HealthCheckResult.Unhealthy("Launcher content bundle is unavailable");
 
         try
         {
