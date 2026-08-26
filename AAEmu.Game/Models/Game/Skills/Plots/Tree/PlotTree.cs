@@ -248,12 +248,15 @@ public class PlotTree(uint plotId)
         state.Caster?.BroadcastPacket(new SCPlotEndedPacket(state.ActiveSkill.TlId), true);
         EndPlotChannel(state);
 
-        state.Caster?.Cooldowns.AddCooldown(state.ActiveSkill.Template.Id, (uint)state.ActiveSkill.Template.CooldownTime);
-
-        if (state.Caster?.GetOwnerCharacter() is { IgnoreSkillCooldowns: true } character)
+        if (ShouldStartCooldown(state.CancellationRequested(), state.IsCasting))
         {
-            character.ResetSkillCooldown(state.ActiveSkill.Template.Id, false);
-            state.Caster.Cooldowns.RemoveCooldown(state.ActiveSkill.Template.Id);
+            state.Caster?.Cooldowns.AddCooldown(state.ActiveSkill.Template.Id, (uint)state.ActiveSkill.Template.CooldownTime);
+
+            if (state.Caster?.GetOwnerCharacter() is { IgnoreSkillCooldowns: true } character)
+            {
+                character.ResetSkillCooldown(state.ActiveSkill.Template.Id, false);
+                state.Caster.Cooldowns.RemoveCooldown(state.ActiveSkill.Template.Id);
+            }
         }
 
         // Maybe always do this on end of plot?
@@ -268,5 +271,12 @@ public class PlotTree(uint plotId)
         state.ActiveSkill.Callback?.Invoke();
         if (state.Caster?.ActivePlotState == state)
             state.Caster.ActivePlotState = null;
+    }
+
+    internal static bool ShouldStartCooldown(bool cancellationRequested, bool isCasting)
+    {
+        // A plot cancelled while its casting edge is active has not reached its fire event yet.
+        // Once casting has ended, cancellation represents an already-fired or channeled skill.
+        return !cancellationRequested || !isCasting;
     }
 }
