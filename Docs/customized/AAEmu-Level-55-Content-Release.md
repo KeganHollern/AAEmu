@@ -7,12 +7,15 @@ This release enables the existing r208022 levels 51–55 and level-55 skill-tree
 - Canonical project: `Content/projects/custom/project.json`
 - Active local configuration: `Content/content-studio.json`
 - Portable configuration template: `Content/content-studio.example.json`
-- Baseline: `r208022`
+- Client baseline descriptor: `Content/baselines/r208022.json`
+- Server baseline descriptor: `Content/baselines/r208022.server.json`
 - Complete output artifact: `.content-studio/build/compact.custom.sqlite3`
 - Build report: `.content-studio/build/content-build-report.md`
 - Audit queries: `.content-studio/build/content-build-audit.sql`
 
 There is no separate level-55 project or registry. The ten level-55 `record` plans and seven `assertion` plans live with all other reviewed custom work under `Content/projects/custom/`. A build contains the complete intended change set for its selected baseline, but it is not portable across compact schemas. Client and server artifacts must be built and reviewed separately while preserving their target-only tables.
+
+Both descriptors use the logical baseline key `r208022`, allowing the same canonical project to compile against either exact input. The client descriptor pins the 635-table stock client compact. The server descriptor separately pins the 679-table AAEmu server compact and requires server-only tables so the two targets cannot be confused.
 
 The level-55 release contains ten sparse `record` manifests. Each manifest changes only `skills.show` from `f` to `t`; it does not copy or replace any skill row.
 
@@ -84,7 +87,9 @@ dotnet run --project .\Tools\AAEmu.ContentStudio.Cli\AAEmu.ContentStudio.Cli.csp
 dotnet run --project .\Tools\AAEmu.ContentStudio.Cli\AAEmu.ContentStudio.Cli.csproj -- diff --baseline .\.content-studio\baselines\r208022\compact.sqlite3 --artifact .\.content-studio\build\compact.custom.sqlite3
 ```
 
-Publishing is intentionally separate because it replaces a configured compact after making a restore copy. The checked-in r208022 descriptor identifies the 635-table client compact; it must not replace AAEmu's 679-table server compact. Content Studio now rejects a deployment whose schema differs from the artifact. Do not activate these plans in a shared server/client release until a server-superset artifact path can apply the same reviewed row changes while preserving server-only data, followed by a separately built client artifact.
+Publishing is intentionally separate because it replaces a configured compact after making a restore copy. Build once with the client baseline and `Content/baselines/r208022.json`, then independently with the server baseline and `Content/baselines/r208022.server.json`. Use separate output directories so one target can never overwrite the other. Content Studio verifies each exact input, preserves its complete target-specific schema, applies the same project snapshot, runs all seven assertions, and rejects a deployment whose schema differs from the artifact.
+
+For a coordinated release, both builds must be repeated from clean inputs and produce byte-identical target artifacts. Release evidence must record both baseline and final hashes, prove the only semantic changes are the ten `skills.show` cells, and keep the client artifact in the signed launcher release while baking only the server artifact into the Game image.
 
 ## In-game acceptance checklist
 
