@@ -1,6 +1,7 @@
 using System.Numerics;
 
 using AAEmu.Game.Models.CryEngine.Entities;
+using AAEmu.Game.Models.CryEngine.Loaders;
 using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.Game.Models.Game.AI.AStar;
@@ -46,6 +47,7 @@ public class PathNode
     public Vector3 Position { get; set; }
 
     public bool LastSearchSucceeded { get; private set; }
+    public bool LastPathUsesNavigationFunnel { get; private set; }
     public int LastExpandedNodeCount { get; private set; }
 
     /// <summary>
@@ -75,6 +77,7 @@ public class PathNode
         StartPointPos = start;
         EndPointPos = goal;
         LastSearchSucceeded = false;
+        LastPathUsesNavigationFunnel = false;
         LastExpandedNodeCount = 0;
         CurrentTargetPos = Vector3.Zero;
 
@@ -96,6 +99,7 @@ public class PathNode
             [startNode] = 0f
         };
         var cameFrom = new Dictionary<NodeDescriptor, NodeDescriptor>(ReferenceEqualityComparer.Instance);
+        var cameVia = new Dictionary<NodeDescriptor, LinkDescriptor>(ReferenceEqualityComparer.Instance);
         frontier.Enqueue(startNode, GetHeuristic(startNode, goalNode));
 
         while (frontier.TryDequeue(out var currentNode, out var queuedPriority))
@@ -110,9 +114,11 @@ public class PathNode
             LastExpandedNodeCount++;
             if (ReferenceEquals(currentNode, goalNode))
             {
-                var result = BuildPath(cameFrom, currentNode);
+                var result = BuildPath(world.Template, cameFrom, cameVia, currentNode, start, goal,
+                    agentRadius, out var usesNavigationFunnel);
                 Position = result[0];
                 CurrentTargetPos = result[0];
+                LastPathUsesNavigationFunnel = usesNavigationFunnel;
                 LastSearchSucceeded = true;
                 return result;
             }
@@ -135,6 +141,7 @@ public class PathNode
                     continue;
 
                 cameFrom[targetNode] = currentNode;
+                cameVia[targetNode] = linkDescriptor;
                 pathCost[targetNode] = candidatePathCost;
                 frontier.Enqueue(targetNode, candidatePathCost + GetHeuristic(targetNode, goalNode));
             }
@@ -170,29 +177,176 @@ public class PathNode
         return Vector3.Distance(from.Pos, goal.Pos);
     }
 
-    private static List<Vector3> BuildPath(
+    private List<Vector3> BuildPath(
+        WorldTemplate worldTemplate,
         Dictionary<NodeDescriptor, NodeDescriptor> cameFrom,
-        NodeDescriptor goalNode)
+        Dictionary<NodeDescriptor, LinkDescriptor> cameVia,
+        NodeDescriptor goalNode,
+        Vector3 start,
+        Vector3 goal,
+        float agentRadius,
+        out bool usesNavigationFunnel)
     {
         var nodes = new List<NodeDescriptor> { goalNode };
+        var links = new List<LinkDescriptor>();
         var currentNode = goalNode;
         while (cameFrom.TryGetValue(currentNode, out var previousNode))
         {
+            links.Add(cameVia[currentNode]);
             nodes.Add(previousNode);
             currentNode = previousNode;
         }
 
         nodes.Reverse();
-        var result = new List<Vector3>(nodes.Count);
+        links.Reverse();
+        var portals = new List<Portal>();
+        usesNavigationFunnel = nodes.All(node =>
+            (node.NavigationType & BaiNavigationType.Triangular) != 0) &&
+            NodeContainsPosition(worldTemplate, nodes[0], start) &&
+            NodeContainsPosition(worldTemplate, nodes[^1], goal);
+        if (usesNavigationFunnel)
+            usesNavigationFunnel = TryCreatePortals(worldTemplate, links, agentRadius, out portals);
+        if (usesNavigationFunnel)
+            return PullString(start, goal, portals);
+
+        var result = new List<Vector3>(nodes.Count + 2);
+        AddUniquePoint(result, start);
         foreach (var node in nodes)
+            AddUniquePoint(result, node.Pos);
+
+        AddUniquePoint(result, goal);
+        return result;
+    }
+
+    private bool NodeContainsPosition(WorldTemplate worldTemplate, NodeDescriptor node, Vector3 position)
+    {
+        var ownerBai = FindBaiOwner(worldTemplate, node, position, node.Pos);
+        return ownerBai != null && ownerBai.ContainsPosition(node, position, out _);
+    }
+
+    private bool TryCreatePortals(WorldTemplate worldTemplate, List<LinkDescriptor> links,
+        float agentRadius, out List<Portal> portals)
+    {
+        portals = new List<Portal>(links.Count);
+        foreach (var link in links)
         {
-            if (result.Count == 0 ||
-                Vector3.DistanceSquared(result[^1], node.Pos) > DuplicatePointToleranceSquared)
+            var ownerBai = FindBaiOwner(worldTemplate, link.SourceNodeDescriptor,
+                link.SourceNodeDescriptor.Pos, link.TargetNodeDescriptor.Pos, link.EdgeCenter);
+            if (ownerBai == null || !ownerBai.TryGetPortal(link, agentRadius, out var left, out var right))
             {
-                result.Add(node.Pos);
+                portals.Clear();
+                return false;
+            }
+
+            portals.Add(new Portal(left, right));
+        }
+
+        return true;
+    }
+
+    private BaseBaiLoader FindBaiOwner(WorldTemplate worldTemplate, NodeDescriptor node,
+        params Vector3[] candidatePositions)
+    {
+        foreach (var position in candidatePositions)
+        {
+            var candidate = worldTemplate.GetBaiByPos(ZoneKey, position);
+            if (candidate?.NetMissionReaders.Contains(node.NetMission) == true)
+                return candidate;
+        }
+
+        return worldTemplate.ZoneBaiLoader.Values
+            .Concat(worldTemplate.PathBaiLoader.Values)
+            .FirstOrDefault(candidate => candidate.NetMissionReaders.Contains(node.NetMission));
+    }
+
+    private static List<Vector3> PullString(Vector3 start, Vector3 goal, IReadOnlyList<Portal> routePortals)
+    {
+        var portals = new List<Portal>(routePortals.Count + 2)
+        {
+            new(start, start)
+        };
+        portals.AddRange(routePortals);
+        portals.Add(new Portal(goal, goal));
+
+        var result = new List<Vector3> { start };
+        var portalApex = start;
+        var portalLeft = start;
+        var portalRight = start;
+        var apexIndex = 0;
+        var leftIndex = 0;
+        var rightIndex = 0;
+
+        for (var portalIndex = 1; portalIndex < portals.Count; portalIndex++)
+        {
+            var left = portals[portalIndex].Left;
+            var right = portals[portalIndex].Right;
+
+            if (TriangleArea2(portalApex, portalRight, right) <= 0f)
+            {
+                if (SamePoint2D(portalApex, portalRight) ||
+                    TriangleArea2(portalApex, portalLeft, right) > 0f)
+                {
+                    portalRight = right;
+                    rightIndex = portalIndex;
+                }
+                else
+                {
+                    AddUniquePoint(result, portalLeft);
+                    portalApex = portalLeft;
+                    apexIndex = leftIndex;
+                    portalLeft = portalApex;
+                    portalRight = portalApex;
+                    leftIndex = apexIndex;
+                    rightIndex = apexIndex;
+                    portalIndex = apexIndex;
+                    continue;
+                }
+            }
+
+            if (TriangleArea2(portalApex, portalLeft, left) >= 0f)
+            {
+                if (SamePoint2D(portalApex, portalLeft) ||
+                    TriangleArea2(portalApex, portalRight, left) < 0f)
+                {
+                    portalLeft = left;
+                    leftIndex = portalIndex;
+                }
+                else
+                {
+                    AddUniquePoint(result, portalRight);
+                    portalApex = portalRight;
+                    apexIndex = rightIndex;
+                    portalLeft = portalApex;
+                    portalRight = portalApex;
+                    leftIndex = apexIndex;
+                    rightIndex = apexIndex;
+                    portalIndex = apexIndex;
+                }
             }
         }
 
+        AddUniquePoint(result, goal);
         return result;
     }
+
+    private static float TriangleArea2(Vector3 first, Vector3 second, Vector3 third)
+    {
+        return (third.X - first.X) * (second.Y - first.Y) -
+               (second.X - first.X) * (third.Y - first.Y);
+    }
+
+    private static bool SamePoint2D(Vector3 first, Vector3 second)
+    {
+        var x = first.X - second.X;
+        var y = first.Y - second.Y;
+        return x * x + y * y <= DuplicatePointToleranceSquared;
+    }
+
+    private static void AddUniquePoint(List<Vector3> points, Vector3 point)
+    {
+        if (points.Count == 0 || Vector3.DistanceSquared(points[^1], point) > DuplicatePointToleranceSquared)
+            points.Add(point);
+    }
+
+    private readonly record struct Portal(Vector3 Left, Vector3 Right);
 }

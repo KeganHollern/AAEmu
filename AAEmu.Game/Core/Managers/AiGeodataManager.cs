@@ -202,6 +202,7 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
     {
         NodeDescriptor closestPointFound = null;
         var minDist = float.MaxValue;
+        var closestPointContainsPosition = false;
         
         var (sourceCellX, sourceCellY) = pos.ToCellIndex();
         var cell = worldTemplate.GetCell(sourceCellX, sourceCellY);
@@ -232,17 +233,28 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
         {
             if (bLoader == null)
                 continue;
-            foreach (var netMission in bLoader.NetMissionReaders)
+
+            var nodeDescriptor = bLoader.FindClosestNetMissionNode(pos, out var containsPosition,
+                out var distance);
+            if (nodeDescriptor == null)
+                continue;
+
+            if (containsPosition)
             {
-                foreach (var (_, nodeDescriptor) in netMission.NodeDescriptorList)
+                if (!closestPointContainsPosition || distance < minDist)
                 {
-                    var distance = (nodeDescriptor.Pos - pos).Length();
-                    if (distance < minDist)
-                    {
-                        closestPointFound = nodeDescriptor;
-                        minDist = distance;
-                    }
+                    closestPointFound = nodeDescriptor;
+                    minDist = distance;
+                    closestPointContainsPosition = true;
                 }
+
+                continue;
+            }
+
+            if (!closestPointContainsPosition && distance < minDist)
+            {
+                closestPointFound = nodeDescriptor;
+                minDist = distance;
             }
         }
 

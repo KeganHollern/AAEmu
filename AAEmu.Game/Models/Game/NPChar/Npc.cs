@@ -1370,10 +1370,12 @@ public partial class Npc : Unit
         if (Vector3.DistanceSquared(resList[^1], targetPosition) > 0.0001f)
             resList.Add(targetPosition);
 
-        var reducedPath = ParentWorld.Template.GeoData.ReducePath(resList, 10, Ai.PathNode.ZoneKey);
+        var reducedPath = Ai.PathNode.LastPathUsesNavigationFunnel
+            ? new Queue<Vector3>(resList)
+            : ParentWorld.Template.GeoData.ReducePath(resList, 10, Ai.PathNode.ZoneKey);
         Ai.PathNode.FoundPath = reducedPath;
         Ai.PathNode.CurrentTargetPos = reducedPath.Count > 0 ? reducedPath.Peek() : Vector3.Zero;
-        Logger.Trace($"BAI path for NPC {ObjId}:{TemplateId} reduced to {reducedPath.Count}/{resList.Count} points");
+        Logger.Trace($"BAI path for NPC {ObjId}:{TemplateId} produced {reducedPath.Count}/{resList.Count} points (funnel: {Ai.PathNode.LastPathUsesNavigationFunnel})");
         return reducedPath.Count > 0;
     }
 

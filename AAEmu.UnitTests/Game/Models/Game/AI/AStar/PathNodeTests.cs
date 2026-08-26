@@ -137,6 +137,141 @@ public sealed class PathNodeTests
     }
 
     [Test]
+    public async Task FindPath_PointsInsideSameTriangle_UsesActualPositions()
+    {
+        var graph = CreateTriangularGraph(
+            [new Vector3(100f / 3f, 100f / 3f, 0f)],
+            [new Vector3(0f, 0f, 0f), new Vector3(100f, 0f, 0f), new Vector3(0f, 100f, 0f)],
+            [[0, 1, 2]],
+            []);
+        var start = new Vector3(10f, 10f, 0f);
+        var goal = new Vector3(12f, 12f, 0f);
+        var pathNode = new PathNode { ZoneKey = TestZoneKey };
+
+        var result = pathNode.FindPath(graph.World, start, goal, 1f);
+
+        await Assert.That(pathNode.LastSearchSucceeded).IsTrue();
+        await Assert.That(pathNode.LastPathUsesNavigationFunnel).IsTrue();
+        await Assert.That(result.Count).IsEqualTo(2);
+        await Assert.That(result[0]).IsEqualTo(start);
+        await Assert.That(result[1]).IsEqualTo(goal);
+    }
+
+    [Test]
+    public async Task FindPath_ContainingTriangleBeatsCloserCentroid()
+    {
+        var graph = CreateTriangularGraph(
+            [new Vector3(100f / 3f, 100f / 3f, 0f), new Vector3(155f / 3f, 5f / 3f, 0f)],
+            [
+                new Vector3(0f, 0f, 0f),
+                new Vector3(100f, 0f, 0f),
+                new Vector3(0f, 100f, 0f),
+                new Vector3(50f, 0f, 0f),
+                new Vector3(55f, 0f, 0f),
+                new Vector3(50f, 5f, 0f)
+            ],
+            [[0, 1, 2], [3, 4, 5]],
+            []);
+        var start = new Vector3(10f, 10f, 0f);
+        var goal = new Vector3(49f, 2f, 0f);
+        var pathNode = new PathNode { ZoneKey = TestZoneKey };
+
+        var result = pathNode.FindPath(graph.World, start, goal, 1f);
+
+        await Assert.That(Vector3.Distance(graph.Nodes[1].Pos, goal))
+            .IsLessThan(Vector3.Distance(graph.Nodes[0].Pos, goal));
+        await Assert.That(pathNode.LastSearchSucceeded).IsTrue();
+        await Assert.That(pathNode.LastPathUsesNavigationFunnel).IsTrue();
+        await Assert.That(result.Count).IsEqualTo(2);
+        await Assert.That(result[0]).IsEqualTo(start);
+        await Assert.That(result[1]).IsEqualTo(goal);
+    }
+
+    [Test]
+    public async Task FindPath_TriangularCorridor_PullsStraightThroughPortal()
+    {
+        var graph = CreateTriangularGraph(
+            [new Vector3(10f / 3f, 10f / 3f, 0f), new Vector3(20f / 3f, 20f / 3f, 0f)],
+            [
+                new Vector3(0f, 0f, 0f),
+                new Vector3(10f, 0f, 0f),
+                new Vector3(0f, 10f, 0f),
+                new Vector3(10f, 10f, 0f)
+            ],
+            [[0, 1, 2], [1, 3, 2]],
+            [new TestEdge(0, 1, 5d)]);
+        graph.Bai.NetMissionReaders[0].LinkDescriptorList[0].EdgeCenter = new Vector3(5f, 5f, 0f);
+        graph.Bai.NetMissionReaders[0].LinkDescriptorList[0].IsPureTriangularLink = true;
+        var start = new Vector3(1f, 1f, 0f);
+        var goal = new Vector3(9f, 9f, 0f);
+        var pathNode = new PathNode { ZoneKey = TestZoneKey };
+
+        var result = pathNode.FindPath(graph.World, start, goal, 1f);
+
+        await Assert.That(pathNode.LastSearchSucceeded).IsTrue();
+        await Assert.That(pathNode.LastPathUsesNavigationFunnel).IsTrue();
+        await Assert.That(result.Count).IsEqualTo(2);
+        await Assert.That(result[0]).IsEqualTo(start);
+        await Assert.That(result[1]).IsEqualTo(goal);
+    }
+
+    [Test]
+    public async Task FindPath_PointOutsideTriangle_UsesConservativeNodeRoute()
+    {
+        var graph = CreateTriangularGraph(
+            [new Vector3(40f / 3f, 40f / 3f, 0f)],
+            [new Vector3(10f, 10f, 0f), new Vector3(20f, 10f, 0f), new Vector3(10f, 20f, 0f)],
+            [[0, 1, 2]],
+            []);
+        var start = new Vector3(8f, 8f, 0f);
+        var goal = new Vector3(11f, 11f, 0f);
+        var pathNode = new PathNode { ZoneKey = TestZoneKey };
+
+        var result = pathNode.FindPath(graph.World, start, goal, 1f);
+
+        await Assert.That(pathNode.LastSearchSucceeded).IsTrue();
+        await Assert.That(pathNode.LastPathUsesNavigationFunnel).IsFalse();
+        await Assert.That(result.Count).IsEqualTo(3);
+        await Assert.That(result[0]).IsEqualTo(start);
+        await Assert.That(result[1]).IsEqualTo(graph.Nodes[0].Pos);
+        await Assert.That(result[2]).IsEqualTo(goal);
+    }
+
+    [Test]
+    public async Task FindPath_BentTriangularCorridor_DoesNotCutOutsideNavigationMesh()
+    {
+        var graph = CreateTriangularGraph(
+            [
+                new Vector3(10f / 3f, 10f / 3f, 0f),
+                new Vector3(20f / 3f, 20f / 3f, 0f),
+                new Vector3(40f / 3f, 10f / 3f, 0f),
+                new Vector3(50f / 3f, 20f / 3f, 0f),
+                new Vector3(40f / 3f, 40f / 3f, 0f)
+            ],
+            [
+                new Vector3(0f, 0f, 0f),
+                new Vector3(10f, 0f, 0f),
+                new Vector3(0f, 10f, 0f),
+                new Vector3(10f, 10f, 0f),
+                new Vector3(20f, 0f, 0f),
+                new Vector3(20f, 10f, 0f),
+                new Vector3(10f, 20f, 0f)
+            ],
+            [[0, 1, 2], [1, 3, 2], [1, 4, 3], [4, 5, 3], [3, 5, 6]],
+            [new TestEdge(0, 1), new TestEdge(1, 2), new TestEdge(2, 3), new TestEdge(3, 4)]);
+        var start = new Vector3(1f, 8f, 0f);
+        var goal = new Vector3(11f, 18f, 0f);
+        var pathNode = new PathNode { ZoneKey = TestZoneKey };
+
+        var result = pathNode.FindPath(graph.World, start, goal, 1f);
+
+        await Assert.That(pathNode.LastSearchSucceeded).IsTrue();
+        await Assert.That(pathNode.LastPathUsesNavigationFunnel).IsTrue();
+        await Assert.That(result.Count).IsGreaterThan(2);
+        await Assert.That(RouteLength(result)).IsGreaterThan(Vector3.Distance(start, goal));
+    }
+
+    [Test]
     public async Task ReducePath_DetourOutsideCorridor_PreservesTopology()
     {
         var graph = CreateGraph([], []);
@@ -226,7 +361,30 @@ public sealed class PathNodeTests
         bai.NetMissionReaders.Add(netMission);
         template.ZoneBaiLoader.Add(TestZoneKey, bai);
         template.GeoData = new AiGeoDataManager(template);
-        return new TestGraph(template, new WorldInstance(template, 0, true, 1), nodes);
+        return new TestGraph(template, new WorldInstance(template, 0, true, 1), bai, nodes);
+    }
+
+    private static TestGraph CreateTriangularGraph(IReadOnlyList<Vector3> positions,
+        IReadOnlyList<Vector3> vertices, IReadOnlyList<int[]> triangles, IReadOnlyList<TestEdge> edges)
+    {
+        var graph = CreateGraph(positions, edges);
+        var vertexMission = new VertexMissionReader(Stream.Null, TestZoneKey);
+        foreach (var vertex in vertices)
+        {
+            vertexMission.ObstacleDataDescriptorList.Add(new ObstacleDataDescriptor(TestZoneKey)
+            {
+                Pos = vertex
+            });
+        }
+
+        graph.Bai.VertexMissionReaders.Add(vertexMission);
+        for (var index = 0; index < triangles.Count; index++)
+        {
+            graph.Nodes[index].NavigationType = BaiNavigationType.Triangular;
+            graph.Nodes[index].Obstacle = triangles[index];
+        }
+
+        return graph;
     }
 
     private static WorldTemplate CreateWorldTemplate()
@@ -244,9 +402,19 @@ public sealed class PathNodeTests
         return template;
     }
 
+    private static float RouteLength(List<Vector3> points)
+    {
+        var result = 0f;
+        for (var index = 1; index < points.Count; index++)
+            result += Vector3.Distance(points[index - 1], points[index]);
+
+        return result;
+    }
+
     private sealed record TestGraph(
         WorldTemplate Template,
         WorldInstance World,
+        BaseBaiLoader Bai,
         IReadOnlyDictionary<int, NodeDescriptor> Nodes);
 
     private readonly record struct TestEdge(int Source, int Target, double MaxPassRadius = 10d);
