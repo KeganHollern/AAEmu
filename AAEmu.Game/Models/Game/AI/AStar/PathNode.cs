@@ -1,254 +1,197 @@
-﻿// https://lsreg.ru/realizaciya-algoritma-poiska-a-na-c/
-
-using System.Collections.ObjectModel;
 using System.Numerics;
 
-using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.CryEngine.Entities;
 using AAEmu.Game.Models.Game.World;
-using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Models.Game.AI.AStar;
 
 /// <summary>
-/// Reusable A* pathfinder.
+/// Reusable A* pathfinder over the client's BAI navigation graph.
 /// </summary>
 public class PathNode
 {
+    private const int MaxExpandedNodes = 50_000;
+    private const float DuplicatePointToleranceSquared = 0.0001f;
+    private const float BaiSeamNodeToleranceSquared = 0.01f;
+    private const float MinimumEdgeCost = 0.001f;
+
     /// <summary>
-    /// Current zone.Id 
+    /// Current zone key.
     /// </summary>
     public uint ZoneKey { get; set; }
 
     /// <summary>
-    /// The current point on the map.
+    /// Current route point used by GM/debug scripts.
     /// </summary>
     public Vector3 CurrentTargetPos { get; set; }
 
     /// <summary>
-    /// Coordinates of the start point on the map (for the script).
+    /// Coordinates of the start point on the map.
     /// </summary>
     public Vector3 StartPointPos { get; set; } = Vector3.Zero;
 
     /// <summary>
-    /// Coordinates of the end point on the map (for the script).
+    /// Actual requested endpoint. This remains the target's world position rather than its snapped BAI node.
     /// </summary>
     public Vector3 EndPointPos { get; set; } = Vector3.Zero;
 
     /// <summary>
-    /// List of found points (for the script).
+    /// Route points currently being followed by the NPC.
     /// </summary>
     public Queue<Vector3> FoundPath { get; set; } = [];
 
     /// <summary>
-    /// The coordinates of the point on the map. And the coordinates of the point on the map where the Npc goes.
+    /// First point in the most recently calculated route, retained for GM/debug scripts.
     /// </summary>
     public Vector3 Position { get; set; }
 
-    /// <summary>
-    /// Path length from the start (G).
-    /// </summary>
-    private float PathLengthFromStart { get; set; }
+    public bool LastSearchSucceeded { get; private set; }
+    public int LastExpandedNodeCount { get; private set; }
 
     /// <summary>
-    /// The point from which it came to this point.
+    /// Returns whether a combat route needs to be recalculated for the supplied target position.
     /// </summary>
-    private PathNode CameFrom { get; set; }
-
-    /// <summary>
-    /// Approximate distance to target (H).
-    /// </summary>
-    private float PathLengthToEnd { get; init; }
-
-    /// <summary>
-    /// Expected total distance to target (F).
-    /// </summary>
-    private float EstimateFullPathLength => PathLengthFromStart + PathLengthToEnd;
-
-    /// <summary>
-    /// Basic method of route calculation.
-    /// </summary>
-    /// <param name="world"></param>
-    /// <param name="start"></param>
-    /// <param name="goal"></param>
-    /// <returns></returns>
-    public List<Vector3> FindPath(WorldInstance world, Vector3 start, Vector3 goal)
+    public bool NeedsPathRefresh(Vector3 targetPosition, float movementThreshold, bool routeRequired)
     {
-        // Find the nearest point from the start point in the list of geodata points and start the search from it.
-        var posStart = world.Template.GeoData.FindСlosestToTheCurrent(ZoneKey, new Vector3(start.X, start.Y, start.Z));
-        if (posStart != null)
-            start = posStart.Pos; // replace it with the nearest point from the geodata
-        var posEnd = world.Template.GeoData.FindСlosestToTheCurrent(ZoneKey, new Vector3(goal.X, goal.Y, goal.Z));
-        if (posEnd != null)
-            goal = posEnd.Pos;// replace it with the nearest point from the geodata
+        if (!LastSearchSucceeded)
+            return true;
+
+        var threshold = Math.Max(0.1f, movementThreshold);
+        if (Vector3.DistanceSquared(EndPointPos, targetPosition) > threshold * threshold)
+            return true;
+
+        return routeRequired && FoundPath.Count == 0;
+    }
+
+    /// <summary>
+    /// Finds the shortest traversable BAI route between two world positions.
+    /// </summary>
+    /// <param name="world">World containing the BAI graph.</param>
+    /// <param name="start">Actual start position.</param>
+    /// <param name="goal">Actual goal position.</param>
+    /// <param name="agentRadius">Radius required to pass a BAI link. Zero disables radius filtering.</param>
+    public List<Vector3> FindPath(WorldInstance world, Vector3 start, Vector3 goal, float agentRadius = 0f)
+    {
+        StartPointPos = start;
         EndPointPos = goal;
-        var rawDistance = Vector3.Distance(start, goal);
+        LastSearchSucceeded = false;
+        LastExpandedNodeCount = 0;
+        CurrentTargetPos = Vector3.Zero;
 
-        // Step 1.
-        var closedSet = new Collection<PathNode>();
-        var openSet = new Collection<PathNode>();
+        var geoData = world?.Template?.GeoData;
+        if (geoData == null)
+            return [];
 
-        // Step 2.
-        var startNode = new PathNode
+        var startNode = geoData.FindClosestToCurrent(ZoneKey, start);
+        var goalNode = geoData.FindClosestToCurrent(ZoneKey, goal);
+        if (startNode == null || goalNode == null)
+            return [];
+
+        startNode = NormalizeBaiSeamNode(world.Template, startNode);
+        goalNode = NormalizeBaiSeamNode(world.Template, goalNode);
+
+        var frontier = new PriorityQueue<NodeDescriptor, float>();
+        var pathCost = new Dictionary<NodeDescriptor, float>(ReferenceEqualityComparer.Instance)
         {
-            CurrentTargetPos = posStart?.Pos ?? start,
-            Position = start,
-            EndPointPos = goal,
-            CameFrom = null,
-            PathLengthFromStart = 0,
-            PathLengthToEnd = GetHeuristicPathLength(start)
+            [startNode] = 0f
         };
-        openSet.Add(startNode);
+        var cameFrom = new Dictionary<NodeDescriptor, NodeDescriptor>(ReferenceEqualityComparer.Instance);
+        frontier.Enqueue(startNode, GetHeuristic(startNode, goalNode));
 
-        var maxLoopsLeft = (int)MathF.Ceiling(rawDistance * 10) + 50; // This is to prevent the pathfinder from traveling too far off
-        while (openSet.Count > 0)
+        while (frontier.TryDequeue(out var currentNode, out var queuedPriority))
         {
-            maxLoopsLeft--;
+            if (!pathCost.TryGetValue(currentNode, out var currentPathCost))
+                continue;
 
-            // Step 3.
-            var currentNode = openSet.OrderBy(node => node.EstimateFullPathLength).First();
+            var currentPriority = currentPathCost + GetHeuristic(currentNode, goalNode);
+            if (queuedPriority > currentPriority + float.Epsilon)
+                continue;
 
-            // Step 4.
-            if (currentNode.Position.Equals(goal) || maxLoopsLeft <= 0)
+            LastExpandedNodeCount++;
+            if (ReferenceEquals(currentNode, goalNode))
             {
-                var result = GetPathForNode(currentNode);
-                // Leave the nearest point taken from geodata instead of the point from where we are going
-                // result[0] = pos1; // replace the first and the last point with the real one
-                // result[^1] = pos2;
-                // Let's add the target coordinates to the found points
-                result.Add(EndPointPos);
-                result = AiGeoDataManager.DouglasPeuckerReduction(result, 2.0);
+                var result = BuildPath(cameFrom, currentNode);
                 Position = result[0];
-                CurrentTargetPos = Vector3.Zero;
+                CurrentTargetPos = result[0];
+                LastSearchSucceeded = true;
                 return result;
             }
 
-            // Step 5.
-            openSet.Remove(currentNode);
-            closedSet.Add(currentNode);
+            if (LastExpandedNodeCount >= MaxExpandedNodes)
+                return [];
 
-            // Step 6.
-            foreach (var neighbourNode in GetNeighbours(world, currentNode))
+            foreach (var linkDescriptor in geoData.GetAvailablePoints(currentNode))
             {
-                // Step 7.
-                if (closedSet.Any(node => node.Position.Equals(neighbourNode.Position)))
-                {
+                if (!CanTraverseLink(linkDescriptor, agentRadius))
                     continue;
-                }
 
-                var openNode = openSet.FirstOrDefault(node => node.Position.Equals(neighbourNode.Position));
-                // Step 8.
-                if (openNode == null)
-                {
-                    openSet.Add(neighbourNode);
-                }
-                else if (openNode.PathLengthFromStart > neighbourNode.PathLengthFromStart)
-                {
-                    // Step 9.
-                    openNode.CameFrom = currentNode;
-                    openNode.PathLengthFromStart = neighbourNode.PathLengthFromStart;
-                }
+                var targetNode = NormalizeBaiSeamNode(world.Template, linkDescriptor.TargetNodeDescriptor);
+                if (geoData.CheckImpossibleWalk(ZoneKey, targetNode.Pos))
+                    continue;
+
+                var edgeCost = Math.Max(MinimumEdgeCost, Vector3.Distance(currentNode.Pos, targetNode.Pos));
+                var candidatePathCost = currentPathCost + edgeCost;
+                if (pathCost.TryGetValue(targetNode, out var knownPathCost) && candidatePathCost >= knownPathCost)
+                    continue;
+
+                cameFrom[targetNode] = currentNode;
+                pathCost[targetNode] = candidatePathCost;
+                frontier.Enqueue(targetNode, candidatePathCost + GetHeuristic(targetNode, goalNode));
             }
         }
-        // Step 10.
+
         return [];
     }
 
-    /// <summary>
-    /// G: Function for the distance from the starting point to the current point.
-    /// </summary>
-    /// <param name="to"></param>
-    /// <returns></returns>
-    private float GetDistanceFromStart(Vector3 to)
+    private static bool CanTraverseLink(LinkDescriptor linkDescriptor, float agentRadius)
     {
-        var fromVector = new Vector3(StartPointPos.X, StartPointPos.Y, StartPointPos.Z);
-        var toVector = new Vector3(to.X, to.Y, to.Z);
-        return MathUtil.CalculateDistance(fromVector, toVector);
+        if (linkDescriptor.SourceNodeDescriptor == null || linkDescriptor.TargetNodeDescriptor == null)
+            return false;
+
+        return agentRadius <= 0f || linkDescriptor.MaxPassRadius <= 0d ||
+               agentRadius <= linkDescriptor.MaxPassRadius;
     }
 
     /// <summary>
-    /// H: Estimates the distance to the target.
+    /// Path tiles overlap at their edges. Resolve an overlapping target node to the node owned by the tile
+    /// selected for its position, while refusing a distant nearest-node snap.
     /// </summary>
-    /// <param name="from"></param>
-    /// <returns></returns>
-    private float GetHeuristicPathLength(Vector3 from)
+    private NodeDescriptor NormalizeBaiSeamNode(WorldTemplate worldTemplate, NodeDescriptor node)
     {
-        // point-to-point distance
-        var fromVector = new Vector3(from.X, from.Y, from.Z);
-        var toVector = new Vector3(EndPointPos.X, EndPointPos.Y, EndPointPos.Z);
-        return MathUtil.CalculateDistance(fromVector, toVector);
+        var positionBai = worldTemplate.GetBaiByPos(ZoneKey, node.Pos);
+        var positionNode = positionBai?.FindClosestNetMissionNode(node.Pos);
+        return positionNode != null && Vector3.DistanceSquared(positionNode.Pos, node.Pos) <= BaiSeamNodeToleranceSquared
+            ? positionNode
+            : node;
     }
 
-    /// <summary>
-    /// Obtaining a list of neighbors
-    /// </summary>
-    /// <param name="world"></param>
-    /// <param name="pathNode"></param>
-    /// <returns></returns>
-    private Collection<PathNode> GetNeighbours(WorldInstance world, PathNode pathNode)
+    private static float GetHeuristic(NodeDescriptor from, NodeDescriptor goal)
     {
-        var result = new Collection<PathNode>();
+        return Vector3.Distance(from.Pos, goal.Pos);
+    }
 
-        // Check which navmesh file is valid at this position
-        var bai = world.Template.GetBaiByPos(pathNode.CurrentTargetPos);
-        if (bai == null)
+    private static List<Vector3> BuildPath(
+        Dictionary<NodeDescriptor, NodeDescriptor> cameFrom,
+        NodeDescriptor goalNode)
+    {
+        var nodes = new List<NodeDescriptor> { goalNode };
+        var currentNode = goalNode;
+        while (cameFrom.TryGetValue(currentNode, out var previousNode))
         {
-            return result;
+            nodes.Add(previousNode);
+            currentNode = previousNode;
         }
 
-        // Find the nearest node
-        var nearestNode = bai.FindClosestNetMissionNode(pathNode.CurrentTargetPos);
-        if (nearestNode == null)
+        nodes.Reverse();
+        var result = new List<Vector3>(nodes.Count);
+        foreach (var node in nodes)
         {
-            // Was not able to find a nearby node
-            // TODO: create a fall-back system
-            return result;
-        }
-
-        // The adjacent points are the points where you can go.
-        var neighbourPoints = world.Template.GeoData.GetAvailablePoints(nearestNode);
-
-        foreach (var linkDescriptor in neighbourPoints)
-        {
-            // Checking that the point falls within the forbidden area where it is not allowed to walk.
-            if (world.Template.GeoData.CheckImpossibleWalk(linkDescriptor.TargetNodeDescriptor.Pos))
+            if (result.Count == 0 ||
+                Vector3.DistanceSquared(result[^1], node.Pos) > DuplicatePointToleranceSquared)
             {
-                //ViewPoint(point.Position, 858u); // let's show the point for debugging purposes
-                continue;
+                result.Add(node.Pos);
             }
-
-            // Fill in the data for the waypoint.
-            var neighbourNode = new PathNode
-            {
-                CurrentTargetPos = linkDescriptor.TargetNodeDescriptor.Pos,
-                Position = linkDescriptor.TargetNodeDescriptor.Pos,
-                EndPointPos = pathNode.EndPointPos,
-                CameFrom = pathNode,
-                PathLengthFromStart = (linkDescriptor.SourceNodeDescriptor.Pos - pathNode.EndPointPos).Length(), // GetDistanceFromStart(linkDescriptor.SourceNodeDescriptor.Pos),
-                PathLengthToEnd = (linkDescriptor.TargetNodeDescriptor.Pos - pathNode.EndPointPos).Length() // GetHeuristicPathLength(linkDescriptor.TargetNodeDescriptor.Pos)
-            };
-
-            result.Add(neighbourNode);
         }
-
-        return result;
-    }
-
-    /// <summary>
-    /// Obtaining a route. The route is represented as a list of point coordinates.
-    /// </summary>
-    /// <param name="pathNode"></param>
-    /// <returns></returns>
-    private static List<Vector3> GetPathForNode(PathNode pathNode)
-    {
-        var result = new List<Vector3>();
-        var currentNode = pathNode;
-        while (currentNode != null)
-        {
-            result.Add(currentNode.Position);
-            //ViewPoint(currentNode.Position, 5014u); // let's show the point for debugging purposes
-            currentNode = currentNode.CameFrom;
-        }
-        result.Reverse();
 
         return result;
     }

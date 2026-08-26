@@ -279,6 +279,15 @@ public class WorldTemplate
 
     public BaseBaiLoader GetBaiByPos(Vector3 pos)
     {
+        return GetBaiByPos(0, pos);
+    }
+
+    /// <summary>
+    /// Gets the BAI loader that owns a position, preferring the explicitly supplied zone when this world
+    /// stores navigation in per-zone files.
+    /// </summary>
+    public BaseBaiLoader GetBaiByPos(uint zoneKey, Vector3 pos)
+    {
         if (!float.IsFinite(pos.X) || !float.IsFinite(pos.Y) ||
             pos.X < 0f || pos.Y < 0f || Cells is null ||
             pos.X >= Cells.GetLength(0) * WorldManager.CELL_SIZE ||
@@ -286,7 +295,23 @@ public class WorldTemplate
             return null;
 
         if (ZoneBaiLoader.Count > 0)
-            return ZoneBaiLoader.Values.First(); // TODO: Pick the actually correct zone
+        {
+            if (zoneKey != 0 && ZoneBaiLoader.TryGetValue(zoneKey, out var explicitZoneBai))
+                return explicitZoneBai;
+
+            var sectorX = (int)(pos.X / WorldManager.REGION_SIZE);
+            var sectorY = (int)(pos.Y / WorldManager.REGION_SIZE);
+            if (ZoneKeyByRegions is not null &&
+                sectorX >= 0 && sectorX < ZoneKeyByRegions.GetLength(0) &&
+                sectorY >= 0 && sectorY < ZoneKeyByRegions.GetLength(1) &&
+                ZoneBaiLoader.TryGetValue(ZoneKeyByRegions[sectorX, sectorY], out var positionZoneBai))
+            {
+                return positionZoneBai;
+            }
+
+            // Single-zone instances do not need a region map to disambiguate their only BAI loader.
+            return ZoneBaiLoader.Count == 1 ? ZoneBaiLoader.Values.First() : null;
+        }
 
         var cellPos = pos.ToCellIndex();
         var cell = GetCell(cellPos.Item1, cellPos.Item2);
