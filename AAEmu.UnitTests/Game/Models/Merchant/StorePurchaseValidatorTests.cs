@@ -163,6 +163,43 @@ public class StorePurchaseValidatorTests
         await Assert.That(emptyPack).IsEqualTo(0u);
     }
 
+    [Test]
+    public async Task RemotePurchaseCommandParsesBoundedItemAndCountPairs()
+    {
+        var valid = RemoteShopCatalog.TryParsePurchaseRequests(
+            "777:1,16000:3",
+            ShopCurrencyType.VocationBadges,
+            out var requests);
+        var malformed = RemoteShopCatalog.TryParsePurchaseRequests(
+            "777:1,broken",
+            ShopCurrencyType.VocationBadges,
+            out _);
+        var nonPositive = RemoteShopCatalog.TryParsePurchaseRequests(
+            "777:0",
+            ShopCurrencyType.VocationBadges,
+            out _);
+        var unsupportedCurrency = RemoteShopCatalog.TryParsePurchaseRequests(
+            "777:1",
+            ShopCurrencyType.Money,
+            out _);
+        var tooMany = RemoteShopCatalog.TryParsePurchaseRequests(
+            string.Join(',', Enumerable.Range(1, StorePurchaseValidator.MaxPurchaseLines + 1)
+                .Select(itemId => $"{itemId}:1")),
+            ShopCurrencyType.Honor,
+            out _);
+
+        await Assert.That(valid).IsTrue();
+        await Assert.That(requests).Count().IsEqualTo(2);
+        await Assert.That(requests[0]).IsEqualTo(
+            new StorePurchaseRequest(777, 1, ShopCurrencyType.VocationBadges));
+        await Assert.That(requests[1]).IsEqualTo(
+            new StorePurchaseRequest(16000, 3, ShopCurrencyType.VocationBadges));
+        await Assert.That(malformed).IsFalse();
+        await Assert.That(nonPositive).IsFalse();
+        await Assert.That(unsupportedCurrency).IsFalse();
+        await Assert.That(tooMany).IsFalse();
+    }
+
     private static (bool Success, StorePurchaseError Error) CreateHonorPlan(
         IReadOnlyList<StorePurchaseRequest> requests)
     {

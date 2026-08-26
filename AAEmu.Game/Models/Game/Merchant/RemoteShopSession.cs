@@ -1,3 +1,4 @@
+using System.Globalization;
 using AAEmu.Game.Models.Game.Items;
 
 namespace AAEmu.Game.Models.Game.Merchant;
@@ -9,13 +10,51 @@ public static class RemoteShopCatalog
 
     public static bool TryGetPackId(string shopName, out uint merchantPackId)
     {
-        merchantPackId = shopName?.ToLowerInvariant() switch
+        return TryGetPack(shopName, out merchantPackId, out _);
+    }
+
+    public static bool TryGetPack(
+        string shopName,
+        out uint merchantPackId,
+        out ShopCurrencyType currency)
+    {
+        (merchantPackId, currency) = shopName?.ToLowerInvariant() switch
         {
-            "honor" => HonorPackId,
-            "vocation" => VocationPackId,
-            _ => 0
+            "honor" => (HonorPackId, ShopCurrencyType.Honor),
+            "vocation" => (VocationPackId, ShopCurrencyType.VocationBadges),
+            _ => (0, default)
         };
         return merchantPackId != 0;
+    }
+
+    public static bool TryParsePurchaseRequests(
+        string encodedRequests,
+        ShopCurrencyType currency,
+        out IReadOnlyList<StorePurchaseRequest> requests)
+    {
+        requests = [];
+        if (currency is not (ShopCurrencyType.Honor or ShopCurrencyType.VocationBadges) ||
+            string.IsNullOrEmpty(encodedRequests))
+            return false;
+
+        var encodedLines = encodedRequests.Split(',');
+        if (encodedLines.Length == 0 || encodedLines.Length > StorePurchaseValidator.MaxPurchaseLines)
+            return false;
+
+        var parsed = new List<StorePurchaseRequest>(encodedLines.Length);
+        foreach (var encodedLine in encodedLines)
+        {
+            var fields = encodedLine.Split(':');
+            if (fields.Length != 2 ||
+                !uint.TryParse(fields[0], NumberStyles.None, CultureInfo.InvariantCulture, out var itemId) ||
+                !int.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out var count) ||
+                itemId == 0 || count <= 0)
+                return false;
+            parsed.Add(new StorePurchaseRequest(itemId, count, currency));
+        }
+
+        requests = parsed;
+        return true;
     }
 
     public static bool TryGetPackId(
