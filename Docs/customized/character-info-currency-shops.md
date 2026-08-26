@@ -8,11 +8,10 @@ stock store UI; the game server remains authoritative for the transaction.
 
 ## Protocol and trust boundary
 
-The client sends `/aaemu_shop honor` or `/aaemu_shop vocation` before opening
-the native store. The public command creates a five-minute, character-local
-authorization for merchant pack 192 or 164. A purchase without an NPC or doodad
-is accepted only while that authorization is valid, and a successful purchase
-refreshes it.
+The client opens the native store directly. For a purchase without an NPC or
+doodad, the server selects merchant pack 192 or 164 only when every request line
+uses the corresponding Honor Point or Vocation Badge currency. Money and mixed-
+currency requests cannot select a remote catalog.
 
 `CSBuyItemsPacket` does not trust the client catalog. It reloads the merchant
 pack and item templates, rejects unsupported currencies, invalid or duplicate
@@ -35,5 +34,5 @@ lifespan packets are deferred until the transaction succeeds.
 
 The managed client release adds native store buttons to the Honor Point and
 Vocation Badge rows, plus catalog/display adapters for the stock store UI. The
-embedded list is display-only. See the matching `shop.r20260824` recipe in the
-deployment repository for deterministic Lua and `game_pak` construction.
+embedded list is display-only. See the active client recipe in the deployment
+repository for deterministic Lua and `game_pak` construction.
