@@ -101,7 +101,7 @@ public class BaseBaiLoader(WorldTemplate parentWorldTemplate)
                 // Logger.Debug($"Net File: {netFile}");
 
                 using var fs = ClientFileManager.GetFileStream(netFile);
-                var net = new NetMissionReader(fs, zoneKey);
+                var net = new NetMissionReader(fs, zoneKey) { SourceFileName = netFile };
                 try
                 {
                     net.ReaderPointOffset = targetOffset;
@@ -139,7 +139,7 @@ public class BaseBaiLoader(WorldTemplate parentWorldTemplate)
 
                 try
                 {
-                    var vertex = new VertexMissionReader(fileStream, zoneKey);
+                    var vertex = new VertexMissionReader(fileStream, zoneKey) { SourceFileName = vertexFile };
                     vertex.ReaderPointOffset = targetOffset;
                     vertex.ReadFile();
                     VertexMissionReaders.Add(vertex);
@@ -252,31 +252,200 @@ public class BaseBaiLoader(WorldTemplate parentWorldTemplate)
 
     public NodeDescriptor FindClosestNetMissionNode(Vector3 pos)
     {
+        return FindClosestNetMissionNode(pos, out _, out _);
+    }
+
+    /// <summary>
+    /// Finds the navigation node that owns a world point. Triangular navigation nodes are selected by
+    /// polygon containment and surface height before falling back to nearest-center distance.
+    /// </summary>
+    public NodeDescriptor FindClosestNetMissionNode(Vector3 pos, out bool containsPosition, out float matchDistance)
+    {
         NodeDescriptor nearestNode = null;
         var nearestDistance = float.MaxValue;
+        NodeDescriptor containingNode = null;
+        var containingSurfaceDistance = float.MaxValue;
+        var containingCenterDistance = float.MaxValue;
         foreach (var netMissionReader in NetMissionReaders)
         {
-            foreach (var (index, nodeDescriptor) in netMissionReader.NodeDescriptorList)
+            foreach (var (_, nodeDescriptor) in netMissionReader.NodeDescriptorList)
             {
-                if (nearestNode == null)
+                var centerDistance = Vector3.Distance(nodeDescriptor.Pos, pos);
+                if (centerDistance < nearestDistance)
                 {
                     nearestNode = nodeDescriptor;
-                    nearestDistance = (nearestNode.Pos - pos).Length();
-                    continue;
-                }
-                var thisDistance = (pos - nodeDescriptor.Pos).Length();
-                if (thisDistance < nearestDistance)
-                {
-                    nearestNode = nodeDescriptor;
-                    nearestDistance = thisDistance;
+                    nearestDistance = centerDistance;
                 }
 
-                if (nearestDistance <= 0.0001f)
+                if (!ContainsPosition(nodeDescriptor, pos, out var surfaceDistance))
                 {
-                    return nearestNode;
+                    continue;
+                }
+
+                if (surfaceDistance < containingSurfaceDistance ||
+                    MathF.Abs(surfaceDistance - containingSurfaceDistance) <= 0.001f &&
+                    centerDistance < containingCenterDistance)
+                {
+                    containingNode = nodeDescriptor;
+                    containingSurfaceDistance = surfaceDistance;
+                    containingCenterDistance = centerDistance;
                 }
             }
         }
+
+        if (containingNode != null)
+        {
+            containsPosition = true;
+            matchDistance = containingSurfaceDistance;
+            return containingNode;
+        }
+
+        containsPosition = false;
+        matchDistance = nearestDistance;
         return nearestNode;
+    }
+
+    public bool ContainsPosition(NodeDescriptor node, Vector3 position, out float surfaceDistance)
+    {
+        surfaceDistance = float.MaxValue;
+        if (!TryGetTriangleVertices(node, out var first, out var second, out var third) ||
+            !TryGetTriangleSurfaceHeight(position, first, second, third, out var surfaceHeight))
+        {
+            return false;
+        }
+
+        surfaceDistance = MathF.Abs(surfaceHeight - position.Z);
+        return true;
+    }
+
+    public bool TryGetTriangleVertices(NodeDescriptor node, out Vector3 first, out Vector3 second,
+        out Vector3 third)
+    {
+        first = Vector3.Zero;
+        second = Vector3.Zero;
+        third = Vector3.Zero;
+        if (node == null || (node.NavigationType & BaiNavigationType.Triangular) == 0 ||
+            node.Obstacle is not { Length: 3 })
+        {
+            return false;
+        }
+
+        var vertexReader = FindVertexReader(node.NetMission);
+        if (vertexReader == null || node.Obstacle.Any(index =>
+                index < 0 || index >= vertexReader.ObstacleDataDescriptorList.Count))
+        {
+            return false;
+        }
+
+        first = vertexReader.ObstacleDataDescriptorList[node.Obstacle[0]].Pos;
+        second = vertexReader.ObstacleDataDescriptorList[node.Obstacle[1]].Pos;
+        third = vertexReader.ObstacleDataDescriptorList[node.Obstacle[2]].Pos;
+        return true;
+    }
+
+    public bool TryGetPortal(LinkDescriptor link, float agentRadius, out Vector3 left, out Vector3 right)
+    {
+        left = Vector3.Zero;
+        right = Vector3.Zero;
+        if (link?.SourceNodeDescriptor == null || link.TargetNodeDescriptor == null ||
+            !ReferenceEquals(link.SourceNodeDescriptor.NetMission, link.TargetNodeDescriptor.NetMission) ||
+            !NetMissionReaders.Contains(link.SourceNodeDescriptor.NetMission))
+        {
+            return false;
+        }
+
+        var vertexReader = FindVertexReader(link.SourceNodeDescriptor.NetMission);
+        if (vertexReader == null)
+            return false;
+
+        var sharedVertexIndexes = link.SourceNodeDescriptor.Obstacle
+            .Intersect(link.TargetNodeDescriptor.Obstacle)
+            .Distinct()
+            .Where(index => index >= 0 && index < vertexReader.ObstacleDataDescriptorList.Count)
+            .Take(2)
+            .ToArray();
+        if (sharedVertexIndexes.Length != 2)
+            return false;
+
+        var first = vertexReader.ObstacleDataDescriptorList[sharedVertexIndexes[0]].Pos;
+        var second = vertexReader.ObstacleDataDescriptorList[sharedVertexIndexes[1]].Pos;
+        var portalCenter = Vector3.Lerp(first, second, 0.5f);
+        var travelDirection = link.TargetNodeDescriptor.Pos - link.SourceNodeDescriptor.Pos;
+        var firstOffset = first - portalCenter;
+        var cross = travelDirection.X * firstOffset.Y - travelDirection.Y * firstOffset.X;
+        left = cross >= 0f ? first : second;
+        right = cross >= 0f ? second : first;
+
+        var portalWidth = Vector2.Distance(new Vector2(left.X, left.Y), new Vector2(right.X, right.Y));
+        var clearance = Math.Max(0f, agentRadius);
+        if (clearance <= 0f)
+            return true;
+
+        if (portalWidth <= clearance * 2f || portalWidth <= float.Epsilon)
+        {
+            left = portalCenter;
+            right = portalCenter;
+            return true;
+        }
+
+        var amount = clearance / portalWidth;
+        var originalLeft = left;
+        left = Vector3.Lerp(originalLeft, right, amount);
+        right = Vector3.Lerp(right, originalLeft, amount);
+        return true;
+    }
+
+    private VertexMissionReader FindVertexReader(NetMissionReader netMissionReader)
+    {
+        if (VertexMissionReaders.Count == 1)
+            return VertexMissionReaders[0];
+
+        var netSuffix = GetMissionFileSuffix(netMissionReader.SourceFileName, "netmission");
+        if (!string.IsNullOrEmpty(netSuffix))
+        {
+            var matchingReader = VertexMissionReaders.FirstOrDefault(reader =>
+                string.Equals(GetMissionFileSuffix(reader.SourceFileName, "vertsmission"), netSuffix,
+                    StringComparison.OrdinalIgnoreCase));
+            if (matchingReader != null)
+                return matchingReader;
+        }
+
+        var netReaderIndex = NetMissionReaders.IndexOf(netMissionReader);
+        return netReaderIndex >= 0 && netReaderIndex < VertexMissionReaders.Count
+            ? VertexMissionReaders[netReaderIndex]
+            : null;
+    }
+
+    private static string GetMissionFileSuffix(string fileName, string prefix)
+    {
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        return name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? name[prefix.Length..]
+            : string.Empty;
+    }
+
+    private static bool TryGetTriangleSurfaceHeight(Vector3 point, Vector3 first, Vector3 second,
+        Vector3 third, out float surfaceHeight)
+    {
+        surfaceHeight = 0f;
+        var denominator = (second.Y - third.Y) * (first.X - third.X) +
+                          (third.X - second.X) * (first.Y - third.Y);
+        if (MathF.Abs(denominator) <= float.Epsilon)
+            return false;
+
+        var firstWeight = ((second.Y - third.Y) * (point.X - third.X) +
+                           (third.X - second.X) * (point.Y - third.Y)) / denominator;
+        var secondWeight = ((third.Y - first.Y) * (point.X - third.X) +
+                            (first.X - third.X) * (point.Y - third.Y)) / denominator;
+        var thirdWeight = 1f - firstWeight - secondWeight;
+        const float containmentTolerance = 0.0001f;
+        if (firstWeight < -containmentTolerance || secondWeight < -containmentTolerance ||
+            thirdWeight < -containmentTolerance)
+        {
+            return false;
+        }
+
+        surfaceHeight = firstWeight * first.Z + secondWeight * second.Z + thirdWeight * third.Z;
+        return true;
     }
 }

@@ -12,6 +12,7 @@ public abstract class BaiReader // : IDisposable
     public System.IO.Stream RawStream { get; set; } = rawStream;
     public BinaryReader Reader { get; set; }
     public uint ZoneId { get; } = zoneId;
+    public string SourceFileName { get; set; } = string.Empty;
 
     /// <summary>
     /// This Vector3 gets added to every point read
