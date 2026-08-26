@@ -1,3 +1,5 @@
+using AAEmu.Game.Models.Game.Items;
+
 namespace AAEmu.Game.Models.Game.Merchant;
 
 public static class RemoteShopCatalog
@@ -11,6 +13,27 @@ public static class RemoteShopCatalog
         {
             "honor" => HonorPackId,
             "vocation" => VocationPackId,
+            _ => 0
+        };
+        return merchantPackId != 0;
+    }
+
+    public static bool TryGetPackId(
+        IReadOnlyList<StorePurchaseRequest> requests,
+        out uint merchantPackId)
+    {
+        merchantPackId = 0;
+        if (requests is not { Count: > 0 })
+            return false;
+
+        var currency = requests[0].Currency;
+        if (requests.Any(request => request.Currency != currency))
+            return false;
+
+        merchantPackId = currency switch
+        {
+            ShopCurrencyType.Honor => HonorPackId,
+            ShopCurrencyType.VocationBadges => VocationPackId,
             _ => 0
         };
         return merchantPackId != 0;

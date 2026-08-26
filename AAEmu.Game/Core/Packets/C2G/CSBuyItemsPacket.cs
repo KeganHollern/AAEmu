@@ -53,7 +53,6 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
             return;
         }
 
-        var now = DateTime.UtcNow;
         var remotePurchase = false;
         MerchantGoods pack;
 
@@ -73,16 +72,14 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
         }
         else
         {
-            var session = character.ActiveRemoteShop;
-            if (session == null || !session.IsValid(now))
+            if (!RemoteShopCatalog.TryGetPackId(requests, out var merchantPackId))
             {
-                character.ActiveRemoteShop = null;
                 character.SendErrorMessage(ErrorMessageType.StoreHaveProblem);
                 return;
             }
 
             remotePurchase = true;
-            pack = NpcManager.Instance.GetGoods(session.MerchantPackId);
+            pack = NpcManager.Instance.GetGoods(merchantPackId);
         }
 
         if (pack == null)
@@ -112,8 +109,7 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
                 plan,
                 buyBackIndices,
                 remotePurchase,
-                npc != null,
-                now);
+                npc != null);
         }
     }
 
@@ -123,19 +119,8 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
         StorePurchasePlan plan,
         List<int> buyBackIndices,
         bool remotePurchase,
-        bool hasNpc,
-        DateTime now)
+        bool hasNpc)
     {
-        if (remotePurchase &&
-            (character.ActiveRemoteShop is not { } session ||
-             !session.IsValid(now) ||
-             session.MerchantPackId != pack.Id))
-        {
-            character.ActiveRemoteShop = null;
-            character.SendErrorMessage(ErrorMessageType.StoreHaveProblem);
-            return;
-        }
-
         var buyBackItems = new Dictionary<Item, int>();
         long buyBackCost = 0;
         if (buyBackIndices.Count > 0)
@@ -227,9 +212,6 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
                 character.SendErrorMessage(ErrorMessageType.StoreHaveProblem);
                 return;
         }
-
-        if (remotePurchase)
-            character.ActiveRemoteShop = character.ActiveRemoteShop?.Refresh(now);
 
         Connection.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.StoreBuy, tasks, []));
         foreach (var packet in deferredSyncPackets)

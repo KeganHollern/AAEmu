@@ -131,6 +131,38 @@ public class StorePurchaseValidatorTests
         await Assert.That(unknownPack).IsEqualTo(0u);
     }
 
+    [Test]
+    public async Task RemotePurchaseRequestsSelectOnlyOnePointCatalog()
+    {
+        var honor = RemoteShopCatalog.TryGetPackId(
+            [new StorePurchaseRequest(24750, 1, ShopCurrencyType.Honor)],
+            out var honorPack);
+        var vocation = RemoteShopCatalog.TryGetPackId(
+            [new StorePurchaseRequest(777, 1, ShopCurrencyType.VocationBadges)],
+            out var vocationPack);
+        var mixed = RemoteShopCatalog.TryGetPackId(
+            [
+                new StorePurchaseRequest(24750, 1, ShopCurrencyType.Honor),
+                new StorePurchaseRequest(777, 1, ShopCurrencyType.VocationBadges)
+            ],
+            out var mixedPack);
+        var money = RemoteShopCatalog.TryGetPackId(
+            [new StorePurchaseRequest(1, 1, ShopCurrencyType.Money)],
+            out var moneyPack);
+        var empty = RemoteShopCatalog.TryGetPackId([], out var emptyPack);
+
+        await Assert.That(honor).IsTrue();
+        await Assert.That(honorPack).IsEqualTo(RemoteShopCatalog.HonorPackId);
+        await Assert.That(vocation).IsTrue();
+        await Assert.That(vocationPack).IsEqualTo(RemoteShopCatalog.VocationPackId);
+        await Assert.That(mixed).IsFalse();
+        await Assert.That(mixedPack).IsEqualTo(0u);
+        await Assert.That(money).IsFalse();
+        await Assert.That(moneyPack).IsEqualTo(0u);
+        await Assert.That(empty).IsFalse();
+        await Assert.That(emptyPack).IsEqualTo(0u);
+    }
+
     private static (bool Success, StorePurchaseError Error) CreateHonorPlan(
         IReadOnlyList<StorePurchaseRequest> requests)
     {
