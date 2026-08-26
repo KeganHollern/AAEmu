@@ -12,8 +12,11 @@ namespace AAEmu.Game.Models.Game.AI.v2.Behaviors.Flytrap;
 
 public class FlytrapAttackBehavior : Behavior
 {
+    private static readonly TimeSpan PathRefreshInterval = TimeSpan.FromMilliseconds(500);
+
     private FlytrapAiParams _aiParams;
     private bool _enter;
+    private DateTime _nextPathRefreshTime = DateTime.MinValue;
 
     public override void Enter()
     {
@@ -78,64 +81,56 @@ public class FlytrapAttackBehavior : Behavior
         {
             gimmick.Target = target.Transform.World.Position;
         }
-        var finalPoint = gimmick.Target;
-
         var range = 0.1f;
-        var moveDistance = gimmick.BaseMoveSpeed * (delta.Milliseconds / 1000.0f) + 1f;
-        var moveDistanceZ = gimmick.Template.Gravity * (delta.Milliseconds / 1000.0f);
-        var distanceToTarget = MathUtil.CalculateDistance(gimmickPosition, gimmick.Target, true);
+        var moveDistance = gimmick.BaseMoveSpeed * (float)delta.TotalSeconds + 1f;
+        var moveDistanceZ = gimmick.Template.Gravity * (float)delta.TotalSeconds;
+        var targetPosition = target.Transform.World.Position;
+        var distanceToTarget = MathUtil.CalculateDistance(gimmickPosition, targetPosition, true);
 
         if (AppConfiguration.Instance.World.GeoDataMode)
         {
-            // we will find the path to the abuser only if the target coordinates have changed
-            if (Ai.PathNode?.FoundPath?.Count == 0 && target != null && Ai.PathNode?.EndPointPos != null)
+            var pathNode = Ai.PathNode;
+            var now = DateTime.UtcNow;
+            var targetMovementThreshold = Math.Max(1f, Ai.Owner.ModelSize);
+            if (distanceToTarget > range && pathNode != null && now >= _nextPathRefreshTime &&
+                pathNode.NeedsPathRefresh(targetPosition, targetMovementThreshold, true))
             {
-                //if (!Ai.PathNode.pos2.Equals(new Point(target.Transform.World.Position.X, target.Transform.World.Position.Y, target.Transform.World.Position.Z)))
-                if (Math.Abs((Ai.PathNode.EndPointPos - target.Transform.World.Position).Length()) <= Ai.Owner.ModelSize)
-                {
-                    // let's find the path to the abuser
-                    Ai.Owner.FindPath((Unit)target);
-                    // remember the new target coordinates
-                    Ai.PathNode.EndPointPos = new Vector3(target.Transform.World.Position.X, target.Transform.World.Position.Y, target.Transform.World.Position.Z);
+                if (Ai.Owner.FindPath((Unit)target))
                     gimmick.Target = target.Transform.World.Position;
-                }
+                _nextPathRefreshTime = now + PathRefreshInterval;
             }
-            // moving along the route points
-            if (Ai.PathNode?.FoundPath?.Count > 0 && !Ai.PathNode.FoundPath.Peek().Equals(Vector3.Zero))
+
+            if (distanceToTarget <= range)
             {
-                // take the point to which we are moving
-                var routePoint = new Vector3(Ai.PathNode.Position.X, Ai.PathNode.Position.Y, Ai.PathNode.Position.Z);
-                // recalculate the distance, since the path is divided into points
+                gimmick.StopMovement();
+                return;
+            }
+
+            if (pathNode is not { LastSearchSucceeded: true })
+            {
+                gimmick.StopMovement();
+                return;
+            }
+
+            while (pathNode.FoundPath.Count > 0)
+            {
+                var routePoint = pathNode.FoundPath.Peek();
                 var distanceToPoint = MathUtil.CalculateDistance(gimmickPosition, routePoint, true);
                 if (distanceToPoint > range)
                 {
                     gimmick.MoveTowards(routePoint, moveDistance, moveDistanceZ);
+                    return;
                 }
-                else
-                {
-                    // take the next point to which we are moving
-                    if (Ai.PathNode.FoundPath.Count <= 0)
-                    {
-                        Ai.Owner.StopMovement();
-                        Ai.PathNode.FoundPath = [];
-                        return;
-                    }
 
-                    Ai.PathNode.CurrentTargetPos = Ai.PathNode.FoundPath.Dequeue();
-                }
+                pathNode.CurrentTargetPos = pathNode.FoundPath.Dequeue();
             }
-            else // we move straight to the final point
-            {
-                if (distanceToTarget > range)
-                    gimmick.MoveTowards(finalPoint, moveDistance, moveDistanceZ);
-                else
-                    gimmick.StopMovement();
-            }
+
+            gimmick.StopMovement();
         }
         else // we move straight to the final point
         {
             if (distanceToTarget > range)
-                gimmick.MoveTowards(finalPoint, moveDistance, moveDistanceZ);
+                gimmick.MoveTowards(targetPosition, moveDistance, moveDistanceZ);
             else
                 gimmick.StopMovement();
         }

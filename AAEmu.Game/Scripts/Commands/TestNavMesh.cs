@@ -57,13 +57,13 @@ public class TestNavMesh : ICommand
         ClearMarkers();
         if (character.CurrentTarget is not Npc npc)
         {
-            var closestNodePos = character.ParentWorld.Template.GeoData.FindСlosestToTheCurrent(character.Transform.ZoneId, character.Transform.World.Position);
+            var closestNodePos = character.ParentWorld.Template.GeoData.FindClosestToCurrent(character.Transform.ZoneId, character.Transform.World.Position);
             messageOutput.SendMessage($"Your closest node is: {closestNodePos}");
             AddDoodadMarker(character.ParentWorld, closestNodePos.Pos, crescentThroneFlagDoodad);
             return;
         }
         var world = character.ParentWorld;
-        var pos = world.Template.GeoData.FindСlosestToTheCurrent(npc.Transform.ZoneId, npc.Transform.World.Position);
+        var pos = world.Template.GeoData.FindClosestToCurrent(npc.Transform.ZoneId, npc.Transform.World.Position);
         messageOutput.SendMessage($"Closest to {npc.Transform.World.Position} -> {pos}");
         var foundPath = npc.Ai.PathNode.FindPath(npc.ParentWorld, npc.Transform.World.Position, character.Transform.World.Position).ToList();
         foundPath.Insert(0, npc.Transform.World.Position);
@@ -75,7 +75,7 @@ public class TestNavMesh : ICommand
             AddDoodadMarker(world, v3, stonePostDoodad);
         }
         messageOutput.SendMessage($"Reduced:");
-        var reducedPath = world.Template.GeoData.ReducePath(foundPath.ToList(), 10).ToList();
+        var reducedPath = world.Template.GeoData.ReducePath(foundPath.ToList(), 10, npc.Transform.ZoneId).ToList();
         //reducedPath.Insert(0, npc.Transform.World.Position);
         //reducedPath.Add(character.Transform.World.Position);
         foreach (var v3 in reducedPath)

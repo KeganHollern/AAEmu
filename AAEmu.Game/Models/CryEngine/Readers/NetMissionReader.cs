@@ -6,6 +6,9 @@ namespace AAEmu.Game.Models.CryEngine.Readers;
 
 public class NetMissionReader : BaiReader
 {
+    private readonly object _outgoingLinkIndexLock = new();
+    private OutgoingLinkIndex _outgoingLinkIndex;
+
     public static int BaiTriangulationFileVersion = 55;
 
     public ConcurrentDictionary<long, NodeDescriptor> NodeDescriptorList { get; set; } = new();
@@ -17,6 +20,42 @@ public class NetMissionReader : BaiReader
     {
         Navigation = new Navigation(ZoneId);
         BBox = new BBox();
+    }
+
+    /// <summary>
+    /// Gets the links leaving a node without rescanning the entire BAI edge list for every A* expansion.
+    /// The index is rebuilt if a loader or test replaces or appends to the source list.
+    /// </summary>
+    public IReadOnlyList<LinkDescriptor> GetOutgoingLinks(long sourceNode)
+    {
+        var links = LinkDescriptorList;
+        var index = Volatile.Read(ref _outgoingLinkIndex);
+        if (index == null || !ReferenceEquals(index.Source, links) || index.LinkCount != links.Count)
+        {
+            lock (_outgoingLinkIndexLock)
+            {
+                index = _outgoingLinkIndex;
+                if (index == null || !ReferenceEquals(index.Source, links) || index.LinkCount != links.Count)
+                {
+                    var linksBySource = new Dictionary<long, List<LinkDescriptor>>();
+                    foreach (var link in links)
+                    {
+                        if (!linksBySource.TryGetValue(link.SourceNode, out var outgoingLinks))
+                        {
+                            outgoingLinks = [];
+                            linksBySource.Add(link.SourceNode, outgoingLinks);
+                        }
+
+                        outgoingLinks.Add(link);
+                    }
+
+                    index = new OutgoingLinkIndex(links, links.Count, linksBySource);
+                    Volatile.Write(ref _outgoingLinkIndex, index);
+                }
+            }
+        }
+
+        return index.LinksBySource.GetValueOrDefault(sourceNode) ?? [];
     }
 
     public override void CheckVersion(int version)
@@ -81,4 +120,9 @@ public class NetMissionReader : BaiReader
             LinkDescriptorList.Add(linkDescriptor);
         }
     }
+
+    private sealed record OutgoingLinkIndex(
+        List<LinkDescriptor> Source,
+        int LinkCount,
+        Dictionary<long, List<LinkDescriptor>> LinksBySource);
 }

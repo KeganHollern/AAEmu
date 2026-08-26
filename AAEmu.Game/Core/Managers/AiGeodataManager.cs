@@ -1,8 +1,10 @@
 ﻿using System.Numerics;
 
+using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.CryEngine.Entities;
 using AAEmu.Game.Models.CryEngine.Loaders;
 using AAEmu.Game.Models.CryEngine.Mission;
+using AAEmu.Game.Models.CryEngine.Readers;
 using AAEmu.Game.Models.Game.AI.AStar;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Utils;
@@ -18,9 +20,9 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
-    public List<LinkDescriptor> GetAvailablePoints(NodeDescriptor point)
+    public IReadOnlyList<LinkDescriptor> GetAvailablePoints(NodeDescriptor point)
     {
-        return point.NetMission.LinkDescriptorList.Where(l => l.SourceNode == point.Id).ToList() ?? [];
+        return point.NetMission.GetOutgoingLinks(point.Id);
     }
 
     #region A point in a polygon
@@ -32,12 +34,17 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
     /// <returns></returns>
     public bool CheckImpossibleWalk(Vector3 point)
     {
-        var bai = worldTemplate.GetBaiByPos(point);
+        return CheckImpossibleWalk(0, point);
+    }
+
+    public bool CheckImpossibleWalk(uint zoneKey, Vector3 point)
+    {
+        var bai = worldTemplate.GetBaiByPos(zoneKey, point);
         if (bai != null)
         {
             foreach (var areaMission in bai.AreasMissionReaders)
             {
-                foreach (var forbiddenArea in areaMission.ForbiddenAreasList)
+                foreach (var forbiddenArea in EnumerateForbiddenAreas(areaMission))
                 {
                     if (IsInPolygon(point, forbiddenArea.Points))
                         return true;
@@ -49,6 +56,9 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
 
     private static bool IsInPolygon(Vector3 point, List<Vector3> polygon)
     {
+        if (polygon.Count < 3)
+            return false;
+
         var result = false;
         var a = polygon.Last();
         foreach (var b in polygon)
@@ -188,35 +198,24 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
 
     #region Finding the closest point
 
-    public NodeDescriptor FindСlosestToTheCurrent(uint zoneKey, Vector3 pos)
+    public NodeDescriptor FindClosestToCurrent(uint zoneKey, Vector3 pos)
     {
-        var posX = pos.X;
-        var posY = pos.Y;
-
         NodeDescriptor closestPointFound = null;
-        var minDist = 99999.0f;
+        var minDist = float.MaxValue;
         
         var (sourceCellX, sourceCellY) = pos.ToCellIndex();
         var cell = worldTemplate.GetCell(sourceCellX, sourceCellY);
         if (cell == null)
             return null;
 
+        cell.VerifyCellLoaded();
+
         List<BaseBaiLoader> toCheckChunkList = [];
         if (cell.Template.ZoneBaiLoader.Count > 0)
         {
-            // If the zoneKey is actually the pre-defined one, then just use that
-            if (cell.Template.ZoneBaiLoader.TryGetValue(zoneKey, out var preDefined))
-            {
-                toCheckChunkList.Add(preDefined);
-            }
-            else
-            {
-                // Otherwise, check all of them
-                foreach (var (_, bai) in cell.Template.ZoneBaiLoader)
-                {
-                    toCheckChunkList.Add(bai);
-                }
-            }
+            var zoneBai = worldTemplate.GetBaiByPos(zoneKey, pos);
+            if (zoneBai != null)
+                toCheckChunkList.Add(zoneBai);
         }
         else
         {
@@ -249,6 +248,12 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
 
         // Logger.Warn($"# Found near position index: {index}...");
         return closestPointFound;
+    }
+
+    // Kept for scripts compiled against the original misspelled API.
+    public NodeDescriptor FindСlosestToTheCurrent(uint zoneKey, Vector3 pos)
+    {
+        return FindClosestToCurrent(zoneKey, pos);
     }
 
     /// <summary>
@@ -499,38 +504,59 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
         // Nothing to load here anymore, everything
     }
 
-    public Queue<Vector3> ReducePath(List<Vector3> foundPath, int maxNodeSkipCount)
+    public Queue<Vector3> ReducePath(List<Vector3> foundPath, int maxNodeSkipCount, uint zoneKey = 0)
     {
         var res = new Queue<Vector3>();
-        // Check for all node
-        for (var startNodeIndex = 0; startNodeIndex < foundPath.Count; startNodeIndex++)
+        if (foundPath.Count == 0)
+            return res;
+
+        var startNodeIndex = 0;
+        res.Enqueue(foundPath[startNodeIndex]);
+        while (startNodeIndex < foundPath.Count - 1)
         {
-            var startNode = foundPath[startNodeIndex];
-            res.Enqueue(startNode);
-            // Check nodes further in the path, starting at the furthest node defined by max skip (and getting closer with each loop)
-            for (var endNodeIndex = startNodeIndex + maxNodeSkipCount; endNodeIndex > startNodeIndex; endNodeIndex--)
+            var selectedEndNodeIndex = startNodeIndex + 1;
+            var furthestEndNodeIndex = Math.Min(foundPath.Count - 1,
+                startNodeIndex + Math.Max(1, maxNodeSkipCount));
+            for (var endNodeIndex = furthestEndNodeIndex; endNodeIndex > startNodeIndex + 1; endNodeIndex--)
             {
-                // Check if still in total range
-                if (endNodeIndex >= foundPath.Count)
-                    continue;
-                var endNode = foundPath[endNodeIndex];
-                // Skip this node if the height offset is too much
-                var delta = endNode - startNode;
-                var angleRate = delta.Length() > 0 ? delta.Z / delta.Length() : 0f;
-                if (angleRate >= 0.2f || angleRate <= -0.5f)
-                    continue;
-                // Check if there's a direct line between the two nodes that is allowed
-                if (LinePassesThroughForbiddenArea(startNode, endNode) == false)
+                if (CanSkipPathNodes(foundPath, startNodeIndex, endNodeIndex, zoneKey))
                 {
-                    // If clear, directly put this point as next, and move the check index
-                    res.Enqueue(endNode);
-                    startNodeIndex = endNodeIndex;
+                    selectedEndNodeIndex = endNodeIndex;
                     break;
                 }
             }
+
+            res.Enqueue(foundPath[selectedEndNodeIndex]);
+            startNodeIndex = selectedEndNodeIndex;
         }
 
         return res;
+    }
+
+    private const float MaxPathCorridorDeviation = 2f;
+
+    private bool CanSkipPathNodes(List<Vector3> path, int startNodeIndex, int endNodeIndex, uint zoneKey)
+    {
+        var startNode = path[startNodeIndex];
+        var endNode = path[endNodeIndex];
+        for (var nodeIndex = startNodeIndex + 1; nodeIndex < endNodeIndex; nodeIndex++)
+        {
+            if (DistanceToSegment(path[nodeIndex], startNode, endNode) > MaxPathCorridorDeviation)
+                return false;
+        }
+
+        return !LinePassesThroughForbiddenArea(startNode, endNode, zoneKey);
+    }
+
+    private static float DistanceToSegment(Vector3 point, Vector3 segmentStart, Vector3 segmentEnd)
+    {
+        var segment = segmentEnd - segmentStart;
+        var lengthSquared = segment.LengthSquared();
+        if (lengthSquared <= float.Epsilon)
+            return Vector3.Distance(point, segmentStart);
+
+        var amount = Math.Clamp(Vector3.Dot(point - segmentStart, segment) / lengthSquared, 0f, 1f);
+        return Vector3.Distance(point, segmentStart + segment * amount);
     }
 
     /// <summary>
@@ -544,6 +570,9 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
     /// <returns></returns>
     private bool LinePassesThroughAiShape(Vector3 startPos, Vector3 endPos, AiShape shape, bool closedLoop, float maxHeightOffset)
     {
+        if (shape.Points.Count < 2)
+            return false;
+
         for (var index = 0; index < shape.Points.Count + (closedLoop ? 0 : -1); index++)
         {
             var lineStart = shape.Points[index];
@@ -564,32 +593,47 @@ public class AiGeoDataManager(WorldTemplate worldTemplate)
     /// <param name="startNode"></param>
     /// <param name="endNode"></param>
     /// <returns></returns>
-    private bool LinePassesThroughForbiddenArea(Vector3 startNode, Vector3 endNode)
+    private bool LinePassesThroughForbiddenArea(Vector3 startNode, Vector3 endNode, uint zoneKey)
     {
-        // It should be enough to grab the starting node's bai data. Forbidden zones are defined if even part of the zone falls within the area
-        var sourceBai = worldTemplate.GetBaiByPos(startNode);
-        foreach (var areaMission in sourceBai.AreasMissionReaders)
+        foreach (var bai in GetBaiLoadersAlongSegment(startNode, endNode, zoneKey))
         {
-            // Loop forbidden areas shape
-            foreach (var aiShape in areaMission.ForbiddenAreasList)
+            foreach (var areaMission in bai.AreasMissionReaders)
             {
-                if (LinePassesThroughAiShape(startNode, endNode, aiShape, true, 8f))
-                    return true;
-            }
-
-            foreach (var aiShape in areaMission.ForbiddenBoundariesList)
-            {
-                if (LinePassesThroughAiShape(startNode, endNode, aiShape, true, 8f))
-                    return true;
-            }
-
-            foreach (var aiShape in areaMission.DesignerForbiddenAreasList)
-            {
-                if (LinePassesThroughAiShape(startNode, endNode, aiShape, true, 8f))
-                    return true;
+                foreach (var aiShape in EnumerateForbiddenAreas(areaMission))
+                {
+                    if (IsInPolygon(startNode, aiShape.Points) || IsInPolygon(endNode, aiShape.Points) ||
+                        LinePassesThroughAiShape(startNode, endNode, aiShape, true, 8f))
+                    {
+                        return true;
+                    }
+                }
             }
         }
         return false;
+    }
+
+    private HashSet<BaseBaiLoader> GetBaiLoadersAlongSegment(Vector3 startNode, Vector3 endNode, uint zoneKey)
+    {
+        var result = new HashSet<BaseBaiLoader>(ReferenceEqualityComparer.Instance);
+        var horizontalDistance = Vector2.Distance(new Vector2(startNode.X, startNode.Y),
+            new Vector2(endNode.X, endNode.Y));
+        var sampleCount = Math.Max(1, (int)MathF.Ceiling(horizontalDistance / WorldManager.REGION_SIZE));
+        for (var sampleIndex = 0; sampleIndex <= sampleCount; sampleIndex++)
+        {
+            var position = Vector3.Lerp(startNode, endNode, sampleIndex / (float)sampleCount);
+            var bai = worldTemplate.GetBaiByPos(zoneKey, position);
+            if (bai != null)
+                result.Add(bai);
+        }
+
+        return result;
+    }
+
+    private static IEnumerable<AiShape> EnumerateForbiddenAreas(AreasMissionReader areaMission)
+    {
+        return areaMission.ForbiddenAreasList
+            .Concat(areaMission.ForbiddenBoundariesList)
+            .Concat(areaMission.DesignerForbiddenAreasList);
     }
 
     /// <summary>

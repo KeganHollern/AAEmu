@@ -1348,24 +1348,33 @@ public partial class Npc : Unit
         Ai.AlreadyTargeted = other != null;
     }
 
-    public void FindPath(Unit abuser)
+    public bool FindPath(Unit abuser)
     {
+        if (Ai?.PathNode == null || abuser == null || ParentWorld?.Template?.GeoData == null)
+            return false;
+
         Ai.PathNode.StartPointPos = new Vector3(Ai.Owner.Transform.World.Position.X, Ai.Owner.Transform.World.Position.Y, Ai.Owner.Transform.World.Position.Z);
         Ai.PathNode.EndPointPos = new Vector3(abuser.Transform.World.Position.X, abuser.Transform.World.Position.Y, abuser.Transform.World.Position.Z);
 
         Ai.PathNode.ZoneKey = Ai.Owner.Transform.ZoneId;
-        var resList = Ai.PathNode.FindPath(Ai.Owner.ParentWorld, Ai.PathNode.StartPointPos, Ai.PathNode.EndPointPos);
-        resList.Add(abuser.Transform.World.Position);
-        var reducedPath = ParentWorld.Template.GeoData.ReducePath(resList, 10);
-        Ai.PathNode.FoundPath = reducedPath;
-        if (abuser is Character player)
+        var resList = Ai.PathNode.FindPath(Ai.Owner.ParentWorld, Ai.PathNode.StartPointPos,
+            Ai.PathNode.EndPointPos, ModelSize);
+        if (resList.Count == 0)
         {
-            player.SendMessage($"Aggro from {Ai.Owner.ObjId}, getting attack path in {Ai.PathNode.FoundPath.Count}/{resList.Count} steps");
-            foreach (var v3 in Ai.PathNode.FoundPath)
-            {
-                player.SendMessage($"Path step -> {v3}");
-            }
+            Ai.PathNode.FoundPath = [];
+            Logger.Debug($"No BAI path from {Ai.PathNode.StartPointPos} to {Ai.PathNode.EndPointPos} for NPC {ObjId}:{TemplateId}");
+            return false;
         }
+
+        var targetPosition = abuser.Transform.World.Position;
+        if (Vector3.DistanceSquared(resList[^1], targetPosition) > 0.0001f)
+            resList.Add(targetPosition);
+
+        var reducedPath = ParentWorld.Template.GeoData.ReducePath(resList, 10, Ai.PathNode.ZoneKey);
+        Ai.PathNode.FoundPath = reducedPath;
+        Ai.PathNode.CurrentTargetPos = reducedPath.Count > 0 ? reducedPath.Peek() : Vector3.Zero;
+        Logger.Trace($"BAI path for NPC {ObjId}:{TemplateId} reduced to {reducedPath.Count}/{resList.Count} points");
+        return reducedPath.Count > 0;
     }
 
     /// <summary>

@@ -19,12 +19,15 @@ namespace AAEmu.Game.Models.Game.AI.v2.Behaviors;
 
 public abstract class BaseCombatBehavior : Behavior
 {
+    private static readonly TimeSpan PathRefreshInterval = TimeSpan.FromMilliseconds(500);
+
     protected bool _strafeDuringDelay;
     protected string _pipeName;
     protected uint _phaseType;
     protected DateTime _combatStartTime;
     protected Queue<AiSkill> _skillQueue;
     private bool _startingSkillAlreadyUsed;
+    private DateTime _nextPathRefreshTime = DateTime.MinValue;
 
     public void MoveInRange(BaseUnit target, TimeSpan delta)
     {
@@ -64,7 +67,7 @@ public abstract class BaseCombatBehavior : Behavior
 
         var speed = Ai.GetRealMovementSpeed(Ai.Owner.BaseMoveSpeed);
         var moveFlags = Ai.GetRealMovementFlags(speed);
-        speed *= delta.Milliseconds / 1000.0;
+        speed *= delta.TotalSeconds;
 
         // Fish overrides
         if (Ai.Owner.Buffs.CheckBuffs(SkillManager.Instance.GetBuffsByTagId((uint)TagsEnum.Fish)))
@@ -143,63 +146,55 @@ public abstract class BaseCombatBehavior : Behavior
 
         var distanceToTarget = Ai.Owner.GetDistanceTo(target, true);
 
-        if (AppConfiguration.Instance.World.GeoDataMode && target != null)
+        if (AppConfiguration.Instance.World.GeoDataMode && target != null && !Ai.Owner.CanFly)
         {
-            if (Ai.PathNode?.EndPointPos != null && Ai.PathNode != null)
+            var pathNode = Ai.PathNode;
+            var targetPosition = target.Transform.World.Position;
+            var routeRequired = distanceToTarget > range;
+            if (!routeRequired)
             {
-                // If not at target position (take model size error margin), then calculate new target route position
-                if (Math.Abs((Ai.PathNode.EndPointPos - target.Transform.World.Position).Length()) <= Ai.Owner.ModelSize)
-                {
-                    var stopWatch = new Stopwatch();
-                    stopWatch.Start();
-                    Ai.Owner.FindPath((Unit)target);
-                    stopWatch.Stop();
-                    // Toss warning if it took a long time
-                    if (stopWatch.Elapsed.Ticks >= TimeSpan.TicksPerMillisecond)
-                        Logger.Warn($"FindPath took {stopWatch.Elapsed} for Ai.Owner.ObjId:{Ai.Owner.ObjId}, Owner.TemplateId {Ai.Owner.TemplateId} @ {Ai.Owner.Transform}");
-                    // Save the target's new coordinates
-                    Ai.PathNode.EndPointPos =  new Vector3(target.Transform.World.Position.X, target.Transform.World.Position.Y, target.Transform.World.Position.Z);
-                }
+                Ai.Owner.StopMovement();
+                return;
             }
 
-            // If there is a PathNode set, and we still have a target, then find the next point to move to
-            if (Ai.PathNode != null)
+            var now = DateTime.UtcNow;
+            var targetMovementThreshold = Math.Max(1f, Ai.Owner.ModelSize);
+            if (pathNode != null && now >= _nextPathRefreshTime &&
+                pathNode.NeedsPathRefresh(targetPosition, targetMovementThreshold, routeRequired))
             {
-                if (Ai.PathNode.FoundPath.Count > 0 && !Ai.PathNode.FoundPath.Peek().Equals(Vector3.Zero))
-                {
-                    var nextPathPoint = Ai.PathNode.FoundPath.Peek();
-                    distanceToTarget = MathUtil.CalculateDistance(Ai.Owner.Transform.World.Position, nextPathPoint, true);
-                    if (distanceToTarget > range)
-                    {
-                        Ai.Owner.MoveTowards(nextPathPoint, (float)speed, moveFlags, range);
-                    }
-                    else
-                    {
-                        if (Ai.PathNode.FoundPath.Count <= 0)
-                        {
-                            Ai.Owner.StopMovement();
-                            Ai.PathNode.FoundPath = [];
-                            return;
-                        }
+                var stopWatch = Stopwatch.StartNew();
+                Ai.Owner.FindPath((Unit)target);
+                stopWatch.Stop();
+                _nextPathRefreshTime = now + PathRefreshInterval;
+                if (stopWatch.Elapsed.Ticks >= TimeSpan.TicksPerMillisecond)
+                    Logger.Warn($"FindPath took {stopWatch.Elapsed} for Ai.Owner.ObjId:{Ai.Owner.ObjId}, Owner.TemplateId {Ai.Owner.TemplateId} @ {Ai.Owner.Transform}");
+            }
 
-                        Ai.PathNode.CurrentTargetPos = Ai.PathNode.FoundPath.Dequeue();
-                    }
-                }
-                else
-                {
-                    if (distanceToTarget > range)
-                        Ai.Owner.MoveTowards(target.Transform.World.Position, (float)speed, moveFlags, range);
-                    else
-                        Ai.Owner.StopMovement();
-                }
-            }
-            else
+            if (pathNode is not { LastSearchSucceeded: true })
             {
-                if (distanceToTarget > range)
-                    Ai.Owner.MoveTowards(target.Transform.World.Position, (float)speed, moveFlags);
-                else
-                    Ai.Owner.StopMovement();
+                Ai.Owner.StopMovement();
+                return;
             }
+
+            var waypointArrivalRadius = Math.Max(0.5f, Ai.Owner.ModelSize);
+            while (pathNode.FoundPath.Count > 0)
+            {
+                var nextPathPoint = pathNode.FoundPath.Peek();
+                var isFinalPoint = pathNode.FoundPath.Count == 1;
+                var arrivalRadius = isFinalPoint ? range : waypointArrivalRadius;
+                var distanceToWaypoint = MathUtil.CalculateDistance(
+                    Ai.Owner.Transform.World.Position, nextPathPoint, true);
+                if (distanceToWaypoint > arrivalRadius)
+                {
+                    pathNode.CurrentTargetPos = nextPathPoint;
+                    Ai.Owner.MoveTowards(nextPathPoint, (float)speed, moveFlags, arrivalRadius);
+                    return;
+                }
+
+                pathNode.CurrentTargetPos = pathNode.FoundPath.Dequeue();
+            }
+
+            Ai.Owner.StopMovement();
         }
         else
         {
