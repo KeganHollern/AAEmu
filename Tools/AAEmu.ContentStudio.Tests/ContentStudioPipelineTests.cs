@@ -112,6 +112,41 @@ public class ContentStudioPipelineTests
     }
 
     [Test]
+    public async Task Build_ServerSuperset_PreservesServerOnlyTablesWithSameProject()
+    {
+        using var workspace = TestWorkspace.Create();
+        var service = new BuildService();
+        var clientBuild = service.Build(workspace.CreateBuildRequest()).Manifest;
+
+        using (var connection = new SqliteConnection($"Data Source={workspace.BaselinePath};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE server_runtime_sentinel (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO server_runtime_sentinel VALUES (1, 'preserved');
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var descriptor = new ProjectRepository().LoadBaseline(workspace.DescriptorPath);
+        descriptor.Length = new FileInfo(workspace.BaselinePath).Length;
+        descriptor.Sha256 = FileHashService.CalculateSha256(workspace.BaselinePath);
+        descriptor.TableCount += 1;
+        File.WriteAllText(workspace.DescriptorPath, ContentStudioJson.Serialize(descriptor));
+
+        var serverBuild = service.Build(workspace.CreateBuildRequest()).Manifest;
+        using var artifact = new SqliteConnection($"Data Source={serverBuild.ArtifactPath};Mode=ReadOnly;Pooling=False");
+        artifact.Open();
+        using var sentinel = artifact.CreateCommand();
+        sentinel.CommandText = "SELECT value FROM server_runtime_sentinel WHERE id = 1;";
+
+        await Assert.That(Convert.ToString(sentinel.ExecuteScalar())).IsEqualTo("preserved");
+        await Assert.That(serverBuild.ProjectKey).IsEqualTo(clientBuild.ProjectKey);
+        await Assert.That(serverBuild.Changes).IsEquivalentTo(clientBuild.Changes);
+    }
+
+    [Test]
     public async Task Build_RejectsMidBuildRawSqlEditWithoutPromotingOutputs()
     {
         using var workspace = TestWorkspace.Create();

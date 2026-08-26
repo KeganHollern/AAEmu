@@ -186,7 +186,7 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
             Logger.Warn($"StartSkill: Id {skillId}, undefined use type");
             // If it's a valid skill cast it. This fixes interactions with quest items/doodads.
             var template = SkillManager.Instance.GetSkillTemplate(skillId);
-            if (template is null)
+            if (!CanUseUnlearnedSkill(template))
             {
                 skill = new Skill(new SkillTemplate { Id = skillId });
                 skillResult = SkillResult.InvalidSkill;
@@ -215,5 +215,11 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
     internal static bool TryAuthorizeComboFollowup(SkillComboState state, uint skillId, bool isOwnUnitCast)
     {
         return isOwnUnitCast && state.TryConsume(skillId);
+    }
+
+    internal static bool CanUseUnlearnedSkill(SkillTemplate template)
+    {
+        return template is not null &&
+            (!template.NeedLearn || template.AbilityId is AbilityType.General or AbilityType.None);
     }
 }
