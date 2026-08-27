@@ -1,48 +1,35 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Game;
-using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Core.Packets.G2C;
 
-#pragma warning disable IDE0052 // Remove unread private members
-
 public class SCCooldownsPacket : GamePacket
 {
-    private Character _chr;
-    //private uint _skillId;
-    private readonly int _skillCount;
-    private readonly int _tagCount;
+    // The r208022 client reserves 150 12-byte entries for each cooldown bucket.
+    private const int MaximumEntriesPerBucket = 150;
 
-    public SCCooldownsPacket() : base(SCOffsets.SCCooldownsPacket, 1)
+    private readonly UnitCooldowns _cooldowns;
+
+    public SCCooldownsPacket(UnitCooldowns cooldowns) : base(SCOffsets.SCCooldownsPacket, 1)
     {
-        _skillCount = 0;
-        _tagCount = 0;
-    }
-    public SCCooldownsPacket(Character chr) : base(SCOffsets.SCCooldownsPacket, 1)
-    {
-        _chr = chr;
-        _skillCount = 0;
-        _tagCount = 0;
+        _cooldowns = cooldowns;
     }
 
     public override PacketStream Write(PacketStream stream)
     {
-        //TODO заготовка для пакета
+        var skills = _cooldowns.GetActiveSnapshots(MaximumEntriesPerBucket);
 
-        stream.Write(_skillCount); // skillCount
-        for (var i = 0; i < _skillCount; i++)
+        stream.Write((uint)skills.Count);
+        foreach (var skill in skills)
         {
-            stream.Write(0u); // type(id)
-            stream.Write(0u); // type(id)
-            stream.Write(0u); // type(id)
+            stream.Write(skill.SkillId);
+            stream.Write(skill.Duration);
+            stream.Write(skill.Remaining);
         }
-        stream.Write(_tagCount); // tagCount
-        for (var i = 0; i < _tagCount; i++)
-        {
-            stream.Write(0u); // type(id) //tagId
-            stream.Write(0u); // type(id) // GCD?
-            stream.Write(0u); // type(id) // Delay?
-        }
+
+        // AAEmu does not keep an independent cooldown-tag store.
+        stream.Write(0u);
 
         return stream;
     }

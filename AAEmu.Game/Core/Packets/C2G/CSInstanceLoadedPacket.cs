@@ -12,7 +12,7 @@ public class CSInstanceLoadedPacket() : GamePacket(CSOffsets.CSInstanceLoadedPac
         // TODO Debug
 
         Connection.SendPacket(new SCUnitStatePacket(Connection.ActiveChar));
-        // Connection.SendPacket(new SCCooldownsPacket(Connection.ActiveChar));
+        Connection.SendPacket(new SCCooldownsPacket(Connection.ActiveChar.Cooldowns));
         Connection.SendPacket(new SCDetailedTimeOfDayPacket(12f));
 
         Connection.ActiveChar.DisabledSetPosition = false;
