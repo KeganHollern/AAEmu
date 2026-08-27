@@ -116,6 +116,7 @@ public static class Program
         builder.Services.AddTransient<MySqlConnection>(sp =>
             sp.GetRequiredService<IMySqlConnectionFactory>().CreateConnection());
 
+        builder.Services.AddHostedService<LauncherUpdateInitializer>();
         builder.Services.AddHostedService<MySqlInitializer>();
         builder.Services.AddHostedService<LoginService>();
 
@@ -139,6 +140,8 @@ public static class Program
 
         var launcherOptions = app.Services
             .GetRequiredService<Microsoft.Extensions.Options.IOptions<LauncherApiOptions>>().Value;
+        var launcherUpdateOptions = app.Services
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<LauncherUpdateOptions>>().Value;
         var koreaAuthOptions = app.Services
             .GetRequiredService<Microsoft.Extensions.Options.IOptions<KoreaAuthOptions>>().Value;
         if (launcherOptions.Enabled && koreaAuthOptions.Enabled)
@@ -150,7 +153,7 @@ public static class Program
 
         app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
         app.MapHealthChecks("/health/ready");
-        if (launcherOptions.Enabled)
+        if (launcherOptions.Enabled || launcherUpdateOptions.Enabled)
             app.MapLauncherApi();
 
         await app.RunAsync();
