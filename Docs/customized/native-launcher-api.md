@@ -1,6 +1,7 @@
 ﻿# Native launcher API
 
-Issues: `KeganHollern/aaemu-cluster#17`, `KeganHollern/aaemu-cluster#70`
+Issues: `KeganHollern/aaemu-cluster#17`, `KeganHollern/aaemu-cluster#70`,
+`KeganHollern/aaemu-cluster#174`
 
 AAEmu.Login hosts the authenticated HTTP API used by the native Rust/Tauri
 launcher. TLS terminates at the deployment ingress; the Login pod continues to
@@ -50,6 +51,19 @@ An enabled launcher API also maps these authenticated raw-byte routes:
 | `GET /launcher/v2/manifest.minisig` | bearer access token | Return the pinned detached Minisign bytes unchanged |
 | `GET /launcher/v2/assets/<sha256>` | bearer access token | Stream a manifest-listed representation with HTTP Range support |
 
+The separate `LauncherUpdate` section maps these public update routes:
+
+| Method and path | Authentication | Purpose |
+| --- | --- | --- |
+| `GET /launcher/update/v1/manifest` | none | Return the pinned canonical launcher update manifest |
+| `GET /launcher/update/v1/manifest.minisig` | none | Return the pinned detached Minisign signature |
+| `GET /launcher/update/v1/aaemu-launcher-linux-x86_64.tar.gz` | none | Stream the Linux launcher archive with HTTP Range support |
+| `GET /launcher/update/v1/aaemu-launcher-windows-i686.zip` | none | Stream the Windows launcher archive with HTTP Range support |
+
+The launcher update provider checks the exact size and SHA-256 of all 4 files
+at startup. It serves only this fixed file set. The launcher checks the
+Minisign signature and archive SHA-256 before installation.
+
 The v2 provider loads one fixed release directory once during startup. It
 bounds and pins the raw manifest and signature, rejects duplicate JSON keys,
 builds a lowercase content-hash allowlist from `representation.blob`, verifies
@@ -90,6 +104,14 @@ select a reviewed signed release and set all of the following:
 - `LauncherApi__ContentV2__ReleasePath=Data/client-patches/releases/<sequence>`
 - `LauncherApi__ContentV2__ExpectedManifestSha256=<exact lowercase SHA-256>`
 - `LauncherApi__ContentV2__ExpectedMinisigSha256=<exact lowercase SHA-256>`
+
+The `LauncherUpdate` section is also disabled by default. A deployment enabling
+it must set the release path and exact size and SHA-256 pins for these files:
+
+- `manifest.json`
+- `manifest.minisig`
+- `aaemu-launcher-linux-x86_64.tar.gz`
+- `aaemu-launcher-windows-i686.zip`
 
 Token and ticket lifetimes have conservative defaults and can be overridden
 through the remaining `LauncherApi` options.

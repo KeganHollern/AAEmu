@@ -15,9 +15,24 @@ public static class LauncherApiServiceCollectionExtensions
                                      && IsPinnedSha256(options.ContentV2.ExpectedManifestSha256)
                                      && IsPinnedSha256(options.ContentV2.ExpectedMinisigSha256)),
                 "Enabled launcher API requires a signed content release path and lowercase manifest/signature SHA-256 pins");
+        services.AddOptionsWithValidateOnStart<LauncherUpdateOptions>()
+            .BindConfiguration(LauncherUpdateOptions.ConfigurationSectionName)
+            .ValidateDataAnnotations()
+            .Validate(options => !options.Enabled
+                                 || (!string.IsNullOrWhiteSpace(options.ReleasePath)
+                                     && IsPinnedFile(options.ExpectedManifestSha256,
+                                         options.ExpectedManifestSize)
+                                     && IsPinnedFile(options.ExpectedMinisigSha256,
+                                         options.ExpectedMinisigSize)
+                                     && IsPinnedFile(options.ExpectedLinuxArchiveSha256,
+                                         options.ExpectedLinuxArchiveSize)
+                                     && IsPinnedFile(options.ExpectedWindowsArchiveSha256,
+                                         options.ExpectedWindowsArchiveSize)),
+                "Enabled launcher updates require a release path and exact lowercase SHA-256/size pins for all files");
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<ILoginReadiness, LoginReadiness>();
         services.AddSingleton<IClientContentBundleProvider, ClientContentBundleProvider>();
+        services.AddSingleton<ILauncherUpdateBundleProvider, LauncherUpdateBundleProvider>();
         services.AddSingleton<ILauncherSessionService, LauncherSessionService>();
         services.AddSingleton<ILaunchTicketStore, MySqlLaunchTicketStore>();
         services.AddSingleton<ILaunchTicketService, LaunchTicketService>();
@@ -52,5 +67,10 @@ public static class LauncherApiServiceCollectionExtensions
         return value is { Length: 64 }
                && !value.All(character => character == '0')
                && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+    }
+
+    private static bool IsPinnedFile(string? sha256, long size)
+    {
+        return size > 0 && IsPinnedSha256(sha256);
     }
 }

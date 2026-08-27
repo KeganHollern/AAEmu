@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using AAEmu.Login.Core.Controllers;
+using AAEmu.Login.Models;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Net.Http.Headers;
 using MySql.Data.MySqlClient;
@@ -51,26 +52,87 @@ public static class LauncherApiEndpoints
             }
         });
 
-        var group = app.MapGroup("/launcher/v1");
-        group.MapGet("/status", GetStatus);
-        group.MapPost("/sessions", CreateSessionAsync).RequireRateLimiting("launcher-login");
-        group.MapPost("/sessions/refresh", RefreshSessionAsync).RequireRateLimiting("launcher-login");
-        group.MapDelete("/sessions/current", RevokeSessionAsync);
-        group.MapPost("/launch-tickets", CreateLaunchTicketAsync).RequireRateLimiting("launcher-login");
+        var launcherOptions = app.Services
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<LauncherApiOptions>>().Value;
+        if (launcherOptions.Enabled)
+        {
+            var group = app.MapGroup("/launcher/v1");
+            group.MapGet("/status", GetStatus);
+            group.MapPost("/sessions", CreateSessionAsync).RequireRateLimiting("launcher-login");
+            group.MapPost("/sessions/refresh", RefreshSessionAsync).RequireRateLimiting("launcher-login");
+            group.MapDelete("/sessions/current", RevokeSessionAsync);
+            group.MapPost("/launch-tickets", CreateLaunchTicketAsync).RequireRateLimiting("launcher-login");
 
-        var content = app.MapGroup("/launcher/v2");
-        content.MapGet("/manifest", GetContentManifestAsync);
-        content.MapGet("/manifest.minisig", GetContentMinisigAsync);
-        content.MapGet("/assets/{sha256}", DownloadContentAssetAsync)
-            .RequireRateLimiting("launcher-download");
+            var content = app.MapGroup("/launcher/v2");
+            content.MapGet("/manifest", GetContentManifestAsync);
+            content.MapGet("/manifest.minisig", GetContentMinisigAsync);
+            content.MapGet("/assets/{sha256}", DownloadContentAssetAsync)
+                .RequireRateLimiting("launcher-download");
 
-        // In-game web test page (aaemu-cluster#26): the ArcheAge client's embedded
-        // Awesomium browser (Chromium ~18) opens the TrionWeb base URLs and appends
-        // its own path suffixes. Accept any suffix and echo the request back in
-        // deliberately ancient, self-contained HTML so we can prove the URLs are
-        // server-controlled and learn the exact path each client surface requests.
-        app.MapGet("/launcher/test-shop-ui", GetTestShopUi);
-        app.MapGet("/launcher/test-shop-ui/{**clientPath}", GetTestShopUi);
+            // In-game web test page (aaemu-cluster#26): the ArcheAge client's embedded
+            // Awesomium browser (Chromium ~18) opens the TrionWeb base URLs and appends
+            // its own path suffixes. Accept any suffix and echo the request back in
+            // deliberately ancient, self-contained HTML so we can prove the URLs are
+            // server-controlled and learn the exact path each client surface requests.
+            app.MapGet("/launcher/test-shop-ui", GetTestShopUi);
+            app.MapGet("/launcher/test-shop-ui/{**clientPath}", GetTestShopUi);
+        }
+
+        var launcherUpdateOptions = app.Services
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<LauncherUpdateOptions>>().Value;
+        if (launcherUpdateOptions.Enabled)
+        {
+            var update = app.MapGroup("/launcher/update/v1");
+            update.MapGet("/manifest", GetLauncherUpdateManifest);
+            update.MapGet("/manifest.minisig", GetLauncherUpdateMinisig);
+            update.MapGet(
+                    $"/{LauncherUpdateBundleProvider.LinuxArchiveFileName}",
+                    GetLauncherUpdateLinuxArchive)
+                .RequireRateLimiting("launcher-download");
+            update.MapGet(
+                    $"/{LauncherUpdateBundleProvider.WindowsArchiveFileName}",
+                    GetLauncherUpdateWindowsArchive)
+                .RequireRateLimiting("launcher-download");
+        }
+    }
+
+    private static IResult GetLauncherUpdateManifest(ILauncherUpdateBundleProvider updateProvider)
+    {
+        return !updateProvider.IsAvailable
+            ? Maintenance()
+            : GetLauncherUpdateAsset(updateProvider.Manifest, "application/json");
+    }
+
+    private static IResult GetLauncherUpdateMinisig(ILauncherUpdateBundleProvider updateProvider)
+    {
+        return !updateProvider.IsAvailable
+            ? Maintenance()
+            : GetLauncherUpdateAsset(updateProvider.Minisig, "application/octet-stream");
+    }
+
+    private static IResult GetLauncherUpdateLinuxArchive(ILauncherUpdateBundleProvider updateProvider)
+    {
+        return !updateProvider.IsAvailable
+            ? Maintenance()
+            : GetLauncherUpdateAsset(updateProvider.LinuxArchive, "application/gzip");
+    }
+
+    private static IResult GetLauncherUpdateWindowsArchive(ILauncherUpdateBundleProvider updateProvider)
+    {
+        return !updateProvider.IsAvailable
+            ? Maintenance()
+            : GetLauncherUpdateAsset(updateProvider.WindowsArchive, "application/zip");
+    }
+
+    private static IResult GetLauncherUpdateAsset(
+        LauncherUpdateAsset asset,
+        string contentType)
+    {
+        return Results.Stream(
+            asset.OpenReadStream(),
+            contentType,
+            entityTag: ContentEntityTag(asset.Sha256),
+            enableRangeProcessing: true);
     }
 
     private static IResult GetTestShopUi(HttpContext context)
