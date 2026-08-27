@@ -10,35 +10,78 @@ namespace AAEmu.Game.Models.Game.Units;
 
 public class UnitCooldowns
 {
+    private const string SavepointName = "unit_cooldowns";
+
     protected static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
-    public ConcurrentDictionary<uint, DateTime> Cooldowns { get; set; } = new();
+    private readonly ConcurrentDictionary<uint, CooldownState> _cooldowns = new();
+
+    private readonly record struct CooldownState(DateTime EndTime, uint Duration);
+
+    public readonly record struct CooldownSnapshot(uint SkillId, uint Duration, uint Remaining);
+
+    public int Count => _cooldowns.Count;
+
+    public bool Contains(uint skillId)
+    {
+        return _cooldowns.ContainsKey(skillId);
+    }
 
     public void AddCooldown(uint skillId, uint duration)
     {
-        if (!Cooldowns.TryGetValue(skillId, out _))
-            Cooldowns.TryAdd(skillId, DateTime.UtcNow + TimeSpan.FromMilliseconds(duration));
+        var state = new CooldownState(DateTime.UtcNow + TimeSpan.FromMilliseconds(duration), duration);
+        _cooldowns.TryAdd(skillId, state);
     }
 
     public bool CheckCooldown(uint skillId)
     {
-        if (!Cooldowns.TryGetValue(skillId, out var endTime))
+        if (!_cooldowns.TryGetValue(skillId, out var state))
             return false;
 
-        var timeLeft = endTime - DateTime.UtcNow;
+        var timeLeft = state.EndTime - DateTime.UtcNow;
 
         //Logger.Debug($"CheckCooldown: timeLeft={timeLeft}");
 
         if (timeLeft > TimeSpan.FromMilliseconds(250))
             return true;
 
-        RemoveCooldown(skillId);
+        TryRemove(skillId, state);
         return false;
     }
 
     public void RemoveCooldown(uint skillId)
     {
-        Cooldowns.TryRemove(skillId, out _);
+        _cooldowns.TryRemove(skillId, out _);
+    }
+
+    /// <summary>
+    /// Returns the active r208022 cooldown tuple: skill id, total duration, and remaining
+    /// duration. All duration values use milliseconds on the wire.
+    /// </summary>
+    public IReadOnlyList<CooldownSnapshot> GetActiveSnapshots(int maximumCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(maximumCount);
+
+        var utcNow = DateTime.UtcNow;
+        var snapshots = new List<CooldownSnapshot>(Math.Min(_cooldowns.Count, maximumCount));
+        foreach (var (skillId, state) in _cooldowns.OrderBy(entry => entry.Key))
+        {
+            if (snapshots.Count >= maximumCount)
+                break;
+
+            var remaining = state.EndTime - utcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                TryRemove(skillId, state);
+                continue;
+            }
+
+            var remainingMilliseconds = ToWireMilliseconds(remaining);
+            var totalDuration = Math.Max(state.Duration, remainingMilliseconds);
+            snapshots.Add(new CooldownSnapshot(skillId, totalDuration, remainingMilliseconds));
+        }
+
+        return snapshots;
     }
 
     /// <summary>
@@ -47,37 +90,76 @@ public class UnitCooldowns
     /// </summary>
     public void Save(MySqlConnection connection, MySqlTransaction transaction, uint characterId)
     {
+        var savepointCreated = false;
         try
         {
-            using (var deleteCmd = connection.CreateCommand())
-            {
-                deleteCmd.Connection = connection;
-                deleteCmd.Transaction = transaction;
-                deleteCmd.CommandText = "DELETE FROM `character_cooldowns` WHERE `character_id` = @characterId";
-                deleteCmd.Parameters.AddWithValue("@characterId", characterId);
-                deleteCmd.ExecuteNonQuery();
-            }
+            ExecuteTransactionCommand(connection, transaction, $"SAVEPOINT `{SavepointName}`");
+            savepointCreated = true;
 
             var utcNow = DateTime.UtcNow;
-            foreach (var (skillId, endTime) in Cooldowns)
-            {
-                if (endTime <= utcNow)
-                    continue; // Already expired; nothing to persist
+            var activeCooldowns = _cooldowns
+                .Where(entry => entry.Value.EndTime > utcNow)
+                .OrderBy(entry => entry.Key)
+                .ToArray();
 
+            // Upsert first. If the schema or an insert is invalid, existing cooldown rows remain.
+            foreach (var (skillId, state) in activeCooldowns)
+            {
                 using var cmd = connection.CreateCommand();
                 cmd.Connection = connection;
                 cmd.Transaction = transaction;
                 cmd.CommandText =
-                    "INSERT INTO `character_cooldowns` (`character_id`, `skill_id`, `expires_at`) " +
-                    "VALUES (@characterId, @skillId, @expiresAt)";
+                    "INSERT INTO `character_cooldowns` (`character_id`, `skill_id`, `duration_ms`, `expires_at`) " +
+                    "VALUES (@characterId, @skillId, @durationMs, @expiresAt) " +
+                    "ON DUPLICATE KEY UPDATE `duration_ms`=@durationMs, `expires_at`=@expiresAt";
                 cmd.Parameters.AddWithValue("@characterId", characterId);
                 cmd.Parameters.AddWithValue("@skillId", skillId);
-                cmd.Parameters.AddWithValue("@expiresAt", endTime);
+                cmd.Parameters.AddWithValue("@durationMs", state.Duration);
+                cmd.Parameters.AddWithValue("@expiresAt", state.EndTime);
                 cmd.ExecuteNonQuery();
             }
+
+            // Remove rows that are no longer present only after every upsert succeeds.
+            using var cleanupCmd = connection.CreateCommand();
+            cleanupCmd.Connection = connection;
+            cleanupCmd.Transaction = transaction;
+            cleanupCmd.Parameters.AddWithValue("@characterId", characterId);
+            if (activeCooldowns.Length == 0)
+            {
+                // The duration_ms reference makes an unmigrated schema fail before it deletes rows.
+                cleanupCmd.CommandText =
+                    "DELETE FROM `character_cooldowns` " +
+                    "WHERE `character_id` = @characterId AND `duration_ms` IS NOT NULL";
+            }
+            else
+            {
+                cleanupCmd.CommandText =
+                    "DELETE FROM `character_cooldowns` WHERE `character_id` = @characterId AND `skill_id` NOT IN (" +
+                    string.Join(",", activeCooldowns.Select((_, i) => $"@active{i}")) + ")";
+                for (var i = 0; i < activeCooldowns.Length; i++)
+                    cleanupCmd.Parameters.AddWithValue($"@active{i}", activeCooldowns[i].Key);
+            }
+            cleanupCmd.ExecuteNonQuery();
+
+            ExecuteTransactionCommand(connection, transaction, $"RELEASE SAVEPOINT `{SavepointName}`");
+            savepointCreated = false;
         }
         catch (Exception ex)
         {
+            if (savepointCreated)
+            {
+                try
+                {
+                    ExecuteTransactionCommand(connection, transaction, $"ROLLBACK TO SAVEPOINT `{SavepointName}`");
+                    ExecuteTransactionCommand(connection, transaction, $"RELEASE SAVEPOINT `{SavepointName}`");
+                }
+                catch (Exception rollbackException)
+                {
+                    Logger.Error(rollbackException,
+                        "Failed to roll back cooldown savepoint for character {CharacterId}", characterId);
+                }
+            }
+
             Logger.Error(ex, "Failed to save cooldowns for character {CharacterId}", characterId);
         }
     }
@@ -85,8 +167,7 @@ public class UnitCooldowns
     /// <summary>
     /// Restores persisted cooldowns when a character enters the world.
     /// Expired rows are removed. Server-side enforcement via CheckCooldown()
-    /// applies immediately; the client-side cooldown display packet has an
-    /// unknown 1.2 wire format and is intentionally left empty.
+    /// and client-side display through SCCooldownsPacket use the restored state.
     /// </summary>
     public void Load(uint characterId)
     {
@@ -106,6 +187,7 @@ public class UnitCooldowns
                 while (reader.Read())
                 {
                     var skillId = reader.GetUInt32("skill_id");
+                    var duration = reader.GetUInt32("duration_ms");
                     var expiresAt = reader.GetDateTime("expires_at");
 
                     if (expiresAt <= utcNow)
@@ -114,7 +196,8 @@ public class UnitCooldowns
                         continue;
                     }
 
-                    Cooldowns[skillId] = expiresAt;
+                    var remaining = ToWireMilliseconds(expiresAt - utcNow);
+                    _cooldowns[skillId] = new CooldownState(expiresAt, Math.Max(duration, remaining));
                     restoredCount++;
                 }
             }
@@ -138,5 +221,33 @@ public class UnitCooldowns
         {
             Logger.Error(ex, "Failed to load cooldowns for character {CharacterId}", characterId);
         }
+    }
+
+    private static uint ToWireMilliseconds(TimeSpan duration)
+    {
+        var milliseconds = Math.Ceiling(duration.TotalMilliseconds);
+        if (milliseconds <= 0)
+            return 0;
+        if (milliseconds >= uint.MaxValue)
+            return uint.MaxValue;
+        return (uint)milliseconds;
+    }
+
+    private static void ExecuteTransactionCommand(
+        MySqlConnection connection,
+        MySqlTransaction transaction,
+        string commandText)
+    {
+        using var command = connection.CreateCommand();
+        command.Connection = connection;
+        command.Transaction = transaction;
+        command.CommandText = commandText;
+        command.ExecuteNonQuery();
+    }
+
+    private bool TryRemove(uint skillId, CooldownState expectedState)
+    {
+        return ((ICollection<KeyValuePair<uint, CooldownState>>)_cooldowns)
+            .Remove(new KeyValuePair<uint, CooldownState>(skillId, expectedState));
     }
 }
