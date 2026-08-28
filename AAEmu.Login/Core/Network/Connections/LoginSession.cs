@@ -19,6 +19,8 @@ public sealed class LoginSession(
     ILogger<LoginSession> logger)
     : ILoginSession
 {
+    private const string AuthenticationCompletedEventName = "login.authentication.completed";
+    private const string EnterWorldCompletedEventName = "login.enter_world.completed";
     private readonly TimeSpan _enterWorldTimeout = appConfig.Value.EnterWorldTimeout;
     private readonly Lock _lock = new();
 
@@ -88,6 +90,7 @@ public sealed class LoginSession(
 
         var result = await flow.StartAsync(Client, cancellationToken);
         ProcessAuthResult(result, flow);
+        LogAuthenticationOutcome(result, flow);
         await SendAuthResultAsync(result, cancellationToken);
     }
 
@@ -133,6 +136,7 @@ public sealed class LoginSession(
 
         var result = await step(flow!);
         ProcessAuthResult(result, flow!);
+        LogAuthenticationOutcome(result, flow!);
         await SendAuthResultAsync(result, cancellationToken);
     }
 
@@ -181,6 +185,29 @@ public sealed class LoginSession(
         }
     }
 
+    private void LogAuthenticationOutcome(AuthFlowResult result, IAuthenticationFlow flow)
+    {
+        if (result is AuthFlowResult.Pending)
+            return;
+
+        var outcome = result is AuthFlowResult.Success ? "success" : "denied";
+        var reason = result is AuthFlowResult.Denied denied ? denied.Reason.ToString() : null;
+
+        logger.LogInformation(
+            "{EventName}: Authentication {Outcome} on connection {ConnectionId} with {AuthenticationMethod}. " +
+            "Reason {Reason}",
+            AuthenticationCompletedEventName, outcome, Connection.Id.Value, GetAuthenticationMethod(flow), reason);
+    }
+
+    private static string GetAuthenticationMethod(IAuthenticationFlow flow) => flow switch
+    {
+        LauncherTicketAuthFlow => "launcher_ticket",
+        PasswordAuthFlow => "password",
+        ReconnectAuthFlow => "reconnect",
+        KoreaAuthFlow => "korea_challenge",
+        _ => "unknown"
+    };
+
     public async Task InitiateEnterWorldAsync(GameServerId gsId, CancellationToken cancellationToken)
     {
         CancellationTokenSource linkedCts;
@@ -220,11 +247,11 @@ public sealed class LoginSession(
         gameController.RequestEnterWorld(Connection.AccountId, Connection.Id, gsId);
 
         // Spawn background task to await response and send result
-        _enterWorldBackgroundTask = RunEnterWorldBackgroundAsync(tcs, linkedCts);
+        _enterWorldBackgroundTask = RunEnterWorldBackgroundAsync(tcs, linkedCts, gsId);
     }
 
     private async Task RunEnterWorldBackgroundAsync(TaskCompletionSource<EnterWorldResult> tcs,
-        CancellationTokenSource linkedCts)
+        CancellationTokenSource linkedCts, GameServerId gsId)
     {
         try
         {
@@ -233,19 +260,21 @@ public sealed class LoginSession(
             if (result is { Success: true, Server: not null })
             {
                 await Client.SendWorldCookieAsync(result.Server, CancellationToken.None);
+                LogEnterWorldOutcome(LogLevel.Information, "success", gsId, null);
             }
             else
             {
                 await Client.SendEnterWorldDeniedAsync(result.DenialReason, CancellationToken.None);
+                LogEnterWorldOutcome(LogLevel.Information, "denied", gsId, result.DenialReason.ToString());
             }
         }
         catch (OperationCanceledException)
         {
-            logger.LogDebug("EnterWorld cancelled for connection {ConnectionId}", Connection.Id);
+            LogEnterWorldOutcome(LogLevel.Debug, "cancelled", gsId, "cancelled");
         }
         catch (TimeoutException)
         {
-            logger.LogWarning("EnterWorld timed out for connection {ConnectionId}", Connection.Id);
+            LogEnterWorldOutcome(LogLevel.Warning, "timeout", gsId, "timeout");
             try
             {
                 await Client.SendEnterWorldDeniedAsync(0, CancellationToken.None);
@@ -266,6 +295,14 @@ public sealed class LoginSession(
                 }
             }
         }
+    }
+
+    private void LogEnterWorldOutcome(LogLevel level, string outcome, GameServerId gsId, string? reason)
+    {
+        logger.Log(level,
+            "{EventName}: Enter-world {Outcome} on connection {ConnectionId} for game server {GameServerId}. " +
+            "Reason {Reason}",
+            EnterWorldCompletedEventName, outcome, Connection.Id.Value, gsId.Value, reason);
     }
 
     public void CancelEnterWorld()

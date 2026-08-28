@@ -27,6 +27,7 @@ public class TalkBehavior : BaseCombatBehavior
     private readonly Dictionary<uint, DateTime> _greeted = new();
     // ------------------------------------------------------
     private bool _isInitialized;
+    private bool _loggedUninitializedTick;
 
     public override void Enter()
     {
@@ -37,6 +38,7 @@ public class TalkBehavior : BaseCombatBehavior
         Ai.Owner.CurrentGameStance = GameStanceType.Relaxed;
         Ai.Owner.CurrentAlertness = MoveTypeAlertness.Idle;
         _isInitialized = true;
+        _loggedUninitializedTick = false;
     }
 
     public override void Tick(TimeSpan delta)
@@ -77,7 +79,11 @@ public class TalkBehavior : BaseCombatBehavior
     {
         if (!_isInitialized)
         {
-            Logger.Warn($"TalkBehavior.Tick called before initialization for unit {Ai?.Owner?.ObjId}");
+            if (!_loggedUninitializedTick)
+            {
+                Logger.Warn("TalkBehavior.Tick called before initialization for unit {0}", Ai?.Owner?.ObjId);
+                _loggedUninitializedTick = true;
+            }
             return false;
         }
         return true;

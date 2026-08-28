@@ -16,31 +16,13 @@ public abstract class LoginPacket(ushort typeId) : PacketBase<ILoginConnection>(
     public override PacketStream Encode()
     {
         var ps = new PacketStream();
-        try
-        {
-            ps.Write(new PacketStream().Write(TypeId).Write(this));
-        }
-        catch (Exception ex)
-        {
-            Logger.Fatal(ex);
-            throw;
-        }
-
+        ps.Write(new PacketStream().Write(TypeId).Write(this));
         return ps;
     }
 
     public override PacketBase<ILoginConnection> Decode(PacketStream ps)
     {
-        try
-        {
-            Read(ps);
-        }
-        catch (Exception ex)
-        {
-            Logger.Fatal(ex);
-            throw;
-        }
-
+        Read(ps);
         return this;
     }
 }

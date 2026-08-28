@@ -21,8 +21,6 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
         var languageType = stream.ReadByte();
         var ability = stream.ReadInt32();
 
-        Logger.Debug(message);
-
         if (message.StartsWith(CommandManager.CommandPrefix))
         {
             if (CommandManager.Instance.Handle(Connection.ActiveChar, message.Substring(CommandManager.CommandPrefix.Length).Trim(), out _))

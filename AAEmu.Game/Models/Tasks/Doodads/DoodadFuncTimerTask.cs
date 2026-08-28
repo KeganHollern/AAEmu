@@ -1,5 +1,4 @@
 ﻿using AAEmu.Game.Core.Managers.UnitManagers;
-using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Units;
 
@@ -17,9 +16,7 @@ public class DoodadFuncTimerTask(BaseUnit caster, Doodad owner, uint skillId, in
 
     public override void Execute()
     {
-        if (_caster is Character)
-            Logger.Debug("[Doodad] DoodadFuncTimerTask: Doodad {0}, TemplateId {1}. Using skill {2} with doodad phase {3}", _owner.ObjId, _owner.TemplateId, _skillId, nextPhase);
-        else
+        if (Logger.IsTraceEnabled)
             Logger.Trace("[Doodad] DoodadFuncTimerTask: Doodad {0}, TemplateId {1}. Using skill {2} with doodad phase {3}", _owner.ObjId, _owner.TemplateId, _skillId, nextPhase);
 
         _owner.FuncTask = null;

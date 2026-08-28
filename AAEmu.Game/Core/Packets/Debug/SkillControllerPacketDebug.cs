@@ -5,7 +5,7 @@ namespace AAEmu.Game.Core.Packets.Debug;
 
 /// <summary>
 /// Debug logging for skill-controller packets (shared by harpoon rope, gliders, and other mechanics — not harpoon-specific).
-/// Uses NLog Debug level so lines reach the ColoredConsole target (AAEmu.Game/NLog.config: console minlevel Debug).
+/// Uses NLog Debug level. Set AAEMU_LOG_LEVEL=Debug to include these lines in stdout.
 /// Opcodes (client_12_r208022): CSSkillControllerStatePacket 0x08A, CSCreateSkillControllerPacket 0x08B, SCSkillControllerStatePacket 0x06D.
 /// Set <see cref="EnableVerbosePacketLogging"/> to true only while tracing; default is off (rope updates spam Debug every tick).
 /// </summary>

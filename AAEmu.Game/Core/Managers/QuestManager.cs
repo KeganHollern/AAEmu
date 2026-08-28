@@ -144,7 +144,8 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
             if (!EvaluationQueue.Contains(quest))
                 EvaluationQueue.Enqueue(quest);
 
-            Logger.Info($"EnqueueEvaluation, {quest.Owner.Name} ({quest.Owner.Id}), Quest {quest.TemplateId}");
+            if (Logger.IsTraceEnabled)
+                Logger.Trace($"EnqueueEvaluation, {quest.Owner.Name} ({quest.Owner.Id}), Quest {quest.TemplateId}");
 
             if (needNewTask)
                 taskManager.Schedule(new QuestManagerRunQueueTask(), null, TimeSpan.FromMilliseconds(1));
@@ -162,7 +163,8 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
             {
                 var quest = EvaluationQueue.Dequeue();
                 quest.StartingEvaluation();
-                Logger.Info($"DoQueuedEvaluations, {quest.Owner.Name} ({quest.Owner.Id}), Quest {quest.TemplateId}");
+                if (Logger.IsTraceEnabled)
+                    Logger.Trace($"DoQueuedEvaluations, {quest.Owner.Name} ({quest.Owner.Id}), Quest {quest.TemplateId}");
                 var currentResult = quest.RunCurrentStep();
             }
         }

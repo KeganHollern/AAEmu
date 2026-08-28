@@ -1613,10 +1613,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                     }
                     catch (Exception ex)
                     {
-                        // Create a manual SQL string with the data provided
-                        var sqlString = $"REPLACE INTO items (id, type, template_id, container_id, slot_type, slot, count, details, lifespan_mins, made_unit_id, unsecure_time, unpack_time, owner, created_at, grade, flags, ucc, expire_time, expire_online_minutes, charge_time, charge_count) VALUES ({item.Id}, {item.GetType()}, {item.TemplateId}, {item._holdingContainer?.ContainerId ?? 0}, {item.SlotType}, {item.Slot}, {item.Count}, {details.GetBytes()}, {item.LifespanMins}, {item.MadeUnitId}, {item.UnsecureTime}, {item.UnpackTime}, {item.CreateTime}, {item.OwnerId}, {item.Grade}, {(byte)item.ItemFlags}, {item.UccId}, {item.ExpirationTime}, {item.ExpirationOnlineMinutesLeft}, {item.ChargeStartTime}, {item.ChargeCount})";
-
-                        Logger.Error($"Error: {ex.Message}\nSQL Query: {sqlString}\n");
+                        Logger.Error(ex, "Error updating item {0} ({1})", item.Id, item.TemplateId);
                     }
                     command.Parameters.Clear();
                 }

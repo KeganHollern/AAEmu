@@ -27,10 +27,12 @@ public class LoginSessionTests
     private readonly List<LoginPacket> _sentPackets = [];
     private readonly CancellationTokenSource _connectionClosedCts = new();
     private readonly FakeTimeProvider _fakeTimeProvider = new();
+    private readonly CapturingLogger<LoginSession> _logger = new();
     private readonly LoginSession _session;
 
     public LoginSessionTests()
     {
+        Mock.SetupAllProperties(_mockConnection);
         _mockConnection.Id.Returns(s_testConnectionId);
         _mockConnection.Ip.Returns(s_testIp);
         _mockConnection.ConnectionClosed.Returns(_connectionClosedCts.Token);
@@ -47,7 +49,7 @@ public class LoginSessionTests
             _mockGameController.Object,
             _fakeTimeProvider,
             appConfig,
-            Mock.Of<ILogger<LoginSession>>().Object);
+            _logger);
     }
 
     private static Mock<IAuthenticationFlow> CreateMockFlow(AuthFlowResult result)
@@ -127,9 +129,6 @@ public class LoginSessionTests
     [Test]
     public async Task AuthenticateAsync_Success_SetsConnectionProperties(CancellationToken cancellationToken)
     {
-        // Enable property tracking so setters update the getter return values
-        Mock.SetupAllProperties(_mockConnection);
-
         var flow = CreateMockFlow(new AuthFlowResult.Success(s_testAccountId, "testuser"));
 
         await _session.AuthenticateAsync(flow.Object, cancellationToken);
@@ -138,6 +137,23 @@ public class LoginSessionTests
         await Assert.That(_mockConnection.Object.AccountName).IsEqualTo("testuser");
         await Assert.That(_mockConnection.Object.LastIp).IsEqualTo(s_testIp);
         await Assert.That(_mockConnection.Object.LastLogin).IsEqualTo(_fakeTimeProvider.GetUtcNow().DateTime);
+    }
+
+    [Test]
+    public async Task AuthenticateAsync_Success_LogsStructuredOutcomeWithoutUsername(
+        CancellationToken cancellationToken)
+    {
+        var flow = new LauncherTicketAuthFlow(s_testAccountId, "testuser");
+
+        await _session.AuthenticateAsync(flow, cancellationToken);
+
+        var entry = GetLogEntry("login.authentication.completed");
+        await Assert.That(entry.Level).IsEqualTo(LogLevel.Information);
+        await Assert.That(entry.Properties["Outcome"]).IsEqualTo("success");
+        await Assert.That(entry.Properties["AuthenticationMethod"]).IsEqualTo("launcher_ticket");
+        await Assert.That(entry.Properties["ConnectionId"]).IsEqualTo(s_testConnectionId.Value);
+        await Assert.That(entry.Properties.ContainsKey("AccountId")).IsFalse();
+        await Assert.That(entry.Properties.ContainsKey("Username")).IsFalse();
     }
 
     [Test]
@@ -266,6 +282,25 @@ public class LoginSessionTests
     }
 
     [Test]
+    public async Task InitiateEnterWorld_Timeout_LogsStructuredOutcome(CancellationToken cancellationToken)
+    {
+        await AuthenticateSuccessfullyAsync(cancellationToken);
+        CreateActiveGameServer(s_testGsId);
+
+        await _session.InitiateEnterWorldAsync(s_testGsId, cancellationToken);
+        _fakeTimeProvider.Advance(TimeSpan.FromMilliseconds(300));
+        await _session.EnterWorldBackgroundTask!;
+
+        var entry = GetLogEntry("login.enter_world.completed");
+        await Assert.That(entry.Level).IsEqualTo(LogLevel.Warning);
+        await Assert.That(entry.Properties["Outcome"]).IsEqualTo("timeout");
+        await Assert.That(entry.Properties["ConnectionId"]).IsEqualTo(s_testConnectionId.Value);
+        await Assert.That(entry.Properties.ContainsKey("AccountId")).IsFalse();
+        await Assert.That(entry.Properties["GameServerId"]).IsEqualTo(s_testGsId.Value);
+        await Assert.That(entry.Properties["Reason"]).IsEqualTo("timeout");
+    }
+
+    [Test]
     public async Task InitiateEnterWorld_FromWrongState_NoAction(CancellationToken cancellationToken)
     {
         // Session is in Connected state
@@ -367,4 +402,27 @@ public class LoginSessionTests
         await Assert.That(_sentPackets).IsEmpty();
         await Assert.That(_session.State).IsEqualTo(LoginState.Disconnected);
     }
+
+    private LogEntry GetLogEntry(string eventName) => _logger.Entries.Single(entry =>
+        entry.Properties.TryGetValue("EventName", out var value) && Equals(value, eventName));
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<LogEntry> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var properties = state is IEnumerable<KeyValuePair<string, object?>> values
+                ? values.ToDictionary(static value => value.Key, static value => value.Value)
+                : new Dictionary<string, object?>();
+            Entries.Add(new LogEntry(logLevel, properties));
+        }
+    }
+
+    private sealed record LogEntry(LogLevel Level, IReadOnlyDictionary<string, object?> Properties);
 }

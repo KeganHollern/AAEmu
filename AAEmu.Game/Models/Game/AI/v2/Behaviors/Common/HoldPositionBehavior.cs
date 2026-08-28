@@ -23,6 +23,7 @@ public class HoldPositionBehavior : BaseCombatBehavior
     private DateTime _lastSkillCheck;
     private bool _isInitialized;
     private bool _isFollowingNpc;
+    private bool _loggedUninitializedTick;
 
     public override void Enter()
     {
@@ -31,6 +32,7 @@ public class HoldPositionBehavior : BaseCombatBehavior
 
         InitializeHoldPosition();
         _isInitialized = true;
+        _loggedUninitializedTick = false;
     }
 
     private void InitializeHoldPosition()
@@ -74,7 +76,11 @@ public class HoldPositionBehavior : BaseCombatBehavior
     {
         if (!_isInitialized)
         {
-            Logger.Warn($"HoldPositionBehavior.Tick called before initialization for unit {Ai?.Owner?.ObjId}");
+            if (!_loggedUninitializedTick)
+            {
+                Logger.Warn("HoldPositionBehavior.Tick called before initialization for unit {0}", Ai?.Owner?.ObjId);
+                _loggedUninitializedTick = true;
+            }
             return false;
         }
         return true;
