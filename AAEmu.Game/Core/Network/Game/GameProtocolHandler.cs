@@ -1,6 +1,4 @@
 ﻿using System.Collections.Concurrent;
-using System.Text;
-
 using AAEmu.Commons.Exceptions;
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
@@ -197,7 +195,7 @@ public class GameProtocolHandler : BaseProtocolHandler
         catch (Exception e)
         {
             connection?.Shutdown();
-            Logger.Error(e);
+            Logger.Error(e, "Game protocol failed on connection {0} from {1}", connection?.Id, connection?.Ip);
         }
     }
 
@@ -221,9 +219,9 @@ public class GameProtocolHandler : BaseProtocolHandler
     /// <param name="stream"></param>
     private static void HandleUnknownPacket(GameConnection connection, uint type, byte level, PacketStream stream)
     {
-        var dump = new StringBuilder();
-        for (var i = stream.Pos; i < stream.Count; i++)
-            dump.AppendFormat("{0:x2} ", stream.Buffer[i]);
-        Logger.Error($"Unknown packet 0x{type:x2}({level}) from {connection.Ip}:\n{dump}");
+        Logger.Warn(
+            "{EventName}: Rejected unknown {Network} packet 0x{PacketOpcode:X4} at level {PacketLevel} with " +
+            "{PacketLength} unread bytes on connection {ConnectionId} from {RemoteIp}",
+            "game.packet.rejected", "game", type, level, stream.Count - stream.Pos, connection.Id, connection.Ip);
     }
 }

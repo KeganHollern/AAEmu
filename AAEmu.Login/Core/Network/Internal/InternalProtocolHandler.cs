@@ -1,6 +1,5 @@
 ﻿using System.Collections.Concurrent;
 using System.Globalization;
-using System.Text;
 using AAEmu.Commons.Exceptions;
 using AAEmu.Commons.Network;
 using AAEmu.Login.Core.Controllers;
@@ -114,14 +113,9 @@ public class InternalProtocolHandler(
 
     private void HandleUnknownPacket(ISession session, uint type, PacketStream stream)
     {
-        if (!logger.IsEnabled(LogLevel.Error))
-        {
-            return;
-        }
-
-        var dump = new StringBuilder();
-        for (var i = stream.Pos; i < stream.Count; i++)
-            dump.Append($"{stream.Buffer[i]:x2} ");
-        logger.LogError("Unknown packet 0x{Type:x2} from {IP}:\n{Dump}", type, session.Ip, dump);
+        logger.LogWarning(
+            "{EventName}: Rejected unknown {Network} packet 0x{PacketOpcode:X4} with {PacketLength} bytes " +
+            "on connection {ConnectionId} from {RemoteIp}",
+            "login.packet.rejected", "internal", type, stream.Count - stream.Pos, session.SessionId, session.Ip);
     }
 }

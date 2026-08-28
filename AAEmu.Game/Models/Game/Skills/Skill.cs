@@ -246,7 +246,6 @@ public class Skill
         {
             SkillTlIdManager.ReleaseId(TlId);
             TlId = 0;
-            Logger.Info($"TooCloseRange targetDist={targetDist}, minRangeCheck={minRangeCheck}, SkillTlId {TlId} for Skill {Template.Id}, Caster {caster.Name} ({caster.TemplateId}:{caster.ObjId}) with target {target.Name} ({target.TemplateId}:{target.ObjId})");
             return SkillResult.TooCloseRange;
         }
 
@@ -256,7 +255,6 @@ public class Skill
         {
             SkillTlIdManager.ReleaseId(TlId);
             TlId = 0;
-            Logger.Info($"TooFarRange targetDist={targetDist}, maxRangeCheck={maxRangeCheck}, SkillTlId {TlId} for Skill {Template.Id}, Caster {caster.Name} ({caster.TemplateId}:{caster.ObjId}) with target {target.Name} ({target.TemplateId}:{target.ObjId})");
             return SkillResult.TooFarRange;
         }
 

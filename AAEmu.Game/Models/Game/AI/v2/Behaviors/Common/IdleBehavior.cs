@@ -21,6 +21,7 @@ public class IdleBehavior : BaseCombatBehavior
     // ------------------------------------------------------
 
     private bool _isInitialized;
+    private bool _loggedUninitializedTick;
 
     public override void Enter()
     {
@@ -29,6 +30,7 @@ public class IdleBehavior : BaseCombatBehavior
 
         InitializeIdleState();
         _isInitialized = true;
+        _loggedUninitializedTick = false;
         //Logger.Debug($"Unit {Ai.Owner.ObjId}:{Ai.Owner.TemplateId} entered idle state");
     }
 
@@ -63,7 +65,11 @@ public class IdleBehavior : BaseCombatBehavior
     {
         if (!_isInitialized)
         {
-            Logger.Warn($"IdleBehavior.Tick called before initialization for unit {Ai?.Owner?.ObjId}");
+            if (!_loggedUninitializedTick)
+            {
+                Logger.Warn("IdleBehavior.Tick called before initialization for unit {0}", Ai?.Owner?.ObjId);
+                _loggedUninitializedTick = true;
+            }
             return false;
         }
 

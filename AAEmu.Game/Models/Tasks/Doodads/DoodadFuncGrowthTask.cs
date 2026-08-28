@@ -1,5 +1,4 @@
-﻿using AAEmu.Game.Models.Game.Char;
-using AAEmu.Game.Models.Game.DoodadObj;
+﻿using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Units;
 
 using NLog;
@@ -16,9 +15,7 @@ public class DoodadFuncGrowthTask(BaseUnit caster, Doodad owner, uint skillId, i
 
     public override void Execute()
     {
-        if (_caster is Character)
-            Logger.Debug("[Doodad] DoodadFuncGrowthTask: Doodad {0}, TemplateId {1}. Using skill {2} with doodad phase {3}", _owner.ObjId, _owner.TemplateId, _skillId, _owner.FuncGroupId);
-        else
+        if (Logger.IsTraceEnabled)
             Logger.Trace("[Doodad] DoodadFuncGrowthTask: Doodad {0}, TemplateId {1}. Using skill {2} with doodad phase {3}", _owner.ObjId, _owner.TemplateId, _skillId, _owner.FuncGroupId);
 
         _owner.Scale = endScale;

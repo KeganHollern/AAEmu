@@ -79,14 +79,18 @@ public class EnterWorldManager(
             else
             {
                 // TODO: Token did not match the expected account (phishing attempt?)
-                Logger.Warn($"Token does not match expected account, Token: {token}, AccountId: {accountId}, Expected AccountId: {account}, IP: {connection.Ip}");
+                Logger.Warn(
+                    "Login token does not match expected account. AccountId: {0}, ExpectedAccountId: {1}, IP: {2}",
+                    accountId,
+                    account,
+                    connection.Ip);
                 connection.Shutdown();
             }
         }
         else
         {
             // TODO: Invalid token (hacking attempt?)
-            Logger.Warn($"Invalid token during login attempt, Token: {token}, AccountId: {accountId}, IP: {connection.Ip}");
+            Logger.Warn("Invalid login token. AccountId: {0}, IP: {1}", accountId, connection.Ip);
             connection.Shutdown();
         }
     }

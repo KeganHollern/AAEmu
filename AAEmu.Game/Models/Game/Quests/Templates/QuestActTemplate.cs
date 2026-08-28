@@ -58,7 +58,8 @@ public class QuestActTemplate(QuestComponentTemplate parentComponent)
     /// </summary>
     public virtual void InitializeAction(Quest quest, QuestAct questAct)
     {
-        Logger.Info($"{QuestActTemplateName}.InitializeAction({questAct.Template.DetailId}) Owner {quest.Owner.Name} ({quest.Owner.Id})");
+        if (Logger.IsTraceEnabled)
+            Logger.Trace($"{QuestActTemplateName}.InitializeAction({questAct.Template.DetailId}) Owner {quest.Owner.Name} ({quest.Owner.Id})");
     }
 
     /// <summary>
@@ -66,7 +67,8 @@ public class QuestActTemplate(QuestComponentTemplate parentComponent)
     /// </summary>
     public virtual void FinalizeAction(Quest quest, QuestAct questAct)
     {
-        Logger.Info($"{QuestActTemplateName}.FinalizeAction({questAct.Template.DetailId}) Owner {quest.Owner.Name} ({quest.Owner.Id})");
+        if (Logger.IsTraceEnabled)
+            Logger.Trace($"{QuestActTemplateName}.FinalizeAction({questAct.Template.DetailId}) Owner {quest.Owner.Name} ({quest.Owner.Id})");
     }
 
     /// <summary>
@@ -74,7 +76,8 @@ public class QuestActTemplate(QuestComponentTemplate parentComponent)
     /// </summary>
     public virtual void InitializeQuest(Quest quest, QuestAct questAct)
     {
-        Logger.Info($"{QuestActTemplateName}.InitializeQuest({questAct.Template.DetailId}) Owner {quest.Owner.Name} ({quest.Owner.Id})");
+        if (Logger.IsTraceEnabled)
+            Logger.Trace($"{QuestActTemplateName}.InitializeQuest({questAct.Template.DetailId}) Owner {quest.Owner.Name} ({quest.Owner.Id})");
     }
 
     /// <summary>
@@ -82,7 +85,8 @@ public class QuestActTemplate(QuestComponentTemplate parentComponent)
     /// </summary>
     public virtual void FinalizeQuest(Quest quest, QuestAct questAct)
     {
-        Logger.Info($"{QuestActTemplateName}.FinalizeQuest({questAct.Template.DetailId}) Owner {quest.Owner.Name} ({quest.Owner.Id})");
+        if (Logger.IsTraceEnabled)
+            Logger.Trace($"{QuestActTemplateName}.FinalizeQuest({questAct.Template.DetailId}) Owner {quest.Owner.Name} ({quest.Owner.Id})");
     }
 
     /// <summary>

@@ -435,18 +435,10 @@ public class Doodad : BaseUnit
             FuncGroupId = (uint)funcGroupId;
         }
 
-        var player = caster as Character;
-
         while (true)
         {
-            if (player != null)
-            {
-                Logger.Warn($"Use: TemplateId {TemplateId}, Using phase {FuncGroupId} with SkillId {skillId}");
-            }
-            else
-            {
+            if (Logger.IsTraceEnabled)
                 Logger.Trace($"Use: TemplateId {TemplateId}, Using phase {FuncGroupId} with SkillId {skillId}");
-            }
 
             ToNextPhase = false; // по умолчанию не выполняем следующую фазу
             ListGroupId.Clear();
@@ -525,15 +517,8 @@ public class Doodad : BaseUnit
             if (stop || ToNextPhase == false)
             {
                 // did not pass the quest conditions check or there is no phase function
-                if (caster is Character)
-                {
-                    Logger.Debug($"Use: Did not pass the conditions check! TemplateId {TemplateId}, Using phase {FuncGroupId} with SkillId {skillId}");
-                    Logger.Debug($"Use: Looking forward to interacting with doodad TemplateId {TemplateId}, Using phase {FuncGroupId}");
-                }
-                else
-                {
+                if (Logger.IsTraceEnabled)
                     Logger.Trace($"Use: Did not pass the conditions check! TemplateId {TemplateId}, Using phase {FuncGroupId} with SkillId {skillId}");
-                }
 
                 return;
             }
@@ -554,14 +539,8 @@ public class Doodad : BaseUnit
         // if there is no function, complete the cycle
         if (func == null)
         {
-            if (caster is Character)
-            {
-                Logger.Debug($"DoFunc: Finished execution with func = null: TemplateId {TemplateId}, Using phase {FuncGroupId} with SkillId {skillId}");
-            }
-            else
-            {
+            if (Logger.IsTraceEnabled)
                 Logger.Trace($"DoFunc: Finished execution with func = null: TemplateId {TemplateId}, Using phase {FuncGroupId} with SkillId {skillId}");
-            }
 
             return true;
         }
@@ -585,7 +564,8 @@ public class Doodad : BaseUnit
                     {
                         FuncTask.Cancel();
                         FuncTask = null;
-                        Logger.Debug($"DoFunc::DoodadFuncTimer: The current timer has been canceled. TemplateId {TemplateId}, ObjId {ObjId}, nextPhase {func.NextPhase}");
+                        if (Logger.IsTraceEnabled)
+                            Logger.Trace($"DoFunc::DoodadFuncTimer: The current timer has been canceled. TemplateId {TemplateId}, ObjId {ObjId}, nextPhase {func.NextPhase}");
                     }
 
                     // Delete doodad
@@ -616,14 +596,8 @@ public class Doodad : BaseUnit
         }
         else
         {
-            if (caster is Character)
-            {
-                Logger.Debug($"DoFunc Finished execution withOut ToNextPhase = {ToNextPhase}: TemplateId {TemplateId}, Using phase {FuncGroupId} with SkillId {skillId}");
-            }
-            else
-            {
+            if (Logger.IsTraceEnabled)
                 Logger.Trace($"DoFunc Finished execution withOut ToNextPhase = {ToNextPhase}: TemplateId {TemplateId}, Using phase {FuncGroupId} with SkillId {skillId}");
-            }
 
             // DoodadFuncLootItem sets ToNextPhase=false when loot fails (or early chance miss). Multi-item func groups
             // list several LootItem rows for one phase; return false so Use()'s foreach continues to the next func.
@@ -659,14 +633,8 @@ public class Doodad : BaseUnit
             if (funcs.Count > 0)
             {
                 // например, если это ID=2231, Target, то надо прервать рекурсию
-                if (caster is Character)
-                {
-                    Logger.Debug($"DoPhase: Finished execution with recurse: TemplateId {TemplateId}, Using phase {FuncGroupId}");
-                }
-                else
-                {
+                if (Logger.IsTraceEnabled)
                     Logger.Trace($"DoPhase: Finished execution with recurse: TemplateId {TemplateId}, Using phase {FuncGroupId}");
-                }
 
                 ListGroupId.Clear();
                 return true;
@@ -680,24 +648,12 @@ public class Doodad : BaseUnit
         {
             FuncTask.Cancel();
             FuncTask = null;
-            if (caster is Character)
-            {
-                Logger.Debug("DoPhaseFuncs:DoodadFuncTimer: The current timer has been canceled.");
-            }
-            else
-            {
+            if (Logger.IsTraceEnabled)
                 Logger.Trace("DoPhaseFuncs:DoodadFuncTimer: The current timer has been canceled.");
-            }
         }
 
-        if (caster is Character)
-        {
-            Logger.Debug($"DoPhaseFuncs: TemplateId {TemplateId}, ObjId {ObjId}, nextPhase {nextPhase}");
-        }
-        else
-        {
+        if (Logger.IsTraceEnabled)
             Logger.Trace($"DoPhaseFuncs: TemplateId {TemplateId}, ObjId {ObjId}, nextPhase {nextPhase}");
-        }
 
         var phaseFuncs = DoodadManager.Instance.GetPhaseFunc(FuncGroupId);
         if (phaseFuncs.Count == 0)
@@ -759,14 +715,8 @@ public class Doodad : BaseUnit
         //if (nextPhase == FuncGroupId)
         //    return true;
 
-        if (caster is Character)
-        {
-            Logger.Debug($"DoChangePhase: TemplateId {TemplateId}, ObjId {ObjId}, nextPhase {nextPhase}");
-        }
-        else
-        {
+        if (Logger.IsTraceEnabled)
             Logger.Trace($"DoChangePhase: TemplateId {TemplateId}, ObjId {ObjId}, nextPhase {nextPhase}");
-        }
 
         var stop = DoPhaseFuncs(caster, ref nextPhase);
 

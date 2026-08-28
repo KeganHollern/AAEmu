@@ -1,6 +1,5 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
-using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Units;
 
@@ -32,9 +31,7 @@ public class DoodadFuncFinalTask : DoodadFuncTask
 
     public override void Execute()
     {
-        if (_caster is Character)
-            Logger.Debug("[Doodad] DoodadFuncFinalTask: Doodad {0}, TemplateId {1}. Using skill {2} with doodad phase {3}", _owner.ObjId, _owner.TemplateId, _skillId, _owner.FuncGroupId);
-        else
+        if (Logger.IsTraceEnabled)
             Logger.Trace("[Doodad] DoodadFuncFinalTask: Doodad {0}, TemplateId {1}. Using skill {2} with doodad phase {3}", _owner.ObjId, _owner.TemplateId, _skillId, _owner.FuncGroupId);
 
         if (_respawn && _owner.Spawner != null)

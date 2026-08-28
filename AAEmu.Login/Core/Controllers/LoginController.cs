@@ -95,8 +95,6 @@ public partial class LoginController(
         var accountId = new AccountId(Convert.ToUInt32(reader["id"]));
         var now = DateTime.UtcNow;
 
-        logger.LogInformation("{Username} connected.", username.ReplaceLineEndings(" "));
-
         await reader.CloseAsync();
 
         #region update account
@@ -251,7 +249,6 @@ public partial class LoginController(
                 createLegacyAccount, cancellationToken);
         }
 
-        logger.LogDebug("Created account from invalid username login with value {Username}", username);
         return await LoginInternalAsync(username, password, clientIp, allowPasswordRehash, createLegacyAccount,
             cancellationToken);
     }

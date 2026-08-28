@@ -1,6 +1,5 @@
 ﻿using System.Collections.Concurrent;
 using System.Net;
-using System.Text;
 using AAEmu.Commons.Models;
 using AAEmu.Commons.Network;
 using AAEmu.Login.Core.Network.Login;
@@ -190,15 +189,10 @@ public sealed class LoginConnection : ILoginConnectionOwner
 
     private void HandleUnknownPacket(uint type, PacketStream stream)
     {
-        if (!_logger.IsEnabled(LogLevel.Error))
-        {
-            return;
-        }
-
-        var dump = new StringBuilder();
-        for (var i = stream.Pos; i < stream.Count; i++)
-            dump.Append($"{stream.Buffer[i]:x2} ");
-        _logger.LogError("Unknown packet 0x{Type:x2} from {ConnectionIP}:\n{Dump}", type, Ip, dump);
+        _logger.LogWarning(
+            "{EventName}: Rejected unknown {Network} packet 0x{PacketOpcode:X4} with {PacketLength} bytes " +
+            "on connection {ConnectionId} from {RemoteIp}",
+            "login.packet.rejected", "client", type, stream.Count - stream.Pos, Id.Value, Ip);
     }
 
     private static bool IsExpectedDisconnectException(Exception ex)

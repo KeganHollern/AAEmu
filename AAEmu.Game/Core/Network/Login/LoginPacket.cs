@@ -14,7 +14,7 @@ public abstract class LoginPacket(ushort typeId) : PacketBase<LoginConnection>(t
         }
         catch (Exception ex)
         {
-            Logger.Fatal(ex);
+            Logger.Error(ex, "LoginPacket: Failed to encode G->L type {0:X3}", TypeId);
             throw;
         }
 
@@ -29,7 +29,7 @@ public abstract class LoginPacket(ushort typeId) : PacketBase<LoginConnection>(t
         }
         catch (Exception ex)
         {
-            Logger.Fatal(ex);
+            Logger.Error(ex, "LoginPacket: Failed to decode L->G type {0:X3}", TypeId);
             throw;
         }
 

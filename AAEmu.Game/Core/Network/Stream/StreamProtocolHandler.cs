@@ -1,5 +1,4 @@
 ﻿using System.Collections.Concurrent;
-using System.Text;
 using AAEmu.Commons.Exceptions;
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
@@ -131,7 +130,7 @@ public class StreamProtocolHandler : BaseProtocolHandler
         catch (Exception e)
         {
             connection?.Shutdown();
-            Logger.Error(e);
+            Logger.Error(e, "Stream protocol failed on connection {0} from {1}", connection?.Id, connection?.Ip);
         }
     }
 
@@ -144,9 +143,9 @@ public class StreamProtocolHandler : BaseProtocolHandler
 
     private static void HandleUnknownPacket(StreamConnection connection, uint type, PacketStream stream)
     {
-        var dump = new StringBuilder();
-        for (var i = stream.Pos; i < stream.Count; i++)
-            dump.AppendFormat("{0:x2} ", stream.Buffer[i]);
-        Logger.Error("Unknown packet 0x{0:x2} from {1}:\n{2}", (object)type, (object)connection.Ip, (object)dump);
+        Logger.Warn(
+            "{EventName}: Rejected unknown {Network} packet 0x{PacketOpcode:X4} with {PacketLength} unread bytes " +
+            "on connection {ConnectionId} from {RemoteIp}",
+            "game.packet.rejected", "stream", type, stream.Count - stream.Pos, connection.Id, connection.Ip);
     }
 }

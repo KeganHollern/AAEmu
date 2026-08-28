@@ -8,9 +8,9 @@ public class CSJoinUserChatChannelPacket() : GamePacket(CSOffsets.CSJoinUserChat
     public override void Read(PacketStream stream)
     {
         var name = stream.ReadString();
-        var pwd = stream.ReadString();
+        _ = stream.ReadString();
         var create = stream.ReadBoolean();
 
-        Logger.Debug("JoinUserChatChannel, Name: {0}, Password: {1}, Create: {2}", name, pwd, create);
+        Logger.Debug("JoinUserChatChannel, Name: {0}, Create: {1}", name, create);
     }
 }

@@ -61,20 +61,11 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         if (Connection.ActiveChar != null)
             Connection.ActiveChar.LastPacketActivityTime = DateTime.UtcNow;
         var world = Connection.ActiveChar?.ParentWorld ?? WorldManager.Instance.GetWorld(WorldManager.DefaultInstanceId);
-        
-        Logger.Info($"StartSkill: Id {skillId}, flag {flag}, caster={skillCaster.ObjId}, target={skillCastTarget.ObjId}");
 
         var skillResult = SkillResult.Success;
         var skillResultErrorValue = 0u;
         Skill skill = null;
         var isOwnUnitCast = skillCaster is SkillCasterUnit && skillCaster.ObjId == Connection.ActiveChar.ObjId;
-
-        if (skillCaster is SkillCasterUnit scu)
-        {
-            var unit = world.GetUnit(scu.ObjId);
-            if (unit is Character character)
-                Logger.Info($"{character.Name}:{character.ObjId} is using skill={skillId}");
-        }
 
         if (skillId > 0 && SkillManager.Instance.IsComboFollowupSkill(skillId))
         {

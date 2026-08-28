@@ -31,7 +31,7 @@ public static class HarpoonMechanicsDebug
         if (!EnableVerboseHarpoonMechanicsLogging || !IsShipHarpoonSkill(skillId))
             return;
 
-        // NLog.config: console uses minlevel Debug — Trace would not appear in the terminal.
+        // Set AAEMU_LOG_LEVEL=Debug to include this diagnostic in stdout.
         Log.Debug("[Harpoon][C2S CSStartSkill 0x052] skillId={0} flag=0x{1:X2} flagTypeSkillObject={2} caster={3} target={4} skillObjectFlag={5}",
             skillId, flag, flagType, FormatCaster(caster), FormatTarget(target), skillObject.Flag);
     }
