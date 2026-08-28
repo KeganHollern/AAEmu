@@ -6,6 +6,9 @@ namespace AAEmu.Game.Core.Packets.G2C;
 
 public class SCInitialConfigPacket() : GamePacket(SCOffsets.SCInitialConfigPacket, 1)
 {
+    private const ushort ClientIdleKickIntervalSeconds = 5 * 60;
+    private const ushort IdleKickThresholdSeconds = (12 * 60 * 60) - ClientIdleKickIntervalSeconds;
+
     public override PacketStream Write(PacketStream stream)
     {
         stream.Write("aaemu.local"); // host
@@ -90,7 +93,8 @@ public class SCInitialConfigPacket() : GamePacket(SCOffsets.SCInitialConfigPacke
          */
         stream.Write((byte)0); // secondPasswordMaxFailCount
 
-        stream.Write((ushort)0); // idleKickTime
+        // r208022 adds five minutes before it returns the player to the world list.
+        stream.Write(IdleKickThresholdSeconds); // idleKickTime
 
         return stream;
     }
