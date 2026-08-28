@@ -31,7 +31,7 @@ public class NLogConfigurationTests
         var configuration = new XmlLoggingConfiguration(configurationPath, logFactory);
 
         await Assert.That(configuration.AllTargets).HasSingleItem();
-        await Assert.That(configuration.LoggingRules).HasSingleItem();
+        await Assert.That(configuration.LoggingRules.Count).IsGreaterThanOrEqualTo(1);
 
         var configuredTarget = configuration.AllTargets.Single();
         await Assert.That(configuredTarget).IsTypeOf<AsyncTargetWrapper>();
@@ -43,7 +43,7 @@ public class NLogConfigurationTests
         await Assert.That(stdoutTarget.StdErr.RenderValue(LogEventInfo.CreateNullEvent(), false)).IsFalse();
         await Assert.That(stdoutTarget.Layout).IsTypeOf<JsonLayout>();
 
-        var rule = configuration.LoggingRules.Single();
+        var rule = configuration.LoggingRules.Single(loggingRule => loggingRule.LoggerNamePattern == "*");
         await Assert.That(rule.Targets).HasSingleItem();
         await Assert.That(ReferenceEquals(rule.Targets.Single(), asyncTarget)).IsTrue();
         await Assert.That(rule.IsLoggingEnabledForLevel(LogLevel.Trace)).IsFalse();
@@ -79,11 +79,28 @@ public class NLogConfigurationTests
         using var environment = new EnvironmentVariableScope(MinimumLevelEnvironmentVariable, "Debug");
         using var logFactory = new LogFactory();
         var configuration = new XmlLoggingConfiguration(configurationPath, logFactory);
-        var rule = configuration.LoggingRules.Single();
+        var rule = configuration.LoggingRules.Single(loggingRule => loggingRule.LoggerNamePattern == "*");
 
         await Assert.That(rule.IsLoggingEnabledForLevel(LogLevel.Trace)).IsFalse();
         await Assert.That(rule.IsLoggingEnabledForLevel(LogLevel.Debug)).IsTrue();
         await Assert.That(rule.IsLoggingEnabledForLevel(LogLevel.Info)).IsTrue();
+    }
+
+    [Test]
+    [Arguments("Microsoft.AspNetCore.Hosting.Diagnostics")]
+    [Arguments("Microsoft.AspNetCore.Routing.EndpointMiddleware")]
+    public async Task Configuration_LoginSuppressesRoutineAspNetCoreRequestLogs(string loggerName)
+    {
+        using var environment = new EnvironmentVariableScope(MinimumLevelEnvironmentVariable, null);
+        using var logFactory = new LogFactory();
+        logFactory.Configuration = new XmlLoggingConfiguration(GetConfigurationPath("AAEmu.Login"), logFactory);
+
+        var frameworkLogger = logFactory.GetLogger(loggerName);
+        await Assert.That(frameworkLogger.IsInfoEnabled).IsFalse();
+        await Assert.That(frameworkLogger.IsWarnEnabled).IsTrue();
+
+        var applicationLogger = logFactory.GetLogger("AAEmu.Login.Test");
+        await Assert.That(applicationLogger.IsInfoEnabled).IsTrue();
     }
 
     private static string GetConfigurationPath(string projectName, [CallerFilePath] string sourceFilePath = "")
