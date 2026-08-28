@@ -38,6 +38,7 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
     /// long-running servers.
     /// </summary>
     private static readonly TimeSpan OfflineTeamDisbandGrace = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan InvitationLifetime = TimeSpan.FromMinutes(1);
 
     /// <summary>
     /// Per-(recipient,source) snapshot of the last values broadcast to that recipient.
@@ -50,7 +51,8 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
     // set while game-handler threads concurrently join/disband. Reads (TryGetValue,
     // Values) are lock-free; mutations (TryAdd, TryRemove) are internally synced.
     private readonly ConcurrentDictionary<uint, Team> _activeTeams = new(); // teamId, Team
-    private readonly Dictionary<uint, InvitationTemplate> _activeInvitations = []; // targetId, InvitationTemplate
+    private readonly ConcurrentDictionary<uint, InvitationTemplate> _activeInvitations = new(); // targetId, InvitationTemplate
+    private readonly object _activeInvitationsLock = new();
 
     public Team GetActiveTeamByUnit(uint unitId)
     {
@@ -117,6 +119,8 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
 
     public void AskToJoin(Character owner, string targetName, uint teamId, bool isParty, Character targetObj = null)
     {
+        RemoveExpiredInvitations();
+
         var target = targetObj ?? worldManager.GetCharacter(targetName);
         if (target == null) return;
         // TODO - CONFIG INVITE DISABLED
@@ -130,6 +134,12 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
 
 
         var activeTeam = GetActiveTeam(teamId);
+        if (GetActiveTeamByUnit(target.Id) != null)
+        {
+            owner.SendErrorMessage(ErrorMessageType.TeamInviteeInTeam);
+            return;
+        }
+
         if (GetActiveInvitation(target.Id) != null)
         {
             owner.SendPacket(new SCRejectedTeamPacket(targetName, isParty));
@@ -155,18 +165,35 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
             }
         }
 
-        _activeInvitations.Add(target.Id, new InvitationTemplate
+        var invitation = new InvitationTemplate
         {
             Owner = owner,
             Target = target,
             IsParty = activeTeam?.IsParty ?? isParty,
             Time = DateTime.UtcNow,
             TeamId = activeTeam?.Id ?? 0u,
-        });
+        };
+        lock (_activeInvitationsLock)
+        {
+            if (!_activeInvitations.TryAdd(target.Id, invitation))
+            {
+                owner.SendPacket(new SCRejectedTeamPacket(targetName, isParty));
+                return;
+            }
+        }
+
         target.SendPacket(new SCAskToJoinTeamPacket(activeTeam?.Id ?? 0u, owner.Id, owner.Name, isParty));
     }
 
     public void ReplyToJoinTeam(Character target, uint teamId, bool isParty, uint ownerId, bool isReject, string charName, bool isArea)
+    {
+        lock (_activeInvitationsLock)
+        {
+            ReplyToJoinTeamLocked(target, teamId, isParty, ownerId, isReject, charName, isArea);
+        }
+    }
+
+    private void ReplyToJoinTeamLocked(Character target, uint teamId, bool isParty, uint ownerId, bool isReject, string charName, bool isArea)
     {
         var activeInvitation = GetActiveInvitation(target.Id);
         if (activeInvitation == null)
@@ -175,17 +202,24 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
             return;
         }
 
-        if (isReject || activeInvitation.Time.AddSeconds(60) < DateTime.UtcNow) // 60 seconds for timeout
+        if (isReject || activeInvitation.Time + InvitationLifetime < DateTime.UtcNow)
         {
             activeInvitation.Owner.SendPacket(new SCRejectedTeamPacket(activeInvitation.Target.Name, activeInvitation.IsParty));
-            _activeInvitations.Remove(target.Id);
+            _activeInvitations.TryRemove(new KeyValuePair<uint, InvitationTemplate>(target.Id, activeInvitation));
             return;
         }
 
         if (isArea)
         {
             // TODO
-            _activeInvitations.Remove(target.Id);
+            _activeInvitations.TryRemove(new KeyValuePair<uint, InvitationTemplate>(target.Id, activeInvitation));
+            return;
+        }
+
+        if (GetActiveTeamByUnit(target.Id) != null)
+        {
+            target.SendErrorMessage(ErrorMessageType.TeamInviteeInTeam);
+            _activeInvitations.TryRemove(new KeyValuePair<uint, InvitationTemplate>(target.Id, activeInvitation));
             return;
         }
 
@@ -198,7 +232,7 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
             }
             else
             {
-                _activeInvitations.Remove(target.Id);
+                _activeInvitations.TryRemove(new KeyValuePair<uint, InvitationTemplate>(target.Id, activeInvitation));
                 // TODO - ERROR TEAM DO NOT EXISTS ANYMORE
                 return;
             }
@@ -209,7 +243,7 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
             {
                 // ERROR TEAM IS FULL
                 target.SendErrorMessage(ErrorMessageType.TeamFull);
-                _activeInvitations.Remove(activeInvitation.Target.Id);
+                _activeInvitations.TryRemove(new KeyValuePair<uint, InvitationTemplate>(target.Id, activeInvitation));
                 return;
             }
 
@@ -237,7 +271,24 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
             }
         }
 
-        _activeInvitations.Remove(activeInvitation.Target.Id);
+        _activeInvitations.TryRemove(new KeyValuePair<uint, InvitationTemplate>(target.Id, activeInvitation));
+    }
+
+    private void RemoveExpiredInvitations()
+    {
+        lock (_activeInvitationsLock)
+        {
+            var now = DateTime.UtcNow;
+            foreach (var invitation in _activeInvitations)
+            {
+                if (invitation.Value.Time + InvitationLifetime >= now || !_activeInvitations.TryRemove(invitation))
+                    continue;
+
+                if (invitation.Value.Owner.IsOnline)
+                    invitation.Value.Owner.SendPacket(new SCRejectedTeamPacket(
+                        invitation.Value.Target.Name, invitation.Value.IsParty));
+            }
+        }
     }
 
     public void MoveTeamMember(Character owner, uint teamId, uint targetId, uint target2Id, byte fromIndex, byte toIndex)
