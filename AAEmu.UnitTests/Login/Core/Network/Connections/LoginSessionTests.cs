@@ -152,7 +152,7 @@ public class LoginSessionTests
         await Assert.That(entry.Properties["Outcome"]).IsEqualTo("success");
         await Assert.That(entry.Properties["AuthenticationMethod"]).IsEqualTo("launcher_ticket");
         await Assert.That(entry.Properties["ConnectionId"]).IsEqualTo(s_testConnectionId.Value);
-        await Assert.That(entry.Properties["AccountId"]).IsEqualTo(s_testAccountId.Value);
+        await Assert.That(entry.Properties.ContainsKey("AccountId")).IsFalse();
         await Assert.That(entry.Properties.ContainsKey("Username")).IsFalse();
     }
 
@@ -295,7 +295,7 @@ public class LoginSessionTests
         await Assert.That(entry.Level).IsEqualTo(LogLevel.Warning);
         await Assert.That(entry.Properties["Outcome"]).IsEqualTo("timeout");
         await Assert.That(entry.Properties["ConnectionId"]).IsEqualTo(s_testConnectionId.Value);
-        await Assert.That(entry.Properties["AccountId"]).IsEqualTo(s_testAccountId.Value);
+        await Assert.That(entry.Properties.ContainsKey("AccountId")).IsFalse();
         await Assert.That(entry.Properties["GameServerId"]).IsEqualTo(s_testGsId.Value);
         await Assert.That(entry.Properties["Reason"]).IsEqualTo("timeout");
     }

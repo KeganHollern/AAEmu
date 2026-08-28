@@ -191,14 +191,12 @@ public sealed class LoginSession(
             return;
 
         var outcome = result is AuthFlowResult.Success ? "success" : "denied";
-        var accountId = result is AuthFlowResult.Success success ? success.AccountId.Value : (uint?)null;
         var reason = result is AuthFlowResult.Denied denied ? denied.Reason.ToString() : null;
 
         logger.LogInformation(
             "{EventName}: Authentication {Outcome} on connection {ConnectionId} with {AuthenticationMethod}. " +
-            "Account {AccountId}, reason {Reason}",
-            AuthenticationCompletedEventName, outcome, Connection.Id.Value, GetAuthenticationMethod(flow), accountId,
-            reason);
+            "Reason {Reason}",
+            AuthenticationCompletedEventName, outcome, Connection.Id.Value, GetAuthenticationMethod(flow), reason);
     }
 
     private static string GetAuthenticationMethod(IAuthenticationFlow flow) => flow switch
@@ -302,9 +300,9 @@ public sealed class LoginSession(
     private void LogEnterWorldOutcome(LogLevel level, string outcome, GameServerId gsId, string? reason)
     {
         logger.Log(level,
-            "{EventName}: Enter-world {Outcome} on connection {ConnectionId} for account {AccountId} and " +
-            "game server {GameServerId}. Reason {Reason}",
-            EnterWorldCompletedEventName, outcome, Connection.Id.Value, Connection.AccountId.Value, gsId.Value, reason);
+            "{EventName}: Enter-world {Outcome} on connection {ConnectionId} for game server {GameServerId}. " +
+            "Reason {Reason}",
+            EnterWorldCompletedEventName, outcome, Connection.Id.Value, gsId.Value, reason);
     }
 
     public void CancelEnterWorld()
