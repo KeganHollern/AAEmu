@@ -84,6 +84,47 @@ Example:
 - **Type**: `number`
 - **Description**: Target physics TPS (tick rate for physics threads).
 
+## World clock
+
+### `Time.Mode`
+- **Type**: `string`
+- **Allowed values**:
+  - **`Accelerated`**: Derives the game-day phase from the UTC epoch and the configured day length.
+  - **`TimeZone`**: Matches the wall clock in `Time.TimeZoneId`.
+- **Default**: `Accelerated`
+
+Both modes derive time from an authoritative clock. Server restarts and delayed ticks do not reset the game time.
+World clock setting changes take effect after a Game service restart.
+
+### `Time.TimeZoneId`
+- **Type**: `string`
+- **Description**: IANA or Windows time-zone ID for `TimeZone` mode.
+- **Default**: `UTC`
+- **Example**: `America/Chicago` follows Central Standard Time and Central Daylight Time.
+
+The `/time set` command is disabled in `TimeZone` mode because the wall clock controls game time.
+
+### `Time.AcceleratedDayLengthMinutes`
+- **Type**: `number`
+- **Description**: Real minutes for one complete game day in `Accelerated` mode.
+- **Default**: `240.0`
+
+The `/time set` command changes the accelerated phase until the Game service restarts.
+Use the UTC-derived phase for restart-safe accelerated time.
+
+Example:
+
+```json
+{
+  "World": {
+    "Time": {
+      "Mode": "TimeZone",
+      "TimeZoneId": "America/Chicago"
+    }
+  }
+}
+```
+
 ### `ActabilityRate`
 - **Type**: `number`
 - **Description**: Server-side actability points multiplier.
@@ -118,4 +159,3 @@ Examples:
   }
 }
 ```
-

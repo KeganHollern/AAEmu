@@ -20,6 +20,11 @@ public class WorldConfig
     }
 
     /// <summary>
+    /// Configuration for the shared world clock.
+    /// </summary>
+    public WorldTimeConfig Time { get; set; } = new();
+
+    /// <summary>
     /// Message of the Day that gets displayed in player's chat upon login
     /// </summary>
     public string MOTD { get; set; } = "";
@@ -159,6 +164,37 @@ public class WorldConfig
     /// Level at which a player starts losing exp and durability on death
     /// </summary>
     public int MinimumExpLossLevel { get; set; } = 10;
+}
+
+public enum WorldTimeMode
+{
+    /// <summary>
+    /// Derive the game-day phase from the UTC epoch and a configured day length.
+    /// </summary>
+    Accelerated,
+
+    /// <summary>
+    /// Match the wall clock in the configured IANA or Windows time zone.
+    /// </summary>
+    TimeZone
+}
+
+public class WorldTimeConfig
+{
+    /// <summary>
+    /// Source for the shared world clock.
+    /// </summary>
+    public WorldTimeMode Mode { get; set; } = WorldTimeMode.Accelerated;
+
+    /// <summary>
+    /// IANA or Windows time-zone identifier used by <see cref="WorldTimeMode.TimeZone"/>.
+    /// </summary>
+    public string TimeZoneId { get; set; } = "UTC";
+
+    /// <summary>
+    /// Real minutes per complete game day in <see cref="WorldTimeMode.Accelerated"/> mode.
+    /// </summary>
+    public double AcceleratedDayLengthMinutes { get; set; } = 240d;
 }
 
 public class DungeonLoadConfig
