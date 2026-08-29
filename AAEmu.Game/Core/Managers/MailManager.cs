@@ -356,6 +356,34 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         return false;
     }
 
+    public bool NotifyMailReceiverOpenedIfSenderOnline(BaseMail mail)
+    {
+        if (mail.Header.SenderId == 0)
+            return false;
+
+        var sender = worldManager.GetCharacterById(mail.Header.SenderId);
+        if (sender == null)
+            return false;
+
+        // The client applies this receipt on its next normal Sent-list refresh.
+        // SCMailListEnd is not a redraw signal because it ends every active mail-list transfer.
+        sender.SendPacket(new SCMailReceiverOpenedPacket(mail.Id, mail.OpenDate));
+        return true;
+    }
+
+    public bool NotifyMailRemovedIfSenderOnline(BaseMail mail)
+    {
+        if (mail.Header.SenderId == 0)
+            return false;
+
+        var sender = worldManager.GetCharacterById(mail.Header.SenderId);
+        if (sender == null)
+            return false;
+
+        sender.SendPacket(new SCMailRemovedPacket(true, mail.Id));
+        return true;
+    }
+
     public void CheckAllMailTimings()
     {
         // Deliver yet "undelivered" mails
