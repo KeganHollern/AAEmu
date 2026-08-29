@@ -720,14 +720,17 @@ public class Doodad : BaseUnit
 
         var stop = DoPhaseFuncs(caster, ref nextPhase);
 
-        // the phase change packet call must be after the phase functions to have the correct FuncGroupId in the packet
-        BroadcastPacket(new SCDoodadPhaseChangedPacket(this), true); // change the phase to display doodad
+        // Post-phase work must use a live doodad. RatioRespawn can replace and delete this instance.
+        if (!_deleted)
+        {
+            BroadcastPacket(new SCDoodadPhaseChangedPacket(this), true); // change the phase to display doodad
 
-        // aaemu-cluster#92 / #95: re-arm the per-instance DoodadFuncAreaTrigger sensors for the phase
-        // we settled in, then notify world subscribers (dungeon scripts) with the NEW FuncGroupId.
-        // Null-conditional because the initial InitDoodad settle can run before ParentWorld is assigned.
-        ParentWorld?.DoodadAreaTriggers.OnDoodadPhaseChanged(this);
-        ParentWorld?.RaiseDoodadPhaseChanged(this, FuncGroupId);
+            // aaemu-cluster#92 / #95: re-arm the per-instance DoodadFuncAreaTrigger sensors for the phase
+            // we settled in, then notify world subscribers (dungeon scripts) with the NEW FuncGroupId.
+            // Null-conditional because the initial InitDoodad settle can run before ParentWorld is assigned.
+            ParentWorld?.DoodadAreaTriggers.OnDoodadPhaseChanged(this);
+            ParentWorld?.RaiseDoodadPhaseChanged(this, FuncGroupId);
+        }
 
         return stop; // if true, it did not pass the check for the quest (it must be aborted)
     }
