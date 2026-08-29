@@ -57,6 +57,7 @@ public class CharacterMails
                 mail.OpenDate = DateTime.UtcNow;
                 mail.Header.Status = MailStatus.Read;
                 mail.IsDelivered = true;
+                MailManager.Instance.NotifyMailReceiverOpenedIfSenderOnline(mail);
             }
             Self.SendPacket(new SCMailBodyPacket(false, isSent, mail.Body, true, UnreadMailCount));
             Self.SendPacket(new SCMailStatusUpdatedPacket(isSent, id, mail.Header.Status));
@@ -257,17 +258,18 @@ public class CharacterMails
             // Mark mail as read in case we took at least one item from it
             if (thisMail.Header.Status == MailStatus.Unread && (tookMoney || itemSlotList.Count > 0))
             {
+                thisMail.OpenDate = DateTime.UtcNow;
                 thisMail.Header.Status = MailStatus.Read;
                 UnreadMailCount.UpdateReceived(thisMail.MailType, -1);
                 Self.SendPacket(new SCMailStatusUpdatedPacket(false, mailId, MailStatus.Read));
                 SendUnreadMailCount();
                 thisMail.IsDirty = true;
+                MailManager.Instance.NotifyMailReceiverOpenedIfSenderOnline(thisMail);
             }
 
             // TODO: Make sure attachment settings and mail info is sent back correctly 
             // taking all attachments sometimes doesn't enable the delete button when getting attachments using "GetAllSelected"
 
-            // TODO: if source player is online, update their mail info (sent tab)
         }
 
         return res;
@@ -290,7 +292,9 @@ public class CharacterMails
                     Self.SendPacket(new SCMailDeletedPacket(isSent, id, false, UnreadMailCount));
                 }
                 // ReSharper enable ConditionIsAlwaysTrueOrFalse
-                MailManager.Instance.DeleteMail(id);
+                var deletedMail = MailManager.Instance._allPlayerMails[id];
+                if (MailManager.Instance.DeleteMail(id))
+                    MailManager.Instance.NotifyMailRemovedIfSenderOnline(deletedMail);
             }
         }
     }
