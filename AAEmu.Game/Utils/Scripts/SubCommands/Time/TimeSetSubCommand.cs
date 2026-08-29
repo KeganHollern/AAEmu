@@ -24,8 +24,14 @@ public class TimeSetSubCommand : SubCommandBase
         if (parameters.TryGetValue("minute", out var minuteValue))
             minute = minuteValue;
         var newTime = hour * 1f + minute / 60f;
-        TimeManager.Instance.Set(newTime);
+        if (!TimeManager.Instance.Set(newTime))
+        {
+            SendMessage(messageOutput, "Game time follows the configured time zone and cannot be set manually.");
+            return;
+        }
 
-        SendMessage(messageOutput, $"Changed game time {oldTime:F2} -> {newTime:F2} ({hour}h{minute}m)");
+        SendMessage(messageOutput,
+            $"Changed game time {oldTime:F2} -> {newTime:F2} ({hour}h{minute}m). " +
+            "This change lasts until the Game service restarts.");
     }
 }

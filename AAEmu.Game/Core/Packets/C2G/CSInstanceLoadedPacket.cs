@@ -1,4 +1,5 @@
 ﻿using AAEmu.Commons.Network;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 
@@ -12,7 +13,9 @@ public class CSInstanceLoadedPacket() : GamePacket(CSOffsets.CSInstanceLoadedPac
         // TODO Debug
 
         Connection.SendPacket(new SCUnitStatePacket(Connection.ActiveChar));
-        Connection.SendPacket(new SCDetailedTimeOfDayPacket(12f));
+        Connection.SendPacket(new SCDetailedTimeOfDayPacket(
+            TimeManager.Instance.GetTime,
+            TimeManager.Instance.ClientSpeed));
 
         Connection.ActiveChar.DisabledSetPosition = false;
 

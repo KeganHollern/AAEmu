@@ -20,6 +20,11 @@
         "PreLoadTerrain": false,
         "MaxInstances": 32,
         "TargetPhysicsTps": 25.0,
+        "Time": {
+            "Mode": "Accelerated",
+            "TimeZoneId": "UTC",
+            "AcceleratedDayLengthMinutes": 240.0
+        },
         "WindModel": "Official",
         "ActabilityRate": 1.0,
         "UsePersistentHouseDoodads": false,
