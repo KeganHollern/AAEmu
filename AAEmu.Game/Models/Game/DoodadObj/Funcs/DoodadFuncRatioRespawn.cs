@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Models.Game.DoodadObj.Templates;
+﻿using AAEmu.Game.Core.Managers.UnitManagers;
+using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
@@ -12,18 +13,25 @@ public class DoodadFuncRatioRespawn : DoodadPhaseFuncTemplate
     {
         Logger.Trace("DoodadFuncRatioRespawn : Ratio {0}, SpawnDoodadId {1}", Ratio, SpawnDoodadId);
 
-        // Doodad spawn
+        // Replace the marker with the selected doodad through its authored spawner.
         if (owner.PhaseRatio <= Ratio && (owner.Spawner?.Id ?? 0) > 0)
         {
-            /*
-            var doodad = DoodadManager.Instance.Create(0, SpawnDoodadId);
-            doodad.Transform = owner.Transform.Clone();
-            doodad.Spawn();
-            owner.Delete();
-            */
-            owner.Spawner.RespawnDoodadTemplateId = SpawnDoodadId;
+            var spawner = owner.Spawner;
+            if (!DoodadManager.Instance.Exist(SpawnDoodadId))
+            {
+                Logger.Error(
+                    $"DoodadFuncRatioRespawn: Spawn template {SpawnDoodadId} does not exist (spawner={spawner.Id}, currentTemplate={owner.TemplateId}).");
+                owner.CumulativePhaseRatio -= Ratio;
+                return false;
+            }
 
-            return true; // Interrupt the PhaseFunc as new doodad is spawned
+            spawner.RespawnDoodadTemplateId = SpawnDoodadId;
+            spawner.Despawn(owner);
+            var spawned = spawner.Spawn(0);
+            if (spawned == null)
+                Logger.Error($"DoodadFuncRatioRespawn: Spawn failed for template {SpawnDoodadId} at spawner {spawner.Id}.");
+
+            return true; // Interrupt the phase functions because the source doodad no longer exists.
         }
 
         owner.CumulativePhaseRatio -= Ratio;

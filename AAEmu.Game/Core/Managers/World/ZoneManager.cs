@@ -254,7 +254,7 @@ public class ZoneManager(IWorldManager worldManager) : Singleton<ZoneManager>, I
     public bool DoodadHasMatchingClimate(Doodad doodad)
     {
         // If no climate defined, then don't give a bonus
-        if (doodad.Template.ClimateId == Climate.Any || doodad.Template.ClimateId == Climate.Any)
+        if (doodad.Template == null || doodad.Template.ClimateId == Climate.None || doodad.Template.ClimateId == Climate.Any)
             return false;
 
         // Get doodad's zone (if missing zoneId (key)
@@ -265,6 +265,8 @@ public class ZoneManager(IWorldManager worldManager) : Singleton<ZoneManager>, I
             doodad.Transform.ZoneId = zoneId;
         }
         var zone = GetZoneByKey(doodad.Transform.ZoneId);
+        if (zone == null)
+            return false;
 
         // Get the climates list for this zone
         var zoneClimates = GetClimatesByZone(zone);
