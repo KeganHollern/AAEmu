@@ -1910,6 +1910,16 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         return itemId;
     }
 
+    internal ulong ReserveItemId()
+    {
+        return GetNewId();
+    }
+
+    internal void ReleaseReservedItemId(ulong itemId)
+    {
+        itemIdManager.ReleaseId((uint)itemId);
+    }
+
     /// <summary>
     /// Queues an item's DB row for deletion on the next save WITHOUT freeing its
     /// runtime id or removing it from the live item list. Used when an item moves

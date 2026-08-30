@@ -2,6 +2,7 @@
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
@@ -922,6 +923,16 @@ public class Inventory
             // инициируем событие
             //Task.Run(() => QuestManager.Instance.DoAcquiredEvents((Character)Owner, item.TemplateId, item.Count));
             QuestManager.Instance.DoItemsAcquiredEvents(Owner, item.TemplateId, item.Count);
+
+            if (Owner is Character character)
+            {
+                character.Achievements?.Increment(
+                    CharRecordKind.GetItemType,
+                    item.TemplateId,
+                    item.Grade,
+                    (uint)count,
+                    matchValue2Wildcard: true);
+            }
         }
     }
 

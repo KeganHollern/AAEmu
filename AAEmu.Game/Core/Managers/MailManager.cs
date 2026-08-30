@@ -1,4 +1,6 @@
-﻿using AAEmu.Commons.Exceptions;
+﻿using System.Collections.Concurrent;
+
+using AAEmu.Commons.Exceptions;
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.Id;
@@ -21,8 +23,8 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
-    public Dictionary<long, BaseMail> _allPlayerMails;
-    public Dictionary<long, BaseMail> AllPlayerMails => _allPlayerMails;
+    public ConcurrentDictionary<long, BaseMail> _allPlayerMails;
+    public IDictionary<long, BaseMail> AllPlayerMails => _allPlayerMails;
     private List<long> _deletedMailIds = [];
     // Unused: private object _lock = new();
 
@@ -53,6 +55,11 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         }
     }
 
+    internal void ReleaseReservedMailId(uint mailId)
+    {
+        mailIdManager.ReleaseId(mailId);
+    }
+
     public bool Send(BaseMail mail)
     {
         // Verify Receiver
@@ -75,7 +82,8 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             Logger.Trace("Send() - Assign new mail Id");
             mail.Id = GetNewMailId();
         }
-        _allPlayerMails.Add(mail.Id, mail);
+        if (!_allPlayerMails.TryAdd(mail.Id, mail))
+            return false;
         NotifyNewMailByNameIfOnline(mail, targetName);
         return true;
     }
@@ -95,7 +103,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
                 _deletedMailIds.Add(id);
             mailIdManager.ReleaseId((uint)id);
         }
-        return _allPlayerMails.Remove(id);
+        return _allPlayerMails.TryRemove(id, out _);
     }
 
     public bool DeleteMail(BaseMail mail, bool trashItems = false)
@@ -199,7 +207,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
                         // Remove from delete list if it's a recycled Id
                         if (_deletedMailIds.Contains(tempMail.Id))
                             _deletedMailIds.Remove(tempMail.Id);
-                        _allPlayerMails.Add(tempMail.Id, tempMail);
+                        _allPlayerMails.TryAdd(tempMail.Id, tempMail);
                     }
                 }
             }
@@ -293,6 +301,11 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     }
 
     #endregion
+
+    internal bool TryAddPlayerMail(BaseMail mail)
+    {
+        return _allPlayerMails.TryAdd(mail.Id, mail);
+    }
 
     
     public Dictionary<long, BaseMail> GetCurrentMailList(uint characterId)

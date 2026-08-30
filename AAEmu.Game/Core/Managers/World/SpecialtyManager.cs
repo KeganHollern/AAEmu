@@ -1,6 +1,7 @@
 ﻿using AAEmu.Commons.Utils;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
@@ -321,9 +322,12 @@ public class SpecialtyManager : Singleton<SpecialtyManager>, ISpecialtyManager
         }
 
         // Delete the backpack
-        player.Inventory.Equipment.ConsumeItem(ItemTaskType.SellBackpack, backpack.TemplateId, 1, backpack);
+        var consumed = player.Inventory.Equipment.ConsumeItem(ItemTaskType.SellBackpack, backpack.TemplateId, 1, backpack);
         // TODO: Calculate proper labor by skill level
         player.ChangeLabor(-60, (int)ActabilityType.Commerce);
+
+        if (consumed == 1)
+            player.Achievements.Increment(CharRecordKind.SellItem, backpack.TemplateId, npc.TemplateId);
 
         // Add one pack sold in this zone during this tick
         var zoneGroupId = ZoneManager.Instance.GetZoneByKey(player.Transform.ZoneId)?.GroupId ?? 0;

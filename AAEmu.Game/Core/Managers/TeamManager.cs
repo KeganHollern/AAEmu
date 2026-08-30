@@ -5,6 +5,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Char;
@@ -268,6 +269,7 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
                 // aaemu-cluster#11: joining next to each other left the new pair
                 // unbound, so they never rendered on the minimap until a relog).
                 RefreshTeamMemberObjIds(activeTeam, target);
+                RecordEnrollment(target, activeTeam.IsParty);
             }
         }
 
@@ -368,7 +370,8 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
         var (targetMember, _) = newTeam.AddMember(activeInvitation.Target);
         if (ownerMember == null || targetMember == null) return;
 
-        _activeTeams.TryAdd(newTeam.Id, newTeam);
+        if (!_activeTeams.TryAdd(newTeam.Id, newTeam))
+            return;
 
         activeInvitation.Owner.SendPacket(new SCJoinedTeamPacket(newTeam));
         activeInvitation.Owner.InParty = true;
@@ -394,6 +397,8 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
         activeInvitation.Owner.SendPacket(new SCTeamRemoteMembersExPacket([targetMember]));
         activeInvitation.Target.SendPacket(new SCTeamRemoteMembersExPacket([ownerMember]));
         RefreshTeamMemberObjIds(newTeam, activeInvitation.Target);
+        RecordEnrollment(activeInvitation.Owner, newTeam.IsParty);
+        RecordEnrollment(activeInvitation.Target, newTeam.IsParty);
     }
 
     public void CreateSoloTeam(Character character, bool asParty)
@@ -528,7 +533,7 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
     public void ConvertToRaid(Character owner, uint teamId)
     {
         var activeTeam = GetActiveTeam(teamId);
-        if (activeTeam?.OwnerId != owner.Id)
+        if (activeTeam?.OwnerId != owner.Id || !activeTeam.IsParty)
             return;
 
         activeTeam.IsParty = false;
@@ -537,7 +542,10 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
         foreach (var m in activeTeam.Members)
         {
             if (m?.Character != null)
+            {
                 chatManager.GetRaidChat(activeTeam).JoinChannel(m.Character);
+                RecordEnrollment(m.Character, false);
+            }
         }
 
         // Once the party becomes a raid, the raid UI re-keys every member slot, so
@@ -548,6 +556,12 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
         // which would send both directions for every pair twice).
         RefreshAllTeamMemberObjIds(activeTeam);
         // TODO: Handle raids in dungeons
+    }
+
+    private static void RecordEnrollment(Character character, bool isParty)
+    {
+        var recordKind = isParty ? CharRecordKind.EnrollParty : CharRecordKind.EnrollRaidGroup;
+        character.Achievements.Increment(recordKind, 0, 0);
     }
 
     public void SetTeamMemberRole(Character unit, uint teamId, uint memberId, MemberRole role)
@@ -724,6 +738,11 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
 
         unit.SendPacket(new SCJoinedTeamPacket(activeTeam));
         unit.InParty = true;
+        unit.Achievements.UpdateMaximum(
+            activeTeam.IsParty ? CharRecordKind.EnrollParty : CharRecordKind.EnrollRaidGroup,
+            0,
+            0,
+            1);
 
         // 1) Reconnecting player gets a single bulk snapshot of every OTHER team-
         //    mate's current HP/MP/position/ObjId so the raid UI is fully populated.

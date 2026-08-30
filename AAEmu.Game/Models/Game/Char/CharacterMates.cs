@@ -34,6 +34,11 @@ public class CharacterMates(Character owner)
         return _mates.GetValueOrDefault(itemId);
     }
 
+    internal IEnumerable<MateDb> GetMateInfos()
+    {
+        return _mates.Values;
+    }
+
     private MateDb CreateNewMate(ulong itemId, NpcTemplate npcTemplate)
     {
         if (_mates.ContainsKey(itemId)) return null;

@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Formulas;
@@ -648,6 +649,7 @@ public sealed class Mate : Unit
         if (leveledUp)
         {
             BroadcastPacket(new SCLevelChangedPacket(ObjId, Level), true);
+            owner.Achievements?.UpdateMaximum(CharRecordKind.PetLevel, Template.Id, 0, Level);
             // Notify owner of the level up event
             owner.Events.OnMateLevelUp(this, new OnMateLevelUpArgs());
             //StartRegen();

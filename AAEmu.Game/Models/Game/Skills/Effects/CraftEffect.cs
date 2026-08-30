@@ -2,6 +2,7 @@
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Skills.Templates;
@@ -90,6 +91,8 @@ public class CraftEffect : EffectTemplate
                     character.Craft.EndCraft();
                     break;
                 case WorldInteractionGroup.Building when target is House house:
+                    var wasUnderConstruction = house.CurrentStep != -1;
+
                     // Get the house's current build step
                     var currentStep =
                         house.CurrentAction >= 0 && house.CurrentStep < house.Template.BuildSteps.Count
@@ -128,6 +131,14 @@ public class CraftEffect : EffectTemplate
                             var doodads = house.AttachedDoodads.ToArray();
                             foreach (var doodad in doodads)
                                 doodad.Spawn();
+                        }
+
+                        if (wasUnderConstruction && house.CurrentStep == -1)
+                        {
+                            character.Achievements?.Increment(
+                                CharRecordKind.MakeHousing,
+                                house.TemplateId,
+                                0);
                         }
                     }
                     break;

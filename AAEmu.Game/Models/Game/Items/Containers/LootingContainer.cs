@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Items.Actions;
@@ -677,6 +678,16 @@ public class LootingContainer(IBaseUnit owner)
                 }
                 grantSucceeded = true;
             }
+
+            if (itemEntry.Item.Count > 0)
+            {
+                player.Achievements?.Increment(
+                    CharRecordKind.GetLootitem,
+                    itemEntry.Item.TemplateId,
+                    0,
+                    (uint)itemEntry.Item.Count);
+            }
+
             // TODO: check what packet this sends to others
             player.SendPacket(new SCLootItemTookPacket(itemEntry.Item.TemplateId, itemEntry.ItemIndex, LootOwnerType, LootOwner.ObjId, itemEntry.Item.Count));
 

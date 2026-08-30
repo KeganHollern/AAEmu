@@ -62,6 +62,9 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
 
             Connection.ActiveChar.Quests.Send();
             Connection.ActiveChar.Quests.SendCompleted();
+            // Send the current mail list before the final login hook can add achievement reward mail.
+            // A new reward mail then sends one incremental notification.
+            MailManager.Instance.GetCurrentMailList(Connection.ActiveChar.Id);
 
             Connection.ActiveChar.Actability.Send();
             Connection.ActiveChar.Mails.SendUnreadMailCount();

@@ -50,6 +50,51 @@ public class AchievementGameDataTests : SqliteTestBase
         await Assert.That(record.Id).IsEqualTo(10u);
     }
 
+    [Test]
+    public async Task GetMatchingCharRecords_Value2Wildcard_IsExplicitAndDoesNotDuplicateWildcardInput()
+    {
+        Execute("""
+            INSERT INTO char_records (id, kind_id, value1, value2) VALUES (10, 29, 500, 3);
+            INSERT INTO char_records (id, kind_id, value1, value2) VALUES (11, 29, 500, -1);
+            INSERT INTO char_records (id, kind_id, value1, value2) VALUES (12, 29, 501, -1);
+            """);
+        var gameData = new AchievementGameData();
+        gameData.Load(Connection);
+        gameData.PostLoad();
+
+        var exactOnly = gameData.GetMatchingCharRecords(CharRecordKind.GetItemType, 500, 3);
+        var exactAndWildcard = gameData.GetMatchingCharRecords(CharRecordKind.GetItemType, 500, 3, true);
+        var wildcardOnly = gameData.GetMatchingCharRecords(CharRecordKind.GetItemType, 500, 4, true);
+        var wildcardInput = gameData.GetMatchingCharRecords(
+            CharRecordKind.GetItemType,
+            500,
+            uint.MaxValue,
+            true);
+
+        await Assert.That(exactOnly.Select(record => record.Id)).IsEquivalentTo([10u]);
+        await Assert.That(exactAndWildcard.Select(record => record.Id)).IsEquivalentTo([10u, 11u]);
+        await Assert.That(wildcardOnly.Select(record => record.Id)).IsEquivalentTo([11u]);
+        await Assert.That(wildcardInput.Select(record => record.Id)).IsEquivalentTo([11u]);
+    }
+
+    [Test]
+    public async Task GetCharRecords_ReturnsAllValue2SelectorsInStableOrder()
+    {
+        Execute("""
+            INSERT INTO char_records (id, kind_id, value1, value2) VALUES (10, 25, 500, 35);
+            INSERT INTO char_records (id, kind_id, value1, value2) VALUES (11, 25, 500, 0);
+            INSERT INTO char_records (id, kind_id, value1, value2) VALUES (12, 25, 500, 20);
+            INSERT INTO char_records (id, kind_id, value1, value2) VALUES (13, 25, 501, 20);
+            """);
+        var gameData = new AchievementGameData();
+        gameData.Load(Connection);
+        gameData.PostLoad();
+
+        var records = gameData.GetCharRecords(CharRecordKind.KillNpc, 500);
+
+        await Assert.That(records.Select(record => record.Id)).IsEquivalentTo([11u, 12u, 10u]);
+    }
+
     protected override void CreateTestSchema()
     {
         base.CreateTestSchema();

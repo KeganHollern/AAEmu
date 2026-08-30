@@ -27,6 +27,9 @@ public class Plot
         // I am guessing we want to do something here to run it in a thread, or at least using Async
         await Tree.ExecuteAsync(state);
 
+        if (skill.Template.PlotOnly && !state.CancellationRequested())
+            skill.RecordUseSkillAchievement(caster);
+
         if (casterCaster is SkillItem skillItem && caster is Character player && skillItem.SkillSourceItem != null)
         {
             // Trigger item use if not cancelled

@@ -6,7 +6,11 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Char.Templates;
+using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Units.Static;
+using AAEmu.Game.Models.StaticValues;
 using AAEmu.UnitTests.Utils.Mocks;
 
 using Microsoft.Data.Sqlite;
@@ -198,6 +202,287 @@ public class CharacterAchievementsTests
     }
 
     [Test]
+    public async Task Increment_AddsAndSaturatesAtUIntMaximum()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.KillNpc, 1);
+        data.AddAchievement(1000, uint.MaxValue, false);
+        data.AddObjective(1, 1000, 100);
+        var achievements = new CharacterAchievements(new CharacterMock(), data.Build());
+
+        achievements.Increment(CharRecordKind.KillNpc, 1, 0, 0);
+        await Assert.That(achievements.GetAmount(1000)).IsEqualTo(0u);
+
+        achievements.Increment(CharRecordKind.KillNpc, 1, 0, uint.MaxValue - 2);
+        await Assert.That(achievements.GetAmount(1000)).IsEqualTo(uint.MaxValue - 2);
+
+        achievements.Increment(CharRecordKind.KillNpc, 1, 0, 10);
+        await Assert.That(achievements.GetAmount(1000)).IsEqualTo(uint.MaxValue);
+
+        achievements.Increment(CharRecordKind.KillNpc, 1, 0);
+        await Assert.That(achievements.GetAmount(1000)).IsEqualTo(uint.MaxValue);
+    }
+
+    [Test]
+    public async Task Increment_Value2Wildcard_RequiresOptInAndKeepsSelectorsIndependent()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.GetItemType, 500, 3);
+        data.AddRecord(101, CharRecordKind.GetItemType, 500, uint.MaxValue);
+        data.AddRecord(102, CharRecordKind.GetItemType, 500, 4);
+        data.AddAchievement(1000, 100, false);
+        data.AddObjective(1, 1000, 100);
+        data.AddAchievement(1001, 100, false);
+        data.AddObjective(2, 1001, 101);
+        data.AddAchievement(1002, 100, false);
+        data.AddObjective(3, 1002, 102);
+        var achievements = new CharacterAchievements(new CharacterMock(), data.Build());
+
+        achievements.Increment(CharRecordKind.GetItemType, 500, 3, 2);
+
+        await Assert.That(achievements.GetAmount(1000)).IsEqualTo(2u);
+        await Assert.That(achievements.GetAmount(1001)).IsEqualTo(0u);
+        await Assert.That(achievements.GetAmount(1002)).IsEqualTo(0u);
+
+        achievements.Increment(CharRecordKind.GetItemType, 500, 3, 3, true);
+
+        await Assert.That(achievements.GetAmount(1000)).IsEqualTo(5u);
+        await Assert.That(achievements.GetAmount(1001)).IsEqualTo(3u);
+        await Assert.That(achievements.GetAmount(1002)).IsEqualTo(0u);
+    }
+
+    [Test]
+    public async Task Increment_ItemAndCraftGrades_UpdateExactAndWildcardSelectors()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.GetItemType, 500, 3);
+        data.AddRecord(101, CharRecordKind.GetItemType, 500, uint.MaxValue);
+        data.AddRecord(102, CharRecordKind.GetItemType, 500, 4);
+        data.AddRecord(103, CharRecordKind.MakeItemType, 600, 5);
+        data.AddRecord(104, CharRecordKind.MakeItemType, 600, uint.MaxValue);
+        data.AddRecord(105, CharRecordKind.MakeItemType, 600, 6);
+        data.AddRecord(106, CharRecordKind.MakeItemImpl, 21, 2);
+        data.AddRecord(107, CharRecordKind.MakeItemImpl, 21, uint.MaxValue);
+        data.AddRecord(108, CharRecordKind.MakeItemImpl, 21, 3);
+        for (uint index = 0; index < 9; index++)
+        {
+            data.AddAchievement(1000 + index, 100, false);
+            data.AddObjective(1 + index, 1000 + index, 100 + index);
+        }
+        var achievements = new CharacterAchievements(new CharacterMock(), data.Build());
+
+        achievements.Increment([
+            new AchievementProgressEvent(CharRecordKind.GetItemType, 500, 3, 2, true),
+            new AchievementProgressEvent(CharRecordKind.MakeItemType, 600, 5, 3, true),
+            new AchievementProgressEvent(CharRecordKind.MakeItemImpl, 21, 2, 4, true)
+        ]);
+
+        uint[] expectedAmounts = [2, 2, 0, 3, 3, 0, 4, 4, 0];
+        for (uint index = 0; index < expectedAmounts.Length; index++)
+        {
+            await Assert.That(achievements.GetAmount(1000 + index))
+                .IsEqualTo(expectedAmounts[index]);
+        }
+    }
+
+    [Test]
+    public async Task Increment_BatchEvaluatesFinalStateOnceAndPreservesPacketOrder()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.DeadByPvp);
+        data.AddRecord(101, CharRecordKind.DeadByPvp, 14);
+        data.AddRecord(102, CharRecordKind.DeadByPvp, 15);
+        data.AddAchievement(1000, 2, false);
+        data.AddObjective(1, 1000, 100);
+        data.AddObjective(2, 1000, 101);
+        data.AddAchievement(1001, 1, false);
+        data.AddObjective(3, 1001, 100);
+        data.AddAchievement(1002, 1, false);
+        data.AddObjective(4, 1002, 102);
+        var session = new RecordingSession();
+        var character = new CharacterMock { Connection = new GameConnection(session) };
+        var achievements = new CharacterAchievements(
+            character,
+            data.Build(),
+            new FakeTimeProvider(new DateTimeOffset(2026, 8, 30, 12, 0, 0, TimeSpan.Zero)),
+            () => true);
+
+        achievements.Increment([
+            new AchievementProgressEvent(CharRecordKind.DeadByPvp, 14, 0, 1),
+            new AchievementProgressEvent(CharRecordKind.DeadByPvp, 0, 0, 1)
+        ]);
+
+        await Assert.That(achievements.GetAmount(1000)).IsEqualTo(2u);
+        await Assert.That(achievements.GetAmount(1001)).IsEqualTo(1u);
+        await Assert.That(achievements.GetAmount(1002)).IsEqualTo(0u);
+        await Assert.That(session.Packets.Count).IsEqualTo(4);
+
+        ushort[] expectedOpcodes =
+        [
+            SCOffsets.SCAchievementChangedPacket,
+            SCOffsets.SCAchievementChangedPacket,
+            SCOffsets.SCAchievementCompletedPacket,
+            SCOffsets.SCAchievementCompletedPacket
+        ];
+        uint[] expectedIds = [1000, 1001, 1000, 1001];
+        for (var index = 0; index < session.Packets.Count; index++)
+        {
+            AssertPacketOpcode(session.Packets[index], expectedOpcodes[index]);
+            await Assert.That(BitConverter.ToUInt32(session.Packets[index], 8)).IsEqualTo(expectedIds[index]);
+        }
+
+        await Assert.That(BitConverter.ToInt32(session.Packets[0], 12)).IsEqualTo(2);
+        await Assert.That(BitConverter.ToInt32(session.Packets[1], 12)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RewardDelivery_WaitsForCompletionPersistence()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.KillNpc, 1);
+        data.AddAchievement(1000, 1, false, 34138);
+        data.AddObjective(1, 1000, 100);
+        var persistenceSucceeds = false;
+        var deliveries = 0;
+        var achievements = new CharacterAchievements(
+            new CharacterMock(),
+            data.Build(),
+            TimeProvider.System,
+            () => persistenceSucceeds,
+            (_, _) =>
+            {
+                deliveries++;
+                return AchievementRewardStatus.Inventory;
+            });
+
+        achievements.UpdateMaximum(CharRecordKind.KillNpc, 1, 0, 1);
+
+        await Assert.That(deliveries).IsEqualTo(0);
+        await Assert.That(achievements.GetRewardStatus(1000)).IsEqualTo(AchievementRewardStatus.Pending);
+
+        persistenceSucceeds = true;
+        achievements.UpdateMaximum(CharRecordKind.KillNpc, 1, 0, 1);
+
+        await Assert.That(deliveries).IsEqualTo(1);
+        await Assert.That(achievements.GetRewardStatus(1000)).IsEqualTo(AchievementRewardStatus.Inventory);
+    }
+
+    [Test]
+    public async Task RewardDelivery_FailureStaysPendingThenRetriesOnce()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.KillNpc, 1);
+        data.AddAchievement(1000, 1, false, 34138);
+        data.AddObjective(1, 1000, 100);
+        var attempts = 0;
+        var achievements = new CharacterAchievements(
+            new CharacterMock(),
+            data.Build(),
+            TimeProvider.System,
+            () => true,
+            (achievementId, itemTemplateId) =>
+            {
+                attempts++;
+                return attempts == 1 ? null : AchievementRewardStatus.Inventory;
+            });
+
+        achievements.UpdateMaximum(CharRecordKind.KillNpc, 1, 0, 1);
+
+        await Assert.That(attempts).IsEqualTo(1);
+        await Assert.That(achievements.GetRewardStatus(1000)).IsEqualTo(AchievementRewardStatus.Pending);
+
+        achievements.SendSnapshot();
+        achievements.SendSnapshot();
+
+        await Assert.That(attempts).IsEqualTo(2);
+        await Assert.That(achievements.GetRewardStatus(1000)).IsEqualTo(AchievementRewardStatus.Inventory);
+    }
+
+    [Test]
+    [Arguments(AchievementRewardStatus.Inventory)]
+    [Arguments(AchievementRewardStatus.Mail)]
+    public async Task RewardDelivery_TerminalStatusPreventsDuplicateAttempts(
+        AchievementRewardStatus terminalStatus)
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.KillNpc, 1);
+        data.AddAchievement(1000, 1, false, 34138);
+        data.AddObjective(1, 1000, 100);
+        var attempts = 0;
+        var achievements = new CharacterAchievements(
+            new CharacterMock(),
+            data.Build(),
+            TimeProvider.System,
+            () => true,
+            (_, _) =>
+            {
+                attempts++;
+                return terminalStatus;
+            });
+
+        achievements.UpdateMaximum(CharRecordKind.KillNpc, 1, 0, 1);
+        achievements.UpdateMaximum(CharRecordKind.KillNpc, 1, 0, 1);
+        achievements.SendSnapshot();
+        achievements.Increment(CharRecordKind.KillNpc, 1, 0);
+
+        await Assert.That(attempts).IsEqualTo(1);
+        await Assert.That(achievements.GetRewardStatus(1000)).IsEqualTo(terminalStatus);
+    }
+
+    [Test]
+    public async Task RewardDelivery_FailureRetriesOnNextUnchangedProgressEvent()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.KillNpc, 1);
+        data.AddAchievement(1000, 1, false, 34138);
+        data.AddObjective(1, 1000, 100);
+        var attempts = 0;
+        var achievements = new CharacterAchievements(
+            new CharacterMock(),
+            data.Build(),
+            TimeProvider.System,
+            () => true,
+            (_, _) => ++attempts == 1 ? null : AchievementRewardStatus.Inventory);
+
+        achievements.UpdateMaximum(CharRecordKind.KillNpc, 1, 0, 1);
+        achievements.UpdateMaximum(CharRecordKind.KillNpc, 1, 0, 1);
+
+        await Assert.That(attempts).IsEqualTo(2);
+        await Assert.That(achievements.GetRewardStatus(1000)).IsEqualTo(AchievementRewardStatus.Inventory);
+    }
+
+    [Test]
+    public async Task RewardDelivery_LeafAndMetaRewardsUseAchievementOrderAndMailStatus()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.KillNpc, 1);
+        data.AddAchievement(1000, 1, false, 34138);
+        data.AddObjective(1, 1000, 100);
+        data.AddRecord(101, CharRecordKind.CompleteAchievement, 1000);
+        data.AddAchievement(1001, 1, false, 32750);
+        data.AddObjective(2, 1001, 101);
+        List<(uint AchievementId, uint ItemTemplateId)> deliveries = [];
+        var achievements = new CharacterAchievements(
+            new CharacterMock(),
+            data.Build(),
+            TimeProvider.System,
+            () => true,
+            (achievementId, itemTemplateId) =>
+            {
+                deliveries.Add((achievementId, itemTemplateId));
+                return AchievementRewardStatus.Mail;
+            });
+
+        achievements.UpdateMaximum(CharRecordKind.KillNpc, 1, 0, 1);
+
+        await Assert.That(deliveries.Count).IsEqualTo(2);
+        await Assert.That(deliveries[0]).IsEqualTo((1000u, 34138u));
+        await Assert.That(deliveries[1]).IsEqualTo((1001u, 32750u));
+        await Assert.That(achievements.GetRewardStatus(1000)).IsEqualTo(AchievementRewardStatus.Mail);
+        await Assert.That(achievements.GetRewardStatus(1001)).IsEqualTo(AchievementRewardStatus.Mail);
+    }
+
+    [Test]
     public async Task UpdateMaximum_ObjectiveRulesAndPrerequisite_CompleteInOrder()
     {
         using var data = new AchievementDataBuilder();
@@ -237,6 +522,91 @@ public class CharacterAchievementsTests
         await Assert.That(achievements.GetAmount(1002)).IsEqualTo(3u);
         await Assert.That(achievements.IsCompleted(1003)).IsTrue();
         await Assert.That(achievements.GetAmount(1003)).IsEqualTo(1u);
+    }
+
+    [Test]
+    public async Task Increment_ObjectiveUnitRequirements_UseAndOrRaceAndMotherFactionRules()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.KillNpc, 1);
+        for (uint index = 0; index < 4; index++)
+        {
+            data.AddAchievement(1000 + index, 1, false);
+            data.AddObjective(1 + index, 1000 + index, 100, orUnitReqs: index >= 2);
+        }
+
+        data.AddUnitRequirement(1, 1, UnitReqsKindType.Race, (uint)Race.Nuian);
+        data.AddUnitRequirement(2, 1, UnitReqsKindType.MotherFaction, (uint)FactionsEnum.NuiaAlliance);
+        data.AddUnitRequirement(3, 2, UnitReqsKindType.Race, (uint)Race.Nuian);
+        data.AddUnitRequirement(4, 2, UnitReqsKindType.MotherFaction, (uint)FactionsEnum.HaranyaAlliance);
+        data.AddUnitRequirement(5, 3, UnitReqsKindType.Race, (uint)Race.Nuian);
+        data.AddUnitRequirement(6, 3, UnitReqsKindType.MotherFaction, (uint)FactionsEnum.HaranyaAlliance);
+        data.AddUnitRequirement(7, 4, UnitReqsKindType.Race, (uint)Race.Ferre);
+        data.AddUnitRequirement(8, 4, UnitReqsKindType.MotherFaction, (uint)FactionsEnum.HaranyaAlliance);
+
+        var character = new CharacterMock
+        {
+            Race = Race.Nuian,
+            Faction = new SystemFaction
+            {
+                Id = FactionsEnum.Nuian,
+                MotherId = FactionsEnum.NuiaAlliance
+            }
+        };
+        var achievements = new CharacterAchievements(
+            character,
+            data.Build(),
+            TimeProvider.System,
+            null,
+            unitRequirementsData: data.BuildUnitRequirements(),
+            templateMotherFactionResolver: _ => FactionsEnum.NuiaAlliance);
+
+        character.Faction = new SystemFaction
+        {
+            Id = FactionsEnum.Pirate,
+            MotherId = FactionsEnum.HaranyaAlliance
+        };
+
+        achievements.Increment(CharRecordKind.KillNpc, 1, 0);
+
+        await Assert.That(achievements.GetAmount(1000)).IsEqualTo(1u);
+        await Assert.That(achievements.GetAmount(1001)).IsEqualTo(0u);
+        await Assert.That(achievements.GetAmount(1002)).IsEqualTo(1u);
+        await Assert.That(achievements.GetAmount(1003)).IsEqualTo(0u);
+    }
+
+    [Test]
+    public async Task Reconcile_ObjectiveRequirement_PreservesProgressAndCompletedState()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.CompleteQuestCategory, 3);
+        data.AddAchievement(799, 1, false);
+        data.AddObjective(1469, 799, 100);
+        data.AddUnitRequirement(1, 1469, UnitReqsKindType.Race, (uint)Race.Nuian);
+        var character = new CharacterMock { Race = Race.Ferre };
+        var achievements = new CharacterAchievements(
+            character,
+            data.Build(),
+            TimeProvider.System,
+            null,
+            unitRequirementsData: data.BuildUnitRequirements());
+
+        achievements.Increment(CharRecordKind.CompleteQuestCategory, 3, 0);
+
+        await Assert.That(achievements.GetAmount(799)).IsEqualTo(0u);
+        await Assert.That(achievements.IsCompleted(799)).IsFalse();
+
+        character.Race = Race.Nuian;
+        achievements.ReconcileAuthoritativeState();
+
+        await Assert.That(achievements.GetAmount(799)).IsEqualTo(1u);
+        await Assert.That(achievements.IsCompleted(799)).IsTrue();
+
+        character.Race = Race.Ferre;
+        achievements.ReconcileAuthoritativeState();
+
+        await Assert.That(achievements.GetAmount(799)).IsEqualTo(1u);
+        await Assert.That(achievements.IsCompleted(799)).IsTrue();
     }
 
     [Test]
@@ -315,6 +685,85 @@ public class CharacterAchievementsTests
         await Assert.That(second.ReadUInt32()).IsEqualTo(1u);
         await Assert.That(second.ReadInt64()).IsEqualTo(Helpers.UnixTime(DateTime.MinValue));
         await Assert.That(second.LeftBytes).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Reconcile_DurableCounters_RestoresSafeAchievementMinimums()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.GetLifePoint);
+        data.AddRecord(101, CharRecordKind.GetJuryPoint);
+        data.AddRecord(102, CharRecordKind.Judgement, 0);
+        data.AddRecord(103, CharRecordKind.Judgement, 1);
+        data.AddRecord(104, CharRecordKind.MyGold);
+        data.AddRecord(105, CharRecordKind.SpendLabor);
+        data.AddRecord(106, CharRecordKind.GetActability, 7);
+        data.AddRecord(107, CharRecordKind.GetFaction, (uint)FactionsEnum.Pirate);
+        data.AddAchievement(1000, 1000, false);
+        data.AddAchievement(1001, 1000, false);
+        data.AddAchievement(1002, 1000, false);
+        data.AddAchievement(1003, 1000, false);
+        data.AddAchievement(1004, 1000, false);
+        data.AddAchievement(1005, 1000, false);
+        data.AddAchievement(1006, 1000, false);
+        data.AddAchievement(1007, 1000, false);
+        data.AddObjective(1, 1000, 100);
+        data.AddObjective(2, 1001, 101);
+        data.AddObjective(3, 1002, 102);
+        data.AddObjective(4, 1003, 103);
+        data.AddObjective(5, 1004, 104);
+        data.AddObjective(6, 1005, 105);
+        data.AddObjective(7, 1006, 106);
+        data.AddObjective(8, 1007, 107);
+        var character = new CharacterMock
+        {
+            VocationPoint = 450,
+            JuryPoint = 8,
+            NotGuiltyCount = 3,
+            GuiltyCount = 4,
+            Money = 1_230_000,
+            ConsumedLaborPower = 789,
+            Faction = new SystemFaction { Id = FactionsEnum.Pirate }
+        };
+        character.Actability = new CharacterActability(character);
+        character.Actability.Actabilities[7] = new Actability(new ActabilityTemplate { Id = 7 })
+        {
+            Point = 456
+        };
+        var achievements = new CharacterAchievements(character, data.Build());
+
+        achievements.ReconcileAuthoritativeState();
+
+        await Assert.That(achievements.GetAmount(1000)).IsEqualTo(450u);
+        await Assert.That(achievements.GetAmount(1001)).IsEqualTo(7u);
+        await Assert.That(achievements.GetAmount(1002)).IsEqualTo(3u);
+        await Assert.That(achievements.GetAmount(1003)).IsEqualTo(4u);
+        await Assert.That(achievements.GetAmount(1004)).IsEqualTo(123u);
+        await Assert.That(achievements.GetAmount(1005)).IsEqualTo(789u);
+        await Assert.That(achievements.GetAmount(1006)).IsEqualTo(456u);
+        await Assert.That(achievements.GetAmount(1007)).IsEqualTo(1u);
+    }
+
+    [Test]
+    public async Task QuestCompletion_RepeatableTypeDoesNotRepeatCategoryProgress()
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.CompleteQuestCategory, 35);
+        data.AddRecord(101, CharRecordKind.CompleteQuestType, 2941);
+        data.AddAchievement(1000, 10, false);
+        data.AddAchievement(1001, 10, false);
+        data.AddObjective(1, 1000, 100);
+        data.AddObjective(2, 1001, 101);
+        var achievements = new CharacterAchievements(new CharacterMock(), data.Build());
+
+        achievements.Increment([
+            new AchievementProgressEvent(CharRecordKind.CompleteQuestType, 2941, 0, 1),
+            new AchievementProgressEvent(CharRecordKind.CompleteQuestCategory, 35, 0, 1)
+        ]);
+        achievements.Increment(CharRecordKind.CompleteQuestType, 2941, 0);
+
+        await Assert.That(achievements.GetAmount(1000)).IsEqualTo(1u);
+        await Assert.That(achievements.GetAmount(1001)).IsEqualTo(2u);
     }
 
     private static void AddLevelAchievements(AchievementDataBuilder data)
@@ -397,24 +846,45 @@ public class CharacterAchievementsTests
                     value1 INTEGER,
                     value2 INTEGER
                 );
+                CREATE TABLE unit_reqs (
+                    id INTEGER PRIMARY KEY,
+                    owner_id INTEGER,
+                    owner_type TEXT,
+                    kind_id INTEGER,
+                    value1 INTEGER,
+                    value2 INTEGER
+                );
                 """);
         }
 
-        public void AddAchievement(uint id, uint completeNum, bool completeOr)
+        public void AddAchievement(uint id, uint completeNum, bool completeOr, uint itemId = 0)
         {
             Execute($"""
                 INSERT INTO achievements
                     (id, category_id, complete_num, complete_or, icon_id, is_active, is_hidden, item_id,
                      or_unit_reqs, parent_achievement_id, priority, sub_category_id)
-                VALUES ({id}, 1, {completeNum}, '{ToSqlBoolean(completeOr)}', 0, 't', 'f', 0, 'f', 0, {id}, 1);
+                VALUES ({id}, 1, {completeNum}, '{ToSqlBoolean(completeOr)}', 0, 't', 'f', {itemId}, 'f', 0, {id}, 1);
                 """);
         }
 
-        public void AddObjective(uint id, uint achievementId, uint recordId)
+        public void AddObjective(uint id, uint achievementId, uint recordId, bool orUnitReqs = false)
         {
             Execute($"""
                 INSERT INTO achievement_objectives (id, achievement_id, or_unit_reqs, record_id)
-                VALUES ({id}, {achievementId}, 'f', {recordId});
+                VALUES ({id}, {achievementId}, '{ToSqlBoolean(orUnitReqs)}', {recordId});
+                """);
+        }
+
+        public void AddUnitRequirement(
+            uint id,
+            uint objectiveId,
+            UnitReqsKindType kind,
+            uint value1,
+            uint value2 = 0)
+        {
+            Execute($"""
+                INSERT INTO unit_reqs (id, owner_id, owner_type, kind_id, value1, value2)
+                VALUES ({id}, {objectiveId}, 'AchievementObjective', {(uint)kind}, {value1}, {value2});
                 """);
         }
 
@@ -434,6 +904,14 @@ public class CharacterAchievementsTests
         public AchievementGameData Build()
         {
             var gameData = new AchievementGameData();
+            gameData.Load(_connection);
+            gameData.PostLoad();
+            return gameData;
+        }
+
+        public UnitRequirementsGameData BuildUnitRequirements()
+        {
+            var gameData = new UnitRequirementsGameData();
             gameData.Load(_connection);
             gameData.PostLoad();
             return gameData;

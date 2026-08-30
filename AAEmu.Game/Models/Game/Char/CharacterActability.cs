@@ -1,5 +1,6 @@
 ﻿using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.StaticValues;
 using MySql.Data.MySqlClient;
@@ -28,6 +29,7 @@ public class CharacterActability(Character owner)
         var template = CharacterManager.Instance.GetExpertLimit(actability.Step);
         if (actability.Point > template.UpLimit)
             actability.Point = template.UpLimit;
+        Owner.Achievements?.UpdateMaximum(CharRecordKind.GetActability, id, 0, (uint)Math.Max(actability.Point, 0));
         return actability.Point - previousPoints;
     }
 
