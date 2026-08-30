@@ -16,6 +16,13 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers.World;
 
+internal enum PendingWorldAccountResult
+{
+    NotFound,
+    AccountMismatch,
+    Consumed
+}
+
 public class EnterWorldManager(
     IAccountManager accountManager,
     IStreamManager streamManager,
@@ -30,6 +37,7 @@ public class EnterWorldManager(
     /// List of connected accounts (connection token, accountId)
     /// </summary>
     private readonly Dictionary<uint, uint> _accounts = [];
+    private readonly Lock _accountsLock = new();
 
     /// <summary>
     /// Adds an account to the connection list and notifies the login server the client is connected
@@ -42,11 +50,41 @@ public class EnterWorldManager(
         var gsId = AppConfiguration.Instance.Id;
 
         if (accountManager.Contains(accountId))
+        {
+            RemovePendingAccount(connectionId);
             connection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, 1));
+        }
         else
         {
-            _accounts.Add(connectionId, accountId);
+            SetPendingAccount(connectionId, accountId);
             connection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, 0));
+        }
+    }
+
+    internal void SetPendingAccount(uint connectionId, uint accountId)
+    {
+        lock (_accountsLock)
+            _accounts[connectionId] = accountId;
+    }
+
+    internal void RemovePendingAccount(uint connectionId)
+    {
+        lock (_accountsLock)
+            _accounts.Remove(connectionId);
+    }
+
+    internal PendingWorldAccountResult ConsumePendingAccount(uint token, uint accountId)
+    {
+        lock (_accountsLock)
+        {
+            if (!_accounts.TryGetValue(token, out var expectedAccountId))
+                return PendingWorldAccountResult.NotFound;
+
+            if (expectedAccountId != accountId)
+                return PendingWorldAccountResult.AccountMismatch;
+
+            _accounts.Remove(token);
+            return PendingWorldAccountResult.Consumed;
         }
     }
 
@@ -59,12 +97,9 @@ public class EnterWorldManager(
     /// <param name="token"></param>
     public void Login(GameConnection connection, uint accountId, uint token)
     {
-        if (_accounts.TryGetValue(token, out var account))
+        switch (ConsumePendingAccount(token, accountId))
         {
-            if (account == accountId)
-            {
-                _accounts.Remove(token);
-
+            case PendingWorldAccountResult.Consumed:
                 connection.AccountId = accountId;
                 connection.State = GameState.Lobby;
 
@@ -75,19 +110,15 @@ public class EnterWorldManager(
                 var gm = connection.GetAttribute("gmFlag") != null;
                 connection.SendPacket(new X2EnterWorldResponsePacket(0, gm, connection.Id, port));
                 connection.SendPacket(new ChangeStatePacket(0));
-            }
-            else
-            {
-                // TODO: Token did not match the expected account (phishing attempt?)
+                break;
+            case PendingWorldAccountResult.AccountMismatch:
                 Logger.Warn("Login token does not match the expected account. IP: {0}", connection.Ip);
                 connection.Shutdown();
-            }
-        }
-        else
-        {
-            // TODO: Invalid token (hacking attempt?)
-            Logger.Warn("Invalid login token. IP: {0}", connection.Ip);
-            connection.Shutdown();
+                break;
+            case PendingWorldAccountResult.NotFound:
+                Logger.Warn("Invalid login token. IP: {0}", connection.Ip);
+                connection.Shutdown();
+                break;
         }
     }
 
