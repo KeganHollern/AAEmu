@@ -257,12 +257,12 @@ public sealed class DoodadPhaseCycleTests
     }
 
     [Test]
-    public async Task DoChangePhase_WithTodOverrideSuppressed_KeepsRequestedPhase()
+    public async Task ApplyTodPhase_WithoutTopPriority_KeepsRequestedPhaseAndRunsOtherFuncs()
     {
         var doodad = new Doodad
         {
             TemplateId = 1032,
-            Template = new DoodadTemplate { Id = 1032, ForceTodTopPriority = true }
+            Template = new DoodadTemplate { Id = 1032, ForceTodTopPriority = false }
         };
 
         var stopped = doodad.ApplyTodPhase(null, (int)EveningSecondPhase);
