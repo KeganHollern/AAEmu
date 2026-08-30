@@ -803,11 +803,15 @@ public class Doodad : BaseUnit
 
         // Actually do the phase change
         var unit = ParentWorld.GetUnit(OwnerObjId);
-        var settledPhase = FuncGroupId;
         if (Template.ForceTodTopPriority)
-            settledPhase = ResolveTodPhase(FuncGroupId, TimeManager.Instance.GetTime);
-
-        ApplyTodPhase(unit, (int)settledPhase);
+        {
+            var settledPhase = ResolveTodPhase(FuncGroupId, TimeManager.Instance.GetTime);
+            ApplyTodPhase(unit, (int)settledPhase);
+        }
+        else
+        {
+            DoChangePhase(unit, (int)FuncGroupId);
+        }
     }
 
     /// <summary>
