@@ -208,6 +208,50 @@ public class Dungeon
     }
 
     /// <summary>
+    /// Converts an active solo dungeon owned by the party leader into that party's dungeon.
+    /// The IndunManager request lock must surround this call. (aaemu-cluster#102)
+    /// </summary>
+    internal bool TryPromoteActiveSoloToTeam(Team.Team team)
+    {
+        if (team == null)
+            return false;
+
+        lock (_lock)
+        {
+            if (!CanPromoteActiveSoloToTeam(
+                    IsDestroyed,
+                    IsSystem,
+                    _isTeamOwned,
+                    _characterOwner?.Id,
+                    team.OwnerId,
+                    HasPlayers,
+                    EnterRequests.Count > 0))
+            {
+                return false;
+            }
+
+            _ownerTeam = team;
+            _isTeamOwned = true;
+            _characterOwner = null;
+            Logger.Info($"[Dungeon] instanceId: {_zoneInstanceId.InstanceId}, zoneId: {_zoneInstanceId.ZoneId}. Converting active solo instance into a party instance.");
+            return true;
+        }
+    }
+
+    internal static bool CanPromoteActiveSoloToTeam(
+        bool isDestroyed,
+        bool isSystem,
+        bool isTeamOwned,
+        uint? characterOwnerId,
+        uint teamOwnerId,
+        bool hasPlayers,
+        bool hasEnterRequests)
+    {
+        return !isDestroyed && !isSystem && !isTeamOwned && characterOwnerId == teamOwnerId &&
+               (hasPlayers || hasEnterRequests);
+    }
+
+    /// <summary>
     /// Adds a player to the queue while the dungeon is still loading
     /// </summary>
     /// <param name="character"></param>
@@ -580,11 +624,8 @@ public class Dungeon
 
         if (_isTeamOwned == false)
         {
-            if (ownerId != _characterOwner.Id) { return; }
-            _ownerTeam = team;
-            _isTeamOwned = true;
-            _characterOwner = null;
-            Logger.Info($"[Dungeon] instanceId: {_zoneInstanceId.InstanceId}, zoneId: {_zoneInstanceId.ZoneId}. Converting solo instance into a party instance.");
+            if (ownerId != _characterOwner?.Id) { return; }
+            _ = IndunManager.Instance.TryPromoteDungeonToTeam(this, team);
             return;
         }
 

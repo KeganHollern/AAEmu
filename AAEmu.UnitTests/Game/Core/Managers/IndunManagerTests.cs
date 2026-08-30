@@ -107,6 +107,74 @@ public class IndunManagerTests
         await Assert.That(manager.GetRecentDungeonCreationCount(1, 50)).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task IsOwnedByRequester_OldSoloAfterTeamJoin_ReturnsFalse()
+    {
+        var result = IndunManager.IsOwnedByRequester(false, 10, null, 10, 77);
+
+        await Assert.That(result).IsFalse();
+    }
+
+    [Test]
+    public async Task IsOwnedByRequester_SameTeamForDifferentMembers_ReturnsTrue()
+    {
+        var firstMember = IndunManager.IsOwnedByRequester(true, null, 77, 10, 77);
+        var secondMember = IndunManager.IsOwnedByRequester(true, null, 77, 20, 77);
+
+        await Assert.That(firstMember).IsTrue();
+        await Assert.That(secondMember).IsTrue();
+    }
+
+    [Test]
+    public async Task IsOwnedByRequester_DifferentTeam_ReturnsFalse()
+    {
+        var result = IndunManager.IsOwnedByRequester(true, null, 88, 10, 77);
+
+        await Assert.That(result).IsFalse();
+    }
+
+    [Test]
+    public async Task RunDungeonRequestSerialized_ConcurrentDelegates_AreSerialized()
+    {
+        var manager = CreateManager(new FakeTimeProvider());
+        using var ready = new CountdownEvent(2);
+        using var start = new ManualResetEventSlim(false);
+        object sharedInstance = null;
+        var createCount = 0;
+
+        Task<object> RequestInstance()
+        {
+            return Task.Run(() =>
+            {
+                ready.Signal();
+                start.Wait();
+
+                return manager.RunDungeonRequestSerialized(() =>
+                {
+                    var existing = Volatile.Read(ref sharedInstance);
+                    if (existing != null)
+                        return existing;
+
+                    Thread.Sleep(100);
+                    var created = new object();
+                    Interlocked.Increment(ref createCount);
+                    Volatile.Write(ref sharedInstance, created);
+                    return created;
+                });
+            });
+        }
+
+        var firstRequest = RequestInstance();
+        var secondRequest = RequestInstance();
+        ready.Wait();
+        start.Set();
+
+        var instances = await Task.WhenAll(firstRequest, secondRequest);
+
+        await Assert.That(createCount).IsEqualTo(1);
+        await Assert.That(ReferenceEquals(instances[0], instances[1])).IsTrue();
+    }
+
     private static IndunManager CreateManager(
         FakeTimeProvider timeProvider,
         DungeonsConfig dungeonConfig = null,
