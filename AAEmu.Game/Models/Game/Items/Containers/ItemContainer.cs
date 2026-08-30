@@ -315,6 +315,7 @@ public class ItemContainer
         var sourceContainer = item._holdingContainer;
         var sourceSlot = (byte)item.Slot;
         var sourceSlotType = item.SlotType;
+        var sourceOwnerId = item.OwnerId;
 
         var currentPreferredSlotItem = GetItemBySlot(preferredSlot);
         var newSlot = -1;
@@ -426,22 +427,18 @@ public class ItemContainer
 
         ApplyBindRules(taskType);
 
-        // Moved to the end of the method so that the item is already in the inventory
-        // Only trigger when moving between containers with different owners except for this being move to Mail container
-        //if ((sourceContainer != this) && (item.OwnerId != OwnerId) && (this.ContainerType != SlotType.Mail))
-        if (notifyInventory && sourceContainer != this && ContainerType != SlotType.Mail)
+        // Moved to the end of the method so that the item is already in the inventory.
+        // Same-owner container moves are not acquisitions. Mail attachment claims are acquisitions even when
+        // the attachment already has the recipient as its owner.
+        if (notifyInventory &&
+            sourceContainer != this &&
+            ContainerType != SlotType.Mail &&
+            (sourceOwnerId != OwnerId || sourceSlotType == SlotType.Mail))
         {
             Owner?.Inventory.OnAcquiredItem(item, item.Count);
         }
-        else
-        // Got attachment from Mail
-        if (notifyInventory && item.SlotType == SlotType.Mail && ContainerType != SlotType.Mail)
-        {
-            Owner?.Inventory.OnAcquiredItem(item, item.Count);
-        }
-        else
         // Adding mail attachment
-        if (notifyInventory && item.SlotType != SlotType.Mail && ContainerType == SlotType.Mail)
+        else if (notifyInventory && sourceSlotType != SlotType.Mail && ContainerType == SlotType.Mail)
         {
             Owner?.Inventory.OnConsumedItem(item, item.Count);
         }

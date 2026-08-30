@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 
 using NLog;
@@ -108,7 +109,7 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     /// <param name="title"></param>
     public void ReplyToInvite(uint invitorId, Character invitedChar, bool join, string title)
     {
-        if (!join)
+        if (!join || invitedChar == null || invitedChar.Family != 0 || invitedChar.Id == invitorId)
             return;
 
         var invitor = worldManager.GetCharacterById(invitorId);
@@ -120,11 +121,17 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
         }
         else
         {
-            var family = _families[invitor.Family];
+            if (!_families.TryGetValue(invitor.Family, out var family) ||
+                family.GetMember(invitor) == null ||
+                family.GetMember(invitedChar) != null)
+            {
+                return;
+            }
 
             AddFamilyMember(family, invitedChar, title);
             family.SendPacket(new SCFamilyMemberAddedPacket(family, family.Members.Count - 1));
             SaveFamily(family);
+            invitedChar.Achievements.Increment(CharRecordKind.EnrollFamily, 0, 0);
         }
     }
 
@@ -143,6 +150,9 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
         family.SendPacket(new SCFamilyCreatedPacket(family));
 
         SaveFamily(family);
+
+        invitor.Achievements.Increment(CharRecordKind.EnrollFamily, 0, 0);
+        invitedChar.Achievements.Increment(CharRecordKind.EnrollFamily, 0, 0);
 
         return family;
     }
@@ -193,6 +203,7 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
             chatManager.GetFamilyChat(family.Id)?.JoinChannel(character);
             character.SendPacket(new SCFamilyDescPacket(family));
             family.SendPacket(new SCFamilyMemberOnlinePacket(family.Id, member.Id, true));
+            character.Achievements.UpdateMaximum(CharRecordKind.EnrollFamily, 0, 0, 1);
         }
     }
 

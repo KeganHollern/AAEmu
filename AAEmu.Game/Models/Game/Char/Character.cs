@@ -10,6 +10,7 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.DoodadObj;
@@ -1546,9 +1547,16 @@ public partial class Character : Unit, ICharacter
                     itemTasks.Add(new MoneyChangeBank(amount));
                     break;
             }
+            UpdateGoldAchievement();
             SendPacket(new SCItemTaskSuccessPacket(itemTaskType, itemTasks, []));
             return true;
         }
+    }
+
+    public void UpdateGoldAchievement()
+    {
+        var gold = Money <= 0 ? 0u : (uint)Math.Min(Money / 10000L, uint.MaxValue);
+        Achievements?.UpdateMaximum(CharRecordKind.MyGold, 0, 0, gold);
     }
 
     public bool AddMoney(SlotType moneyLocation, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney)
@@ -1567,6 +1575,7 @@ public partial class Character : Unit, ICharacter
 
     public void ChangeLabor(short change, int actabilityId)
     {
+        var laborBefore = LaborPower;
         var actabilityChange = 0;
         byte actabilityStep = 0;
         var expMultiplier = 1f;
@@ -1593,7 +1602,34 @@ public partial class Character : Unit, ICharacter
         }
 
         LaborPower += change;
-        SendPacket(new SCCharacterLaborPowerChangedPacket(change, actabilityId, actabilityChange, actabilityStep));
+        var effectiveChange = (int)LaborPower - laborBefore;
+        if (change < 0 && effectiveChange < 0)
+            RecordLaborConsumption(-effectiveChange);
+        SendPacket(new SCCharacterLaborPowerChangedPacket(effectiveChange, actabilityId, actabilityChange, actabilityStep));
+    }
+
+    public bool SpendLaborWithoutExperience(short amount)
+    {
+        if (amount <= 0 || LaborPower < amount)
+            return false;
+
+        var laborBefore = LaborPower;
+        LaborPower -= amount;
+        var spentLabor = laborBefore - LaborPower;
+        RecordLaborConsumption(spentLabor);
+        SendPacket(new SCCharacterLaborPowerChangedPacket(-spentLabor, 0, 0, 0));
+        return true;
+    }
+
+    private void RecordLaborConsumption(int amount)
+    {
+        if (amount <= 0)
+            return;
+
+        ConsumedLaborPower = (int)Math.Min(
+            (long)Math.Max(ConsumedLaborPower, 0) + amount,
+            int.MaxValue);
+        Achievements?.Increment(CharRecordKind.SpendLabor, 0, 0, (uint)amount);
     }
 
     public void ChangeGamePoints(GamePointKind kind, int change)
@@ -1614,6 +1650,8 @@ public partial class Character : Unit, ICharacter
                         change = (int)Math.Round(change * (vocMul / 100f));
                     }
                     VocationPoint += change;
+                    if (change > 0)
+                        Achievements?.Increment(CharRecordKind.GetLifePoint, 0, 0, (uint)change);
                     break;
                 default:
                     Logger.Error($"ChangeGamePoints - Unknown Game Point Type {kind}");
@@ -1680,6 +1718,7 @@ public partial class Character : Unit, ICharacter
         if (Faction.Id == factionId)
             return;
         base.SetFaction(factionId);
+        Achievements.Increment(CharRecordKind.GetFaction, (uint)factionId, 0);
 
         //Handle houses, guild, party, etc
         HousingManager.Instance.UpdateOwnedHousingFaction(Id, Faction.Id);
@@ -1910,6 +1949,7 @@ public partial class Character : Unit, ICharacter
             {
                 ItemId = item.TemplateId
             });
+            Achievements?.Increment(CharRecordKind.UseItem, item.TemplateId, 0);
         }
     }
 
@@ -1926,6 +1966,7 @@ public partial class Character : Unit, ICharacter
             {
                 ItemId = item.TemplateId
             });
+            Achievements?.Increment(CharRecordKind.UseItem, item.TemplateId, 0);
         }
     }
 
@@ -1942,6 +1983,7 @@ public partial class Character : Unit, ICharacter
             {
                 ItemId = itemTemplate
             });
+            Achievements?.Increment(CharRecordKind.UseItem, itemTemplate, 0);
         }
     }
 
@@ -2217,6 +2259,9 @@ public partial class Character : Unit, ICharacter
         {
             ChangeMoney(SlotType.Inventory, -repairCost);
         }
+
+        if (tasks.Count > 0)
+            Achievements?.Increment(CharRecordKind.ItemFix, 0, 0, (uint)tasks.Count);
 
         Connection.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.Repair, tasks, []));
     }
@@ -2700,14 +2745,14 @@ public partial class Character : Unit, ICharacter
             Mates = new CharacterMates(this);
             Mates.Load(connection);
 
+            // Reward reconciliation can create a mail and notify this character.
+            Mails = new CharacterMails(this);
             Achievements.Load(connection);
             Achievements.ReconcileAuthoritativeState(connection);
 
             LoadActionSlots(connection);
         }
 
-        Mails = new CharacterMails(this);
-        MailManager.Instance.GetCurrentMailList(Id); //Doesn't need a connection, but does need to load after the inventory
         // Update sync housing factions on login
         HousingManager.Instance.UpdateOwnedHousingFaction(Id, Faction.Id);
     }
@@ -3012,24 +3057,25 @@ public partial class Character : Unit, ICharacter
     /// <param name="amount"></param>
     public void AddCrime(short amount)
     {
-        var newAmount = CrimePoint + amount;
-        if (newAmount > short.MaxValue)
-        {
-            CrimePoint = short.MaxValue; // current crime point can't go over short MaxValue
-        }
-        if (newAmount < 0)
-        {
-            CrimePoint = 0;
-        }
-        else
-        {
-            CrimePoint = (short)newAmount;
-        }
+        var newAmount = Math.Clamp((int)CrimePoint + amount, 0, short.MaxValue);
+        CrimePoint = (short)newAmount;
         InfamyPoint += amount; // total amount
-        if (InfamyPoint < 0)
-            InfamyPoint = 0;
+
+        if (amount < 0)
+            TryLeavePirateFactionAfterRehabilitation();
         
         SendPacket(new SCCrimeChangedPacket(amount, CrimePoint, InfamyPoint, GetCrimeState()));
+    }
+
+    internal bool TryLeavePirateFactionAfterRehabilitation()
+    {
+        if (InfamyPoint > 0 || Faction?.Id != FactionsEnum.Pirate)
+            return false;
+
+        var defaultFactionId = CharacterManager.Instance.GetTemplate(Race, Gender).FactionId;
+        SetFaction(defaultFactionId);
+        Achievements?.Increment(CharRecordKind.MyDishonorablePoint, 0, 0);
+        return true;
     }
 
     /// <summary>

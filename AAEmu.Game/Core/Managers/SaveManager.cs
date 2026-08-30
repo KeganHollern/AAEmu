@@ -26,6 +26,7 @@ public class SaveManager(
     private bool _enabled = false;
     private bool _isSaving = false;
     private readonly object _lock = new();
+    internal object PersistenceSyncRoot => _lock;
     private SaveTickStartTask saveTask;
     public ShutdownTask ShutdownTask { get; set; } = null;
 

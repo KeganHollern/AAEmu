@@ -8,6 +8,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -47,6 +48,7 @@ public class Skill
     public Dictionary<uint, SkillHitType> HitTypes { get; set; }
     public BaseUnit InitialTarget { get; set; }//Temp Hack Fix. Replace this with UnitsEffected
     private bool _bypassGcd;
+    private int _achievementUseRecorded;
     public bool Cancelled { get; set; } = false;
     public Action Callback { get; set; }
 
@@ -94,6 +96,9 @@ public class Skill
         {
             return SkillResult.InvalidSource;
         }
+
+        Cancelled = false;
+        Interlocked.Exchange(ref _achievementUseRecorded, 0);
 
         // Cast character for future reference
         var character = caster as Character;
@@ -1428,6 +1433,8 @@ public class Skill
             }
         }
 
+        RecordUseSkillAchievement(caster);
+
         Callback?.Invoke();
         unit.OnSkillEnd(this);
         caster.BroadcastPacket(new SCSkillEndedPacket(TlId), true);
@@ -1449,6 +1456,7 @@ public class Skill
     public void Stop(BaseUnit caster, Doodad channelDoodad = null, SkillCaster casterCaster = null)
     {
         if (caster is not Unit unit) { return; }
+        Cancelled = true;
         if (Template.ChannelingTime > 0)
         {
             EndChanneling(caster, channelDoodad, casterCaster);
@@ -1463,7 +1471,6 @@ public class Skill
         Callback?.Invoke();
         unit.OnSkillEnd(this);
         unit.SkillTask = null;
-        Cancelled = true;
         SkillTlIdManager.ReleaseId(TlId);
         TlId = 0;
 
@@ -1472,6 +1479,18 @@ public class Skill
             character.ResetSkillCooldown(Template.Id, false);
             unit.Cooldowns.RemoveCooldown(Template.Id);
         }
+    }
+
+    internal void RecordUseSkillAchievement(BaseUnit caster)
+    {
+        if (Cancelled)
+            return;
+
+        var owner = caster.GetOwnerCharacter();
+        if (owner == null || Interlocked.Exchange(ref _achievementUseRecorded, 1) != 0)
+            return;
+
+        owner.Achievements.Increment(CharRecordKind.UseSkill, Template.Id, 0);
     }
 
     public SkillHitType RollCombatDice(BaseUnit attacker, BaseUnit target)

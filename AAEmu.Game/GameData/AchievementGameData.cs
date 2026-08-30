@@ -16,6 +16,7 @@ public class AchievementGameData : Singleton<AchievementGameData>, IGameDataLoad
     private Dictionary<uint, List<AchievementObjectives>> _achievementObjectives = [];
     private Dictionary<uint, List<PreCompletedAchievements>> _preCompletedAchievements = [];
     private Dictionary<(CharRecordKind Kind, uint Value1, uint Value2), CharRecords> _charRecordsByKind = [];
+    private Dictionary<(CharRecordKind Kind, uint Value1), List<CharRecords>> _charRecordsByKindAndValue1 = [];
     private Dictionary<uint, List<uint>> _achievementIdsByRecord = [];
     private Dictionary<uint, List<uint>> _achievementIdsByPrerequisite = [];
     private List<uint> _activeAchievementIds = [];
@@ -138,6 +139,11 @@ public class AchievementGameData : Singleton<AchievementGameData>, IGameDataLoad
     {
         _charRecordsByKind = _charRecords.Values.ToDictionary(
             record => (record.KindId, record.Value1, record.Value2));
+        _charRecordsByKindAndValue1 = _charRecords.Values
+            .GroupBy(record => (record.KindId, record.Value1))
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(record => record.Value2).ThenBy(record => record.Id).ToList());
         _achievementIdsByRecord = [];
         _achievementIdsByPrerequisite = [];
         _activeAchievementIds = _achievements.Values
@@ -195,6 +201,31 @@ public class AchievementGameData : Singleton<AchievementGameData>, IGameDataLoad
     public bool TryGetCharRecord(CharRecordKind kind, uint value1, uint value2, out CharRecords record)
     {
         return _charRecordsByKind.TryGetValue((kind, value1, value2), out record);
+    }
+
+    public IReadOnlyList<CharRecords> GetMatchingCharRecords(
+        CharRecordKind kind,
+        uint value1,
+        uint value2,
+        bool matchValue2Wildcard = false)
+    {
+        var hasExactRecord = _charRecordsByKind.TryGetValue((kind, value1, value2), out var exactRecord);
+        if (!matchValue2Wildcard || value2 == uint.MaxValue)
+            return hasExactRecord ? [exactRecord] : [];
+
+        var hasWildcardRecord = _charRecordsByKind.TryGetValue((kind, value1, uint.MaxValue), out var wildcardRecord);
+        if (hasExactRecord && hasWildcardRecord)
+            return [exactRecord, wildcardRecord];
+        if (hasExactRecord)
+            return [exactRecord];
+        if (hasWildcardRecord)
+            return [wildcardRecord];
+        return [];
+    }
+
+    public IReadOnlyList<CharRecords> GetCharRecords(CharRecordKind kind, uint value1)
+    {
+        return _charRecordsByKindAndValue1.GetValueOrDefault((kind, value1)) ?? [];
     }
 
     public IReadOnlyList<AchievementObjectives> GetObjectives(uint achievementId)

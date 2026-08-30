@@ -12,6 +12,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -591,6 +592,14 @@ public class HousingManager(
         connection.ActiveChar.SendPacket(new SCMyHousePacket(house));
         house.Spawn();
         UpdateTaxInfo(house);
+
+        if (house.CurrentStep == -1)
+        {
+            connection.ActiveChar.Achievements?.Increment(
+                CharRecordKind.MakeHousing,
+                house.TemplateId,
+                0);
+        }
     }
 
     /// <summary>

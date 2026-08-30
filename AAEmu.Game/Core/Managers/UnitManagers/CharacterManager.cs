@@ -9,6 +9,7 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Char.Templates;
 using AAEmu.Game.Models.Game.Housing;
@@ -930,7 +931,13 @@ public class CharacterManager(
         character.BroadcastPacket(new SCCharacterGenderAndModelModifiedPacket(character), true);
 
         if (character.Inventory.Bag.ConsumeItem(ItemTaskType.EditCosmetic, Item.SalonCertificate, 1, null) <= 0)
+        {
             Logger.Error($"Could not consume salon certificate for player {character.Name} ({character.Id})!");
+        }
+        else
+        {
+            character.Achievements?.Increment(CharRecordKind.ChangeLook, 0, 0);
+        }
 
         // The client will do a salon leave request after it gets the SCCharacterGenderAndModelModifiedPacket
     }

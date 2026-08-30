@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
@@ -116,6 +117,12 @@ public partial class Character
             ? ZoneManager.Instance.GetConflicts().FirstOrDefault(c => c.ZoneGroupId == victimZone.GroupId)
             : null;
         var zoneState = conflictData?.CurrentZoneState ?? ZoneConflictType.Peace;
+
+        var achievementKiller = killer?.GetOwnerCharacter();
+        RecordPvpDeathAchievements(
+            achievementKiller,
+            victimZone?.GroupId ?? 0,
+            Buffs.CheckBuffTag((uint)BuffConstants.TagWanted));
 
         var relationState = killer.GetRelationStateTo(this);
         var possibleArrest = false;
@@ -254,6 +261,7 @@ public partial class Character
             if (killerHonor > 0)
             {
                 killer.ChangeGamePoints(GamePointKind.Honor, killerHonor);
+                RecordConflictHonor(killer, victimZone, zoneState, killerHonor);
                 killer.HonorGainedInCombat += (uint)killerHonor;
                 Logger.Debug($"PvP Kill: {killer.Name} killed {Name} in {zoneState} zone — {killerHonor} honor (killer share)");
             }
@@ -264,6 +272,7 @@ public partial class Character
                 foreach (var assistant in onlineAssists)
                 {
                     assistant.ChangeGamePoints(GamePointKind.Honor, assistHonor);
+                    RecordConflictHonor(assistant, victimZone, zoneState, assistHonor);
                     assistant.HonorGainedInCombat += (uint)assistHonor;
                     Logger.Debug($"PvP Assist: {assistant.Name} assisted {killer.Name} killing {Name} — {assistHonor} honor");
                     assistant.BroadcastPacket(new SCUnitPvPPointsChangedPacket(assistant.ObjId, 0, (int)assistant.HonorGainedInCombat), true);
@@ -276,6 +285,7 @@ public partial class Character
             if (honor > 0)
             {
                 killer.ChangeGamePoints(GamePointKind.Honor, honor);
+                RecordConflictHonor(killer, victimZone, zoneState, honor);
                 killer.HonorGainedInCombat += (uint)honor;
                 Logger.Debug($"PvP Solo Kill: {killer.Name} killed {Name} in {zoneState} zone — {honor} honor");
             }
@@ -289,6 +299,48 @@ public partial class Character
             // any conflict zone, so the displayed honor never updates after a kill.
             killer.SendPacket(new SCConflictZoneHonorPointSumPacket((ushort)victimZone.GroupId, (int)killer.HonorGainedInCombat));
         }
+    }
+
+    internal void RecordPvpDeathAchievements(Character killer, uint zoneGroupId, bool victimWasWanted)
+    {
+        if (killer == null || killer.Id == Id)
+            return;
+
+        List<AchievementProgressEvent> progressEvents =
+        [
+            new(CharRecordKind.DeadByPvp, 0, 0, 1)
+        ];
+        if (zoneGroupId > 0)
+            progressEvents.Add(new AchievementProgressEvent(CharRecordKind.DeadByPvp, zoneGroupId, 0, 1));
+        Achievements.Increment(progressEvents);
+
+        if (victimWasWanted)
+            killer.Achievements.Increment(CharRecordKind.KillWanted, 0, 0);
+    }
+
+    private static void RecordConflictHonor(Character character, Zone victimZone, ZoneConflictType zoneState, int amount)
+    {
+        var progressEvent = CreateZoneHonorProgressEvent(victimZone?.GroupId ?? 0, zoneState, amount);
+        if (progressEvent.HasValue)
+            character.Achievements.Increment([progressEvent.Value]);
+    }
+
+    internal static AchievementProgressEvent? CreateZoneHonorProgressEvent(
+        uint zoneGroupId,
+        ZoneConflictType zoneState,
+        int amount)
+    {
+        if (zoneGroupId == 0 || amount <= 0 ||
+            zoneState is not (ZoneConflictType.Conflict or ZoneConflictType.War))
+        {
+            return null;
+        }
+
+        return new AchievementProgressEvent(
+            CharRecordKind.GetHonorPoint,
+            0,
+            zoneGroupId,
+            (uint)amount);
     }
 
     /// <summary>

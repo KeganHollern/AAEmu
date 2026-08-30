@@ -1,6 +1,7 @@
 ﻿using AAEmu.Commons.Exceptions;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Mails;
@@ -134,9 +135,11 @@ public class CharacterMails
     public bool GetAttached(long mailId, bool takeMoney, bool takeItems, bool takeAllSelected, ulong specifiedItemId = 0)
     {
         var res = true;
-        if (MailManager.Instance._allPlayerMails.TryGetValue(mailId, out var thisMail))
+        if (MailManager.Instance._allPlayerMails.TryGetValue(mailId, out var thisMail) &&
+            thisMail.Header.ReceiverId == Self.Id)
         {
             var tookMoney = false;
+            var tookAuctionItem = false;
             if (thisMail.MailType == MailType.AucOffSuccess && thisMail.Body.CopperCoins > 0 && takeMoney)
             {
                 if (Self.LaborPower < 1)
@@ -201,6 +204,7 @@ public class CharacterMails
                                 itemSlotList.Add(itemIdAndLocation);
                                 thisMail.Header.Attachments -= 1;
                                 toRemove.Add(itemAttachment);
+                                tookAuctionItem |= thisMail.MailType == MailType.AucBidWin;
                             }
                             else
                             {
@@ -232,6 +236,8 @@ public class CharacterMails
             {
                 Self.SendPacket(new SCAttachmentTakenPacket(mailId, true, false, takeAllSelected, []));
                 thisMail.IsDirty = true;
+                if (thisMail.MailType == MailType.AucOffSuccess)
+                    Self.Achievements.Increment(CharRecordKind.AuctionSold, 0, 0);
             }
 
             // Items
@@ -254,6 +260,9 @@ public class CharacterMails
                     thisMail.IsDirty = true;
                 }
             }
+
+            if (tookAuctionItem)
+                Self.Achievements.Increment(CharRecordKind.AuctionBuy, 0, 0);
 
             // Mark mail as read in case we took at least one item from it
             if (thisMail.Header.Status == MailStatus.Unread && (tookMoney || itemSlotList.Count > 0))

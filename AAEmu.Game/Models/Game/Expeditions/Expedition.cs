@@ -2,6 +2,7 @@
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
 using MySql.Data.MySqlClient;
@@ -35,6 +36,7 @@ public class Expedition : SystemFaction
 
         SendPacket(new SCExpeditionMemberStatusChangedPacket(member, 0));
         ChatManager.Instance.GetGuildChat(this).JoinChannel(character);
+        character.Achievements.UpdateMaximum(CharRecordKind.EnrollGuild, 0, 0, 1);
     }
 
     public void OnCharacterLogout(Character character)

@@ -380,6 +380,9 @@ public class TradeManager(ITradeIdManager tradeIdManager, IWorldManager worldMan
             }
         }
 
+        owner.UpdateGoldAchievement();
+        target.UpdateGoldAchievement();
+
         // Trade complete, remove ID and send item task packets
         _trades.Remove(tradeId);
         owner.SendPacket(new SCTradeMadePacket(ItemTaskType.Trade, tasksOwner, []));

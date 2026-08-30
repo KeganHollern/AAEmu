@@ -7,6 +7,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Crime;
@@ -303,6 +304,7 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
 
                             // Update trials attended count
                             juryEntry.JuryMember.JuryPoint++;
+                            juryEntry.JuryMember.Achievements.Increment(CharRecordKind.GetJuryPoint, 0, 0);
                         }
                         trialData.CourtRoom.TrialChatChannel.LeaveChannel(juryEntry.JuryMember); // Remove Jury from courtroom chat
                     }
@@ -765,6 +767,9 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
         defendant.SendPacket(new SCCrimeChangedPacket(crimeCount, defendant.CrimePoint, defendant.InfamyPoint,
             defendant.GetCrimeState()));
 
+        if (!pleadGuilty)
+            defendant.Achievements.Increment(CharRecordKind.Judgement, 1, 0);
+
         // Prisoner buff
         var jailTimeMs = trial.JailTime * 60_000;
         jailTimeMs = Math.Max(jailTimeMs, 10_000); // Make it minimum 10 seconds, having 0 here will make it use the default 30 minutes instead
@@ -811,16 +816,12 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
         defendant.CrimePoint -= crimeCount;
         defendant.InfamyPoint -= crimeCount;
         defendant.SendPacket(new SCCrimeChangedPacket(crimeCount, defendant.CrimePoint, defendant.InfamyPoint, defendant.GetCrimeState()));
+        defendant.Achievements.Increment(CharRecordKind.Judgement, 0, 0);
 
         defendant.Buffs.RemoveBuffs(BuffKind.Good, 1, (uint)BuffConstants.TagPrisoner);
         defendant.Buffs.RemoveBuff((uint)BuffConstants.Trial_Defendant);
 
-        if (defendant.InfamyPoint <= 0 && defendant.Faction.Id == FactionsEnum.Pirate)
-        {
-            // Return to original faction.
-            var defaultFactionId = CharacterManager.Instance.GetTemplate(defendant.Race, defendant.Gender).FactionId;
-            defendant.SetFaction(defaultFactionId);
-        }
+        defendant.TryLeavePirateFactionAfterRehabilitation();
     }
 
     public TrialData GetTrial(uint trialId)

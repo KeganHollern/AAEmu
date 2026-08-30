@@ -4,6 +4,8 @@ using System.Numerics;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.AI.Utils;
 using AAEmu.Game.Models.Game.AI.v2.Behaviors.Common;
 using AAEmu.Game.Models.Game.AI.v2.Framework;
@@ -20,6 +22,8 @@ using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Utils;
+
+using GameTeam = AAEmu.Game.Models.Game.Team.Team;
 
 namespace AAEmu.Game.Models.Game.NPChar;
 
@@ -836,6 +840,34 @@ public partial class Npc : Unit
         //Equip = new Item[28];
     }
 
+    private void RecordKillAchievements(
+        Character character,
+        HashSet<Character> eligiblePlayers,
+        GameTeam taggedTeam)
+    {
+        List<AchievementProgressEvent> progressEvents =
+        [
+            new(CharRecordKind.KillNpc, TemplateId, 0, 1)
+        ];
+
+        if (taggedTeam is { IsParty: true } && eligiblePlayers.Count > 1)
+        {
+            foreach (var record in AchievementGameData.Instance.GetCharRecords(CharRecordKind.KillNpc, TemplateId))
+            {
+                if (record.Value2 == 0 || !eligiblePlayers.All(member => member.Level <= record.Value2))
+                    continue;
+
+                progressEvents.Add(new AchievementProgressEvent(
+                    CharRecordKind.KillNpc,
+                    TemplateId,
+                    record.Value2,
+                    1));
+            }
+        }
+
+        character.Achievements.Increment(progressEvents);
+    }
+
     public override void DoDie(BaseUnit killer, KillReason killReason)
     {
         DeadTime = DateTime.UtcNow;
@@ -845,14 +877,15 @@ public partial class Npc : Unit
         ParentWorld?.RaiseNpcKilled(this);
 
         var eligiblePlayers = new HashSet<Character>();
+        GameTeam taggedTeam = null;
         if (CharacterTagging.TagTeam != 0)
         {
             // A team has tagging rights
-            var team = TeamManager.Instance.GetActiveTeam(CharacterTagging.TagTeam);
-            if (team != null)
+            taggedTeam = TeamManager.Instance.GetActiveTeam(CharacterTagging.TagTeam);
+            if (taggedTeam != null)
             {
                 // Just to check the team is still a valid team.
-                foreach (var member in team.Members)
+                foreach (var member in taggedTeam.Members)
                 {
                     if (member?.Character != null)
                     {
@@ -877,16 +910,18 @@ public partial class Npc : Unit
 
         // Logger.Warn($"Eligible killers count is {eligiblePlayers.Count }");
 
-        if (eligiblePlayers.Count == 0 && killer is Character characterKiller)
+        var killerOwner = killer?.GetOwnerCharacter();
+        if (eligiblePlayers.Count == 0 && killerOwner != null)
         {
-            QuestManager.Instance.DoOnMonsterHuntEvents(characterKiller, this); // No eligible owner, but the killer is a character.
-            characterKiller.AddExp(KillExp, true);
-            var mateList = characterKiller.ParentWorld.MateManager.GetActiveMates(characterKiller.Id);
+            RecordKillAchievements(killerOwner, eligiblePlayers, taggedTeam);
+            QuestManager.Instance.DoOnMonsterHuntEvents(killerOwner, this); // No eligible owner, but the killer belongs to a character.
+            killerOwner.AddExp(KillExp, true);
+            var mateList = killerOwner.ParentWorld.MateManager.GetActiveMates(killerOwner.Id);
             foreach (var mate in mateList)
             {
                 mate.AddExp(KillExp);
                 // TODO: Proper message?
-                characterKiller.SendMessage($"Pet gained {KillExp} XP");
+                killerOwner.SendMessage($"Pet gained {KillExp} XP");
             }
         }
         else
@@ -896,15 +931,14 @@ public partial class Npc : Unit
             if (CharacterTagging.TagTeam != 0)
             {
                 // A team has tagging rights
-                var team = TeamManager.Instance.GetActiveTeam(CharacterTagging.TagTeam);
-                if (team != null)
+                if (taggedTeam != null)
                 {
-                    if (!team.IsParty)
+                    if (!taggedTeam.IsParty)
                     {
                         isRaid = true;
                         // Team is a raid.
                     }
-                    else if (team.MembersCount() > 3)
+                    else if (taggedTeam.MembersCount() > 3)
                     {
                         isFullTeam = true;
                     }
@@ -988,6 +1022,7 @@ public partial class Npc : Unit
                 // character.Quests.OnKill(this);
                 // инициируем событие
                 // Task.Run(() => QuestManager.Instance.DoOnMonsterHuntEvents(character, this));
+                RecordKillAchievements(pl, eligiblePlayers, taggedTeam);
                 QuestManager.Instance.DoOnMonsterHuntEvents(pl, this);
             }
         }
@@ -1009,9 +1044,9 @@ public partial class Npc : Unit
             // eligiblePlayers and was NOT credited — they're a damage dealer who
             // should receive TagShare credit, so don't pre-mark them as credited.
             var alreadyCredited = new HashSet<Character>(eligiblePlayers);
-            if (eligiblePlayers.Count == 0 && killer is Character ck)
+            if (eligiblePlayers.Count == 0 && killerOwner != null)
             {
-                alreadyCredited.Add(ck);
+                alreadyCredited.Add(killerOwner);
             }
 
             var contributors = CharacterTagging.GetAllContributors(LootingContainer.MaxLootingRange);

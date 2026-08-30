@@ -1,5 +1,6 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Skills;
 using MySql.Data.MySqlClient;
 
@@ -74,15 +75,18 @@ public class CharacterAbilities
     public void Swap(AbilityType oldAbilityId, AbilityType abilityId)
     {
         Owner.Skills.Reset(oldAbilityId);
+        var changed = false;
         if (Owner.Ability1 == oldAbilityId)
         {
             Owner.Ability1 = abilityId;
             Abilities[abilityId].Order = 0;
+            changed = true;
         }
         else if (Owner.Ability2 == oldAbilityId)
         {
             Owner.Ability2 = abilityId;
             Abilities[abilityId].Order = 1;
+            changed = true;
 
             //This sets are current ability level to match ability1 since its suppost to be in sync
             if (oldAbilityId == AbilityType.None)
@@ -94,6 +98,7 @@ public class CharacterAbilities
         {
             Owner.Ability3 = abilityId;
             Abilities[abilityId].Order = 2;
+            changed = true;
 
             if (oldAbilityId == AbilityType.None)
             {
@@ -117,6 +122,9 @@ public class CharacterAbilities
 
         foreach (var ability in Abilities.Values)
             Owner.Achievements?.UpdateAbilityLevel(ability.Id, GetAbilityLevel(ability.Id));
+
+        if (changed && oldAbilityId != abilityId)
+            Owner.Achievements?.Increment(CharRecordKind.AbilityChange, 0, 0);
 
         Owner.BroadcastPacket(new SCAbilitySwappedPacket(Owner.ObjId, oldAbilityId, abilityId), true);
     }

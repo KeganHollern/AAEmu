@@ -4,13 +4,23 @@ using System.Reflection;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Models.Game.Achievement.Enums;
+using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Team;
 using AAEmu.UnitTests.Utils.Mocks;
+
+using AchievementDataBuilder = AAEmu.UnitTests.Game.Models.Game.Char.CharacterAchievementsTests.AchievementDataBuilder;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
 public class TeamManagerTests
 {
+    private static readonly FieldInfo s_achievementsField =
+        typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!;
+    private static readonly FieldInfo s_inPartyField =
+        typeof(Character).GetField("<InParty>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
     [Test]
     public async Task Constructor_DoesNotCallDeps()
     {
@@ -73,6 +83,44 @@ public class TeamManagerTests
 
         await Assert.That(ownerTeam.IsMember(target.Id)).IsFalse();
         await Assert.That(GetActiveInvitations(manager)).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(true, 1000u, 1001u)]
+    [Arguments(false, 1001u, 1000u)]
+    public async Task UpdateAtLogin_ValidMembership_ReconcilesPartyOrRaidAchievement(
+        bool isParty,
+        uint expectedAchievementId,
+        uint otherAchievementId)
+    {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.EnrollParty);
+        data.AddRecord(101, CharRecordKind.EnrollRaidGroup);
+        data.AddAchievement(1000, 1, false);
+        data.AddAchievement(1001, 1, false);
+        data.AddObjective(1, 1000, 100);
+        data.AddObjective(2, 1001, 101);
+
+        var character = CreateCharacter(1, "Member");
+        var achievements = new CharacterAchievements(character, data.Build());
+        s_achievementsField.SetValue(character, achievements);
+        s_inPartyField.SetValue(character, true);
+
+        var team = CreateTeam(10, character);
+        team.IsParty = isParty;
+        var chatManager = Mock.Of<IChatManager>();
+        chatManager.GetPartyChat(team, character).Returns(new ChatChannel());
+        chatManager.GetRaidChat(team).Returns(new ChatChannel());
+        var manager = new TeamManager(
+            Mock.Of<IWorldManager>().Object,
+            chatManager.Object,
+            Mock.Of<ITeamIdManager>().Object);
+        GetActiveTeams(manager)[team.Id] = team;
+
+        manager.UpdateAtLogin(character);
+
+        await Assert.That(achievements.GetAmount(expectedAchievementId)).IsEqualTo(1u);
+        await Assert.That(achievements.GetAmount(otherAchievementId)).IsEqualTo(0u);
     }
 
     private static TeamManager CreateManager()
