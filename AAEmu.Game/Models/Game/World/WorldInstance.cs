@@ -86,6 +86,7 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
     /// Event handlers
     /// </summary>
     public WorldEvents Events { get; set; } = new();
+    public EventSpawnOwnershipRegistry EventSpawnOwnership { get; } = new();
 
     /// <summary>
     /// Manager for Quest sphere triggers
@@ -746,6 +747,7 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
         // DoodadFuncTimerTask firing after teardown re-arm a sensor and re-subscribe a TickManager
         // tick that pins this dead instance forever. (aaemu-cluster#95 + review)
         _doodadAreaTriggers?.Dispose();
+        EventSpawnOwnership.Clear();
 
         // Stop respawn system (check for null as SpawnManager may not be initialized in tests)
         if (SpawnManager == null)

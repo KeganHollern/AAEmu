@@ -10,6 +10,7 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.TowerDefs;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Tasks.World;
 
@@ -48,6 +49,11 @@ public class NpcSpawner : Spawner<Npc>
     /// (e.g. Allistair's pit variant pops up after the bridge collapse). (aaemu-cluster#92)
     /// </summary>
     public bool StartInactive { get; set; }
+    public string EventPlacementId { get; set; }
+    public string EventSiteKey { get; set; }
+    public bool SuppressAmbientSpawnsWithSameUnitId { get; set; }
+    [JsonIgnore]
+    internal TowerDefenseSpawnToken PendingTowerDefenseSpawnToken { get; private set; }
     public NpcSpawnerTemplate Template { get; set; }
     public List<NpcSpawnerNpc> SpawnableNpcs { get; set; } = []; // List of NPCs that can be spawned
     public ConcurrentDictionary<uint, List<Npc>> SpawnedNpcs { get; set; } = new(); // <SpawnerId, List of spawned NPCs>
@@ -759,6 +765,34 @@ public class NpcSpawner : Spawner<Npc>
         return SpawnedNpcs[SpawnerId][0];
     }
 
+    public Npc ForceSpawnOwned(TowerDefenseSpawnToken token)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        lock (_spawnLock)
+        {
+            var existing = SpawnedNpcs.TryGetValue(SpawnerId, out var before)
+                ? before.Select(npc => npc.ObjId).ToHashSet()
+                : [];
+            PendingTowerDefenseSpawnToken = token;
+            try
+            {
+                if (SpawnedNpcs.Count == 0)
+                    InitializeSpawnableNpcs(Template);
+                DoSpawn();
+                var spawned = SpawnedNpcs.TryGetValue(SpawnerId, out var after)
+                    ? after.FirstOrDefault(npc => !existing.Contains(npc.ObjId))
+                    : null;
+                if (spawned?.Spawner != null)
+                    spawned.Spawner.RespawnTime = 0;
+                return spawned;
+            }
+            finally
+            {
+                PendingTowerDefenseSpawnToken = null;
+            }
+        }
+    }
+
     /// <summary>
     /// Despawns the specified NPC.
     /// </summary>
@@ -1403,7 +1437,26 @@ public class NpcSpawner : Spawner<Npc>
         var templateNsnTask2 = template.Npcs.FirstOrDefault(nsn => nsn != null && nsn.MemberId == UnitId);
         if (templateNsnTask2 != null)
         {
-            n = templateNsnTask2.Spawn(this);
+            lock (_spawnLock)
+            {
+                var inheritedToken = (caster as Npc)?.TowerDefenseSpawnToken;
+                PendingTowerDefenseSpawnToken = inheritedToken == null
+                    ? null
+                    : inheritedToken with
+                    {
+                        ActionKey = $"{inheritedToken.ActionKey}/spawn-effect:{effect.Id}",
+                        CreatorObjId = caster.ObjId,
+                        DespawnOnCreatorDeath = effect.DespawnOnCreatorDeath
+                    };
+                try
+                {
+                    n = templateNsnTask2.Spawn(this);
+                }
+                finally
+                {
+                    PendingTowerDefenseSpawnToken = null;
+                }
+            }
         }
 
         try

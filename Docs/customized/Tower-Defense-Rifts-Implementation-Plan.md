@@ -1,10 +1,12 @@
 # Tower-Defense Rifts Implementation Plan
 
-- Status: Proposed
+- Status: Implemented behind disabled feature flags; in-game validation pending
 - Audience: AAEmu game-server developers, content designers, QA, and release reviewers
 - Target client: ArcheAge 1.2 (`r208022`)
 - Initial events: Crimson Rift and Grimghast Rift, including Grimghast advance notices
 - Last updated: August 30, 2026
+
+See [Tower-Defense Rifts Flowchart and Test Runbook](Tower-Defense-Rifts-Flowchart.md) for the implemented control flow, recovery branches, and GM test sequence.
 
 ## Outcome
 

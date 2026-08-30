@@ -25,6 +25,9 @@ public sealed class ContentBuildManifest
     public int RecipeCount { get; set; }
     public int WorkbenchCount { get; set; }
     public int AssertionCount { get; set; }
+    public int TowerDefenseEventCount { get; set; }
+    public string? TowerDefenseBundlePath { get; set; }
+    public string? TowerDefenseBundleSha256 { get; set; }
     public ValidationReport Validation { get; set; } = new();
     public List<ContentChange> Changes { get; set; } = [];
 }
@@ -37,6 +40,7 @@ public sealed class ContentBuildResult
     public required string ManifestPath { get; init; }
     public required string ReportPath { get; init; }
     public required string AuditSqlPath { get; init; }
+    public string? TowerDefenseBundlePath { get; init; }
     public required ContentBuildManifest Manifest { get; init; }
 }
 

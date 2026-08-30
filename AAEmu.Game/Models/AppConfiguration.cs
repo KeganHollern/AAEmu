@@ -44,6 +44,7 @@ public partial class AppConfiguration
     public JusticeConfig Justice { get; set; } = new();
     public AiChatConfig AiChat { get; set; } = new();
     public TrionWebConfig TrionWeb { get; set; } = new();
+    public TowerDefenseConfig TowerDefense { get; set; } = new();
     public string DefaultLanguage { get; set; } = "en_us";
     public bool DebugInfo { get; set; } = true;
     public uint DebugInfoLevel { get; set; } = 100;

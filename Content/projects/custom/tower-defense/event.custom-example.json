@@ -1,0 +1,36 @@
+{
+    "$schema": "../../../schemas/tower-defense-event.schema.json",
+    "schemaVersion": 1,
+    "events": [
+        {
+            "key": "custom.example.cinderstone-defense",
+            "towerDefId": 3,
+            "enabled": false,
+            "worldTemplate": "main_world",
+            "zoneGroupId": 20,
+            "trigger": {
+                "type": "Manual",
+                "hour": 12.0,
+                "dayInterval": 1,
+                "dayPhase": 0,
+                "catchUpGraceSeconds": 0
+            },
+            "concurrencyGroup": "rift.crimson.cinderstone",
+            "restartPolicy": "RestartCurrentStep",
+            "sites": [
+                {
+                    "key": "cinderstone-1",
+                    "spotId": 1,
+                    "anchor": { "x": 15480.82, "y": 11883.66, "z": 107.98602 },
+                    "bindings": {
+                        "initial": ["cr-cinderstone-1-initial"],
+                        "9848": ["cr-cinderstone-1-step-1"],
+                        "9849": ["cr-cinderstone-1-step-2"],
+                        "9865": ["cr-cinderstone-1-step-3"],
+                        "9866": ["cr-cinderstone-1-step-4"]
+                    }
+                }
+            ]
+        }
+    ]
+}

@@ -42,6 +42,7 @@ public class SpawnManager(WorldInstance parentWorld)
 
     private Dictionary<uint, List<NpcSpawner>> NpcSpawners { get; } = []; // (idx, List<NpcSpawner>)
     private Dictionary<uint, List<NpcSpawner>> NpcEventSpawners { get; } = []; // (idx, List<NpcSpawner>)
+    private Dictionary<string, NpcSpawner> EventPlacements { get; } = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<uint, DoodadSpawner> DoodadSpawners { get; } = [];
     private Dictionary<uint, TransferSpawner> TransferSpawners { get; } = [];
     private Dictionary<uint, GimmickSpawner> GimmickSpawners { get; } = [];
@@ -180,9 +181,22 @@ public class SpawnManager(WorldInstance parentWorld)
 
                 spawners.Add(npcSpawner);
                 NpcEventSpawners.TryAdd(_nextId, spawners);
+                IndexEventPlacement(npcSpawner);
                 _nextId++;
             }
         }
+    }
+
+    private void IndexEventPlacement(NpcSpawner spawner)
+    {
+        if (string.IsNullOrWhiteSpace(spawner.EventPlacementId))
+            return;
+        if (string.IsNullOrWhiteSpace(spawner.EventSiteKey))
+            throw new InvalidDataException($"Event placement '{spawner.EventPlacementId}' has no EventSiteKey.");
+        if (!spawner.StartInactive)
+            throw new InvalidDataException($"Event placement '{spawner.EventPlacementId}' must set StartInactive=true.");
+        if (!EventPlacements.TryAdd(spawner.EventPlacementId, spawner))
+            throw new InvalidDataException($"Duplicate event placement id '{spawner.EventPlacementId}' in world {World.Template?.Name}.");
     }
 
     /// <summary>
@@ -445,10 +459,12 @@ public class SpawnManager(WorldInstance parentWorld)
 
                     // Check for duplication by UnitId and Position
                     if (NpcSpawners.Values.SelectMany(spawners => spawners)
-                        .Any(spawner => spawner.UnitId == npcSpawnerFromFile.UnitId &&
-                                        Math.Abs(spawner.Position.X - npcSpawnerFromFile.Position.X) < 2f &&
-                                        Math.Abs(spawner.Position.Y - npcSpawnerFromFile.Position.Y) < 2f
-                                        ))
+                            .Concat(NpcEventSpawners.Values.SelectMany(spawners => spawners))
+                            .Any(spawner => spawner.UnitId == npcSpawnerFromFile.UnitId &&
+                                            ((Math.Abs(spawner.Position.X - npcSpawnerFromFile.Position.X) < 2f &&
+                                             Math.Abs(spawner.Position.Y - npcSpawnerFromFile.Position.Y) < 2f) ||
+                                             (string.IsNullOrWhiteSpace(npcSpawnerFromFile.EventPlacementId) &&
+                                              spawner.SuppressAmbientSpawnsWithSameUnitId))))
                     {
                         Logger.Trace($"Duplicate NPC spawner found in {jsonFileName} (UnitId: {npcSpawnerFromFile.UnitId}, Position: {npcSpawnerFromFile.Position})");
                         continue;
@@ -481,14 +497,9 @@ public class SpawnManager(WorldInstance parentWorld)
             return [];
         }
 
-        var reversedFiles = new string[spawnFiles.Length];
-
-        for (var i = 0; i < spawnFiles.Length; i++)
-        {
-            reversedFiles[i] = spawnFiles[spawnFiles.Length - 1 - i];
-        }
-
-        return reversedFiles;
+        return spawnFiles
+            .OrderByDescending(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private bool LoadDoodadSpawns(string worldPath)
@@ -1294,6 +1305,27 @@ public class SpawnManager(WorldInstance parentWorld)
         bool Matches(NpcSpawner spawner) => spawner.Template?.Id == spawnerTemplateId;
     }
 
+    public NpcSpawner GetEventPlacement(string placementId)
+    {
+        lock (NpcSpawners)
+            return !string.IsNullOrWhiteSpace(placementId) && EventPlacements.TryGetValue(placementId, out var spawner)
+                ? spawner
+                : null;
+    }
+
+    public List<NpcSpawner> GetEventSpawnersBySpawnerTemplateId(uint spawnerTemplateId, string siteKey)
+    {
+        lock (NpcSpawners)
+        {
+            return EventPlacements.Values
+                .Where(spawner =>
+                    spawner.Template?.Id == spawnerTemplateId &&
+                    string.Equals(spawner.EventSiteKey, siteKey, StringComparison.OrdinalIgnoreCase))
+                .Distinct()
+                .ToList();
+        }
+    }
+
     public List<NpcSpawner> GetNpcSpawner(uint spawnerId)
     {
         var ret = new List<NpcSpawner>();
@@ -1421,6 +1453,16 @@ public class SpawnManager(WorldInstance parentWorld)
             npcSpawners.ParentWorld = null;
         }
         NpcSpawners.Clear();
+
+        foreach (var npcSpawners in NpcEventSpawners.Values.SelectMany(x => x).Distinct().ToList())
+        {
+            npcSpawners.Deactivate();
+            npcSpawners.DespawnAll();
+            npcSpawners.ParentWorld = null;
+        }
+        NpcEventSpawners.Clear();
+        EventPlacements.Clear();
+        World.EventSpawnOwnership.Clear();
 
         // Doodad
         foreach (var doodadSpawner in DoodadSpawners.Values.ToList())

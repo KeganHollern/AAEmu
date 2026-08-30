@@ -91,6 +91,8 @@ public class NpcSpawnerNpc : Spawner<Npc>
 
         npc.ParentWorld = npcSpawner.ParentWorld;
         npc.OwnerId = ownerId;
+        if (npcSpawner.PendingTowerDefenseSpawnToken is { } pendingEventToken)
+            npc.TowerDefenseSpawnToken = pendingEventToken;
 
         npc.RegisterNpcEvents();
 
@@ -128,6 +130,9 @@ public class NpcSpawnerNpc : Spawner<Npc>
             ? (int)Random.Shared.Next(npc.Spawner.Template.SpawnDelayMin, npc.Spawner.Template.SpawnDelayMax)
             : 0;
         npc.Spawn();
+
+        if (npc.TowerDefenseSpawnToken is { } eventToken)
+            npc.ParentWorld.EventSpawnOwnership.Register(npc, eventToken);
 
         var world = WorldManager.Instance.GetWorld(npc.Transform.InstanceId);
         world.Events.OnUnitSpawn(world, new OnUnitSpawnArgs { Npc = npc });

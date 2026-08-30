@@ -8,6 +8,39 @@ namespace AAEmu.ContentStudio.Tests;
 public class ContentStudioPipelineTests
 {
     [Test]
+    public async Task Build_MergesTowerDefenseSourcesIntoRuntimeBundle()
+    {
+        using var workspace = TestWorkspace.Create();
+        var projectDirectory = Path.GetDirectoryName(workspace.ProjectPath)!;
+        var towerDefenseDirectory = Path.Combine(projectDirectory, "tower-defense");
+        Directory.CreateDirectory(towerDefenseDirectory);
+        File.WriteAllText(Path.Combine(towerDefenseDirectory, "sample.json"), """
+            {
+              "schemaVersion": 1,
+              "events": [
+                {
+                  "key": "event.test",
+                  "towerDefId": 3,
+                  "enabled": false,
+                  "worldTemplate": "main_world",
+                  "sites": [ { "key": "site.test" } ]
+                }
+              ]
+            }
+            """);
+
+        var result = new BuildService().Build(workspace.CreateBuildRequest());
+        var bundle = ContentStudioJson.Deserialize<System.Text.Json.Nodes.JsonObject>(
+            File.ReadAllText(result.TowerDefenseBundlePath!), result.TowerDefenseBundlePath!);
+
+        await Assert.That(result.Manifest.TowerDefenseEventCount).IsEqualTo(1);
+        await Assert.That(result.TowerDefenseBundlePath).IsNotNull();
+        await Assert.That(File.Exists(result.TowerDefenseBundlePath)).IsTrue();
+        await Assert.That(bundle["events"]!.AsArray()).HasSingleItem();
+        await Assert.That(result.Manifest.SourceHashes.Keys).Contains("tower-defense/sample.json");
+    }
+
+    [Test]
     public async Task Build_CompilesRecipeAndWorkbenchGraph()
     {
         using var workspace = TestWorkspace.Create();

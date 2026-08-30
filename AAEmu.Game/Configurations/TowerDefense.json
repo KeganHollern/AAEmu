@@ -1,0 +1,8 @@
+{
+    "TowerDefense": {
+        "Enabled": false,
+        "DryRun": false,
+        "AllowManualWhenDisabled": true,
+        "ManifestPath": "Data/TowerDefense"
+    }
+}
