@@ -10,7 +10,6 @@ namespace AAEmu.Game.Models.Game.AI.v2.Behaviors.Common;
 
 public class SpawningBehavior : BaseCombatBehavior
 {
-    private bool _usedSpawnSkills = false;
     private bool _enter;
 
     public override void Enter()
@@ -35,25 +34,6 @@ public class SpawningBehavior : BaseCombatBehavior
     {
         if (!_enter)
             return; // not initialized yet Enter()
-
-        // TODO: Figure out how to do this on spawn
-        if (Ai.Owner.Template.Skills.TryGetValue(SkillUseConditionKind.OnSpawn, out var skills) && !_usedSpawnSkills)
-        {
-            _usedSpawnSkills = true;
-            foreach (var npcSkill in skills)
-            {
-                var skillTemplate = SkillManager.Instance.GetSkillTemplate(npcSkill.SkillId);
-                var skill = new Skill(skillTemplate);
-
-                var skillCaster = SkillCaster.GetByType(SkillCasterType.Unit);
-                skillCaster.ObjId = Ai.Owner.ObjId;
-
-                var skillTarget = SkillCastTarget.GetByType(SkillCastTargetType.Unit);
-                skillTarget.ObjId = Ai.Owner.ObjId;
-
-                skill.Use(Ai.Owner, skillCaster, skillTarget, null, true, out _);
-            }
-        }
 
         // TODO: This follows the game's way of doing it. This will need code later, obviously
         Ai.GoToRunCommandSet();

@@ -55,6 +55,7 @@ public sealed class ProjectRepository
         var recordFiles = ExpandPatterns(projectDirectory, definition.Records);
         var assertionFiles = ExpandPatterns(projectDirectory, definition.Assertions);
         var rawSqlFiles = ExpandPatterns(projectDirectory, definition.RawSql);
+        var towerDefenseFiles = ExpandPatterns(projectDirectory, definition.TowerDefense);
         var recipes = recipeFiles.Select(path => ContentStudioJson.Deserialize<RecipeDefinition>(readAllText(path), path)).ToList();
         var workbenches = workbenchFiles.Select(path => ContentStudioJson.Deserialize<WorkbenchDefinition>(readAllText(path), path)).ToList();
         var records = recordFiles.Select(path => ContentStudioJson.Deserialize<RecordDefinition>(readAllText(path), path)).ToList();
@@ -66,6 +67,7 @@ public sealed class ProjectRepository
             .Concat(recordFiles)
             .Concat(assertionFiles)
             .Concat(rawSqlFiles)
+            .Concat(towerDefenseFiles)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -80,6 +82,7 @@ public sealed class ProjectRepository
             Records = records,
             Assertions = assertions,
             RawSqlFiles = rawSqlFiles,
+            TowerDefenseFiles = towerDefenseFiles,
             SourceFiles = sourceFiles
         };
     }

@@ -8,6 +8,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.Stream;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Managers.TowerDefense;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Network.Login;
 using AAEmu.Game.Core.Network.Stream;
@@ -117,6 +118,7 @@ public sealed class GameService : IHostedService, IDisposable
         // Start main_world and other static instances
         WorldManager.Instance.CreateStaticInstances();
         WorldManager.Instance.Initialize();
+        TowerDefenseManager.Instance.OnWorldsInitialized();
 
         CharacterManager.Instance.CheckForDeletedCharacters();
         CharacterManager.Instance.StartOnlineTracking();
@@ -138,6 +140,7 @@ public sealed class GameService : IHostedService, IDisposable
         await SaveManager.Instance.StopAsync();
 
         // SpawnManager.Instance.Stop(); Moved to World Instance
+        TowerDefenseManager.Instance.Dispose();
         TaskManager.Instance.Stop();
         GameNetwork.Instance.Stop();
         StreamNetwork.Instance.Stop();

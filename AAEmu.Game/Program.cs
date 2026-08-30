@@ -6,6 +6,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.Stream;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Managers.TowerDefense;
 using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.Models;
 using AAEmu.Game.Services;
@@ -264,6 +265,9 @@ public static class Program
 
                 services.AddSingleton<TimeManager>();
                 services.AddSingleton<ITimeManager>(sp => sp.GetRequiredService<TimeManager>());
+
+                services.AddSingleton<TowerDefenseManager>();
+                services.AddSingleton<ITowerDefenseManager>(sp => sp.GetRequiredService<TowerDefenseManager>());
 
                 services.AddSingleton<TradeManager>();
                 services.AddSingleton<ITradeManager>(sp => sp.GetRequiredService<TradeManager>());

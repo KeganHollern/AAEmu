@@ -13,6 +13,7 @@ public sealed class ContentProjectDefinition
     public string[] Records { get; set; } = ["records/*.json"];
     public string[] Assertions { get; set; } = ["assertions/*.json"];
     public string[] RawSql { get; set; } = ["raw-sql/*.sql"];
+    public string[] TowerDefense { get; set; } = ["tower-defense/*.json"];
 }
 
 public sealed class LoadedContentProject
@@ -25,5 +26,6 @@ public sealed class LoadedContentProject
     public IReadOnlyList<RecordDefinition> Records { get; init; } = [];
     public IReadOnlyList<ContentAssertionDefinition> Assertions { get; init; } = [];
     public IReadOnlyList<string> RawSqlFiles { get; init; } = [];
+    public IReadOnlyList<string> TowerDefenseFiles { get; init; } = [];
     public IReadOnlyList<string> SourceFiles { get; init; } = [];
 }

@@ -26,7 +26,10 @@ public class NpcSpawnerSpawnEffect : EffectTemplate
 
         // aaemu-cluster#92 (#99): search both the normal and the pinned/event spawner dictionaries,
         // effects referencing pinned spawner template ids could not find them before.
-        var spawners = caster.ParentWorld.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(SpawnerId);
+        var eventToken = (caster as Npc)?.TowerDefenseSpawnToken;
+        var spawners = eventToken == null
+            ? caster.ParentWorld.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(SpawnerId)
+            : caster.ParentWorld.SpawnManager.GetEventSpawnersBySpawnerTemplateId(SpawnerId, eventToken.SiteKey);
         if (spawners is not { Count: not 0 })
             Logger.Info($"NpcSpawnerSpawnEffect: SpawnerId={SpawnerId} not found in spawners.");
         else
@@ -47,9 +50,20 @@ public class NpcSpawnerSpawnEffect : EffectTemplate
 
                 // spawn in the same world as for caster
                 spawner.Position.WorldId = caster.Transform.WorldId;
-                var npc = spawner.ForceSpawn(0);
+                var childToken = eventToken == null
+                    ? null
+                    : eventToken with
+                    {
+                        ActionKey = $"{eventToken.ActionKey}/effect:{Id}/placement:{spawner.EventPlacementId}",
+                        CreatorObjId = caster.ObjId,
+                        DespawnOnCreatorDeath = DespawnOnCreatorDeath
+                    };
+                var npc = childToken == null ? spawner.ForceSpawn(0) : spawner.ForceSpawnOwned(childToken);
                 if (npc == null)
                     continue;
+
+                if (childToken != null)
+                    spawner.Deactivate();
 
                 npc.Spawner.RespawnTime = 0; // запретим респавн
                 Logger.Info($"NpcSpawnerSpawnEffect: Do Spawn effect id={Id}, Npc unitId={spawner.UnitId} spawnerId={SpawnerId} worldId={caster.Transform.WorldId}");

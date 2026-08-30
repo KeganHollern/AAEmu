@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
 using AAEmu.ContentStudio.Core.Models;
 using Microsoft.Data.Sqlite;
 
@@ -45,6 +46,7 @@ public sealed class BuildService
         var manifestPath = Path.Combine(outputDirectory, "content-build-manifest.json");
         var reportPath = Path.Combine(outputDirectory, "content-build-report.md");
         var auditSqlPath = Path.Combine(outputDirectory, "content-build-audit.sql");
+        var towerDefenseBundlePath = Path.Combine(outputDirectory, $"tower-defense.{project.Definition.Key}.json");
 
         try
         {
@@ -52,6 +54,12 @@ public sealed class BuildService
             ThrowIfInvalid(_baselineVerifier.Verify(stagingPath, descriptor), "Baseline verification failed");
             ThrowIfInvalid(_validator.ValidateProject(project, stagingPath), "Project validation failed");
             var changes = Compile(stagingPath, project, sourceContents);
+            var towerDefenseBundle = CompileTowerDefenseBundle(project, sourceContents);
+            if (towerDefenseBundle != null)
+            {
+                changes.AddRange(towerDefenseBundle.EventKeys.Select(key =>
+                    new ContentChange("tower-defense", key, 0, "bundle", "Validated runtime event manifest")));
+            }
             var validation = _validator.ValidateBuiltDatabase(stagingPath, project);
             ThrowIfInvalid(validation, "Compiled database validation failed");
             validation.Issues = validation.Issues
@@ -76,6 +84,9 @@ public sealed class BuildService
                 RecipeCount = project.Recipes.Count,
                 WorkbenchCount = project.Workbenches.Count,
                 AssertionCount = project.Assertions.Count,
+                TowerDefenseEventCount = towerDefenseBundle?.EventKeys.Count ?? 0,
+                TowerDefenseBundlePath = towerDefenseBundle == null ? null : towerDefenseBundlePath,
+                TowerDefenseBundleSha256 = towerDefenseBundle?.Hash,
                 Validation = validation,
                 Changes = changes
             };
@@ -83,19 +94,24 @@ public sealed class BuildService
             var reportContents = CreateReport(manifest);
             var auditSqlContents = CreateAuditSql(project);
             _beforePromotion?.Invoke();
-            PublishBuildOutputs(
-            [
+            var outputs = new List<BuildOutput>
+            {
                 new BuildOutput(artifactPath, stagingPath, null, manifest.ArtifactSha256),
                 new BuildOutput(manifestPath, null, manifestContents, HashText(manifestContents)),
                 new BuildOutput(reportPath, null, reportContents, HashText(reportContents)),
                 new BuildOutput(auditSqlPath, null, auditSqlContents, HashText(auditSqlContents))
-            ], () => EnsureSourcesUnchanged(request.ProjectPath, sourceSnapshots));
+            };
+            if (towerDefenseBundle != null)
+                outputs.Add(new BuildOutput(towerDefenseBundlePath, null,
+                    towerDefenseBundle.Contents, towerDefenseBundle.Hash));
+            PublishBuildOutputs(outputs, () => EnsureSourcesUnchanged(request.ProjectPath, sourceSnapshots));
             return new ContentBuildResult
             {
                 ArtifactPath = artifactPath,
                 ManifestPath = manifestPath,
                 ReportPath = reportPath,
                 AuditSqlPath = auditSqlPath,
+                TowerDefenseBundlePath = towerDefenseBundle == null ? null : towerDefenseBundlePath,
                 Manifest = manifest
             };
         }
@@ -106,6 +122,55 @@ public sealed class BuildService
                 Directory.Delete(stagingDirectory, true);
             }
         }
+    }
+
+    private static TowerDefenseBundle? CompileTowerDefenseBundle(
+        LoadedContentProject project,
+        IReadOnlyDictionary<string, string> sourceContents)
+    {
+        if (project.TowerDefenseFiles.Count == 0)
+            return null;
+
+        var events = new JsonArray();
+        var eventKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in project.TowerDefenseFiles.Order(StringComparer.OrdinalIgnoreCase))
+        {
+            JsonObject root;
+            try
+            {
+                root = JsonNode.Parse(sourceContents[path]) as JsonObject
+                    ?? throw new ContentStudioException($"Tower-defense source must be a JSON object: {path}");
+            }
+            catch (Exception exception) when (exception is not ContentStudioException)
+            {
+                throw new ContentStudioException($"Unable to parse tower-defense source {path}: {exception.Message}", exception);
+            }
+
+            if (root["schemaVersion"]?.GetValue<int>() != 1 || root["events"] is not JsonArray sourceEvents)
+                throw new ContentStudioException($"Tower-defense source must use schemaVersion 1 and contain an events array: {path}");
+            foreach (var node in sourceEvents)
+            {
+                if (node is not JsonObject eventNode ||
+                    string.IsNullOrWhiteSpace(eventNode["key"]?.GetValue<string>()) ||
+                    eventNode["towerDefId"]?.GetValue<uint>() is not > 0 ||
+                    string.IsNullOrWhiteSpace(eventNode["worldTemplate"]?.GetValue<string>()) ||
+                    eventNode["sites"] is not JsonArray { Count: > 0 })
+                {
+                    throw new ContentStudioException($"Tower-defense source has an event with invalid required fields: {path}");
+                }
+                var key = eventNode["key"]!.GetValue<string>();
+                if (!eventKeys.Add(key))
+                    throw new ContentStudioException($"Tower-defense event key '{key}' is duplicated across project sources.");
+                events.Add(eventNode.DeepClone());
+            }
+        }
+
+        var contents = new JsonObject
+        {
+            ["schemaVersion"] = 1,
+            ["events"] = events
+        }.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
+        return new TowerDefenseBundle(contents, HashText(contents), eventKeys.Order(StringComparer.OrdinalIgnoreCase).ToList());
     }
 
     private static List<ContentChange> Compile(
@@ -302,6 +367,9 @@ public sealed class BuildService
         builder.AppendLine($"- Recipes: {manifest.RecipeCount}");
         builder.AppendLine($"- Workbenches: {manifest.WorkbenchCount}").AppendLine();
         builder.AppendLine($"- Artifact assertions: {manifest.AssertionCount}");
+        builder.AppendLine($"- Tower-defense events: {manifest.TowerDefenseEventCount}");
+        if (manifest.TowerDefenseBundlePath != null)
+            builder.AppendLine($"- Tower-defense runtime bundle: `{manifest.TowerDefenseBundlePath}` / `{manifest.TowerDefenseBundleSha256}`");
         builder.AppendLine($"- Other changed or copied entries: {manifest.Changes.Count(change => change.EntityType == "record")}").AppendLine();
         builder.AppendLine("## Changes").AppendLine();
         foreach (var change in manifest.Changes)
@@ -372,4 +440,5 @@ public sealed class BuildService
 
     private sealed record SourceSnapshot(string Path, byte[] Bytes, string Contents, string Hash);
     private sealed record BuildOutput(string Path, string? SourcePath, string? Contents, string ExpectedSha256);
+    private sealed record TowerDefenseBundle(string Contents, string Hash, IReadOnlyList<string> EventKeys);
 }

@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.TowerDefs;
 using Microsoft.Extensions.Options;
 using NLog;
 
@@ -33,6 +34,8 @@ public class TimeManager : Singleton<TimeManager>, IObservable<float>, ITimeMana
     private double _lastSourceHours;
     private double? _triggerHighWaterSourceHours;
     private float? _triggerHighWaterDisplayHours;
+
+    public event Action<WorldClockTick> WorldClockChanged = delegate { };
 
     public TimeManager(
         ITickManager tickManager,
@@ -81,6 +84,17 @@ public class TimeManager : Singleton<TimeManager>, IObservable<float>, ITimeMana
         {
             lock (_lock)
                 return _clientSpeed;
+        }
+    }
+
+    public WorldClockSnapshot GetSnapshot()
+    {
+        lock (_lock)
+        {
+            ConfigureClock();
+            var observedAt = _timeProvider.GetUtcNow();
+            var sample = CalculateClockSample(observedAt);
+            return ToSnapshot(sample, observedAt);
         }
     }
 
@@ -148,6 +162,7 @@ public class TimeManager : Singleton<TimeManager>, IObservable<float>, ITimeMana
         float oldHours;
         float newHours;
         List<IObserver<float>> observers;
+        WorldClockTick clockTick;
         lock (_lock)
         {
             ConfigureClock();
@@ -166,9 +181,15 @@ public class TimeManager : Singleton<TimeManager>, IObservable<float>, ITimeMana
             _triggerHighWaterSourceHours = null;
             _triggerHighWaterDisplayHours = null;
             observers = [.. _observers];
+            var newSample = currentSample with { Hours = newHours };
+            clockTick = new WorldClockTick(
+                ToSnapshot(currentSample, utcNow),
+                ToSnapshot(newSample, utcNow),
+                true);
         }
 
         NotifyObservers(observers, newHours);
+        WorldClockChanged(clockTick);
         OnTimeOfDayChange(newHours, oldHours);
         return true;
     }
@@ -192,6 +213,7 @@ public class TimeManager : Singleton<TimeManager>, IObservable<float>, ITimeMana
         float oldHoursForEffects;
         bool processWorldEffects;
         List<IObserver<float>> observers;
+        WorldClockTick clockTick = default;
 
         lock (_lock)
         {
@@ -203,6 +225,16 @@ public class TimeManager : Singleton<TimeManager>, IObservable<float>, ITimeMana
             oldHoursForEffects = oldHours;
             processWorldEffects = TryGetWorldEffectWindow(sample, oldHours, ref oldHoursForEffects);
 
+            if (processWorldEffects)
+            {
+                var observedAt = _timeProvider.GetUtcNow();
+                var previousSample = new ClockSample(oldHoursForEffects, _lastSourceHours, null);
+                clockTick = new WorldClockTick(
+                    ToSnapshot(previousSample, observedAt),
+                    ToSnapshot(sample, observedAt),
+                    false);
+            }
+
             _time = sample.Hours * SecondsPerHour;
             _lastTimeHours = sample.Hours;
             _lastSourceHours = sample.SourceHours;
@@ -211,7 +243,10 @@ public class TimeManager : Singleton<TimeManager>, IObservable<float>, ITimeMana
 
         NotifyObservers(observers, sample.Hours);
         if (processWorldEffects)
+        {
+            WorldClockChanged(clockTick);
             OnTimeOfDayChange(sample.Hours, oldHoursForEffects);
+        }
     }
 
     private void ConfigureClock()
@@ -359,6 +394,13 @@ public class TimeManager : Singleton<TimeManager>, IObservable<float>, ITimeMana
         var normalized = hours % HoursPerDay;
         return (float)(normalized < 0d ? normalized + HoursPerDay : normalized);
     }
+
+    private static WorldClockSnapshot ToSnapshot(ClockSample sample, DateTimeOffset observedAt) =>
+        new(
+            sample.Hours,
+            (long)Math.Floor(sample.SourceHours / HoursPerDay),
+            sample.SourceHours,
+            observedAt);
 
     private static void NotifyObservers(IEnumerable<IObserver<float>> observers, float time)
     {

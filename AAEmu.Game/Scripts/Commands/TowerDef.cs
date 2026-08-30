@@ -1,8 +1,7 @@
-﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.TowerDefense;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
-using AAEmu.Game.Models.Game.TowerDefs;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
@@ -11,20 +10,13 @@ public class TowerDef : ICommand
 {
     public string[] CommandNames { get; set; } = ["towerdef", "tower_def"];
 
-    public void OnLoad()
-    {
-        CommandManager.Instance.Register(CommandNames, this);
-    }
+    public void OnLoad() => CommandManager.Instance.Register(CommandNames, this);
 
-    public string GetCommandLineHelp()
-    {
-        return "<action> <params>";
-    }
+    public string GetCommandLineHelp() =>
+        "<list|start|next|end> [event-key|tower-def-id] [site-key|reason]";
 
-    public string GetCommandHelpText()
-    {
-        return "Actions are: list, start, end, next";
-    }
+    public string GetCommandHelpText() =>
+        "Controls the authoritative tower-defense runtime. Event keys are shown by 'tower_def list'.";
 
     public void Execute(Character character, string[] args, IMessageOutput messageOutput)
     {
@@ -34,49 +26,79 @@ public class TowerDef : ICommand
             return;
         }
 
-        switch (args[0].ToLower())
+        var manager = TowerDefenseManager.Instance;
+        switch (args[0].ToLowerInvariant())
         {
             case "list":
-                CommandManager.SendNormalText(this, messageOutput, $"Not implemented");
+            {
+                foreach (var line in manager.GetEventDiagnostics())
+                    CommandManager.SendNormalText(this, messageOutput, line);
+                var active = manager.GetActiveOccurrences();
+                if (active.Count == 0)
+                {
+                    CommandManager.SendNormalText(this, messageOutput, "No tower-defense occurrences are active.");
+                    return;
+                }
+                foreach (var occurrence in active.OrderBy(value => value.Manifest.Key))
+                {
+                    var objectives = occurrence.Objectives.Count == 0
+                        ? "none"
+                        : string.Join(", ", occurrence.Objectives.Values.Select(value =>
+                            $"npc {value.TargetId}: {value.Current}/{value.Required}"));
+                    CommandManager.SendNormalText(this, messageOutput,
+                        $"{occurrence.Manifest.Key} def={occurrence.Definition.Id} site={occurrence.Site.Key} " +
+                        $"state={occurrence.Status} step={occurrence.CurrentStepOrdinal} objectives=[{objectives}] " +
+                        $"deadline={occurrence.HardDeadlineUtc:O}");
+                }
                 break;
+            }
             case "start":
-                if (!uint.TryParse(args[1], out var startId))
+                if (args.Length < 2)
                 {
+                    CommandManager.SendErrorText(this, messageOutput,
+                        "Usage: tower_def start <event-key|tower-def-id> [site-key]");
                     return;
                 }
-
-                var startPacket = new SCTowerDefStartPacket(new TowerDefKey { TowerDefId = startId, ZoneGroupId = 5 },
-                    character.Transform.ZoneId);
-                character.SendPacket(startPacket);
-                break;
-            case "end":
-                if (!uint.TryParse(args[1], out var endId))
-                {
-                    return;
-                }
-
-                var endPacket = new SCTowerDefEndPacket(new TowerDefKey { TowerDefId = endId, ZoneGroupId = 5 },
-                    character.Transform.ZoneId);
-                character.SendPacket(endPacket);
+                var siteKey = args.Length > 2 ? args[2] : null;
+                SendResult(messageOutput,
+                    manager.StartManual(args[1], siteKey, out var startMessage), startMessage);
                 break;
             case "next":
-                if (!uint.TryParse(args[1], out var nextId))
+                RunWithTarget(args, messageOutput, manager.AdvanceManual);
+                break;
+            case "end":
+                if (args.Length < 2)
                 {
+                    CommandManager.SendErrorText(this, messageOutput,
+                        "Usage: tower_def end <event-key|tower-def-id> [reason]");
                     return;
                 }
-
-                if (!uint.TryParse(args[2], out var step))
-                {
-                    return;
-                }
-
-                var nextPacket = new SCTowerDefWaveStartPacket(
-                    new TowerDefKey { TowerDefId = nextId, ZoneGroupId = 5 }, character.Transform.ZoneId, step);
-                character.SendPacket(nextPacket);
+                var reason = args.Length > 2 ? string.Join('_', args.Skip(2)) : "gm_cancelled";
+                SendResult(messageOutput, manager.EndManual(args[1], reason, out var endMessage), endMessage);
                 break;
             default:
-                CommandManager.SendErrorText(this, messageOutput, $"Unknown tower defense action {args[0]}");
+                CommandManager.SendErrorText(this, messageOutput, $"Unknown tower-defense action '{args[0]}'.");
                 break;
         }
+    }
+
+    private delegate bool TargetAction(string target, out string message);
+
+    private void RunWithTarget(string[] args, IMessageOutput output, TargetAction action)
+    {
+        if (args.Length < 2)
+        {
+            CommandManager.SendErrorText(this, output, "An event key or tower-def ID is required.");
+            return;
+        }
+        SendResult(output, action(args[1], out var message), message);
+    }
+
+    private void SendResult(IMessageOutput output, bool success, string message)
+    {
+        if (success)
+            CommandManager.SendNormalText(this, output, message);
+        else
+            CommandManager.SendErrorText(this, output, message);
     }
 }

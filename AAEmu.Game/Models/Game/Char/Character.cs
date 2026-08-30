@@ -8,6 +8,7 @@ using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Managers.TowerDefense;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Achievement.Enums;
@@ -1868,6 +1869,9 @@ public partial class Character : Unit, ICharacter
         {
             Expedition?.OnCharacterRefresh(this);
         }
+
+        if (lastZoneGroupId != newZoneGroupId && IsOnline)
+            TowerDefenseManager.SendSnapshotIfAvailable(this);
 
         if (newZone is { Closed: false })
         {

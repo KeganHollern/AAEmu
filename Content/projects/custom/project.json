@@ -10,5 +10,6 @@
     "workbenches": ["workbenches/*.json"],
     "records": ["records/*.json"],
     "assertions": ["assertions/*.json"],
-    "rawSql": ["raw-sql/*.sql"]
+    "rawSql": ["raw-sql/*.sql"],
+    "towerDefense": ["tower-defense/*.json"]
 }

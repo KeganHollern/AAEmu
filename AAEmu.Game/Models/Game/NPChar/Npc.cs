@@ -17,6 +17,7 @@ using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
+using AAEmu.Game.Models.Game.TowerDefs;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.Game.Units.Static;
@@ -37,6 +38,7 @@ public partial class Npc : Unit
     public NpcTemplate Template { get; set; }
     //public Item[] Equip { get; set; }
     public NpcSpawner Spawner { get; set; }
+    public TowerDefenseSpawnToken TowerDefenseSpawnToken { get; internal set; }
     public DateTime DeadTime { get; set; } = DateTime.MinValue;
 
     /// <summary>

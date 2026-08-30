@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS `tower_def_occurrences` (
+    `occurrence_key` VARCHAR(191) NOT NULL,
+    `event_key` VARCHAR(128) NOT NULL,
+    `tower_def_id` INT UNSIGNED NOT NULL,
+    `world_template` VARCHAR(64) NOT NULL,
+    `world_instance_id` INT UNSIGNED NOT NULL,
+    `zone_group_id` INT UNSIGNED NOT NULL,
+    `site_key` VARCHAR(128) NOT NULL,
+    `status` VARCHAR(32) NOT NULL,
+    `state_generation` INT NOT NULL DEFAULT 0,
+    `current_step` INT NOT NULL DEFAULT -1,
+    `scheduled_at` DATETIME(6) NOT NULL,
+    `started_at` DATETIME(6) NOT NULL,
+    `step_entered_at` DATETIME(6) NULL,
+    `hard_deadline` DATETIME(6) NOT NULL,
+    `definition_hash` CHAR(64) NOT NULL,
+    `objective_progress` LONGTEXT NULL,
+    `terminal_reason` VARCHAR(255) NULL,
+    `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (`occurrence_key`),
+    INDEX `idx_tower_def_occurrences_active` (`status`, `world_instance_id`),
+    INDEX `idx_tower_def_occurrences_event` (`event_key`, `scheduled_at`)
+) ENGINE=InnoDB DEFAULT COLLATE='utf8mb4_general_ci';
