@@ -11,9 +11,13 @@ using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.UnitTests.Utils.Mocks;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+
+using AchievementDataBuilder = AAEmu.UnitTests.Game.Models.Game.Char.CharacterAchievementsTests.AchievementDataBuilder;
 
 namespace AAEmu.UnitTests.Game.Core.Packets.C2G;
 
@@ -24,6 +28,8 @@ public sealed class CSNotifyInGameCompletedPacketTests
         typeof(Singleton<WorldManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
     private static readonly FieldInfo s_timeManagerInstanceField =
         typeof(Singleton<TimeManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+    private static readonly FieldInfo s_achievementsField =
+        typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!;
 
     private WorldManager _previousWorldManager;
     private TimeManager _previousTimeManager;
@@ -74,22 +80,41 @@ public sealed class CSNotifyInGameCompletedPacketTests
     }
 
     [Test]
-    public void Read_InitialLoginSequence_SendsCooldownSnapshotOnlyAfterInGameCompleted()
+    public void Read_InitialLoginSequence_SendsPersistentSnapshotsOnlyAfterInGameCompleted()
     {
+        using var data = new AchievementDataBuilder();
+        data.AddRecord(100, CharRecordKind.KillNpc, 1);
+        data.AddAchievement(1000, 1, false);
+        data.AddObjective(1, 1000, 100);
+        var completedAt = new DateTimeOffset(2026, 8, 29, 18, 0, 0, TimeSpan.Zero);
         var session = Mock.Of<ISession>();
         var connection = new GameConnection(session.Object);
-        var character = new CharacterMock { Connection = connection };
+        var character = new CharacterMock();
+        var achievements = new CharacterAchievements(
+            character,
+            data.Build(),
+            new FakeTimeProvider(completedAt),
+            () => true);
+        achievements.UpdateMaximum(CharRecordKind.KillNpc, 1, 0, 1);
+        s_achievementsField.SetValue(character, achievements);
+        character.Connection = connection;
         character.Cooldowns.AddCooldown(100, 30_000);
         connection.ActiveChar = character;
 
         var instanceLoadedPacket = new CSInstanceLoadedPacket { Connection = connection };
         instanceLoadedPacket.Read(new PacketStream());
         session.SendPacket(Is<byte[]>(IsCooldownPacket)).WasCalled(Times.Never);
+        session.SendPacket(Is<byte[]>(HasAchievementsOpcode)).WasCalled(Times.Never);
+        session.SendPacket(Is<byte[]>(packet => IsAchievementsPacket(packet, 1000, 1, completedAt.UtcDateTime)))
+            .WasCalled(Times.Never);
 
         var inGameCompletedPacket = new CSNotifyInGameCompletedPacket { Connection = connection };
         inGameCompletedPacket.Read(new PacketStream());
 
         session.SendPacket(Is<byte[]>(IsCooldownPacket)).WasCalled(Times.Once);
+        session.SendPacket(Is<byte[]>(HasAchievementsOpcode)).WasCalled(Times.Once);
+        session.SendPacket(Is<byte[]>(packet => IsAchievementsPacket(packet, 1000, 1, completedAt.UtcDateTime)))
+            .WasCalled(Times.Once);
     }
 
     [Test]
@@ -121,5 +146,22 @@ public sealed class CSNotifyInGameCompletedPacketTests
                Math.Abs(BitConverter.ToSingle(packet, 12) - 1f / 3600f) < 0.0000001f &&
                BitConverter.ToSingle(packet, 16) == 0f &&
                BitConverter.ToSingle(packet, 20) == 24f;
+    }
+
+    private static bool IsAchievementsPacket(byte[] packet, uint id, uint amount, DateTime completedAt)
+    {
+        return packet.Length == 28 &&
+               HasAchievementsOpcode(packet) &&
+               BitConverter.ToInt32(packet, 8) == 1 &&
+               BitConverter.ToUInt32(packet, 12) == id &&
+               BitConverter.ToUInt32(packet, 16) == amount &&
+               BitConverter.ToInt64(packet, 20) == Helpers.UnixTime(completedAt);
+    }
+
+    private static bool HasAchievementsOpcode(byte[] packet)
+    {
+        return packet.Length >= 8 &&
+               packet[6] == (byte)(SCOffsets.SCAchievementsPacket & 0xff) &&
+               packet[7] == (byte)(SCOffsets.SCAchievementsPacket >> 8);
     }
 }

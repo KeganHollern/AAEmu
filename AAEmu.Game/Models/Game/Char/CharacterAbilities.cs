@@ -44,7 +44,10 @@ public class CharacterAbilities
     {
         // TODO SCAbilityExpChangedPacket
         if (type != AbilityType.None)
+        {
             Abilities[type].Exp += exp;
+            Owner.Achievements?.UpdateAbilityLevel(type, GetAbilityLevel(type));
+        }
     }
 
     public void AddActiveExp(int exp)
@@ -52,11 +55,20 @@ public class CharacterAbilities
         // TODO SCExpChangedPacket
         var maxLevelExp = ExperienceManager.Instance.GetExpForLevel(ExperienceManager.Instance.MaxPlayerLevel);
         if (Owner.Ability1 != AbilityType.None)
+        {
             Abilities[Owner.Ability1].Exp = Math.Min(Abilities[Owner.Ability1].Exp + exp, maxLevelExp);
+            Owner.Achievements?.UpdateAbilityLevel(Owner.Ability1, GetAbilityLevel(Owner.Ability1));
+        }
         if (Owner.Ability2 != AbilityType.None)
+        {
             Abilities[Owner.Ability2].Exp = Math.Min(Abilities[Owner.Ability2].Exp + exp, maxLevelExp);
+            Owner.Achievements?.UpdateAbilityLevel(Owner.Ability2, GetAbilityLevel(Owner.Ability2));
+        }
         if (Owner.Ability3 != AbilityType.None)
+        {
             Abilities[Owner.Ability3].Exp = Math.Min(Abilities[Owner.Ability3].Exp + exp, maxLevelExp);
+            Owner.Achievements?.UpdateAbilityLevel(Owner.Ability3, GetAbilityLevel(Owner.Ability3));
+        }
     }
 
     public void Swap(AbilityType oldAbilityId, AbilityType abilityId)
@@ -102,6 +114,10 @@ public class CharacterAbilities
 
         if (oldAbilityId != AbilityType.None)
             Abilities[oldAbilityId].Order = 255;
+
+        foreach (var ability in Abilities.Values)
+            Owner.Achievements?.UpdateAbilityLevel(ability.Id, GetAbilityLevel(ability.Id));
+
         Owner.BroadcastPacket(new SCAbilitySwappedPacket(Owner.ObjId, oldAbilityId, abilityId), true);
     }
 
