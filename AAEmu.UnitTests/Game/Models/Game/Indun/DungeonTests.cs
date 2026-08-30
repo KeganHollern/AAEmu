@@ -35,4 +35,34 @@ public class DungeonTests
     {
         await Assert.That(Dungeon.IsPastEmptyGrace(Now - TimeSpan.FromHours(1), Now)).IsTrue();
     }
+
+    [Test]
+    [Arguments(false, false, false, 10u, 10u, true, false, true)]
+    [Arguments(false, false, false, 10u, 10u, false, true, true)]
+    [Arguments(false, false, false, 10u, 10u, false, false, false)]
+    [Arguments(false, false, false, 20u, 10u, true, false, false)]
+    [Arguments(true, false, false, 10u, 10u, true, false, false)]
+    [Arguments(false, true, false, 10u, 10u, true, false, false)]
+    [Arguments(false, false, true, 10u, 10u, true, false, false)]
+    public async Task CanPromoteActiveSoloToTeam_UsesOwnerAndActivityState(
+        bool isDestroyed,
+        bool isSystem,
+        bool isTeamOwned,
+        uint characterOwnerId,
+        uint teamOwnerId,
+        bool hasPlayers,
+        bool hasEnterRequests,
+        bool expected)
+    {
+        var result = Dungeon.CanPromoteActiveSoloToTeam(
+            isDestroyed,
+            isSystem,
+            isTeamOwned,
+            characterOwnerId,
+            teamOwnerId,
+            hasPlayers,
+            hasEnterRequests);
+
+        await Assert.That(result).IsEqualTo(expected);
+    }
 }

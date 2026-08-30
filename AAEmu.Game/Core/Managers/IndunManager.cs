@@ -28,6 +28,8 @@ public class IndunManager(
     private Dictionary<uint, Dictionary<uint, List<DateTimeOffset>>> CreationHistory { get; } = [];
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
     private readonly object _lock = new();
+    // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
+    private readonly object _dungeonRequestLock = new();
 
     public void Initialize()
     {
@@ -147,6 +149,24 @@ public class IndunManager(
     /// <returns></returns>
     public bool RequestDungeonInstance(Character character, uint zoneId, uint channelId)
     {
+        return RunDungeonRequestSerialized(() => RequestDungeonInstanceCore(character, zoneId, channelId));
+    }
+
+    /// <summary>
+    /// Serializes dungeon owner lookup and creation so concurrent party requests cannot publish
+    /// separate instances from the same stale world snapshot. (aaemu-cluster#102)
+    /// </summary>
+    internal T RunDungeonRequestSerialized<T>(Func<T> request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        lock (_dungeonRequestLock)
+        {
+            return request();
+        }
+    }
+
+    private bool RequestDungeonInstanceCore(Character character, uint zoneId, uint channelId)
+    {
         if (character == null)
         {
             Logger.Info($"Player requested a dungeon, but is now offline.");
@@ -178,6 +198,20 @@ public class IndunManager(
         }
 
         var possibleTargetInstances = GetExistingDungeonsByZoneKey(targetZone.ZoneKey);
+
+        // A party can form while its owner is still inside a solo dungeon. Promote that active
+        // instance before the owner lookup so a concurrent teammate cannot create a second one.
+        // Empty solo instances keep their existing stale-instance cleanup behavior.
+        if (team != null && !possibleTargetInstances.Any(instance =>
+                !instance.IsDestroyed && instance.World != null && !instance.IsSystem &&
+                instance.IsTeamOwned && instance.GetOwnerTeam?.Id == team.Id))
+        {
+            foreach (var possibleTargetInstance in possibleTargetInstances)
+            {
+                if (possibleTargetInstance.TryPromoteActiveSoloToTeam(team))
+                    break;
+            }
+        }
 
         // 1 - Requests already being processed and players already inside do not create a new instance.
         foreach (var possibleTargetInstance in possibleTargetInstances)
@@ -234,9 +268,12 @@ public class IndunManager(
             foreach (var possibleTargetInstance in possibleTargetInstances)
             {
                 if (possibleTargetInstance.IsDestroyed || possibleTargetInstance.World == null ||
-                    possibleTargetInstance.IsSystem || !possibleTargetInstance.IsTeamOwned)
-                    continue;
-                if (possibleTargetInstance.GetOwnerTeam?.Id != team.Id)
+                    possibleTargetInstance.IsSystem || !IsOwnedByRequester(
+                        possibleTargetInstance.IsTeamOwned,
+                        possibleTargetInstance.GetCharacterOwner?.Id,
+                        possibleTargetInstance.GetOwnerTeam?.Id,
+                        character.Id,
+                        team.Id))
                     continue;
 
                 // Join your team's dungeon (if enough room)
@@ -262,9 +299,12 @@ public class IndunManager(
             foreach (var possibleTargetInstance in possibleTargetInstances)
             {
                 if (possibleTargetInstance.IsDestroyed || possibleTargetInstance.World == null ||
-                    possibleTargetInstance.IsSystem || possibleTargetInstance.IsTeamOwned)
-                    continue;
-                if (possibleTargetInstance.GetCharacterOwner?.Id != character.Id)
+                    possibleTargetInstance.IsSystem || !IsOwnedByRequester(
+                        possibleTargetInstance.IsTeamOwned,
+                        possibleTargetInstance.GetCharacterOwner?.Id,
+                        possibleTargetInstance.GetOwnerTeam?.Id,
+                        character.Id,
+                        null))
                     continue;
 
                 // Re-enter own dungeon if not full yet (MaxPlayers still applies, e.g. Sharpwind Mines = 3)
@@ -284,13 +324,54 @@ public class IndunManager(
 
         // 5 - If none of the above applies, actually create a new dungeon
         Logger.Info($"Creating a new dungeon for player {character.Name} ({character.Id}), zone: {dungeonZone}, channel: {channelId}");
-        if (!CreateDungeonInstance(dungeonZone, character, channelId, out var dungeon))
+        if (!CreateDungeonInstance(dungeonZone, character, channelId, team, out var dungeon))
         {
             Logger.Error($"Failed to create a new dungeon for player {character.Name} ({character.Id}), zone: {dungeonZone}, channel: {channelId}");
             return false;
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Matches dungeon reuse by its owner, never by a character's access list. (aaemu-cluster#102)
+    /// </summary>
+    internal static bool IsOwnedByRequester(
+        bool candidateIsTeamOwned,
+        uint? candidateCharacterOwnerId,
+        uint? candidateTeamOwnerId,
+        uint requesterCharacterId,
+        uint? requesterTeamId)
+    {
+        return requesterTeamId.HasValue
+            ? candidateIsTeamOwned && candidateTeamOwnerId == requesterTeamId
+            : !candidateIsTeamOwned && candidateCharacterOwnerId == requesterCharacterId;
+    }
+
+    /// <summary>
+    /// Promotes a live solo dungeon through the same critical section as dungeon requests.
+    /// </summary>
+    internal bool TryPromoteDungeonToTeam(Dungeon dungeon, Team team)
+    {
+        if (dungeon == null || team == null)
+            return false;
+
+        return RunDungeonRequestSerialized(() =>
+        {
+            var hasTeamDungeon = worldManager.GetWorlds().Any(world =>
+                !ReferenceEquals(world.DungeonInstance, dungeon) &&
+                world.DungeonInstance is
+                {
+                    IsDestroyed: false,
+                    IsSystem: false,
+                    IsTeamOwned: true
+                } existingDungeon &&
+                existingDungeon.World != null &&
+                existingDungeon.GetZoneGroupId == dungeon.GetZoneGroupId &&
+                existingDungeon.GetOwnerTeam?.Id == team.Id);
+
+            return !hasTeamDungeon && dungeon.TryPromoteActiveSoloToTeam(team);
+        });
     }
 
     /// <summary>
@@ -376,7 +457,7 @@ public class IndunManager(
     /// <param name="channelId"></param>
     /// <param name="dungeon"></param>
     /// <returns></returns>
-    private bool CreateDungeonInstance(IndunZone dungeonZone, Character character, uint channelId, out Dungeon dungeon)
+    private bool CreateDungeonInstance(IndunZone dungeonZone, Character character, uint channelId, Team team, out Dungeon dungeon)
     {
         dungeon = null;
 
@@ -388,7 +469,6 @@ public class IndunManager(
             return false;
         }
 
-        var team = teamManager.GetTeamByObjId(character.ObjId);
         Logger.Info($"Requesting instance, characterId: {character.Id}, zoneGroupId: {dungeonZone.ZoneGroupId}");
 
         if (!TryReserveDungeonCreation(character.Id, dungeonZone.ZoneGroupId, out var reservationTime))
