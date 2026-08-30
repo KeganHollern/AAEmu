@@ -31,13 +31,13 @@ public class QuestActConReportDoodad(QuestComponentTemplate parentComponent) : Q
 
     public override void FinalizeQuest(Quest quest, QuestAct questAct)
     {
-        quest.Owner.Events.OnReportDoodad += questAct.OnReportDoodad;
+        quest.Owner.Events.OnReportDoodad -= questAct.OnReportDoodad;
         base.FinalizeQuest(quest, questAct);
     }
 
     public override void OnReportDoodad(QuestAct questAct, object sender, OnReportDoodadArgs args)
     {
-        if (questAct.Id != ActId || args.DoodadId != DoodadId)
+        if (questAct.QuestComponent.Parent.Parent.TemplateId != args.QuestId || args.DoodadId != DoodadId)
             return;
 
         // This check is needed so that turning in a quest at a Doodad doesn't complete all active quests that
@@ -51,8 +51,9 @@ public class QuestActConReportDoodad(QuestComponentTemplate parentComponent) : Q
         if (!isReady)
             return;
 
+        questAct.QuestComponent.Parent.Parent.SelectedRewardIndex = args.Selected;
         questAct.OverrideObjectiveCompleted = true;
-        if (questAct.QuestComponent.Parent.Parent.Step == QuestComponentKind.Progress)
+        if (questAct.QuestComponent.Parent.Parent.Step <= QuestComponentKind.Progress)
             questAct.QuestComponent.Parent.Parent.Step = QuestComponentKind.Ready;
         questAct.RequestEvaluation(); // Manual request since this does not use objective counters to trigger
     }

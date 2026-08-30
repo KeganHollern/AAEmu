@@ -70,6 +70,33 @@ public partial class QuestManager
     }
 
     /// <summary>
+    /// Completes an eligible quest with its reduced early-completion reward.
+    /// The packet object identifies the objective context, not the report source.
+    /// </summary>
+    public bool TryCompleteQuestAsLetItDone(ICharacter owner, uint questContextId, uint objectId, int selected)
+    {
+        if (!owner.Quests.ActiveQuests.TryGetValue(questContextId, out var quest) ||
+            !quest.Template.LetItDone ||
+            quest.Step != QuestComponentKind.Progress ||
+            quest.GetQuestObjectiveStatus() < QuestObjectiveStatus.CanEarlyComplete)
+            return false;
+
+        Logger.Debug(
+            "Accepted early quest completion: EventName={EventName}, QuestId={QuestId}, ContextObjectId={ContextObjectId}, " +
+            "CharacterId={CharacterId}, CharacterObjectId={CharacterObjectId}, CharacterName={CharacterName}",
+            "quest.early_completion.accepted",
+            questContextId,
+            objectId,
+            owner.Id,
+            owner.ObjId,
+            owner.Name);
+
+        quest.SelectedRewardIndex = selected;
+        quest.Step = QuestComponentKind.Reward;
+        return true;
+    }
+
+    /// <summary>
     /// Trigger the quest events for handling the consumption or reduction of items
     /// </summary>
     /// <param name="owner"></param>

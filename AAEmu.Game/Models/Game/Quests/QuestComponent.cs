@@ -1,5 +1,4 @@
-﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Models.Game.Quests.Static;
+﻿using AAEmu.Game.Models.Game.Quests.Static;
 
 namespace AAEmu.Game.Models.Game.Quests;
 
@@ -22,8 +21,7 @@ public class QuestComponent : IQuestComponent
     {
         Parent = parent;
         Template = template;
-        var actTemplateList = QuestManager.Instance.GetActsInComponent(Template.Id);
-        foreach (var questActTemplate in actTemplateList)
+        foreach (var questActTemplate in Template.ActTemplates)
         {
             var newAct = new QuestAct(this, questActTemplate);
             Acts.Add(newAct);

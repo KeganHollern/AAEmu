@@ -92,6 +92,9 @@ public class CharacterQuests(Character owner)
             return false;
         }
 
+        if (!forcibly && !IsValidQuestAcceptor(template, questAcceptorType, acceptorId))
+            return RejectQuestAcceptor(questId, questAcceptorType, 0, acceptorId, "template_mismatch");
+
         if (!forcibly && !CanAcceptSupplyItems(template))
             return false;
 
@@ -177,7 +180,17 @@ public class CharacterQuests(Character owner)
     /// <returns></returns>
     public bool AddQuestFromNpc(uint questId, uint npcObjId)
     {
-        var npc = Owner.ParentWorld.GetNpc(npcObjId);
+        var npc = Owner.ParentWorld?.GetNpc(npcObjId);
+        if (npc == null)
+            return RejectQuestAcceptor(questId, QuestAcceptorType.Npc, npcObjId, 0, "object_missing");
+
+        var template = QuestManager.Instance.GetTemplate(questId);
+        if (template == null)
+            return AddQuest(questId, false, QuestAcceptorType.Npc, npc.TemplateId);
+
+        if (!IsValidQuestAcceptor(template, QuestAcceptorType.Npc, npc.TemplateId))
+            return RejectQuestAcceptor(questId, QuestAcceptorType.Npc, npcObjId, npc.TemplateId, "template_mismatch");
+
         Owner.CurrentTarget = npc;
         return AddQuest(questId, false, QuestAcceptorType.Npc, npc.TemplateId);
     }
@@ -190,8 +203,77 @@ public class CharacterQuests(Character owner)
     /// <returns></returns>
     public bool AddQuestFromDoodad(uint questId, uint doodadObjId)
     {
-        var doodad = Owner.ParentWorld.GetDoodad(doodadObjId);
+        var doodad = Owner.ParentWorld?.GetDoodad(doodadObjId);
+        if (doodad == null)
+            return RejectQuestAcceptor(questId, QuestAcceptorType.Doodad, doodadObjId, 0, "object_missing");
+
+        var template = QuestManager.Instance.GetTemplate(questId);
+        if (template == null)
+            return AddQuest(questId, false, QuestAcceptorType.Doodad, doodad.TemplateId);
+
+        if (!IsValidQuestAcceptor(template, QuestAcceptorType.Doodad, doodad.TemplateId))
+            return RejectQuestAcceptor(questId, QuestAcceptorType.Doodad, doodadObjId, doodad.TemplateId, "template_mismatch");
+
         return AddQuest(questId, false, QuestAcceptorType.Doodad, doodad.TemplateId);
+    }
+
+    internal static bool IsValidQuestAcceptor(QuestTemplate template, QuestAcceptorType acceptorType, uint acceptorId)
+    {
+        if (acceptorType is not (QuestAcceptorType.Npc or QuestAcceptorType.Doodad))
+            return true;
+
+        var startActs = template.GetComponents(QuestComponentKind.Start)
+            .SelectMany(component => component.ActTemplates)
+            .ToArray();
+        var hasExplicitWorldAcceptor = startActs.Any(act => act is
+            QuestActConAcceptNpc or
+            QuestActConAcceptNpcEmotion or
+            QuestActConAcceptNpcKill or
+            QuestActConAcceptDoodad);
+
+        if (!hasExplicitWorldAcceptor)
+            return true;
+
+        return acceptorType switch
+        {
+            QuestAcceptorType.Npc => startActs.Any(act => act switch
+            {
+                QuestActConAcceptNpc acceptNpc => acceptNpc.NpcId == acceptorId,
+                QuestActConAcceptNpcEmotion acceptNpcEmotion => acceptNpcEmotion.NpcId == acceptorId,
+                QuestActConAcceptNpcKill acceptNpcKill => acceptNpcKill.NpcId == acceptorId,
+                _ => false
+            }),
+            QuestAcceptorType.Doodad => startActs.Any(act =>
+                act is QuestActConAcceptDoodad acceptDoodad && acceptDoodad.DoodadId == acceptorId),
+            _ => true
+        };
+    }
+
+    private bool RejectQuestAcceptor(
+        uint questId,
+        QuestAcceptorType acceptorType,
+        uint objectId,
+        uint templateId,
+        string reason)
+    {
+        Logger.Warn(
+            "Rejected quest acceptor: EventName={EventName}, Reason={Reason}, QuestId={QuestId}, " +
+            "AcceptorType={AcceptorType}, ObjectId={ObjectId}, TemplateId={TemplateId}, " +
+            "CharacterId={CharacterId}, CharacterObjectId={CharacterObjectId}, CharacterName={CharacterName}, " +
+            "WorldId={WorldId}, InstanceId={InstanceId}, ZoneId={ZoneId}",
+            "quest.acceptor.rejected",
+            reason,
+            questId,
+            acceptorType,
+            objectId,
+            templateId,
+            Owner.Id,
+            Owner.ObjId,
+            Owner.Name,
+            Owner.ParentWorld?.Template?.Id ?? 0,
+            Owner.ParentWorld?.Id ?? 0,
+            Owner.Transform?.ZoneId ?? 0);
+        return false;
     }
 
     /// <summary>
@@ -780,22 +862,6 @@ public class CharacterQuests(Character owner)
                 QuestDetail.DailyLivelihood
             ], sendPacketsIfChanged
         );
-    }
-
-    public void TryCompleteQuestAsLetItDone(uint questId, int selectedReward)
-    {
-        if (!ActiveQuests.TryGetValue(questId, out var quest))
-            return; // Quest not active
-
-        if (quest.Template.LetItDone == false)
-            return; // Quest doesn't have early complete function
-
-        if (quest.GetQuestObjectiveStatus() < QuestObjectiveStatus.CanEarlyComplete)
-            return; // Quest not ready to turn in yet
-
-        // Go to reward step
-        quest.SelectedRewardIndex = selectedReward;
-        quest.Step = QuestComponentKind.Reward;
     }
 
     /// <summary>

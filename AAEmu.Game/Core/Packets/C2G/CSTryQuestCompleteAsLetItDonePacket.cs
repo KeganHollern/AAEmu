@@ -1,4 +1,5 @@
 ﻿using AAEmu.Commons.Network;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
@@ -17,16 +18,6 @@ public class CSTryQuestCompleteAsLetItDonePacket() : GamePacket(CSOffsets.CSTryQ
         _objId = stream.ReadBc();
         _selected = stream.ReadInt32();
 
-        Logger.Warn($"TryQuestCompleteAsLetItDone, Id: {_id}, ObjId: {_objId}, Selected: {_selected}");
-
-        // Check if player is actually targeting the NPC
-        if (
-            _objId > 0
-            && Connection.ActiveChar.CurrentTarget != null
-            && Connection.ActiveChar.CurrentTarget.ObjId != _objId
-           )
-            return;
-        Connection.ActiveChar.Quests.TryCompleteQuestAsLetItDone(_id, _selected);
+        QuestManager.Instance.TryCompleteQuestAsLetItDone(Connection.ActiveChar, _id, _objId, _selected);
     }
 }
-
