@@ -203,6 +203,7 @@ public partial class Character : Unit, ICharacter
     public ItemContainer BuyBackItems { get; set; }
     public BondDoodad Bonding { get; set; }
     public CharacterQuests Quests { get; set; }
+    public CharacterAchievements Achievements { get; }
     public CharacterMails Mails { get; set; }
     public CharacterAppellations Appellations { get; set; }
     public CharacterAbilities Abilities { get; set; }
@@ -1406,6 +1407,7 @@ public partial class Character : Unit, ICharacter
     {
         _options = [];
         _hostilePlayers = new ConcurrentDictionary<uint, DateTime>();
+        Achievements = new CharacterAchievements(this);
         Breath = LungCapacity;
         ModelParams = modelParams;
         Subscribers = [];
@@ -1455,6 +1457,7 @@ public partial class Character : Unit, ICharacter
         
         Experience = newExperience;
         Level = newLevel;
+        Achievements?.UpdateLevel(Level);
         
         if (shouldAddAbilityExp)
             Abilities.AddActiveExp(expDelta); // TODO ... or all?
@@ -2697,6 +2700,9 @@ public partial class Character : Unit, ICharacter
             Mates = new CharacterMates(this);
             Mates.Load(connection);
 
+            Achievements.Load(connection);
+            Achievements.ReconcileAuthoritativeState(connection);
+
             LoadActionSlots(connection);
         }
 
@@ -2717,7 +2723,10 @@ public partial class Character : Unit, ICharacter
                 try
                 {
                     saved = Save(sqlConnection, transaction);
-                    transaction.Commit();
+                    if (saved)
+                        transaction.Commit();
+                    else
+                        transaction.Rollback();
                 }
                 catch (Exception e)
                 {
@@ -2887,6 +2896,7 @@ public partial class Character : Unit, ICharacter
 
             // Inventory?.Save(connection, transaction);
             Abilities?.Save(connection, transaction);
+            Achievements?.Save(connection, transaction);
             Actability?.Save(connection, transaction);
             Appellations?.Save(connection, transaction);
             // Save active buffs that should persist across logout (SaveRuleId > 0)
