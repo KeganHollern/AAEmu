@@ -620,11 +620,14 @@ public class CharacterManager(
         {
             foreach (var (houseId, house) in myHouses)
             {
-                house.Permission = HousingPermission.Public;
-                // force expire the house
-                // This should technically kill the house, and return the minimum amount of furniture
-                house.ProtectionEndDate = DateTime.UtcNow.AddDays(-21);
-                housingManager.UpdateTaxInfo(house);
+                lock (house.TaxPaymentSyncRoot)
+                {
+                    house.Permission = HousingPermission.Public;
+                    // force expire the house
+                    // This should technically kill the house, and return the minimum amount of furniture
+                    house.ProtectionEndDate = DateTime.UtcNow.AddDays(-21);
+                    housingManager.UpdateTaxInfo(house);
+                }
             }
         }
 

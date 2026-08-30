@@ -25,8 +25,7 @@ public class SaveManager(
     private double Delay = 1;
     private bool _enabled = false;
     private bool _isSaving = false;
-    private readonly object _lock = new();
-    internal object PersistenceSyncRoot => _lock;
+    internal static object PersistenceSyncRoot { get; } = new();
     private SaveTickStartTask saveTask;
     public ShutdownTask ShutdownTask { get; set; } = null;
 
@@ -66,7 +65,7 @@ public class SaveManager(
         if (_isSaving)
             return false;
         var saved = false;
-        lock (_lock)
+        lock (PersistenceSyncRoot)
         {
             _isSaving = true;
             var stopWatch = new Stopwatch();

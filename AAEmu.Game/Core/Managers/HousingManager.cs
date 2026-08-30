@@ -667,20 +667,20 @@ public class HousingManager(
             */
             var ownerChar = worldManager.GetCharacterById(house.OwnerId);
 
-            // Mark it as expired protection
-            house.ProtectionEndDate = DateTime.UtcNow.AddSeconds(-1);
-            // Make sure to call UpdateTaxInfo first to remove tax-rated mails of this house
-            UpdateTaxInfo(house);
-            // Return items to player by mail
-            ReturnHouseItemsToOwner(house, failedToPayTax, forceRestoreAllDecor, null);
+            lock (house.TaxPaymentSyncRoot)
+            {
+                // Mark it as expired protection and remove tax mail before changing ownership.
+                house.ProtectionEndDate = DateTime.UtcNow.AddSeconds(-1);
+                UpdateTaxInfo(house);
+                ReturnHouseItemsToOwner(house, failedToPayTax, forceRestoreAllDecor, null);
 
-            // Remove owner
-            house.OwnerId = 0;
-            house.CoOwnerId = 0;
-            house.AccountId = 0;
-            house.SellPrice = 0;
-            house.SellToPlayerId = 0;
-            house.Permission = HousingPermission.Public;
+                house.OwnerId = 0;
+                house.CoOwnerId = 0;
+                house.AccountId = 0;
+                house.SellPrice = 0;
+                house.SellToPlayerId = 0;
+                house.Permission = HousingPermission.Public;
+            }
             house.BroadcastPacket(new SCHouseDemolishedPacket(house.TlId), false);
 
             ownerChar?.SendPacket(new SCMyHouseRemovedPacket(house.TlId));
@@ -783,44 +783,106 @@ public class HousingManager(
     /// <param name="house"></param>
     public void UpdateTaxInfo(House house)
     {
-        var isDemolished = house.ProtectionEndDate <= DateTime.UtcNow;
-        var isTaxDue = house.TaxDueDate <= DateTime.UtcNow;
+        EnsureTaxMail(house, false);
+    }
 
-        // Update Buffs (if needed)
-        SetUntouchable(house, !isDemolished);
-        SetRemovalDebuff(house, isDemolished);
+    /// <summary>
+    /// Creates the next optional tax prepayment mail when the configured limit allows it.
+    /// </summary>
+    /// <param name="house"></param>
+    public void OfferTaxPrepayment(House house)
+    {
+        EnsureTaxMail(house, true);
+    }
 
-        if (house.OwnerId <= 0)
-            return;
-
-        // If expired, start demolition debuffs
-        if (isDemolished)
+    private void EnsureTaxMail(House house, bool allowPrepayment)
+    {
+        lock (house.TaxPaymentSyncRoot)
         {
-            mailManager.DeleteHouseMails(house.Id);
-        }
-        else
-        if (isTaxDue)
-        {
-            // TODO: update corresponding mails if needed (like update weeks unpaid etc)
+            var utcNow = DateTime.UtcNow;
+            var isDemolished = house.ProtectionEndDate <= utcNow;
+            var isTaxDue = house.TaxDueDate <= utcNow;
+
+            // Update Buffs (if needed)
+            SetUntouchable(house, !isDemolished);
+            SetRemovalDebuff(house, isDemolished);
+
             var allMails = mailManager.GetMyHouseMails(house.Id);
 
+            if (house.OwnerId <= 0 || isDemolished)
+            {
+                if (allMails.Count > 0)
+                    mailManager.DeleteHouseMails(house.Id);
+                return;
+            }
+
+            var hasMailForCurrentOwner = allMails.Any(mail => mail.Header.ReceiverId == house.OwnerId);
+            var mustReconcile = allMails.Count > 1 || allMails.Any(mail => mail.Header.ReceiverId != house.OwnerId);
+            if (mustReconcile)
+            {
+                // Preserve a valid prepayment offer while removing duplicates, but never transfer an old owner's bill.
+                allowPrepayment |= !isTaxDue && hasMailForCurrentOwner;
+                mailManager.DeleteHouseMails(house.Id);
+                allMails = [];
+            }
+
+            var shouldCreateMail = isTaxDue || (allowPrepayment && CanPayTaxMail(house));
             if (allMails.Count <= 0)
             {
-                // Create new tax mail
-                var newMail = new MailForTax(house);
-                newMail.FinalizeMail();
-                newMail.Send();
-                Logger.Trace($"New Tax Mail sent for {house.Name} owned by {house.OwnerId}");
+                if (shouldCreateMail)
+                    SendTaxMail(house);
+                return;
             }
-            else
+
+            if (isTaxDue && !MailForTax.UpdateTaxInfo(allMails[0], house))
             {
-                foreach (var mail in allMails)
-                {
-                    MailForTax.UpdateTaxInfo(mail, house);
-                    Logger.Trace($"Tax Mail {mail.Id} updated for {house.Name} ({house.Id}) owned by {house.OwnerId}");
-                }
+                mailManager.DeleteHouseMails(house.Id);
+                SendTaxMail(house);
+                return;
             }
+
+            if (isTaxDue)
+                Logger.Trace($"Tax Mail {allMails[0].Id} updated for {house.Name} ({house.Id}) owned by {house.OwnerId}");
         }
+    }
+
+    private static void SendTaxMail(House house)
+    {
+        var newMail = new MailForTax(house);
+        if (!newMail.FinalizeMail() || !newMail.Send())
+        {
+            Logger.Error($"Failed to send Tax Mail for {house.Name} ({house.Id}) owned by {house.OwnerId}");
+            return;
+        }
+
+        Logger.Trace($"New Tax Mail sent for {house.Name} ({house.Id}) owned by {house.OwnerId}");
+    }
+
+    public int? GetWeeklyTaxAmount(House house)
+    {
+        return CalculateBuildingTaxInfo(house.AccountId, house.Template, false, out _, out _, out _, out _, out var oneWeekTaxCount)
+            ? oneWeekTaxCount
+            : null;
+    }
+
+    public bool CanPayTaxMail(House house)
+    {
+        var utcNow = DateTime.UtcNow;
+        return house.TaxDueDate <= utcNow || IsTaxPrepaymentAllowed(
+            house.TaxDueDate,
+            utcNow,
+            AppConfiguration.Instance.World.DaysForTaxPayment,
+            AppConfiguration.Instance.World.MaxTaxPrepaymentPeriods);
+    }
+
+    internal static bool IsTaxPrepaymentAllowed(DateTime taxDueDate, DateTime utcNow, uint periodDays, uint maxPrepaymentPeriods)
+    {
+        if (maxPrepaymentPeriods == 0)
+            return false;
+
+        var normalizedPeriodDays = Math.Max(1u, periodDays);
+        var prepaymentLimit = utcNow.AddDays((double)normalizedPeriodDays * maxPrepaymentPeriods);
+        return taxDueDate <= prepaymentLimit;
     }
 
     /// <summary>
@@ -830,8 +892,14 @@ public class HousingManager(
     /// <returns></returns>
     public bool PayWeeklyTax(House house)
     {
-        house.ProtectionEndDate = house.ProtectionEndDate.AddDays(AppConfiguration.Instance.World.DaysForTaxPayment);
-        return true;
+        lock (house.TaxPaymentSyncRoot)
+        {
+            if (house.ProtectionEndDate <= DateTime.UtcNow || !CanPayTaxMail(house))
+                return false;
+
+            house.ProtectionEndDate = house.ProtectionEndDate.AddDays(Math.Max(1u, AppConfiguration.Instance.World.DaysForTaxPayment));
+            return true;
+        }
     }
 
     /// <summary>
@@ -1455,15 +1523,18 @@ public class HousingManager(
 
         ReturnHouseItemsToOwner(house, false, false, character);
 
-        // Set new owner info
-        house.SellPrice = 0;
-        house.SellToPlayerId = 0;
-        house.AccountId = character.AccountId;
-        house.OwnerId = character.Id;
-        house.CoOwnerId = character.Id; // not entirely sure if this actually needs to change
-        house.Permission = house.Template.AlwaysPublic ? HousingPermission.Public : HousingPermission.Private;
-        UpdateHouseFaction(house, character.Faction.Id);
-        UpdateTaxInfo(house); // send tax due mails etc. if needed ...
+        lock (house.TaxPaymentSyncRoot)
+        {
+            // Set new owner info and reconcile any old-owner tax offer as one serialized change.
+            house.SellPrice = 0;
+            house.SellToPlayerId = 0;
+            house.AccountId = character.AccountId;
+            house.OwnerId = character.Id;
+            house.CoOwnerId = character.Id; // not entirely sure if this actually needs to change
+            house.Permission = house.Template.AlwaysPublic ? HousingPermission.Public : HousingPermission.Private;
+            UpdateHouseFaction(house, character.Faction.Id);
+            UpdateTaxInfo(house); // send tax due mails etc. if needed ...
+        }
 
         // TODO: broadcast changes
         house.BroadcastPacket(

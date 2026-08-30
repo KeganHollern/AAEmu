@@ -30,7 +30,7 @@ internal static class AchievementRewardManager
 
         // SaveManager holds this lock for its complete database transaction.
         // Use the same lock so reward delivery cannot overlap the normal save.
-        lock (SaveManager.Instance.PersistenceSyncRoot)
+        lock (SaveManager.PersistenceSyncRoot)
             return TryDeliverLocked(character, achievementId, itemTemplateId);
     }
 

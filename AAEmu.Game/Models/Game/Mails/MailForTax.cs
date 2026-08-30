@@ -18,14 +18,25 @@ public class MailForTax : BaseMail
 
     private readonly House _house;
 
-    private static readonly string TaxSenderName = ".houseTax";
+    internal const string TaxSenderName = ".houseTax";
 
     public MailForTax(House house) : base()
     {
         _house = house;
 
         MailType = MailType.Billing;
-        Body.RecvDate = DateTime.UtcNow;
+        Header.SenderId = 0;
+        Header.SenderName = TaxSenderName;
+        Body.SendDate = DateTime.UtcNow;
+        Body.RecvDate = Body.SendDate;
+    }
+
+    public static bool IsTaxMail(BaseMail mail)
+    {
+        return mail != null &&
+               mail.MailType == MailType.Billing &&
+               mail.Header.SenderId == 0 &&
+               string.Equals(mail.Header.SenderName, TaxSenderName, StringComparison.Ordinal);
     }
 
     public static bool UpdateTaxInfo(BaseMail mail, House house)
@@ -34,25 +45,49 @@ public class MailForTax : BaseMail
         var ownerName = NameManager.Instance.GetCharacterName(house.OwnerId);
         if (ownerName == null)
             return false;
-        mail.Header.ReceiverId = house.OwnerId;
-        mail.ReceiverName = ownerName;
 
         // Grab the zone the house is in
         var zone = ZoneManager.Instance.GetZoneByKey(house.Transform.ZoneId);
         if (zone == null)
             return false;
 
-        // Set mail title
-        mail.Title = "title(" + zone.GroupId.ToString() + ")"; // Title calls a function to call zone group name
-
         // Get Tax info
         if (!HousingManager.Instance.CalculateBuildingTaxInfo(house.AccountId, house.Template, false, out var totalTaxAmountDue, out var heavyTaxHouseCount, out var normalTaxHouseCount, out var hostileTaxRate, out _))
             return false;
 
+        ApplyTaxInfo(
+            mail,
+            house,
+            ownerName,
+            zone.GroupId,
+            totalTaxAmountDue,
+            heavyTaxHouseCount,
+            normalTaxHouseCount,
+            hostileTaxRate,
+            DateTime.UtcNow);
+
+        return true;
+    }
+
+    internal static void ApplyTaxInfo(
+        BaseMail mail,
+        House house,
+        string ownerName,
+        uint zoneGroupId,
+        int totalTaxAmountDue,
+        int heavyTaxHouseCount,
+        int normalTaxHouseCount,
+        int hostileTaxRate,
+        DateTime utcNow)
+    {
+        mail.Header.ReceiverId = house.OwnerId;
+        mail.ReceiverName = ownerName;
+        mail.Title = "title(" + zoneGroupId.ToString() + ")"; // Title calls a function to call zone group name
+
         // Note: I'm sure this can be done better, but it works and displays correctly
         var lateFees = 0;
         var paymentDeadLine = house.TaxDueDate;
-        if (house.TaxDueDate <= DateTime.UtcNow)
+        if (house.TaxDueDate <= utcNow)
         {
             lateFees = 1;
             paymentDeadLine = house.ProtectionEndDate;
@@ -61,7 +96,7 @@ public class MailForTax : BaseMail
         //testmail 6 .houseTax title(25) "body('Test','1606565186','1607169986','1606565186','250000','50','3','0','500000','true','1')" 0 500000
         mail.Body.Text = string.Format("body('{0}', '{1}', '{2}', '{3}', '{4}', '{5}', '{6}', '{7}', '{8}', '{9}', '{10}')",
             house.Name,                                 // House Name
-            Helpers.UnixTime(house.PlaceDate),          // Tax period start (this might need to be the same as tax due date)
+            Helpers.UnixTime(house.TaxDueDate),         // Tax period start
             Helpers.UnixTime(house.ProtectionEndDate),  // Tax period end
             Helpers.UnixTime(paymentDeadLine),          // Tax Due Date
             house.Template.Taxation.Tax,                // This house base tax rate
@@ -78,10 +113,8 @@ public class MailForTax : BaseMail
 
         // Extra tag
         ushort extraUnknown = 0;
-        mail.Header.Extra = ((long)zone.GroupId << 48) + ((long)extraUnknown << 32) + house.Id;
+        mail.Header.Extra = ((long)zoneGroupId << 48) + ((long)extraUnknown << 32) + house.Id;
         mail.Header.Status = MailStatus.Unpaid;
-
-        return true;
     }
 
     /// <summary>
@@ -90,9 +123,6 @@ public class MailForTax : BaseMail
     /// <returns></returns>
     public bool FinalizeMail()
     {
-        Header.SenderId = 0;
-        Header.SenderName = TaxSenderName;
-
         if (!UpdateTaxInfo(this, _house))
             return false;
 

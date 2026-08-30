@@ -80,6 +80,11 @@ public class WorldConfig
     public uint DaysForTaxPayment { get; set; } = 7u;
 
     /// <summary>
+    /// Maximum number of optional tax periods that can be prepaid after paying the current bill.
+    /// </summary>
+    public uint MaxTaxPrepaymentPeriods { get; set; } = 5u;
+
+    /// <summary>
     /// Set a minimum access-level that a character must have to ignore falling damage (for devs)
     /// </summary>
     public int IgnoreFallDamageAccessLevel { get; set; } = 100;

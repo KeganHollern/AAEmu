@@ -31,9 +31,12 @@ public interface IHousingManager
     bool BuyHouse(ushort houseTlId, uint money, Character character);
     void CheckHousingTaxes();
     void UpdateTaxInfo(House house);
+    void OfferTaxPrepayment(House house);
     bool DecorateHouse(Character player, ushort houseTlId, uint designId, Vector3 pos, Quaternion quat, uint parentObjId, ulong itemId);
     void HousingToggleAllowRecover(Character character, ushort houseTl);
     House GetHouseAtLocation(float x, float y);
+    int? GetWeeklyTaxAmount(House house);
+    bool CanPayTaxMail(House house);
     bool PayWeeklyTax(House house);
     (int, int) Save(MySqlConnection connection, MySqlTransaction transaction);
     void ReconcileBoundDoodads();
