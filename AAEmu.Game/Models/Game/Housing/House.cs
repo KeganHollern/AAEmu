@@ -140,7 +140,8 @@ public sealed class House : Unit
 
     public DateTime PlaceDate { get => _placeDate; set { _placeDate = value; _isDirty = true; } }
     public DateTime ProtectionEndDate { get => _protectionEndDate; set { _protectionEndDate = value; _isDirty = true; } }
-    public DateTime TaxDueDate { get => _protectionEndDate.AddDays(-7); }
+    public DateTime TaxDueDate { get => _protectionEndDate.AddDays(-Math.Max(1u, AppConfiguration.Instance.World.DaysForTaxPayment)); }
+    public object TaxPaymentSyncRoot { get; } = new();
     public uint SellToPlayerId { get => _sellToPlayerId; set { _sellToPlayerId = value; _isDirty = true; } }
     public uint SellPrice { get => _sellPrice; set { _sellPrice = value; _isDirty = true; } }
     public bool AllowRecover { get => _allowRecover; set { _allowRecover = value; _isDirty = true; } }
@@ -280,49 +281,52 @@ public sealed class House : Unit
 
     public bool Save(MySqlConnection connection, MySqlTransaction transaction = null)
     {
-        if (!IsDirty)
-            return false;
-        if (AccountId <= 0 || OwnerId <= 0)
-            return false; // recently destroyed/expired house
-        using (var command = connection.CreateCommand())
+        lock (TaxPaymentSyncRoot)
         {
-            command.Connection = connection;
-            command.Transaction = transaction;
+            if (!IsDirty)
+                return false;
+            if (AccountId <= 0 || OwnerId <= 0)
+                return false; // recently destroyed/expired house
+            using (var command = connection.CreateCommand())
+            {
+                command.Connection = connection;
+                command.Transaction = transaction;
 
-            command.CommandText =
-                "REPLACE INTO `housings` " +
-                "(`id`,`account_id`,`owner`,`co_owner`,`template_id`,`name`,`x`,`y`,`z`,`yaw`,`pitch`,`roll`,`current_step`,`current_action`,`permission`,`place_date`," +
-                "`protected_until`,`faction_id`,`sell_to`,`sell_price`, `allow_recover`) " +
-                "VALUES(@id,@account_id,@owner,@co_owner,@template_id,@name,@x,@y,@z,@yaw,@pitch,@roll,@current_step,@current_action,@permission,@placedate," +
-                "@protecteduntil,@factionid,@sellto,@sellprice,@allowrecover)";
+                command.CommandText =
+                    "REPLACE INTO `housings` " +
+                    "(`id`,`account_id`,`owner`,`co_owner`,`template_id`,`name`,`x`,`y`,`z`,`yaw`,`pitch`,`roll`,`current_step`,`current_action`,`permission`,`place_date`," +
+                    "`protected_until`,`faction_id`,`sell_to`,`sell_price`, `allow_recover`) " +
+                    "VALUES(@id,@account_id,@owner,@co_owner,@template_id,@name,@x,@y,@z,@yaw,@pitch,@roll,@current_step,@current_action,@permission,@placedate," +
+                    "@protecteduntil,@factionid,@sellto,@sellprice,@allowrecover)";
 
-            command.Parameters.AddWithValue("@id", Id);
-            command.Parameters.AddWithValue("@account_id", AccountId);
-            command.Parameters.AddWithValue("@owner", OwnerId);
-            command.Parameters.AddWithValue("@co_owner", CoOwnerId);
-            command.Parameters.AddWithValue("@template_id", TemplateId);
-            command.Parameters.AddWithValue("@name", Name);
-            command.Parameters.AddWithValue("@x", Transform.World.Position.X);
-            command.Parameters.AddWithValue("@y", Transform.World.Position.Y);
-            command.Parameters.AddWithValue("@z", Transform.World.Position.Z);
-            command.Parameters.AddWithValue("@roll", Transform.World.Rotation.X);
-            command.Parameters.AddWithValue("@pitch", Transform.World.Rotation.Y);
-            command.Parameters.AddWithValue("@yaw", Transform.World.Rotation.Z);
-            command.Parameters.AddWithValue("@current_step", CurrentStep);
-            command.Parameters.AddWithValue("@current_action", NumAction);
-            command.Parameters.AddWithValue("@permission", (byte)Permission);
-            command.Parameters.AddWithValue("@placedate", PlaceDate);
-            command.Parameters.AddWithValue("@protecteduntil", ProtectionEndDate);
-            command.Parameters.AddWithValue("@factionid", Faction.Id);
-            command.Parameters.AddWithValue("@sellto", SellToPlayerId);
-            command.Parameters.AddWithValue("@sellprice", SellPrice);
-            command.Parameters.AddWithValue("@allowrecover", AllowRecover);
-            command.Prepare();
-            command.ExecuteNonQuery();
+                command.Parameters.AddWithValue("@id", Id);
+                command.Parameters.AddWithValue("@account_id", AccountId);
+                command.Parameters.AddWithValue("@owner", OwnerId);
+                command.Parameters.AddWithValue("@co_owner", CoOwnerId);
+                command.Parameters.AddWithValue("@template_id", TemplateId);
+                command.Parameters.AddWithValue("@name", Name);
+                command.Parameters.AddWithValue("@x", Transform.World.Position.X);
+                command.Parameters.AddWithValue("@y", Transform.World.Position.Y);
+                command.Parameters.AddWithValue("@z", Transform.World.Position.Z);
+                command.Parameters.AddWithValue("@roll", Transform.World.Rotation.X);
+                command.Parameters.AddWithValue("@pitch", Transform.World.Rotation.Y);
+                command.Parameters.AddWithValue("@yaw", Transform.World.Rotation.Z);
+                command.Parameters.AddWithValue("@current_step", CurrentStep);
+                command.Parameters.AddWithValue("@current_action", NumAction);
+                command.Parameters.AddWithValue("@permission", (byte)Permission);
+                command.Parameters.AddWithValue("@placedate", PlaceDate);
+                command.Parameters.AddWithValue("@protecteduntil", ProtectionEndDate);
+                command.Parameters.AddWithValue("@factionid", Faction.Id);
+                command.Parameters.AddWithValue("@sellto", SellToPlayerId);
+                command.Parameters.AddWithValue("@sellprice", SellPrice);
+                command.Parameters.AddWithValue("@allowrecover", AllowRecover);
+                command.Prepare();
+                command.ExecuteNonQuery();
+            }
+
+            IsDirty = false;
+            return true;
         }
-
-        IsDirty = false;
-        return true;
     }
 
     public PacketStream Write(PacketStream stream)

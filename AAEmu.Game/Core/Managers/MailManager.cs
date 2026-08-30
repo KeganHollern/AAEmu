@@ -97,13 +97,26 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public bool DeleteMail(long id)
     {
+        return DeleteMail(id, true);
+    }
+
+    private bool DeleteMail(long id, bool releaseId)
+    {
         lock (_deletedMailIds)
         {
             if (!_deletedMailIds.Contains(id))
                 _deletedMailIds.Add(id);
-            mailIdManager.ReleaseId((uint)id);
+            if (releaseId)
+                mailIdManager.ReleaseId((uint)id);
         }
         return _allPlayerMails.TryRemove(id, out _);
+    }
+
+    private bool DeleteTaxMail(long id)
+    {
+        // Keep paid/replaced tax mail IDs reserved for this server lifetime. A delayed replay of
+        // the old client request must never resolve to the newly issued prepayment mail.
+        return DeleteMail(id, false);
     }
 
     public bool DeleteMail(BaseMail mail, bool trashItems = false)
@@ -414,6 +427,14 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public bool PayChargeMoney(Character character, long mailId, bool autoUseAAPoint)
     {
+        // SaveManager holds this lock for the complete cross-manager database snapshot.
+        // Keep the house, mail, inventory, and character mutations in one save epoch.
+        lock (SaveManager.PersistenceSyncRoot)
+            return PayChargeMoneyLocked(character, mailId, autoUseAAPoint);
+    }
+
+    private bool PayChargeMoneyLocked(Character character, long mailId, bool autoUseAAPoint)
+    {
         var mail = GetMailById(mailId);
         if (mail == null)
         {
@@ -421,15 +442,14 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             return false;
         }
 
-        // Only tax mail supported
-        if (mail.MailType != MailType.Billing)
+        // Only server-authored house tax mail is supported.
+        if (!MailForTax.IsTaxMail(mail))
         {
             character.SendErrorMessage(ErrorMessageType.MailInvalid);
             return false;
         }
 
         var houseId = (uint)(mail.Header.Extra & 0xFFFFFFFF); // Extract house DB Id from Extra
-        var houseZoneGroup = (mail.Header.Extra >> 48) & 0xFFFF; // Extract zone group Id from Extra
         var house = housingManager.Value.GetHouseById(houseId);
 
         if (house == null)
@@ -438,67 +458,78 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             return false;
         }
 
-        if (FeaturesManager.Fsets.Check(Feature.taxItem))
+        lock (house.TaxPaymentSyncRoot)
         {
-            // use Tax Certificates as payment
-            // TODO: grab these values from DB somewhere ?
-            var userTaxCount = character.Inventory.GetItemsCount(SlotType.Inventory, Item.TaxCertificate);
-            var userBoundTaxCount = character.Inventory.GetItemsCount(SlotType.Inventory, Item.BoundTaxCertificate);
-            var totatUserTaxCount = userTaxCount + userBoundTaxCount;
-            var consumedCerts = (int)Math.Ceiling(mail.Body.BillingAmount / 10000f);
-
-            if (totatUserTaxCount < consumedCerts)
+            // The mail may have been paid or reconciled by another request while this one waited for the house lock.
+            if (!ReferenceEquals(GetMailById(mailId), mail))
             {
-                // Not enough certs
-                character.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
+                character.SendErrorMessage(ErrorMessageType.MailInvalid);
                 return false;
             }
-            else
+
+            if (mail.Header.ReceiverId != character.Id ||
+                !string.Equals(mail.ReceiverName, character.Name, StringComparison.OrdinalIgnoreCase) ||
+                house.OwnerId != character.Id ||
+                house.AccountId != character.AccountId)
             {
-                var c = consumedCerts;
-                // Use Bound First
-                if (userBoundTaxCount > 0 && c > 0)
-                {
-                    if (c > userBoundTaxCount)
-                        c = userBoundTaxCount;
-                    character.Inventory.Bag.ConsumeItem(Models.Game.Items.Actions.ItemTaskType.Mail, Item.BoundTaxCertificate, c, null);
-                    consumedCerts -= c;
-                }
-                c = consumedCerts;
-                if (userTaxCount > 0 && c > 0)
-                {
-                    if (c > userTaxCount)
-                        c = userTaxCount;
-                    character.Inventory.Bag.ConsumeItem(Models.Game.Items.Actions.ItemTaskType.Mail, Item.TaxCertificate, c, null);
-                    consumedCerts -= c;
-                }
-
-                if (consumedCerts != 0)
-                    Logger.Error("Something went wrong when paying tax for mailId {0}", mail.Id);
-
-                mail.Body.BillingAmount = consumedCerts;
-
-            }
-        }
-        else
-        {
-            // use gold as payment
-            if (mail.Body.BillingAmount > character.Money)
-            {
-                // Not enough gold
-                character.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
+                character.SendErrorMessage(ErrorMessageType.MailInvalid);
                 return false;
             }
-            else
-            {
-                character.SubtractMoney(SlotType.Inventory, mail.Body.BillingAmount);
-            }
-        }
 
-        if (!housingManager.Value.PayWeeklyTax(house))
-            Logger.Error("Could not update protection time when paying taxes, mailId {0}", mail.Id);
-        else
-        {
+            if (house.ProtectionEndDate <= DateTime.UtcNow)
+            {
+                DeleteHouseMails(house.Id);
+                character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+                return false;
+            }
+
+            if (!housingManager.Value.CanPayTaxMail(house))
+            {
+                DeleteHouseMails(house.Id);
+                character.SendErrorMessage(ErrorMessageType.MailInvalid);
+                return false;
+            }
+
+            var currentTaxAmount = housingManager.Value.GetWeeklyTaxAmount(house);
+            if (!currentTaxAmount.HasValue)
+            {
+                character.SendErrorMessage(ErrorMessageType.InvalidTaxation);
+                return false;
+            }
+
+            // Never charge a different amount from the one the player saw. Replace a stale quote and require a new click.
+            if (mail.Body.BillingAmount != currentTaxAmount.Value)
+            {
+                DeleteHouseMails(house.Id);
+                housingManager.Value.OfferTaxPrepayment(house);
+                character.SendErrorMessage(ErrorMessageType.InvalidTaxation);
+                return false;
+            }
+
+            var previousProtectionEndDate = house.ProtectionEndDate;
+            if (!housingManager.Value.PayWeeklyTax(house))
+            {
+                Logger.Error("Could not update protection time when paying taxes, mailId {0}", mail.Id);
+                character.SendErrorMessage(ErrorMessageType.InvalidTaxation);
+                return false;
+            }
+
+            // Extend first while the validated house lock is held. If payment cannot be consumed,
+            // restore the original deadline before releasing the lock.
+            try
+            {
+                if (!TryConsumeTaxPayment(character, mail))
+                {
+                    house.ProtectionEndDate = previousProtectionEndDate;
+                    return false;
+                }
+            }
+            catch
+            {
+                house.ProtectionEndDate = previousProtectionEndDate;
+                throw;
+            }
+
             if (mail.Header.Status != MailStatus.Read)
             {
                 mail.Header.Status = MailStatus.Read;
@@ -507,11 +538,92 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
             character.SendPacket(new SCChargeMoneyPaidPacket(mail.Id));
             character.SendPacket(new SCMailDeletedPacket(false, mail.Id, false, character.Mails.UnreadMailCount));
-            DeleteMail(mail);
+            DeleteTaxMail(mail.Id);
+
+            // Remove any pre-existing duplicate bills before issuing the single next-period offer.
+            DeleteHouseMails(house.Id);
+            housingManager.Value.OfferTaxPrepayment(house);
             character.Mails.SendUnreadMailCount();
         }
 
         return true;
+    }
+
+    private static bool TryConsumeTaxPayment(Character character, BaseMail mail)
+    {
+        if (FeaturesManager.Fsets.Check(Feature.taxItem))
+        {
+            lock (character.StorePurchaseSyncRoot)
+            {
+                // Use Tax Certificates as payment. Bound certificates are consumed first.
+                var userTaxCount = character.Inventory.GetItemsCount(SlotType.Inventory, Item.TaxCertificate);
+                var userBoundTaxCount = character.Inventory.GetItemsCount(SlotType.Inventory, Item.BoundTaxCertificate);
+                var requiredCerts = (int)Math.Ceiling(mail.Body.BillingAmount / 10000f);
+
+                if (TryConsumeTaxCertificates(
+                        requiredCerts,
+                        userBoundTaxCount,
+                        userTaxCount,
+                        count => character.Inventory.Bag.ConsumeItem(
+                            ItemTaskType.Mail, Item.BoundTaxCertificate, count, null),
+                        count => character.Inventory.Bag.ConsumeItem(
+                            ItemTaskType.Mail, Item.TaxCertificate, count, null),
+                        count => character.Inventory.Bag.AcquireDefaultItem(
+                            ItemTaskType.Mail, Item.BoundTaxCertificate, count),
+                        count => character.Inventory.Bag.AcquireDefaultItem(
+                            ItemTaskType.Mail, Item.TaxCertificate, count),
+                        out var fullyRestored))
+                    return true;
+
+                if (!fullyRestored)
+                    Logger.Error("Could not restore partially consumed tax certificates for mailId {0}", mail.Id);
+
+                character.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
+                return false;
+            }
+        }
+
+        lock (character.StorePurchaseSyncRoot)
+        {
+            if (mail.Body.BillingAmount > character.Money ||
+                !character.SubtractMoney(SlotType.Inventory, mail.Body.BillingAmount, ItemTaskType.Mail))
+            {
+                character.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    internal static bool TryConsumeTaxCertificates(
+        int requiredCerts,
+        int userBoundTaxCount,
+        int userTaxCount,
+        Func<int, int> consumeBoundCerts,
+        Func<int, int> consumeTaxCerts,
+        Func<int, bool> restoreBoundCerts,
+        Func<int, bool> restoreTaxCerts,
+        out bool fullyRestored)
+    {
+        fullyRestored = true;
+        if (userBoundTaxCount + userTaxCount < requiredCerts)
+            return false;
+
+        var requestedBoundCerts = Math.Min(userBoundTaxCount, requiredCerts);
+        var consumedBoundCerts = requestedBoundCerts > 0 ? consumeBoundCerts(requestedBoundCerts) : 0;
+        var requestedTaxCerts = requiredCerts - consumedBoundCerts;
+        var consumedTaxCerts = requestedTaxCerts > 0 ? consumeTaxCerts(requestedTaxCerts) : 0;
+
+        if (consumedBoundCerts + consumedTaxCerts == requiredCerts)
+            return true;
+
+        // A concurrent inventory change can invalidate the count snapshot. Restore any
+        // certificates actually removed so a failed payment never partially charges.
+        var restoredBoundCerts = consumedBoundCerts == 0 || restoreBoundCerts(consumedBoundCerts);
+        var restoredTaxCerts = consumedTaxCerts == 0 || restoreTaxCerts(consumedTaxCerts);
+        fullyRestored = restoredBoundCerts && restoredTaxCerts;
+        return false;
     }
 
     public static void ExtractExtraForHouse(long extra, out ushort zoneGroupId, out uint houseId)
@@ -526,7 +638,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         // Check which mails to remove
         foreach (var m in _allPlayerMails)
         {
-            if (m.Value.MailType == MailType.Billing)
+            if (MailForTax.IsTaxMail(m.Value))
             {
                 ExtractExtraForHouse(m.Value.Header.Extra, out _, out var hId);
                 if (houseId == hId)
@@ -540,7 +652,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         {
             var mail = GetMailById(d);
             NotifyDeleteMailByNameIfOnline(mail, mail.ReceiverName);
-            DeleteMail(mail);
+            DeleteTaxMail(mail.Id);
         }
     }
 
@@ -550,7 +662,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         // Check which mails to remove
         foreach (var m in _allPlayerMails)
         {
-            if (m.Value.MailType == MailType.Billing)
+            if (MailForTax.IsTaxMail(m.Value))
             {
                 ExtractExtraForHouse(m.Value.Header.Extra, out _, out var hId);
                 if (houseId == hId)

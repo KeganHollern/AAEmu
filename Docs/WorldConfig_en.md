@@ -60,6 +60,10 @@ Example:
 - **Type**: `number`
 - **Description**: Number of days one tax payment covers (default: 7).
 
+### `MaxTaxPrepaymentPeriods`
+- **Type**: `number`
+- **Description**: Maximum number of optional tax periods offered consecutively after the current bill is paid (default: 5). Set to `0` to disable tax prepayment mails.
+
 ### `IgnoreFallDamageAccessLevel`
 - **Type**: `number`
 - **Description**: Minimum access level that ignores fall damage (dev/testing).
