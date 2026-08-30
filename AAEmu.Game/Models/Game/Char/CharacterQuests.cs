@@ -394,6 +394,43 @@ public class CharacterQuests(Character owner)
     /// <returns>Returns the CompletedQuest block that was changed</returns>
     public CompletedQuest SetCompletedQuestFlag(uint questId, bool isCompleted)
     {
+        return SetCompletedQuestFlag(questId, isCompleted, out _);
+    }
+
+    /// <summary>
+    /// Sets a quest completion flag and reports whether its block reached the database.
+    /// </summary>
+    public CompletedQuest SetCompletedQuestFlag(uint questId, bool isCompleted, out bool persisted)
+    {
+        return SetCompletedQuestFlag(questId, isCompleted, out persisted, out _);
+    }
+
+    /// <summary>
+    /// Sets a quest completion flag and reports whether this is its first completion in the persisted bit set.
+    /// </summary>
+    public CompletedQuest SetCompletedQuestFlag(
+        uint questId,
+        bool isCompleted,
+        out bool persisted,
+        out bool firstCompletion)
+    {
+        return SetCompletedQuestFlag(
+            questId,
+            isCompleted,
+            FlushCompletedQuestBlock,
+            out persisted,
+            out firstCompletion);
+    }
+
+    internal CompletedQuest SetCompletedQuestFlag(
+        uint questId,
+        bool isCompleted,
+        Func<CompletedQuest, bool> persistBlock,
+        out bool persisted,
+        out bool firstCompletion)
+    {
+        ArgumentNullException.ThrowIfNull(persistBlock);
+
         // Calculate block and index
         var completedQuestBlockId = (ushort)(questId / 64);
         var completedQuestBlockIndex = (ushort)(questId % 64);
@@ -403,10 +440,26 @@ public class CharacterQuests(Character owner)
             completedBlock = new CompletedQuest(completedQuestBlockId);
             CompletedQuests.Add(completedQuestBlockId, completedBlock);
         }
+        var previousValue = completedBlock.Body[completedQuestBlockIndex];
+        firstCompletion = isCompleted && !previousValue;
         // Set quest flag to (not) completed
         completedBlock.Body.Set(completedQuestBlockIndex, isCompleted);
-        FlushCompletedQuestBlock(completedBlock);
+        persisted = persistBlock(completedBlock);
+        if (!persisted)
+            completedBlock.Body.Set(completedQuestBlockIndex, previousValue);
         return completedBlock;
+    }
+
+    internal IEnumerable<uint> GetCompletedQuestIds()
+    {
+        foreach (var (blockId, block) in CompletedQuests)
+        {
+            for (var index = 0; index < 64; index++)
+            {
+                if (block.Body[index])
+                    yield return (uint)blockId * 64u + (uint)index;
+            }
+        }
     }
 
     /// <summary>
@@ -679,7 +732,7 @@ public class CharacterQuests(Character owner)
     /// <summary>
     /// Immediately persists one completed-quests bit block. See FlushQuest.
     /// </summary>
-    private void FlushCompletedQuestBlock(CompletedQuest block)
+    private bool FlushCompletedQuestBlock(CompletedQuest block)
     {
         try
         {
@@ -693,10 +746,12 @@ public class CharacterQuests(Character owner)
             command.Parameters.AddWithValue("@data", body);
             command.Parameters.AddWithValue("@owner", Owner.Id);
             command.ExecuteNonQuery();
+            return true;
         }
         catch (Exception e)
         {
             Logger.Warn(e, $"Failed to write-through completed-quest block {block.Id} for {Owner.Name} ({Owner.Id})");
+            return false;
         }
     }
 

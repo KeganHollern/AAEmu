@@ -1,6 +1,7 @@
 ﻿using System.Runtime.InteropServices;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Items.Actions;
@@ -554,6 +555,12 @@ public class LootPack
                 Logger.Error($"Unable to give loot to {character.Name} - ItemId: {itemTemplate} x {count} at grade {gradeToAdd} (loot grade {grade})");
                 return false;
             }
+
+            character.Achievements?.Increment(
+                CharRecordKind.GetLootitem,
+                itemTemplateId,
+                0,
+                (uint)count);
         }
 
         if (coinCount > 0)
@@ -562,6 +569,8 @@ public class LootPack
             // Logger.Debug("{Category} - {Character} got {Amount} from lootpack {Lootpack}");
             character.AddMoney(SlotType.Inventory, coinCount, taskType);
         }
+
+        character.Achievements?.Increment(CharRecordKind.GetLootpack, Id, 0);
 
         return true;
     }

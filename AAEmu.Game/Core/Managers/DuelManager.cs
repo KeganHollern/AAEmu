@@ -3,6 +3,7 @@ using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Duels;
@@ -230,16 +231,21 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
             }
             else if (loseId != 0)
             {
+                Character winner = null;
                 if (loseId == duel.Challenger.Id)
                 {
                     duel.SendPacketsBoth(new SCDuelEndedPacket(duel.Challenged.Id, duel.Challenger.Id, duel.Challenged.ObjId, duel.Challenger.ObjId, det));
+                    winner = duel.Challenged;
                     Logger.Warn($"DuelStop: Challenger:{duel.Challenger.Name} Lose, Challenged:{duel.Challenged.Name} Win!");
                 }
                 else if (loseId == duel.Challenged.Id)
                 {
                     duel.SendPacketsBoth(new SCDuelEndedPacket(duel.Challenger.Id, duel.Challenged.Id, duel.Challenger.ObjId, duel.Challenged.ObjId, det));
+                    winner = duel.Challenger;
                     Logger.Warn($"DuelStop: Challenger:{duel.Challenger.Name} Win, Challenged:{duel.Challenged.Name} Lose!");
                 }
+
+                winner?.Achievements.Increment(CharRecordKind.WinDuel, 0, 0);
             }
             // Duel Status - Duel ended
             duel.SendPacketsBoth(new SCDuelStatePacket(duel.Challenged.ObjId, 0));

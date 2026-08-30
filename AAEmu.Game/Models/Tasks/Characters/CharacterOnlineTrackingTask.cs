@@ -33,16 +33,20 @@ public class CharacterOnlineTrackingTask : Task
         {
             // Update character time
             var lastSeconds = Math.Floor(character.OnlineTime.TotalSeconds);
+            var lastHours = Math.Floor(character.OnlineTime.TotalHours);
             character.OnlineTime += delta;
             var newSeconds = Math.Floor(character.OnlineTime.TotalSeconds);
+            var newHours = Math.Floor(character.OnlineTime.TotalHours);
             var deltaSeconds = (uint)(newSeconds - lastSeconds);
+
+            if (newHours > lastHours)
+                character.Achievements?.UpdatePlayTime(character.OnlineTime);
 
             // Update Account Divine Clock time
             var (time, taken) = AccountManager.Instance.GetDivineClock(character.AccountId);
             time += deltaSeconds;
             AccountManager.Instance.UpdateDivineClock(character.AccountId, time, taken);
 
-            // TODO: Use lastSeconds and newSeconds as a comparison for triggering time played achievements
             // TODO: Add divine clock feedback packets
         }
 

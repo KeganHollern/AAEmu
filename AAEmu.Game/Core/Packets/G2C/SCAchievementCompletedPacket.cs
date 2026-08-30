@@ -3,12 +3,12 @@ using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.G2C;
 
-public class SCAchievementCompletedPacket(uint id) : GamePacket(SCOffsets.SCAchievementCompletedPacket, 1)
+public class SCAchievementCompletedPacket(uint id, DateTime completedAt) : GamePacket(SCOffsets.SCAchievementCompletedPacket, 1)
 {
     public override PacketStream Write(PacketStream stream)
     {
-        stream.Write(id);             // type
-        stream.Write(DateTime.UtcNow); // complete
+        stream.Write(id);          // type
+        stream.Write(completedAt); // complete
 
         return stream;
     }

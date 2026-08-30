@@ -9,6 +9,7 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Expeditions;
 using AAEmu.Game.Models.Game.Faction;
@@ -296,6 +297,9 @@ public class ExpeditionManager(IExpeditionIdManager expeditionIdManager, ITeamMa
             // invited.Save(); // Moved to SaveMananger
         }
         Save(expedition);
+
+        foreach (var member in validMembers)
+            member.Character.Achievements.UpdateMaximum(CharRecordKind.EnrollGuild, 0, 0, 1);
     }
 
     public void Invite(GameConnection connection, string invitedName)
@@ -322,7 +326,13 @@ public class ExpeditionManager(IExpeditionIdManager expeditionIdManager, ITeamMa
         if (!reply)
             return;
 
-        var expedition = _expeditions[id1];
+        if (invited.Expedition != null ||
+            !_expeditions.TryGetValue(id1, out var expedition) ||
+            expedition.GetMember(invited) != null)
+        {
+            return;
+        }
+
         var newMember = GetMemberFromCharacter(expedition, invited, false);
 
         invited.Expedition = expedition;

@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Crafts;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
@@ -339,19 +340,57 @@ public class CharacterCraft(Character owner)
                 Owner.SendDebugMessage($"Product template {product.ItemId} - FixedGrade: {template.FixedGrade}, Gradable: {template.Gradable}");
             }
 
+            var productGranted = false;
+
             // Check if we're crafting a trade pack, if so, try to remove currently equipped backpack slot
             if (ItemManager.Instance.IsAutoEquipTradePack(product.ItemId) == false)
             {
-                Owner.Inventory.Bag.AcquireDefaultItem(ItemTaskType.CraftActSaved, product.ItemId, product.Amount, gradeToUse, Owner.Id);
+                productGranted = Owner.Inventory.Bag.AcquireDefaultItem(
+                    ItemTaskType.CraftActSaved,
+                    product.ItemId,
+                    product.Amount,
+                    gradeToUse,
+                    Owner.Id);
             }
             else
             {
-                if (!Owner.Inventory.TryEquipNewBackPack(ItemTaskType.CraftPickupProduct, product.ItemId, product.Amount, gradeToUse, Owner.Id))
+                productGranted = Owner.Inventory.TryEquipNewBackPack(
+                    ItemTaskType.CraftPickupProduct,
+                    product.ItemId,
+                    product.Amount,
+                    gradeToUse,
+                    Owner.Id);
+                if (!productGranted)
                 {
                     Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.BackpackOccupied, 0, false);
                     CancelCraft();
                     return;
                 }
+            }
+
+            if (productGranted && productTemplate != null && product.Amount > 0)
+            {
+                var actualGrade = productTemplate.FixedGrade >= 0
+                    ? productTemplate.FixedGrade
+                    : gradeToUse;
+                if (actualGrade < 0)
+                    actualGrade = 0;
+
+                Owner.Achievements?.Increment(
+                [
+                    new AchievementProgressEvent(
+                        CharRecordKind.MakeItemType,
+                        product.ItemId,
+                        (uint)actualGrade,
+                        (uint)product.Amount,
+                        true),
+                    new AchievementProgressEvent(
+                        CharRecordKind.MakeItemImpl,
+                        (uint)productTemplate.ImplId,
+                        (uint)actualGrade,
+                        (uint)product.Amount,
+                        true)
+                ]);
             }
         }
 

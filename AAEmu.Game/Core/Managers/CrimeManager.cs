@@ -7,6 +7,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.CommonFarm.Static;
 using AAEmu.Game.Models.Game.Crime;
@@ -230,6 +231,7 @@ public class CrimeManager() : Singleton<CrimeManager>, ICrimeManager
             return null;
         }
         UpdatedEventIds.Add(newEvent.Id);
+        reporter.Achievements.Increment(CharRecordKind.ReportCrime, (uint)crimeType, 0);
 
         // TODO: Handle this phase change by doing the skill, and handling the crime points in DoodadFuncEvidenceItemLoot of the doodad.
         // Add crime points to criminal

@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items;
@@ -145,6 +146,19 @@ public class GradeEnchant : SpecialEffectAction
         // character.Inventory.PlayerInventory.ConsumeItem(ItemTaskType.GradeEnchant, scroll.ItemTemplateId, 1, character.Inventory.GetItemById(scroll.ItemId));
         if (useCharm)
             character.Inventory.Bag.ConsumeItem(ItemTaskType.GradeEnchant, charmItem.TemplateId, 1, charmItem);
+
+        switch (result)
+        {
+            case GradeEnchantResult.Success:
+            case GradeEnchantResult.GreatSuccess:
+                character.Achievements?.Increment(CharRecordKind.EnchantItem, item.Grade, 0);
+                break;
+            case GradeEnchantResult.Break:
+            case GradeEnchantResult.Downgrade:
+            case GradeEnchantResult.Fail:
+                character.Achievements?.Increment(CharRecordKind.EnchantFailure, 0, 0);
+                break;
+        }
 
         character.SendPacket(new SCGradeEnchantResultPacket((byte)result, item, initialGrade, item.Grade));
         character.BroadcastPacket(new SCSkillEndedPacket(skill.TlId), true);

@@ -1,5 +1,6 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Skills;
 using MySql.Data.MySqlClient;
 
@@ -44,7 +45,10 @@ public class CharacterAbilities
     {
         // TODO SCAbilityExpChangedPacket
         if (type != AbilityType.None)
+        {
             Abilities[type].Exp += exp;
+            Owner.Achievements?.UpdateAbilityLevel(type, GetAbilityLevel(type));
+        }
     }
 
     public void AddActiveExp(int exp)
@@ -52,25 +56,37 @@ public class CharacterAbilities
         // TODO SCExpChangedPacket
         var maxLevelExp = ExperienceManager.Instance.GetExpForLevel(ExperienceManager.Instance.MaxPlayerLevel);
         if (Owner.Ability1 != AbilityType.None)
+        {
             Abilities[Owner.Ability1].Exp = Math.Min(Abilities[Owner.Ability1].Exp + exp, maxLevelExp);
+            Owner.Achievements?.UpdateAbilityLevel(Owner.Ability1, GetAbilityLevel(Owner.Ability1));
+        }
         if (Owner.Ability2 != AbilityType.None)
+        {
             Abilities[Owner.Ability2].Exp = Math.Min(Abilities[Owner.Ability2].Exp + exp, maxLevelExp);
+            Owner.Achievements?.UpdateAbilityLevel(Owner.Ability2, GetAbilityLevel(Owner.Ability2));
+        }
         if (Owner.Ability3 != AbilityType.None)
+        {
             Abilities[Owner.Ability3].Exp = Math.Min(Abilities[Owner.Ability3].Exp + exp, maxLevelExp);
+            Owner.Achievements?.UpdateAbilityLevel(Owner.Ability3, GetAbilityLevel(Owner.Ability3));
+        }
     }
 
     public void Swap(AbilityType oldAbilityId, AbilityType abilityId)
     {
         Owner.Skills.Reset(oldAbilityId);
+        var changed = false;
         if (Owner.Ability1 == oldAbilityId)
         {
             Owner.Ability1 = abilityId;
             Abilities[abilityId].Order = 0;
+            changed = true;
         }
         else if (Owner.Ability2 == oldAbilityId)
         {
             Owner.Ability2 = abilityId;
             Abilities[abilityId].Order = 1;
+            changed = true;
 
             //This sets are current ability level to match ability1 since its suppost to be in sync
             if (oldAbilityId == AbilityType.None)
@@ -82,6 +98,7 @@ public class CharacterAbilities
         {
             Owner.Ability3 = abilityId;
             Abilities[abilityId].Order = 2;
+            changed = true;
 
             if (oldAbilityId == AbilityType.None)
             {
@@ -102,6 +119,13 @@ public class CharacterAbilities
 
         if (oldAbilityId != AbilityType.None)
             Abilities[oldAbilityId].Order = 255;
+
+        foreach (var ability in Abilities.Values)
+            Owner.Achievements?.UpdateAbilityLevel(ability.Id, GetAbilityLevel(ability.Id));
+
+        if (changed && oldAbilityId != abilityId)
+            Owner.Achievements?.Increment(CharRecordKind.AbilityChange, 0, 0);
+
         Owner.BroadcastPacket(new SCAbilitySwappedPacket(Owner.ObjId, oldAbilityId, abilityId), true);
     }
 

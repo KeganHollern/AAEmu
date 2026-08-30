@@ -22,12 +22,12 @@ public class UnitRequirementsGameData : Singleton<UnitRequirementsGameData>, IGa
     /// <summary>
     /// Id, unit_reqs
     /// </summary>
-    private Dictionary<uint, UnitReqs> _unitReqs { get; set; }
+    private Dictionary<uint, UnitReqs> _unitReqs { get; set; } = [];
 
     /// <summary>
     /// owner_type, owner_id, unit_reqs
     /// </summary>
-    private Dictionary<string, List<UnitReqs>> _unitReqsByOwnerType { get; set; }
+    private Dictionary<string, List<UnitReqs>> _unitReqsByOwnerType { get; set; } = [];
 
     public void Load(SqliteConnection connection)
     {
@@ -67,7 +67,7 @@ public class UnitRequirementsGameData : Singleton<UnitRequirementsGameData>, IGa
     private IEnumerable<UnitReqs> GetRequirement(string ownerType, uint ownerId)
     {
         if (!_unitReqsByOwnerType.TryGetValue(ownerType, out var unitReqsMap))
-            return null;
+            return [];
         return unitReqsMap.Where(x => x.OwnerId == ownerId);
     }
 
