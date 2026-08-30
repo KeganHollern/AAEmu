@@ -45,8 +45,8 @@ public sealed class DoodadPhaseCycleTests
             new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>().Object),
             Mock.Of<ISusManager>().Object);
 
-        _firstRedirect = new RedirectPhaseFunc(SecondPhase) { Id = 1 };
-        _secondRedirect = new RedirectPhaseFunc(FirstPhase) { Id = 2 };
+        _firstRedirect = new RedirectPhaseFunc((int)SecondPhase) { Id = 1 };
+        _secondRedirect = new RedirectPhaseFunc((int)FirstPhase) { Id = 2 };
         var eveningRedirect = new DoodadFuncTod
         {
             Id = 3,

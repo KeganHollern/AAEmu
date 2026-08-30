@@ -887,7 +887,7 @@ public class Doodad : BaseUnit
             if (!visitedPhases.Add(phase))
                 return phase;
 
-            DoodadFuncTod matchingEdge = null;
+            var nextPhase = phase;
             foreach (var phaseFunc in DoodadManager.Instance.GetPhaseFunc(phase))
             {
                 if (phaseFunc?.FuncType != nameof(DoodadFuncTod))
@@ -897,15 +897,14 @@ public class Doodad : BaseUnit
                     is DoodadFuncTod { NextPhase: > 0 } tod &&
                     MathF.Abs(NormalizeTodHour(tod.TodAsHours) - NormalizeTodHour(edgeHour)) < 0.0001f)
                 {
-                    matchingEdge = tod;
+                    nextPhase = (uint)tod.NextPhase;
                     break;
                 }
             }
 
-            if (matchingEdge == null || matchingEdge.NextPhase == phase)
+            if (nextPhase == phase)
                 return phase;
 
-            var nextPhase = (uint)matchingEdge.NextPhase;
             if (visitedPhases.Contains(nextPhase))
                 return phase;
 

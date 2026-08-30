@@ -419,8 +419,21 @@ public class TimeManager : Singleton<TimeManager>, IObservable<float>, ITimeMana
                     {
                         if (nextPhase > 0)
                         {
-                            var stablePhase = doodad.ResolveTodTransitionTarget((uint)nextPhase, tod);
-                            doodad.ApplyTodPhase(null, (int)stablePhase);
+                            try
+                            {
+                                var stablePhase = doodad.ResolveTodTransitionTarget((uint)nextPhase, tod);
+                                doodad.ApplyTodPhase(null, (int)stablePhase);
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Error(
+                                    ex,
+                                    "Time-of-day phase change failed for Doodad ObjId {0}, TemplateId {1}, next phase {2}",
+                                    doodad.ObjId,
+                                    doodad.TemplateId,
+                                    nextPhase);
+                            }
+
                             break;
                         }
                     }
