@@ -413,15 +413,27 @@ public class TimeManager : Singleton<TimeManager>, IObservable<float>, ITimeMana
                 if (doodad.CurrentToDTriggers.Count <= 0)
                     continue;
 
-                foreach (var (tod, nextPhase) in doodad.CurrentToDTriggers)
+                foreach (var (tod, nextPhase) in doodad.CurrentToDTriggers.ToArray())
                 {
                     if (newTime >= tod && oldTime < tod)
                     {
                         if (nextPhase > 0)
                         {
-                            //doodad.DoChangePhase(doodad, nextPhase);
-                            doodad.FuncGroupId = (uint)nextPhase;
-                            doodad.BroadcastPacket(new SCDoodadPhaseChangedPacket(doodad), true);
+                            try
+                            {
+                                var stablePhase = doodad.ResolveTodTransitionTarget((uint)nextPhase, tod);
+                                doodad.ApplyTodPhase(null, (int)stablePhase);
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Error(
+                                    ex,
+                                    "Time-of-day phase change failed for Doodad ObjId {0}, TemplateId {1}, next phase {2}",
+                                    doodad.ObjId,
+                                    doodad.TemplateId,
+                                    nextPhase);
+                            }
+
                             break;
                         }
                     }

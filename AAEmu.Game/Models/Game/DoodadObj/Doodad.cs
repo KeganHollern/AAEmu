@@ -337,17 +337,15 @@ public class Doodad : BaseUnit
     /// </summary>
     public DateTime OverridePhaseTime { get; set; } = DateTime.MinValue;
 
+    private const int MaxPhaseTransitions = 64;
+    private const float HoursPerDay = 24f;
+
     private bool _deleted;
 
     /// <summary>
     /// Seat data for this Doodad
     /// </summary>
     public VehicleSeat Seat { get; set; }
-
-    /// <summary>
-    /// List of GroupId's of this Doodad
-    /// </summary>
-    private List<uint> ListGroupId { get; set; }
 
     /// <summary>
     /// AreaTriggers that are linked to this Doodad
@@ -360,7 +358,6 @@ public class Doodad : BaseUnit
         PlantTime = DateTime.MinValue;
         AttachPoint = AttachPointKind.System;
         Seat = new VehicleSeat(this);
-        ListGroupId = [];
         CurrentFuncs = [];
         CurrentPhaseFuncs = [];
         CurrentToDTriggers = [];
@@ -441,8 +438,6 @@ public class Doodad : BaseUnit
                 Logger.Trace($"Use: TemplateId {TemplateId}, Using phase {FuncGroupId} with SkillId {skillId}");
 
             ToNextPhase = false; // по умолчанию не выполняем следующую фазу
-            ListGroupId.Clear();
-
             //  first we find the functions, then we execute
             var funcWithSkill = DoodadManager.Instance.GetFunc(FuncGroupId, skillId); // if skillId > 0
             var allFuncsForGroup = DoodadManager.Instance.GetFuncsForGroup(FuncGroupId);
@@ -466,7 +461,6 @@ public class Doodad : BaseUnit
                 {
                     if (DoFunc(caster, startedSkillId, funcWithoutSkill))
                     {
-                        ListGroupId.Clear();
                         return;
                     }
                 }
@@ -616,82 +610,83 @@ public class Doodad : BaseUnit
     /// <param name="caster"></param>
     /// <param name="nextPhase"></param>
     /// <returns>If TRUE, it did not pass the check for the phase (it must be aborted)</returns>
-    private bool DoPhaseFuncs(BaseUnit caster, ref int nextPhase)
+    private bool DoPhaseFuncs(BaseUnit caster, ref int nextPhase, bool suppressTodPhaseOverride)
     {
-        if (nextPhase <= 0) { return true; }
+        var visitedPhases = new HashSet<uint>();
 
-        // Changing the phase.
-        FuncGroupId = (uint)nextPhase;
+        for (var transition = 0; transition < MaxPhaseTransitions; transition++)
+        {
+            if (nextPhase <= 0) { return true; }
 
-        if (!ListGroupId.Contains((uint)nextPhase))
-        {
-            ListGroupId.Add((uint)nextPhase); // to check CheckPhase()
-        }
-        else
-        {
-            var funcs = DoodadManager.Instance.GetFuncsForGroup(FuncGroupId);
-            if (funcs.Count > 0)
+            // Changing the phase.
+            FuncGroupId = (uint)nextPhase;
+
+            // A repeated phase cannot settle during this synchronous walk. Stop at the repeated
+            // phase instead of recursing forever through empty-func ToD pairs.
+            if (!visitedPhases.Add(FuncGroupId))
             {
-                // например, если это ID=2231, Target, то надо прервать рекурсию
                 if (Logger.IsTraceEnabled)
-                    Logger.Trace($"DoPhase: Finished execution with recurse: TemplateId {TemplateId}, Using phase {FuncGroupId}");
+                    Logger.Trace($"DoPhaseFuncs: Stopped phase cycle for TemplateId {TemplateId}, ObjId {ObjId}, phase {FuncGroupId}");
 
-                ListGroupId.Clear();
+                OverridePhase = 0;
                 return true;
             }
 
-            // например, если это ID=898, Prison Gate, то не надо прервать рекурсию
-            ListGroupId.Clear();
-        }
-
-        if (FuncTask != null)
-        {
-            FuncTask.Cancel();
-            FuncTask = null;
-            if (Logger.IsTraceEnabled)
-                Logger.Trace("DoPhaseFuncs:DoodadFuncTimer: The current timer has been canceled.");
-        }
-
-        if (Logger.IsTraceEnabled)
-            Logger.Trace($"DoPhaseFuncs: TemplateId {TemplateId}, ObjId {ObjId}, nextPhase {nextPhase}");
-
-        var phaseFuncs = DoodadManager.Instance.GetPhaseFunc(FuncGroupId);
-        if (phaseFuncs.Count == 0)
-        {
-            return false; // no phase functions for FuncGroupId
-        }
-
-        //CumulativePhaseRatio = 0; // не требуется
-        var stop = false;
-
-        // Perform the phase functions one after the other
-        foreach (var phaseFunc in phaseFuncs)
-        {
-            if (phaseFunc == null) { continue; }
-
-            PhaseRatio = Random.Shared.Next(0, 10000); // проверяем шанс для каждой фазовой функции
-
-            stop = phaseFunc.Use(caster, this);
-            if (stop)
+            if (FuncTask != null)
             {
-                break; // interrupt execution of phase functions and switch to OverridePhase
+                FuncTask.Cancel();
+                FuncTask = null;
+                if (Logger.IsTraceEnabled)
+                    Logger.Trace("DoPhaseFuncs:DoodadFuncTimer: The current timer has been canceled.");
             }
+
+            if (Logger.IsTraceEnabled)
+                Logger.Trace($"DoPhaseFuncs: TemplateId {TemplateId}, ObjId {ObjId}, nextPhase {nextPhase}");
+
+            var phaseFuncs = DoodadManager.Instance.GetPhaseFunc(FuncGroupId);
+            if (phaseFuncs.Count == 0)
+            {
+                return false; // no phase functions for FuncGroupId
+            }
+
+            //CumulativePhaseRatio = 0; // не требуется
+            var stop = false;
+
+            // Perform the phase functions one after the other
+            foreach (var phaseFunc in phaseFuncs)
+            {
+                if (phaseFunc == null) { continue; }
+                if (suppressTodPhaseOverride && phaseFunc.FuncType == nameof(DoodadFuncTod)) { continue; }
+
+                PhaseRatio = Random.Shared.Next(0, 10000); // проверяем шанс для каждой фазовой функции
+
+                stop = phaseFunc.Use(caster, this);
+                if (stop)
+                {
+                    break; // interrupt execution of phase functions and switch to OverridePhase
+                }
+            }
+
+            if (OverridePhase != 0 && stop && FuncGroupId != OverridePhase)
+            {
+                nextPhase = OverridePhase;
+                OverridePhase = 0;
+                continue;
+            }
+
+            if (!_deleted)
+            {
+                Save(); // let's save the doodad in the database
+            }
+
+            return stop; // if true, it did not pass the check for the quest (it must be aborted)
         }
 
-        if (OverridePhase != 0 && stop && FuncGroupId != OverridePhase)
-        {
-            nextPhase = OverridePhase;
-            OverridePhase = 0;
-            var res = DoPhaseFuncs(caster, ref nextPhase);
-            return res;
-        }
-
-        if (!_deleted)
-        {
-            Save(); // let's save the doodad in the database
-        }
-
-        return stop; // if true, it did not pass the check for the quest (it must be aborted)
+        Logger.Warn(
+            "DoPhaseFuncs: Stopped phase walk at {0} transitions for TemplateId {1}, ObjId {2}, next phase {3}",
+            MaxPhaseTransitions, TemplateId, ObjId, nextPhase);
+        OverridePhase = 0;
+        return true;
     }
 
     /// <summary>
@@ -701,6 +696,11 @@ public class Doodad : BaseUnit
     /// <param name="nextPhase"></param>
     /// <returns>If TRUE, it did not pass the check for the quest (it must be aborted)</returns>
     public bool DoChangePhase(BaseUnit caster, int nextPhase)
+    {
+        return DoChangePhaseCore(caster, nextPhase, false);
+    }
+
+    private bool DoChangePhaseCore(BaseUnit caster, int nextPhase, bool suppressTodPhaseOverride)
     {
         // здесь не надо удалять doodad
         //if (nextPhase == -1)
@@ -718,7 +718,7 @@ public class Doodad : BaseUnit
         if (Logger.IsTraceEnabled)
             Logger.Trace($"DoChangePhase: TemplateId {TemplateId}, ObjId {ObjId}, nextPhase {nextPhase}");
 
-        var stop = DoPhaseFuncs(caster, ref nextPhase);
+        var stop = DoPhaseFuncs(caster, ref nextPhase, suppressTodPhaseOverride);
 
         // Post-phase work must use a live doodad. RatioRespawn can replace and delete this instance.
         if (!_deleted)
@@ -803,7 +803,124 @@ public class Doodad : BaseUnit
 
         // Actually do the phase change
         var unit = ParentWorld.GetUnit(OwnerObjId);
-        DoChangePhase(unit, (int)FuncGroupId);
+        var settledPhase = FuncGroupId;
+        if (Template.ForceTodTopPriority)
+            settledPhase = ResolveTodPhase(FuncGroupId, TimeManager.Instance.GetTime);
+
+        ApplyTodPhase(unit, (int)settledPhase);
+    }
+
+    /// <summary>
+    /// Applies a clock edge without re-evaluating time-of-day functions in the target phase.
+    /// </summary>
+    internal bool ApplyTodPhase(BaseUnit caster, int nextPhase)
+    {
+        return DoChangePhaseCore(caster, nextPhase, true);
+    }
+
+    /// <summary>
+    /// Resolves a repeating time-of-day phase graph to the target of its latest clock edge.
+    /// </summary>
+    internal uint ResolveTodPhase(uint startPhase, float currentHour)
+    {
+        if (startPhase == 0 || !Template.ForceTodTopPriority)
+            return startPhase;
+
+        var pendingPhases = new Queue<uint>();
+        var visitedPhases = new HashSet<uint>();
+        var settledPhase = startPhase;
+        var latestEdgeAge = float.PositiveInfinity;
+        var latestEdgeHour = 0f;
+        pendingPhases.Enqueue(startPhase);
+
+        while (pendingPhases.Count > 0 && visitedPhases.Count < MaxPhaseTransitions)
+        {
+            var phase = pendingPhases.Dequeue();
+            if (!visitedPhases.Add(phase))
+                continue;
+
+            foreach (var phaseFunc in DoodadManager.Instance.GetPhaseFunc(phase))
+            {
+                if (phaseFunc?.FuncType != nameof(DoodadFuncTod))
+                    continue;
+
+                if (DoodadManager.Instance.GetPhaseFuncTemplate(phaseFunc.FuncId, phaseFunc.FuncType)
+                    is not DoodadFuncTod { NextPhase: > 0 } tod)
+                    continue;
+
+                var targetPhase = (uint)tod.NextPhase;
+                if (targetPhase != phase && !visitedPhases.Contains(targetPhase))
+                    pendingPhases.Enqueue(targetPhase);
+
+                var edgeAge = NormalizeTodHour(currentHour - tod.TodAsHours);
+                if (edgeAge < latestEdgeAge)
+                {
+                    latestEdgeAge = edgeAge;
+                    latestEdgeHour = tod.TodAsHours;
+                    settledPhase = targetPhase;
+                }
+            }
+        }
+
+        if (pendingPhases.Count > 0)
+        {
+            Logger.Warn(
+                "ResolveTodPhase: Stopped graph scan at {0} phases for TemplateId {1}, ObjId {2}",
+                MaxPhaseTransitions, TemplateId, ObjId);
+        }
+
+        return float.IsPositiveInfinity(latestEdgeAge)
+            ? settledPhase
+            : ResolveTodTransitionTarget(settledPhase, latestEdgeHour);
+    }
+
+    /// <summary>
+    /// Follows consecutive clock edges that share one time and returns their stable target phase.
+    /// </summary>
+    internal uint ResolveTodTransitionTarget(uint startPhase, float edgeHour)
+    {
+        var phase = startPhase;
+        var visitedPhases = new HashSet<uint>();
+
+        for (var transition = 0; transition < MaxPhaseTransitions; transition++)
+        {
+            if (!visitedPhases.Add(phase))
+                return phase;
+
+            var nextPhase = phase;
+            foreach (var phaseFunc in DoodadManager.Instance.GetPhaseFunc(phase))
+            {
+                if (phaseFunc?.FuncType != nameof(DoodadFuncTod))
+                    continue;
+
+                if (DoodadManager.Instance.GetPhaseFuncTemplate(phaseFunc.FuncId, phaseFunc.FuncType)
+                    is DoodadFuncTod { NextPhase: > 0 } tod &&
+                    MathF.Abs(NormalizeTodHour(tod.TodAsHours) - NormalizeTodHour(edgeHour)) < 0.0001f)
+                {
+                    nextPhase = (uint)tod.NextPhase;
+                    break;
+                }
+            }
+
+            if (nextPhase == phase)
+                return phase;
+
+            if (visitedPhases.Contains(nextPhase))
+                return phase;
+
+            phase = nextPhase;
+        }
+
+        Logger.Warn(
+            "ResolveTodTransitionTarget: Stopped phase walk at {0} transitions for TemplateId {1}, ObjId {2}",
+            MaxPhaseTransitions, TemplateId, ObjId);
+        return phase;
+    }
+
+    private static float NormalizeTodHour(float hour)
+    {
+        var normalized = hour % HoursPerDay;
+        return normalized < 0f ? normalized + HoursPerDay : normalized;
     }
 
     /// <summary>
