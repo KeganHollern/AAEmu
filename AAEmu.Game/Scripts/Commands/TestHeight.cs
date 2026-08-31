@@ -5,6 +5,8 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
@@ -58,7 +60,9 @@ public class TestHeight : ICommand
             var rY = (int)Math.Floor(targetPlayer.Transform.World.Position.Y);
             rY = rY - rY % 2;
             uint unitId = 5622; // Pillar
+            var unavailableMarkers = 0;
             for (var y = rY - 10; y <= rY + 10; y += 2)
+            {
                 for (var x = rX - 10; x <= rX + 10; x += 2)
                 {
                     if (!DoodadManager.Instance.Exist(unitId))
@@ -66,18 +70,27 @@ public class TestHeight : ICommand
                         return;
                     }
 
+                    var markerPosition = targetPlayer.Transform.CloneAsSpawnPosition();
+                    markerPosition.X = x;
+                    markerPosition.Y = y;
+                    if (!TryResolveMarkerPosition(targetPlayer.ParentWorld.Template, markerPosition, out _))
+                    {
+                        unavailableMarkers++;
+                        continue;
+                    }
+
                     var doodadSpawner = new DoodadSpawner
                     {
-                        ParentWorld = character.ParentWorld, Id = 0, UnitId = unitId, Position = character.Transform.CloneAsSpawnPosition()
+                        ParentWorld = targetPlayer.ParentWorld, Id = 0, UnitId = unitId, Position = markerPosition
                     };
-                    doodadSpawner.Position.X = x;
-                    doodadSpawner.Position.Y = y;
-                    doodadSpawner.Position.Z = targetPlayer.ParentWorld.Template.GeoData.GetHeight(doodadSpawner.Position.AsPositionVector());
                     doodadSpawner.Position.Yaw = 0;
                     doodadSpawner.Position.Pitch = 0;
                     doodadSpawner.Position.Roll = 0;
                     doodadSpawner.Spawn(0);
                 }
+            }
+
+            ReportSkippedMarkers(messageOutput, unavailableMarkers);
         }
         else if (args.Length > firstarg && args[firstarg] == "line")
         {
@@ -90,6 +103,7 @@ public class TestHeight : ICommand
             float rX = rXX;
             float rY = rYY;
             uint unitId = 5622; // Pillar
+            var unavailableMarkers = 0;
             for (var x = rX - 10f; x <= rX + 10f; x += 1f)
             {
                 if (!DoodadManager.Instance.Exist(unitId))
@@ -97,13 +111,19 @@ public class TestHeight : ICommand
                     return;
                 }
 
+                var markerPosition = targetPlayer.Transform.CloneAsSpawnPosition();
+                markerPosition.X = x;
+                markerPosition.Y = rY;
+                if (!TryResolveMarkerPosition(targetPlayer.ParentWorld.Template, markerPosition, out _))
+                {
+                    unavailableMarkers++;
+                    continue;
+                }
+
                 var doodadSpawner = new DoodadSpawner
                 {
-                    ParentWorld = character.ParentWorld, Id = 0, UnitId = unitId, Position = character.Transform.CloneAsSpawnPosition()
+                    ParentWorld = targetPlayer.ParentWorld, Id = 0, UnitId = unitId, Position = markerPosition
                 };
-                doodadSpawner.Position.X = x;
-                doodadSpawner.Position.Y = rY;
-                doodadSpawner.Position.Z = character.ParentWorld.Template.GeoData.GetHeight(doodadSpawner.Position.AsPositionVector());
                 doodadSpawner.Position.Yaw = 0;
                 doodadSpawner.Position.Pitch = 0;
                 doodadSpawner.Position.Roll = 0;
@@ -117,29 +137,38 @@ public class TestHeight : ICommand
                     return;
                 }
 
+                var markerPosition = targetPlayer.Transform.CloneAsSpawnPosition();
+                markerPosition.X = rX;
+                markerPosition.Y = y;
+                if (!TryResolveMarkerPosition(targetPlayer.ParentWorld.Template, markerPosition, out _))
+                {
+                    unavailableMarkers++;
+                    continue;
+                }
+
                 var doodadSpawner = new DoodadSpawner
                 {
-                    ParentWorld = character.ParentWorld, Id = 0, UnitId = unitId, Position = character.Transform.CloneAsSpawnPosition()
+                    ParentWorld = targetPlayer.ParentWorld, Id = 0, UnitId = unitId, Position = markerPosition
                 };
-                doodadSpawner.Position.X = rX;
-                doodadSpawner.Position.Y = y;
-                doodadSpawner.Position.Z = character.ParentWorld.Template.GeoData.GetHeight(doodadSpawner.Position.AsPositionVector());
                 doodadSpawner.Position.Yaw = 0;
                 doodadSpawner.Position.Pitch = 0;
                 doodadSpawner.Position.Roll = 0;
                 doodadSpawner.Spawn(0);
             }
+
+            ReportSkippedMarkers(messageOutput, unavailableMarkers);
         }
         else
         {
             // Show info
-            var world = WorldManager.Instance.GetWorldTemplateByZoneKey(targetPlayer.Transform.ZoneId);
-
-            var height = world.GetHeight(targetPlayer.Transform.World.Position.X,
-                targetPlayer.Transform.World.Position.Y);
-            var hDelta = character.Transform.World.Position.Z - height;
+            var world = targetPlayer.ParentWorld.Template;
+            var surface = CommandSurfaceResult.Resolve(world, targetPlayer.Transform.World.Position);
+            var terrainDelta = surface.TerrainHeight.HasValue
+                ? CommandSurfaceResult.Format(surface.QueryPosition.Z - surface.TerrainHeight.Value)
+                : "n/a";
             CommandManager.SendNormalText(this, messageOutput,
-                $"{targetPlayer.Name} Z-Pos: {character.Transform.World.Position.Z} - Floor: {height} - HeightmapDelta: {hDelta}");
+                $"{targetPlayer.Name} Z-Pos: {CommandSurfaceResult.Format(surface.QueryPosition.Z)} - " +
+                $"{surface.FormatHeights()} terrainDelta={terrainDelta}");
             CommandManager.SendNormalText(this, messageOutput,
                 $"|cFFFFFFFF{targetPlayer.Name}|r X: |cFFFFFFFF{targetPlayer.Transform.World.Position.X:F1}|r  Y: |cFFFFFFFF{targetPlayer.Transform.World.Position.Y:F1}|r  Z: |cFFFFFFFF{targetPlayer.Transform.World.Position.Z:F1}|r ");
 
@@ -153,14 +182,35 @@ public class TestHeight : ICommand
             var borderTop = borderBottom + 2;
 
             // Get heights for these points
-            var heightTL = world.GetRawHeightMapHeight(borderLeft, borderTop); // 10
-            var heightTR = world.GetRawHeightMapHeight(borderRight, borderTop); // 6
-            var heightBL = world.GetRawHeightMapHeight(borderLeft, borderBottom); // 14
-            var heightBR = world.GetRawHeightMapHeight(borderRight, borderBottom); // 16
+            var heightTL = FormatRawHeight(world, borderLeft, borderTop); // 10
+            var heightTR = FormatRawHeight(world, borderRight, borderTop); // 6
+            var heightBL = FormatRawHeight(world, borderLeft, borderBottom); // 14
+            var heightBR = FormatRawHeight(world, borderRight, borderBottom); // 16
             CommandManager.SendNormalText(this, messageOutput, $"TL @ {borderLeft}x{borderTop} = {heightTL}");
             CommandManager.SendNormalText(this, messageOutput, $"TR @ {borderRight}x{borderTop} = {heightTR}");
             CommandManager.SendNormalText(this, messageOutput, $"BL @ {borderLeft}x{borderBottom} = {heightBL}");
             CommandManager.SendNormalText(this, messageOutput, $"BR @ {borderRight}x{borderBottom} = {heightBR}");
         }
+    }
+
+    internal static bool TryResolveMarkerPosition(WorldTemplate template, WorldSpawnPosition markerPosition,
+        out CommandSurfaceResult surface)
+    {
+        surface = CommandSurfaceResult.Resolve(template, markerPosition.AsPositionVector());
+        if (!surface.TryGetSelectedGroundHeight(out var height))
+            return false;
+
+        markerPosition.Z = height;
+        return true;
+    }
+
+    private static string FormatRawHeight(WorldTemplate template, int x, int y) =>
+        template.TryGetRawHeightMapHeight(x, y, out var height) ? CommandSurfaceResult.Format(height) : "n/a";
+
+    private void ReportSkippedMarkers(IMessageOutput messageOutput, int unavailableMarkers)
+    {
+        if (unavailableMarkers > 0)
+            CommandManager.SendErrorText(this, messageOutput,
+                $"Skipped {unavailableMarkers} marker(s) because selected ground was unavailable.");
     }
 }
