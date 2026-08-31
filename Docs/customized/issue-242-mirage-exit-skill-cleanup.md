@@ -28,7 +28,7 @@
 
 ## Prior research
 
-- Worktree: `fix/issue-242-mirage-exit-fx` from `deployment/r208022` at `36c52263`.
+- Worktree: `fix/issue-242-mirage-exit-fx` with deployment commits through `a3b0c0d6`.
 - Ignored artifacts: Ghidra project data and the decompiler helper under `.tools-re`.
 - The issue image shows the pale body glow and ground markers from FX group `428`.
 
@@ -68,7 +68,8 @@ Its `overhill_form_glow` node is continuous and binds to the emitter.
 | `c3b9d408` | Moved both exits to `RequestLeaveInstance` without an order change. | Comparison only |
 | `6c6514c8` | Removed a second full `EndSkill` call because it used labor twice. | Confirmed design constraint |
 | `fcfbeb75` | Initial research base. | Confirmed |
-| `36c52263` | Final fork base for this fix. | Confirmed |
+| `36c52263` | Base for the rebased local tests. | Confirmed |
+| `a3b0c0d6` | Later deployment commit merged into the PR branch. | Confirmed |
 
 ## Wire contract
 
@@ -110,7 +111,7 @@ The exact cause of the retained emitter remains an inference until a client pack
 - The same test checks opcode `0x0a3`, packet level `1`, body size `2`, and the exact TL ID.
 - A negative test checks that another doodad function does not get an early skill-end packet.
 - `ExitArchemallTests` checks the icon route order.
-- The AAEmu unit-test project passed all `1633` tests on .NET `10.0.11`.
+- The AAEmu unit-test project passed all `1637` tests on .NET `10.0.11`.
 - Manual r208022 test: Pending after deployment.
 
 ## Conclusion
