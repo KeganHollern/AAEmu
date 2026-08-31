@@ -17,9 +17,9 @@ public class DBConnectionsConfig
     public required MySqlConnectionSettings MySQLProvider { get; set; }
 
     /// <summary>
-    /// Gets or sets whether to automatically apply database schema updates without an interactive prompt.
-    /// Intended for unattended environments such as Aspire or CI. Not recommended for production use, as it may apply
-    /// updates without proper review.
+    /// Gets or sets whether to apply pending database updates without an interactive prompt.
+    /// Set this to <c>true</c> for unattended environments such as containers, Aspire, or CI.
+    /// When this is <c>false</c>, unattended startup fails if an update is pending.
     /// </summary>
     public bool AutoApplyUpdates { get; set; }
 }

@@ -1,12 +1,21 @@
-When your code update needs any changes to the MySQL tables, you will need to put a update script here, and also apply it in the initial sql files one folder up from here.
-Files need to be named in the following format;
+When a code change needs a MySQL schema change, add an update script here. Apply the same change to the initial SQL file in the parent folder.
+
+Use this file name format:
 
 YYYY-MM-DD_aaemu_XXXX*.sql
 
-Where YYYY-MM-DD is the date you introduced this change, and "XXXX" is either "login" or "game".
-These scripts will get executed only one time at the start of running the Login or Game server. Installed scripts get logged into a updates table to the relevant to the server it's running for.
-A server will only check and run scripts that are relevant to themselves, therefor the naming of the files is important.
+Use "login" or "game" for "XXXX". Use lowercase file names. The server uses the complete file name as the update version in its `updates` table.
 
-When running a server that supports this new update system for the first time, it will assume that all related scripts in this folder were already installed, and will be marked as such.
+Do not rename or edit a released update script. A rename creates a new update version. An edit does not run again after the original version has `installed=1`. Add a new update script for a correction.
 
-The date part is technically not required, but it is used to handle update order, so please keep it consistent.
+At startup, each server selects its update files and sorts them by file name. The server does not run a file whose ledger row has `installed=1`.
+
+Set `Connections:AutoApplyUpdates` to `true` for an unattended server. The environment variable form is `Connections__AutoApplyUpdates=true`. The server applies each pending file in order and stops at the first failure.
+
+When `AutoApplyUpdates` is `false`, an interactive server asks for `YES` or `SKIP`. An unattended server fails startup instead of reading standard input.
+
+Each attempt updates the ledger with a UTC attempt time. A successful update uses `installed=1`. A failed update uses `installed=0` and stores the error in `last_error`. The server retries that file at the next startup. It does not attempt later files after a failure.
+
+When a server creates the `updates` table for the first time, it marks all update files in that release as installed. This preserves databases that existed before the update system.
+
+Keep the date prefix because file name order is update order.

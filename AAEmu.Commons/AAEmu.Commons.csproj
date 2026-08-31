@@ -11,4 +11,8 @@
     <PackageReference Include="NetCoreServer" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="AAEmu.Login.IntegrationTests" />
+  </ItemGroup>
+
 </Project>
