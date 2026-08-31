@@ -1,5 +1,6 @@
 ﻿using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Plots.Type;
 using AAEmu.Game.Models.Game.Skills.Plots.UpdateTargetMethods;
 using AAEmu.Game.Models.Game.Skills.Utils;
@@ -100,8 +101,7 @@ public class PlotTargetInfo
         {
             posUnit.Transform.Local.AddDistanceToFront(args.Distance / 1000f - 0.01f);
         }
-        // TODO: Make this use geo data, need to check if we can grab parent world from here
-        posUnit.Transform.Local.SetHeight(Math.Max(PreviousTarget.Transform.World.Position.Z + args.HeightOffset / 1000f, WorldManager.Instance.GetHeight(posUnit.Transform)));
+        posUnit.Transform.Local.SetHeight(ResolvePlotLandHeight(PreviousTarget, posUnit, args.HeightOffset));
 
         if (args.MaxTargets == 0)
         {
@@ -167,8 +167,7 @@ public class PlotTargetInfo
         posUnit.Transform.InstanceId = PreviousTarget.Transform.InstanceId;
         posUnit.Transform.Local.SetZRotation(((float)Random.Shared.Next(-180, 180)).DegToRad());
         posUnit.Transform.Local.AddDistanceToFront(args.Distance / 1000f);
-        // TODO: Make this use geo data, need to check if we can grab parent world from here
-        posUnit.Transform.Local.SetHeight(Math.Max(PreviousTarget.Transform.World.Position.Z + args.HeightOffset / 1000f, WorldManager.Instance.GetHeight(posUnit.Transform)));
+        posUnit.Transform.Local.SetHeight(ResolvePlotLandHeight(PreviousTarget, posUnit, args.HeightOffset));
 
         if (args.MaxTargets == 0)
         {
@@ -197,6 +196,46 @@ public class PlotTargetInfo
         }
 
         return posUnit;
+    }
+
+    private static float ResolvePlotLandHeight(BaseUnit previous, BaseUnit position, int rawHeightParameter)
+    {
+        var anchorHeight = previous?.Transform?.World.Position.Z ?? 0f;
+        var hasGroundHeight = WorldManager.Instance.TryGetHeight(position.Transform, out var groundHeight);
+        var previousIsAerial = previous is Npc { CanFly: true } ||
+                               (previous is { ObjId: not uint.MaxValue } && hasGroundHeight &&
+                                anchorHeight > groundHeight + 8f);
+
+        return ResolvePlotLandHeight(
+            anchorHeight,
+            rawHeightParameter,
+            hasGroundHeight ? groundHeight : null,
+            previousIsAerial);
+    }
+
+    /// <summary>
+    /// Resolves the surface used by area-location plot nodes. The raw height field is also used as a
+    /// vertical search range by retail plots; treating large values as a positive offset places rift
+    /// impacts and their SpawnEffects hundreds of metres above the terrain.
+    /// </summary>
+    internal static float ResolvePlotLandHeight(
+        float anchorHeight,
+        int rawHeightParameter,
+        float? groundHeight,
+        bool previousIsAerial)
+    {
+        var offset = rawHeightParameter / 1000f;
+        var raisedHeight = anchorHeight + offset;
+        if (groundHeight is not { } ground || !float.IsFinite(ground))
+            return raisedHeight;
+
+        if (Math.Abs(offset) >= 100f)
+            return ground;
+
+        if (previousIsAerial && raisedHeight > ground + 2f)
+            return ground;
+
+        return Math.Max(raisedHeight, ground);
     }
 
     private static IEnumerable<Unit> FilterTargets(IEnumerable<Unit> units, PlotState state, IPlotTargetParams args, PlotEventTemplate plotEvent)
