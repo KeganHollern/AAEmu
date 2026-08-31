@@ -31,8 +31,7 @@ public sealed class LoginService(
                     dbConnectionsConfig.Value.AutoApplyUpdates))
             {
                 logger.LogCritical("Failed to update database!");
-                logger.LogCritical("Press Ctrl+C to quit");
-                return;
+                throw new InvalidOperationException("The login database update failed.");
             }
         }
 
