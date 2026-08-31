@@ -29,6 +29,7 @@
 ## Prior research
 
 - Worktree: `fix/issue-242-mirage-exit-fx` with deployment commits through `a3b0c0d6`.
+- Forward-correction worktree: `fix/issue-242-character-exit-guard` from `49170c21`.
 - Ignored artifacts: Ghidra project data and the decompiler helper under `.tools-re`.
 - The issue image shows the pale body glow and ground markers from FX group `428`.
 
@@ -103,6 +104,7 @@ The exact cause of the retained emitter remains an inference until a client pack
 - Let normal `EndSkill` use labor, run callbacks, record achievements, and release the TL ID once.
 - Keep the normal later skill-end packet. Existing special effects use the same early-notification pattern.
 - Use the selected `DoodadFuncExitIndun` type for the portal guard.
+- Require a character caster because `DoodadFuncExitIndun` ignores other caster types.
 - No database, compact, config, or persistent-state change is needed.
 
 ## Validation
@@ -110,8 +112,9 @@ The exact cause of the retained emitter remains an inference until a client pack
 - `InteractionEffectTests` checks the early packet order for `DoodadFuncExitIndun`.
 - The same test checks opcode `0x0a3`, packet level `1`, body size `2`, and the exact TL ID.
 - A negative test checks that another doodad function does not get an early skill-end packet.
+- A negative test checks that a non-character caster does not get an early skill-end packet.
 - `ExitArchemallTests` checks the icon route order.
-- The AAEmu unit-test project passed all `1637` tests on .NET `10.0.11`.
+- The AAEmu unit-test project passed all `1638` tests on .NET `10.0.11`.
 - Manual r208022 test: Pending after deployment.
 
 ## Conclusion

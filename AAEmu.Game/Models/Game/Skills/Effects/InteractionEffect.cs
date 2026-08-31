@@ -59,7 +59,7 @@ public class InteractionEffect : EffectTemplate
             return;
         }
 
-        if (target is Doodad doodad)
+        if (caster is Character && target is Doodad doodad)
         {
             doodadFuncResolver ??= DoodadManager.Instance.GetFunc;
             var doodadFunc = doodadFuncResolver(doodad.FuncGroupId, skill.Id);
