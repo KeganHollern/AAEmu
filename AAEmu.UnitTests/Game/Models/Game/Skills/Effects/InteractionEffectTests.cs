@@ -84,7 +84,44 @@ public class InteractionEffectTests
         await Assert.That(character.Packets).IsEmpty();
     }
 
+    [Test]
+    public async Task ExecuteWorldInteraction_ExitIndun_NonCharacterDoesNotSendEarlySkillEnd()
+    {
+        var events = new List<string>();
+        var unit = new RecordingBaseUnit(events);
+        var interaction = new RecordingInteraction(events);
+        var skill = new Skill(new SkillTemplate { Id = MirageIsleExitSkillId }) { TlId = 0x1234 };
+
+        InteractionEffect.ExecuteWorldInteraction(
+            interaction,
+            unit,
+            new SkillCasterUnit(),
+            new Doodad(),
+            new SkillCastUnitTarget(),
+            new EffectSource(skill),
+            0,
+            (_, skillId) => new DoodadFunc
+            {
+                FuncType = nameof(DoodadFuncExitIndun),
+                SkillId = skillId
+            });
+
+        await Assert.That(events.SequenceEqual(["interaction"])).IsTrue();
+        await Assert.That(unit.Packets).IsEmpty();
+    }
+
     private sealed class RecordingCharacter(List<string> events) : Character(null)
+    {
+        public List<GamePacket> Packets { get; } = [];
+
+        public override void BroadcastPacket(GamePacket packet, bool self)
+        {
+            Packets.Add(packet);
+            events.Add("skill-ended");
+        }
+    }
+
+    private sealed class RecordingBaseUnit(List<string> events) : BaseUnit
     {
         public List<GamePacket> Packets { get; } = [];
 
