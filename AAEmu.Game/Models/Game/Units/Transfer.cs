@@ -402,7 +402,8 @@ public class Transfer : Unit
         // spawn the cabin
         character.SendPacket(new SCUnitStatePacket(this));
 
-        base.AddVisibleObject(character);
+        // Transfer children are independently published by the world visibility lifecycle.
+        // Region snapshots batch doodads after their parent units, so recursing here creates seats twice.
     }
 
     public override void RemoveVisibleObject(Character character)
