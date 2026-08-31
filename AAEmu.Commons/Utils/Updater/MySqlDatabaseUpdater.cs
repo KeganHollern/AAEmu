@@ -158,7 +158,7 @@ public static class MySqlDatabaseUpdater
                 command.Parameters.Clear();
                 command.Parameters.AddWithValue("@script_name", Path.GetFileName(fName));
                 command.Parameters.AddWithValue("@installed", success ? 1 : 0);
-                command.Parameters.AddWithValue("@install_date", success ? DateTime.UtcNow : DateTime.MinValue);
+                command.Parameters.AddWithValue("@install_date", DateTime.UtcNow);
                 command.Parameters.AddWithValue("@last_error", errorText);
 
                 command.ExecuteNonQuery();
@@ -187,6 +187,13 @@ public static class MySqlDatabaseUpdater
     /// <param name="autoApply">When <c>true</c>, pending updates are applied automatically without an interactive prompt.</param>
     /// <returns></returns>
     public static bool Run(MySqlConnection connection, string moduleNamePrefix, string databaseSchemaName, bool autoApply = false)
+    {
+        var canPrompt = Environment.UserInteractive && !Console.IsInputRedirected;
+        return RunCore(connection, moduleNamePrefix, databaseSchemaName, autoApply, canPrompt);
+    }
+
+    internal static bool RunCore(MySqlConnection connection, string moduleNamePrefix, string databaseSchemaName,
+        bool autoApply, bool canPrompt)
     {
         Logger.Debug($"Updating database for {moduleNamePrefix}");
 
@@ -270,6 +277,13 @@ public static class MySqlDatabaseUpdater
             }
             else
             {
+                if (!canPrompt)
+                {
+                    Logger.Error("Database updates are pending, but interactive input is not available. " +
+                                 "Set Connections:AutoApplyUpdates to true to apply updates during unattended startup.");
+                    return false;
+                }
+
                 Thread.Sleep(1000);
                 Console.WriteLine($"Warning, there are {filesToRun.Count} updates for the database that need to be installed first!");
                 Console.WriteLine("-----");

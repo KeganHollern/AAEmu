@@ -60,8 +60,7 @@ public sealed class GameService : IHostedService, IDisposable
                     AppConfiguration.Instance.Connections.AutoApplyUpdates))
             {
                 Logger.Fatal("Failed to update database!");
-                Logger.Fatal("Press Ctrl+C to quit");
-                return;
+                throw new InvalidOperationException("The game database update failed.");
             }
         }
 
