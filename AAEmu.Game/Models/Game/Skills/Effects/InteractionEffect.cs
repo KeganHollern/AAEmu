@@ -1,7 +1,10 @@
 ﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Packets;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
@@ -33,19 +36,40 @@ public class InteractionEffect : EffectTemplate
         caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.Interaction);
 
         var action = (IWorldInteraction)Activator.CreateInstance(classType);
-        if (source is { Skill: { } } && casterObj != null && target != null && targetObj != null && source.Skill.Template != null)
-        {
-            action?.Execute(caster, casterObj, target, targetObj, source.Skill.Template.Id, DoodadId);
-        }
+        ExecuteWorldInteraction(action, caster, casterObj, target, targetObj, source, DoodadId);
 
         if (caster is not Character character) { return; }
         if (character.SkillCancelled) { return; }
-        if (target is Doodad doodad)
+        if (caster is Character && target is Doodad doodad)
         {
             //character.Quests.OnInteraction(WorldInteraction, target);
             // инициируем событие
             //Task.Run(() => QuestManager.Instance.DoInteractionEvents((Character)caster, target.TemplateId));
             QuestManager.Instance.DoDoodadInteractionEvents((Character)caster, (Character)caster, target.TemplateId);
         }
+    }
+
+    internal static void ExecuteWorldInteraction(IWorldInteraction action, BaseUnit caster, SkillCaster casterObj,
+        BaseUnit target, SkillCastTarget targetObj, EffectSource source, uint doodadId,
+        Func<uint, uint, DoodadFunc> doodadFuncResolver = null)
+    {
+        if (action == null || source is not { Skill: { } skill } || casterObj == null || target == null ||
+            targetObj == null || skill.Template == null)
+        {
+            return;
+        }
+
+        if (target is Doodad doodad)
+        {
+            doodadFuncResolver ??= DoodadManager.Instance.GetFunc;
+            var doodadFunc = doodadFuncResolver(doodad.FuncGroupId, skill.Id);
+            if (doodadFunc?.FuncType == nameof(DoodadFuncExitIndun))
+            {
+                // ExitIndun loads the saved world before normal skill cleanup runs.
+                caster.BroadcastPacket(new SCSkillEndedPacket(skill.TlId), true);
+            }
+        }
+
+        action.Execute(caster, casterObj, target, targetObj, skill.Template.Id, doodadId);
     }
 }

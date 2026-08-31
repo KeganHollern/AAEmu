@@ -1,4 +1,5 @@
 ﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Units;
 
@@ -25,7 +26,13 @@ public class ExitArchemall : SpecialEffectAction
 
         if (caster is Character character)
         {
-            IndunManager.Instance.RequestLeaveInstance(character);
+            ExitInstance(character, skill, () => IndunManager.Instance.RequestLeaveInstance(character));
         }
+    }
+
+    internal static void ExitInstance(Character character, Skill skill, Action requestLeave)
+    {
+        character.BroadcastPacket(new SCSkillEndedPacket(skill.TlId), true);
+        requestLeave();
     }
 }
