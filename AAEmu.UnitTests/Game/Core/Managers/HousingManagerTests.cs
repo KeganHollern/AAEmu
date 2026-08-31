@@ -67,6 +67,33 @@ public class HousingManagerTests
     }
 
     [Test]
+    public async Task CalculateBuildingTaxInfo_FirstStructure_ChargesDepositAndFirstWeekTax()
+    {
+        var manager = CreateManager();
+        var template = new HousingTemplate
+        {
+            Taxation = new Taxation { Tax = 100000 }
+        };
+
+        var result = manager.CalculateBuildingTaxInfo(
+            42,
+            template,
+            true,
+            out var totalTaxToPay,
+            out var heavyHouseCount,
+            out var normalHouseCount,
+            out var hostileTaxRate,
+            out var oneWeekTaxCount);
+
+        await Assert.That(result).IsTrue();
+        await Assert.That(totalTaxToPay).IsEqualTo(300000);
+        await Assert.That(oneWeekTaxCount).IsEqualTo(100000);
+        await Assert.That(heavyHouseCount).IsEqualTo(0);
+        await Assert.That(normalHouseCount).IsEqualTo(1);
+        await Assert.That(hostileTaxRate).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task IsTaxPrepaymentAllowed_AtConfiguredBoundary_IsAllowed()
     {
         var utcNow = new DateTime(2026, 8, 30, 12, 0, 0, DateTimeKind.Utc);
@@ -169,5 +196,24 @@ public class HousingManagerTests
         {
             AppConfiguration.Instance.World = originalWorldConfig;
         }
+    }
+
+    private static HousingManager CreateManager()
+    {
+        return new HousingManager(
+            Mock.Of<IObjectIdManager>().Object,
+            Mock.Of<IFactionManager>().Object,
+            Mock.Of<ILocalizationManager>().Object,
+            Mock.Of<IWorldManager>().Object,
+            Mock.Of<ITaskManager>().Object,
+            Mock.Of<ISkillManager>().Object,
+            Mock.Of<IHousingIdManager>().Object,
+            Mock.Of<IHousingTldManager>().Object,
+            Mock.Of<IItemManager>().Object,
+            Mock.Of<IMailManager>().Object,
+            Mock.Of<INameManager>().Object,
+            Mock.Of<IZoneManager>().Object,
+            Mock.Of<IDoodadManager>().Object,
+            Mock.Of<IUccManager>().Object);
     }
 }

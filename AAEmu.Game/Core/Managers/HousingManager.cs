@@ -741,7 +741,7 @@ public class HousingManager(
         oneWeekTaxCount = 0;
 
         var userHouses = new Dictionary<uint, House>();
-        if (GetByAccountId(userHouses, accountId) <= 0)
+        if (GetByAccountId(userHouses, accountId) <= 0 && !buildingNewHouse)
             return false;
 
         // Count the houses on this account
