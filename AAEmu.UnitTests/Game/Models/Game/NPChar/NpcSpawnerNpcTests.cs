@@ -1,6 +1,8 @@
 using System.Numerics;
 
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.AI.v2.Behaviors.Common;
+using AAEmu.Game.Models.Game.AI.v2.Framework;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.World.Transform;
 
@@ -8,6 +10,31 @@ namespace AAEmu.UnitTests.Game.Models.Game.NPChar;
 
 public class NpcSpawnerNpcTests
 {
+    [Test]
+    public async Task SpawnLifecycle_AiEntersBeforePublication_OnSpawnRunsOnceAfterPublication()
+    {
+        var npc = new SpawnOrderProbeNpc { Template = new NpcTemplate() };
+        var ai = new SpawnOrderProbeAi { Owner = npc };
+        npc.Ai = ai;
+        ai.Start();
+        var onSpawnCount = 0;
+        var wasPublishedWhenOnSpawnRan = false;
+        npc.Events.OnSpawn += (_, args) =>
+        {
+            onSpawnCount++;
+            wasPublishedWhenOnSpawnRan = ((SpawnOrderProbeNpc)args.Npc).Published;
+        };
+
+        ai.GoToSpawn();
+        await Assert.That(onSpawnCount).IsEqualTo(0);
+
+        NpcSpawnerNpc.SpawnAndRaiseOnSpawn(npc);
+
+        await Assert.That(npc.Published).IsTrue();
+        await Assert.That(onSpawnCount).IsEqualTo(1);
+        await Assert.That(wasPublishedWhenOnSpawnRan).IsTrue();
+    }
+
     [Test]
     public async Task CreateRuntimeSpawnPosition_TerrainGroundWithinTolerance_ChangesOnlyRuntimeCopy()
     {
@@ -113,5 +140,23 @@ public class NpcSpawnerNpcTests
         await Assert.That(actual.Yaw).IsEqualTo(expected.Yaw);
         await Assert.That(actual.Pitch).IsEqualTo(expected.Pitch);
         await Assert.That(actual.Roll).IsEqualTo(expected.Roll);
+    }
+
+    private sealed class SpawnOrderProbeNpc : Npc
+    {
+        public bool Published { get; private set; }
+
+        public override void Spawn()
+        {
+            Published = true;
+        }
+    }
+
+    private sealed class SpawnOrderProbeAi : NpcAi
+    {
+        protected override void Build()
+        {
+            AddBehavior(BehaviorKind.Spawning, new SpawningBehavior());
+        }
     }
 }
