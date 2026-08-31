@@ -94,6 +94,7 @@
     "UnitId": 10913,
     "Title": "Mirage Isle Guide",
     "NpcSpawnerIds": [],
+    "PreserveAuthoredHeight": true,
     "Position": {
       "X": 3710.012,
       "Y": 4545.766,
@@ -244,6 +245,7 @@
     "UnitId": 10915,
     "Title": "Mirage Isle Guide",
     "NpcSpawnerIds": [],
+    "PreserveAuthoredHeight": true,
     "Position": {
       "X": 3712.316,
       "Y": 4546.04,
@@ -259,6 +261,7 @@
     "UnitId": 10915,
     "Title": "Mirage Isle Guide",
     "NpcSpawnerIds": [],
+    "PreserveAuthoredHeight": true,
     "Position": {
       "X": 3710.472,
       "Y": 4550.02,
@@ -274,6 +277,7 @@
     "UnitId": 10915,
     "Title": "Mirage Isle Guide",
     "NpcSpawnerIds": [],
+    "PreserveAuthoredHeight": true,
     "Position": {
       "X": 3714.364,
       "Y": 4547.796,
@@ -289,6 +293,7 @@
     "UnitId": 10915,
     "Title": "Mirage Isle Guide",
     "NpcSpawnerIds": [],
+    "PreserveAuthoredHeight": true,
     "Position": {
       "X": 3712.008,
       "Y": 4543.57,
