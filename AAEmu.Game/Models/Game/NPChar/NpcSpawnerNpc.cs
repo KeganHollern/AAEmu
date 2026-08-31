@@ -2,6 +2,7 @@
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Route;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
@@ -129,7 +130,7 @@ public class NpcSpawnerNpc : Spawner<Npc>
         npc.Spawner.RespawnTime = npcSpawner.ParentWorld.Id == WorldManager.DefaultInstanceId
             ? (int)Random.Shared.Next(npc.Spawner.Template.SpawnDelayMin, npc.Spawner.Template.SpawnDelayMax)
             : 0;
-        npc.Spawn();
+        SpawnAndRaiseOnSpawn(npc);
 
         if (npc.TowerDefenseSpawnToken is { } eventToken)
             npc.ParentWorld.EventSpawnOwnership.Register(npc, eventToken);
@@ -146,6 +147,20 @@ public class NpcSpawnerNpc : Spawner<Npc>
 
         npcs.Add(npc);
         return npcs;
+    }
+
+    /// <summary>
+    /// Publishes an NPC to its world before invoking its on-spawn skills. Self-targeted skills resolve
+    /// their caster through the world object registry, so raising the event before <see cref="GameObject.Spawn"/>
+    /// makes those skills fail with no target. Keep this lifecycle independent from AI behavior so NPCs
+    /// without an AI can also use on-spawn skills.
+    /// </summary>
+    internal static void SpawnAndRaiseOnSpawn(Npc npc)
+    {
+        ArgumentNullException.ThrowIfNull(npc);
+
+        npc.Spawn();
+        npc.Events.OnSpawn(npc, new OnSpawnArgs { Npc = npc });
     }
 
     internal static WorldSpawnPosition CreateRuntimeSpawnPosition(WorldSpawnPosition authoredPosition, GroundSurfaceResult? groundSurface)
