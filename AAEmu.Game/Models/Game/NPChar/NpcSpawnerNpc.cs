@@ -100,13 +100,15 @@ public class NpcSpawnerNpc : Spawner<Npc>
         Logger.Trace($"Spawn npc templateId {MemberId} objId {npc.ObjId} from spawnerId {NpcSpawnerTemplateId} at Position: {npcSpawner.Position}");
 
         GroundSurfaceResult? groundSurface = null;
-        if (!npc.CanFly && npcSpawner.ParentWorld.Template.GeoData.TryGetGroundSurface(
+        if (!npc.CanFly && !npcSpawner.PreserveAuthoredHeight &&
+            npcSpawner.ParentWorld.Template.GeoData.TryGetGroundSurface(
                 npcSpawner.Position.AsPositionVector(), out var sampledSurface))
         {
             groundSurface = sampledSurface;
         }
 
-        var runtimeSpawnPosition = CreateRuntimeSpawnPosition(npcSpawner.Position, groundSurface);
+        var runtimeSpawnPosition = CreateRuntimeSpawnPosition(npcSpawner.Position, groundSurface,
+            npcSpawner.PreserveAuthoredHeight);
         npc.Transform.ApplyWorldSpawnPosition(runtimeSpawnPosition);
         if (npc.Transform == null)
         {
@@ -163,7 +165,8 @@ public class NpcSpawnerNpc : Spawner<Npc>
         npc.Events.OnSpawn(npc, new OnSpawnArgs { Npc = npc });
     }
 
-    internal static WorldSpawnPosition CreateRuntimeSpawnPosition(WorldSpawnPosition authoredPosition, GroundSurfaceResult? groundSurface)
+    internal static WorldSpawnPosition CreateRuntimeSpawnPosition(WorldSpawnPosition authoredPosition,
+        GroundSurfaceResult? groundSurface, bool preserveAuthoredHeight = false)
     {
         var runtimePosition = authoredPosition.Clone();
         // aaemu-cluster#92 (V11): only snap spawn Z to terrain-derived surfaces. Indoor/instance ground
@@ -171,7 +174,8 @@ public class NpcSpawnerNpc : Spawner<Npc>
         // collision floor (e.g. the Sharpwind dig-site rubble). Snapping onto that lifted the researcher
         // NPCs off the floor and made clients visibly bounce them; the capture-dump Z is where the retail
         // server actually stood the NPC, so keep it unless authoritative interpolated terrain says otherwise.
-        if (groundSurface is { Source: GroundSurfaceSource.Terrain } surface &&
+        if (!preserveAuthoredHeight &&
+            groundSurface is { Source: GroundSurfaceSource.Terrain } surface &&
             Math.Abs(authoredPosition.Z - surface.Height) < 1f)
             runtimePosition.Z = surface.Height;
 
