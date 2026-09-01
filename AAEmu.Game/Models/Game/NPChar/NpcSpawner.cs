@@ -44,6 +44,12 @@ public class NpcSpawner : Spawner<Npc>
     public List<uint> NpcSpawnerIds { get; set; } = [];
 
     /// <summary>
+    /// Keeps the authored spawn height instead of applying the near-terrain correction. Use for placements
+    /// on client geometry above the terrain, such as the Mirage Isle plaza. (aaemu-cluster#240)
+    /// </summary>
+    public bool PreserveAuthoredHeight { get; set; }
+
+    /// <summary>
     /// World-spawn JSON flag for pinned entries: bind the spawner deactivated even when its
     /// authored activation_state is true, so a dungeon script controls when the NPC appears
     /// (e.g. Allistair's pit variant pops up after the bridge collapse). (aaemu-cluster#92)

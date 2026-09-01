@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.AI.v2.Behaviors.Common;
 using AAEmu.Game.Models.Game.AI.v2.Framework;
@@ -47,6 +48,30 @@ public class NpcSpawnerNpcTests
         await Assert.That(runtime.Z).IsEqualTo(authored.Z + 0.5f);
         await AssertPositionMatches(runtime, authoredSnapshot, includeHeight: false);
         await AssertPositionMatches(authored, authoredSnapshot, includeHeight: true);
+    }
+
+    [Test]
+    public async Task CreateRuntimeSpawnPosition_PreserveAuthoredHeight_IgnoresNearbyTerrainSurface()
+    {
+        var authored = CreateAuthoredPosition();
+        var authoredSnapshot = authored.Clone();
+
+        var runtime = NpcSpawnerNpc.CreateRuntimeSpawnPosition(authored, TerrainSurface(authored.Z - 0.75f), true);
+
+        await Assert.That(runtime).IsNotSameReferenceAs(authored);
+        await AssertPositionMatches(runtime, authoredSnapshot, includeHeight: true);
+        await AssertPositionMatches(authored, authoredSnapshot, includeHeight: true);
+    }
+
+    [Test]
+    public async Task MirageGuidePlacements_PreserveAuthoredHeight()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Data", "Worlds", "arche_mall_world", "npc_spawns.json");
+        var spawns = JsonHelper.DeserializeObject<List<NpcSpawner>>(await File.ReadAllTextAsync(path));
+
+        var preservedIds = spawns.Where(spawn => spawn.PreserveAuthoredHeight).Select(spawn => spawn.Id);
+
+        await Assert.That(preservedIds).IsEquivalentTo([50579u, 50590u, 50617u, 50584u, 50597u]);
     }
 
     [Test]
@@ -101,6 +126,7 @@ public class NpcSpawnerNpcTests
             Id = 7,
             SpawnerId = 11,
             UnitId = 13,
+            PreserveAuthoredHeight = true,
             Position = CreateAuthoredPosition()
         };
 
@@ -112,6 +138,7 @@ public class NpcSpawnerNpcTests
         await Assert.That(clone.Id).IsEqualTo(source.Id);
         await Assert.That(clone.SpawnerId).IsEqualTo(source.SpawnerId);
         await Assert.That(clone.UnitId).IsEqualTo(source.UnitId);
+        await Assert.That(clone.PreserveAuthoredHeight).IsTrue();
         await Assert.That(source.Position.Z).IsEqualTo(30.75f);
     }
 
