@@ -75,6 +75,21 @@ public class NpcSpawnerNpcTests
     }
 
     [Test]
+    public async Task LilyutMerchantPlacements_PreserveAuthoredHeight()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Data", "Worlds", "main_world", "npc_spawns.json");
+        var spawns = JsonHelper.DeserializeObject<List<NpcSpawner>>(await File.ReadAllTextAsync(path));
+
+        var preservedPlacements = spawns.Where(spawn => spawn.PreserveAuthoredHeight)
+            .Select(spawn => (spawn.UnitId, spawn.Position.X, spawn.Position.Y, spawn.Position.Z));
+
+        await Assert.That(preservedPlacements).IsEquivalentTo([
+            (1893u, 12556.48f, 15459.12f, 164.182f),
+            (8206u, 12551.75f, 15460.18f, 164.257f)
+        ]);
+    }
+
+    [Test]
     public async Task CreateRuntimeSpawnPosition_TerrainGroundAtToleranceBoundary_PreservesAuthoredHeight()
     {
         var authored = CreateAuthoredPosition();
