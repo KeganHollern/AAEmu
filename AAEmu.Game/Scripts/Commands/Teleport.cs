@@ -629,28 +629,25 @@ public class Teleport : ICommand
                 }
                 else
                 {
-                    var height = character.ParentWorld.Template.GeoData.GetHeight(new Vector3(
-                        character.LocalPingPosition.X,
-                        character.LocalPingPosition.Y,
-                        5000f)); // WorldManager.Instance.GetHeight(character.Transform.ZoneId, character.LocalPingPosition.X, character.LocalPingPosition.Y, character.LocalPingPosition.Z);
-                    if (height == 0f)
+                    var surface = CommandSurfaceResult.Resolve(character.ParentWorld.Template,
+                        character.LocalPingPosition.AsPositionVector());
+                    if (!TryBuildPingDestination(surface, out var destination))
                     {
-                        CommandManager.SendNormalText(this,
-                            messageOutput, "|cFFFF0000Target height was |cFFFFFFFFzero|cFFFF0000. " +
-                                           "You likely tried to teleport out of bounds, or no heightmap data was loaded on the server.\n" +
-                                           $"If you still want to move to the target location, you can use |cFFFFFFFF{CommandManager.CommandPrefix}move|cFFFF0000 to go to the following location|cFF40FF40\n" +
-                                           $"X:{character.LocalPingPosition.X:0.0} Y:{character.LocalPingPosition.Y:0.0}|r");
+                        CommandManager.SendNormalText(this, messageOutput,
+                            $"|cFFFF0000Selected ground is unavailable at X:{CommandSurfaceResult.Format(surface.QueryPosition.X)} " +
+                            $"Y:{CommandSurfaceResult.Format(surface.QueryPosition.Y)} " +
+                            $"referenceZ:{CommandSurfaceResult.Format(surface.QueryPosition.Z)}. {surface.FormatHeights()}|r");
                     }
                     else
                     {
-                        height += 2.5f; // compensate a bit for terrain irregularities
                         CommandManager.SendNormalText(this, messageOutput,
-                            "Teleporting to |cFFFFFFFFX:" + character.LocalPingPosition.X + " Y:" +
-                            character.LocalPingPosition.Y + " Z:" + height + "|r");
+                            $"Teleporting to |cFFFFFFFFX:{CommandSurfaceResult.Format(destination.X)} " +
+                            $"Y:{CommandSurfaceResult.Format(destination.Y)} Z:{CommandSurfaceResult.Format(destination.Z)}|r " +
+                            surface.FormatHeights());
                         character.ForceDismount();
                         character.DisabledSetPosition = true;
-                        character.SendPacket(new SCTeleportUnitPacket(0, 0, character.LocalPingPosition.X,
-                            character.LocalPingPosition.Y, height, 0));
+                        character.SendPacket(new SCTeleportUnitPacket(0, 0, destination.X,
+                            destination.Y, destination.Z, 0));
                     }
                 }
             }
@@ -722,6 +719,18 @@ public class Teleport : ICommand
                 CommandManager.SendNormalText(this, messageOutput, s);
             }
         }
+    }
+
+    internal static bool TryBuildPingDestination(CommandSurfaceResult surface, out Vector3 destination)
+    {
+        if (!surface.TryGetSelectedGroundHeight(out var height))
+        {
+            destination = default;
+            return false;
+        }
+
+        destination = new Vector3(surface.QueryPosition.X, surface.QueryPosition.Y, height + 2.5f);
+        return true;
     }
 
     public enum TeleportCommandRegions { East = 0, West = 1, Auroria = 2, Dungeons = 3, Other = 4 }
