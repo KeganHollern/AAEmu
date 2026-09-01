@@ -62,6 +62,20 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
 
     public int Count() => _accounts.Count;
 
+    internal object GetAccountSyncRoot(uint accountId)
+    {
+        lock (_locks)
+        {
+            if (!_locks.TryGetValue(accountId, out var accountLock))
+            {
+                accountLock = new object();
+                _locks.Add(accountId, accountLock);
+            }
+
+            return accountLock;
+        }
+    }
+
     private AccountDetails GetAccountDetailsInternal(uint accountId)
     {
         var res = new AccountDetails();
@@ -216,15 +230,7 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
 
     public void UpdateLabor(uint accountId, short laborPower)
     {
-        object accLock;
-        lock (_locks)
-        {
-            if (!_locks.TryGetValue(accountId, out accLock))
-            {
-                accLock = new object();
-                _locks.Add(accountId, accLock);
-            }
-        }
+        var accLock = GetAccountSyncRoot(accountId);
         lock (accLock)
         {
             try

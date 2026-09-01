@@ -43,6 +43,12 @@ public class CharacterAbilities
 
     public void AddExp(AbilityType type, int exp)
     {
+        lock (Owner.StorePurchaseSyncRoot)
+            AddExpLocked(type, exp);
+    }
+
+    private void AddExpLocked(AbilityType type, int exp)
+    {
         // TODO SCAbilityExpChangedPacket
         if (type != AbilityType.None)
         {
@@ -52,6 +58,12 @@ public class CharacterAbilities
     }
 
     public void AddActiveExp(int exp)
+    {
+        lock (Owner.StorePurchaseSyncRoot)
+            AddActiveExpLocked(exp);
+    }
+
+    private void AddActiveExpLocked(int exp)
     {
         // TODO SCExpChangedPacket
         var maxLevelExp = ExperienceManager.Instance.GetExpForLevel(ExperienceManager.Instance.MaxPlayerLevel);
@@ -73,6 +85,12 @@ public class CharacterAbilities
     }
 
     public void Swap(AbilityType oldAbilityId, AbilityType abilityId)
+    {
+        lock (Owner.StorePurchaseSyncRoot)
+            SwapLocked(oldAbilityId, abilityId);
+    }
+
+    private void SwapLocked(AbilityType oldAbilityId, AbilityType abilityId)
     {
         Owner.Skills.Reset(oldAbilityId);
         var changed = false;

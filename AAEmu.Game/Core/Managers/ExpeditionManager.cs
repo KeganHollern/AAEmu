@@ -248,7 +248,7 @@ public class ExpeditionManager(IExpeditionIdManager expeditionIdManager, ITeamMa
             return;
         }
 
-        owner.Money -= AppConfiguration.Instance.Expedition.Create.Cost;
+        owner.ApplyMoneyDelta(-AppConfiguration.Instance.Expedition.Create.Cost);
         owner.SendPacket(
             new SCItemTaskSuccessPacket(
                 ItemTaskType.ExpeditionCreation,

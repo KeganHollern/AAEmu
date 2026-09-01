@@ -47,6 +47,7 @@ public class CharacterAchievements
     private readonly List<uint> _pendingCompletionIds = [];
     private readonly HashSet<uint> _pendingCompletionIdSet = [];
     private readonly HashSet<uint> _pendingRewardIds = [];
+    private bool _deferredPersistenceActive;
     private bool _rewardDeliveryInProgress;
 
     public Character Owner { get; }
@@ -310,6 +311,32 @@ public class CharacterAchievements
             TryDeliverPendingRewards();
     }
 
+    internal DeferredPersistenceScope BeginDeferredPersistence()
+    {
+        Monitor.Enter(_syncRoot);
+        try
+        {
+            if (_deferredPersistenceActive)
+                throw new InvalidOperationException("Achievement persistence is already deferred.");
+
+            _deferredPersistenceActive = true;
+            return new DeferredPersistenceScope(this, CaptureState());
+        }
+        catch
+        {
+            Monitor.Exit(_syncRoot);
+            throw;
+        }
+    }
+
+    internal void SendCommittedState()
+    {
+        foreach (var packet in CreateSnapshotPackets())
+            Owner.SendPacket(packet);
+
+        TryDeliverPendingRewards();
+    }
+
     public void UpdateLevel(byte level)
     {
         UpdateMaximum(CharRecordKind.CharLevel, 0, 0, level);
@@ -334,6 +361,9 @@ public class CharacterAchievements
             var recordChanged = SetRecordMaximum(kind, value1, value2, amount, out var recordId);
             if (recordChanged)
                 Evaluate(_gameData.GetAchievementIdsForRecord(recordId), notifications);
+
+            if (_deferredPersistenceActive)
+                return;
 
             if (_pendingCompletionIds.Count > 0)
             {
@@ -401,6 +431,9 @@ public class CharacterAchievements
 
             if (affectedAchievementIds.Count > 0)
                 Evaluate(affectedAchievementIds, notifications);
+
+            if (_deferredPersistenceActive)
+                return;
 
             if (_pendingCompletionIds.Count > 0)
             {
@@ -722,6 +755,44 @@ public class CharacterAchievements
         _pendingCompletionIdSet.Clear();
     }
 
+    private StateSnapshot CaptureState()
+    {
+        return new StateSnapshot(
+            new Dictionary<uint, uint>(_recordAmounts),
+            new Dictionary<uint, uint>(_achievementAmounts),
+            new Dictionary<uint, DateTime>(_completionTimes),
+            new Dictionary<uint, AchievementRewardStatus>(_rewardStatuses),
+            [.. _pendingCompletionIds],
+            [.. _pendingCompletionIdSet],
+            [.. _pendingRewardIds]);
+    }
+
+    private void RestoreState(StateSnapshot snapshot)
+    {
+        _recordAmounts.Clear();
+        foreach (var (recordId, amount) in snapshot.RecordAmounts)
+            _recordAmounts[recordId] = amount;
+
+        _achievementAmounts.Clear();
+        foreach (var (achievementId, amount) in snapshot.AchievementAmounts)
+            _achievementAmounts[achievementId] = amount;
+
+        _completionTimes.Clear();
+        foreach (var (achievementId, completedAt) in snapshot.CompletionTimes)
+            _completionTimes[achievementId] = completedAt;
+
+        _rewardStatuses.Clear();
+        foreach (var (achievementId, rewardStatus) in snapshot.RewardStatuses)
+            _rewardStatuses[achievementId] = rewardStatus;
+
+        _pendingCompletionIds.Clear();
+        _pendingCompletionIds.AddRange(snapshot.PendingCompletionIds);
+        _pendingCompletionIdSet.Clear();
+        _pendingCompletionIdSet.UnionWith(snapshot.PendingCompletionIdSet);
+        _pendingRewardIds.Clear();
+        _pendingRewardIds.UnionWith(snapshot.PendingRewardIds);
+    }
+
     private void TryDeliverPendingRewards()
     {
         lock (_syncRoot)
@@ -812,4 +883,51 @@ public class CharacterAchievements
         command.CommandText = commandText;
         command.ExecuteNonQuery();
     }
+
+    internal sealed class DeferredPersistenceScope : IDisposable
+    {
+        private readonly CharacterAchievements _owner;
+        private readonly StateSnapshot _snapshot;
+        private bool _finished;
+
+        internal DeferredPersistenceScope(CharacterAchievements owner, StateSnapshot snapshot)
+        {
+            _owner = owner;
+            _snapshot = snapshot;
+        }
+
+        public void Commit()
+        {
+            if (_finished)
+                throw new InvalidOperationException("The deferred achievement update is already finished.");
+
+            _owner.ClearPendingCompletions();
+            Finish();
+        }
+
+        public void Dispose()
+        {
+            if (_finished)
+                return;
+
+            _owner.RestoreState(_snapshot);
+            Finish();
+        }
+
+        private void Finish()
+        {
+            _owner._deferredPersistenceActive = false;
+            _finished = true;
+            Monitor.Exit(_owner._syncRoot);
+        }
+    }
+
+    internal sealed record StateSnapshot(
+        Dictionary<uint, uint> RecordAmounts,
+        Dictionary<uint, uint> AchievementAmounts,
+        Dictionary<uint, DateTime> CompletionTimes,
+        Dictionary<uint, AchievementRewardStatus> RewardStatuses,
+        List<uint> PendingCompletionIds,
+        HashSet<uint> PendingCompletionIdSet,
+        HashSet<uint> PendingRewardIds);
 }

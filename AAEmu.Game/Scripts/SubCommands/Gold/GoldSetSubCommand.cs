@@ -74,7 +74,7 @@ public class GoldSetSubCommand : SubCommandBase
 
         if (totalAmount != 0)
         {
-            targetCharacter.Money += totalAmount;
+            targetCharacter.ApplyMoneyDelta(totalAmount);
             targetCharacter.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.AutoLootDoodadItem,
                 [new MoneyChange(totalAmount)], []));
             SendMessage(messageOutput,

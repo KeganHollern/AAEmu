@@ -879,7 +879,7 @@ public class Inventory
         var tasks = new List<ItemTask>();
         if (expand.Price != 0)
         {
-            Owner.Money -= expand.Price;
+            Owner.ApplyMoneyDelta(-expand.Price);
             tasks.Add(new MoneyChange(-expand.Price));
         }
 

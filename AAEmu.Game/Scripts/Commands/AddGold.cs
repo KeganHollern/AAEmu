@@ -60,7 +60,7 @@ public class AddGold : ICommand
 
         if (argTotal != 0)
         {
-            targetPlayer.Money += argTotal;
+            targetPlayer.ApplyMoneyDelta(argTotal);
             targetPlayer.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.AutoLootDoodadItem,
                 [new MoneyChange(argTotal)], []));
             if (character.Id != targetPlayer.Id)

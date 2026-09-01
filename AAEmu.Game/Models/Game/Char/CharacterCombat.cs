@@ -64,41 +64,44 @@ public partial class Character
         // Escalating respawn timer — runs BEFORE base.DoDie sends SCUnitDeathPacket
         ComputeDeathWaitTime();
 
-        LastDurabilityLoss = Level >= AppConfiguration.Instance.World.MinimumExpLossLevel
-            ? ItemManager.Instance.GetDeathDurabilityLossRatio()
-            : (byte)0;
-
-        if (Level < ExperienceManager.Instance.MaxPlayerLevel && ParentWorld.Id == WorldManager.DefaultInstanceId)
+        lock (StorePurchaseSyncRoot)
         {
-            if (Level >= AppConfiguration.Instance.World.MinimumExpLossLevel)
+            LastDurabilityLoss = Level >= AppConfiguration.Instance.World.MinimumExpLossLevel
+                ? ItemManager.Instance.GetDeathDurabilityLossRatio()
+                : (byte)0;
+
+            if (Level < ExperienceManager.Instance.MaxPlayerLevel && ParentWorld.Id == WorldManager.DefaultInstanceId)
             {
-                LastExpLoss = ExperienceManager.Instance.GetExpLoss(Level, AppConfiguration.Instance.World.ExpLossRateAtDeath);
-                var thisLevelStartExp = ExperienceManager.Instance.GetExpForLevel(Level);
-                var inThisLevelExp = Experience - thisLevelStartExp;
-                LastExpLoss = Math.Min(LastExpLoss, inThisLevelExp);
-                RecoverableExp = (int)Math.Round(LastExpLoss * 0.80f);
-                SendDebugMessage($"Lost {LastExpLoss} exp, {LastDurabilityLoss} Durability. Can recover {RecoverableExp} exp");
+                if (Level >= AppConfiguration.Instance.World.MinimumExpLossLevel)
+                {
+                    LastExpLoss = ExperienceManager.Instance.GetExpLoss(Level, AppConfiguration.Instance.World.ExpLossRateAtDeath);
+                    var thisLevelStartExp = ExperienceManager.Instance.GetExpForLevel(Level);
+                    var inThisLevelExp = Experience - thisLevelStartExp;
+                    LastExpLoss = Math.Min(LastExpLoss, inThisLevelExp);
+                    RecoverableExp = (int)Math.Round(LastExpLoss * 0.80f);
+                    SendDebugMessage($"Lost {LastExpLoss} exp, {LastDurabilityLoss} Durability. Can recover {RecoverableExp} exp");
+                }
+                else
+                {
+                    // Free resurrect below level 10
+                    SendPacket(new SCNotifyResurrectionPacket(new SkillCasterUnit(ObjId)));
+                    SendDebugMessage($"Free resurrect below level {AppConfiguration.Instance.World.MinimumExpLossLevel}");
+                }
             }
             else
             {
-                // Free resurrect below level 10 
-                SendPacket(new SCNotifyResurrectionPacket(new SkillCasterUnit(ObjId)));
-                SendDebugMessage($"Free resurrect below level {AppConfiguration.Instance.World.MinimumExpLossLevel}");
+                LastExpLoss = 0;
+                SendDebugMessage($"No Exp Lost at max level, Lost {LastDurabilityLoss} Durability.");
             }
-        }
-        else
-        {
-            LastExpLoss = 0;
-            SendDebugMessage($"No Exp Lost at max level, Lost {LastDurabilityLoss} Durability.");
-        }
 
-        if (LastExpLoss > 0 || RecoverableExp > 0)
-        {
-            Experience -= LastExpLoss;
-            SendPacket(new SCRecoverableExpPacket(ObjId, RecoverableExp, LastExpLoss, (int)KillReason.Damage));
-            if (LastExpLoss > 0)
+            if (LastExpLoss > 0 || RecoverableExp > 0)
             {
-                SendPacket(new SCExpChangedPacket(ObjId, -LastExpLoss, false));
+                Experience -= LastExpLoss;
+                SendPacket(new SCRecoverableExpPacket(ObjId, RecoverableExp, LastExpLoss, (int)KillReason.Damage));
+                if (LastExpLoss > 0)
+                {
+                    SendPacket(new SCExpChangedPacket(ObjId, -LastExpLoss, false));
+                }
             }
         }
 

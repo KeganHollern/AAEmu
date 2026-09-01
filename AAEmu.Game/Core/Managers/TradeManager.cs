@@ -332,18 +332,18 @@ public class TradeManager(ITradeIdManager tradeIdManager, IWorldManager worldMan
         // Handle Money from Owner
         if (tradeInfo.OwnerMoneyPutup > 0)
         {
-            owner.Money -= tradeInfo.OwnerMoneyPutup;
+            owner.ApplyMoneyDelta(-tradeInfo.OwnerMoneyPutup);
             tasksOwner.Add(new MoneyChange(-tradeInfo.OwnerMoneyPutup));
-            target.Money += tradeInfo.OwnerMoneyPutup;
+            target.ApplyMoneyDelta(tradeInfo.OwnerMoneyPutup);
             tasksTarget.Add(new MoneyChange(tradeInfo.OwnerMoneyPutup));
         }
 
         // Handle Money from Target
         if (tradeInfo.TargetMoneyPutup > 0)
         {
-            owner.Money += tradeInfo.TargetMoneyPutup;
+            owner.ApplyMoneyDelta(tradeInfo.TargetMoneyPutup);
             tasksOwner.Add(new MoneyChange(tradeInfo.TargetMoneyPutup));
-            target.Money -= tradeInfo.TargetMoneyPutup;
+            target.ApplyMoneyDelta(-tradeInfo.TargetMoneyPutup);
             tasksTarget.Add(new MoneyChange(-tradeInfo.TargetMoneyPutup));
         }
 

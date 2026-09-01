@@ -21,6 +21,12 @@ public class CharacterActability(Character owner)
     /// <returns>The amount that was actually changed</returns>
     public int AddPoint(uint id, int point)
     {
+        lock (Owner.StorePurchaseSyncRoot)
+            return AddPointLocked(id, point);
+    }
+
+    private int AddPointLocked(uint id, int point)
+    {
         if (!Actabilities.TryGetValue(id, out var actability))
             return 0;
         var previousPoints = actability.Point;
@@ -34,6 +40,12 @@ public class CharacterActability(Character owner)
     }
 
     public void Regrade(uint id, bool isUpgrade)
+    {
+        lock (Owner.StorePurchaseSyncRoot)
+            RegradeLocked(id, isUpgrade);
+    }
+
+    private void RegradeLocked(uint id, bool isUpgrade)
     {
         var actability = Actabilities[id];
 

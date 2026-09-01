@@ -2,6 +2,7 @@
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Models.Tasks.TimedRewards;
 
 namespace AAEmu.Game.Core.Managers;
@@ -32,20 +33,23 @@ public class TimedRewardsManager(ITaskManager taskManager) : Singleton<TimedRewa
     /// <param name="addLabor"></param>
     private void DoAddLabor(GameConnection connection, short currentLabor, int addLabor)
     {
-        var maxLaborToAdd = GetMaxLabor(connection.Payment.PremiumState) - currentLabor;
-        if (maxLaborToAdd < 0)
-            maxLaborToAdd = 0;
-        addLabor = Math.Min(addLabor, maxLaborToAdd);
-        AccountManager.Instance.UpdateTickTimes(connection.AccountId, DateTime.UtcNow, true, false, false);
-        if (addLabor > 0)
+        lock (AccountManager.Instance.GetAccountSyncRoot(connection.AccountId))
         {
+            var maxLaborToAdd = GetMaxLabor(connection.Payment.PremiumState) - currentLabor;
+            if (maxLaborToAdd < 0)
+                maxLaborToAdd = 0;
+            addLabor = Math.Min(addLabor, maxLaborToAdd);
+            var now = DateTime.UtcNow;
+            AccountManager.Instance.UpdateTickTimes(connection.AccountId, now, true, false, false);
+            if (addLabor <= 0)
+                return;
+
             var newLabor = (short)(currentLabor + addLabor);
             AccountManager.Instance.UpdateLabor(connection.AccountId, newLabor);
 
+            // Keep the live cache authoritative even if the notification fails.
+            connection.ActiveChar?.InitializeLaborCache(newLabor, now);
             connection.ActiveChar?.SendPacket(new SCCharacterLaborPowerChangedPacket(addLabor, 0, 0, 0));
-
-            // Update cache if character was logged in
-            connection.ActiveChar?.InitializeLaborCache(newLabor, DateTime.UtcNow);
         }
     }
 
@@ -54,15 +58,19 @@ public class TimedRewardsManager(ITaskManager taskManager) : Singleton<TimedRewa
         var connections = GameConnectionTable.Instance.GetConnections();
         foreach (var connection in connections)
         {
-            //var character = connection.ActiveChar;
-            // Grab current values for last ticks
-            var accountDetails = AccountManager.Instance.GetAccountDetails(connection.AccountId);
-
-            // Distribute Labor if needed (only for online labor)
-            if (AppConfiguration.Instance.Labor.TickMinutes > 0 && accountDetails.LastLaborTick.AddMinutes(AppConfiguration.Instance.Labor.TickMinutes) <= DateTime.UtcNow)
+            AccountDetails accountDetails;
+            lock (AccountManager.Instance.GetAccountSyncRoot(connection.AccountId))
             {
-                var addLabor = AppConfiguration.Instance.Labor.GetTickAmount(connection.Payment.PremiumState);
-                DoAddLabor(connection, accountDetails.Labor, addLabor);
+                //var character = connection.ActiveChar;
+                // Grab current values for last ticks
+                accountDetails = AccountManager.Instance.GetAccountDetails(connection.AccountId);
+
+                // Distribute Labor if needed (only for online labor)
+                if (AppConfiguration.Instance.Labor.TickMinutes > 0 && accountDetails.LastLaborTick.AddMinutes(AppConfiguration.Instance.Labor.TickMinutes) <= DateTime.UtcNow)
+                {
+                    var addLabor = AppConfiguration.Instance.Labor.GetTickAmount(connection.Payment.PremiumState);
+                    DoAddLabor(connection, accountDetails.Labor, addLabor);
+                }
             }
 
             // Distribute Credits if needed
