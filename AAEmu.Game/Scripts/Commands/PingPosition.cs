@@ -1,5 +1,4 @@
-﻿using System.Numerics;
-using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Utils.Scripts;
@@ -35,20 +34,14 @@ public class PingPosition : ICommand
         }
         else
         {
-            var height = character.ParentWorld.Template.GeoData.GetHeight(new Vector3(
-                character.LocalPingPosition.X,
-                character.LocalPingPosition.Y,
-                5000f)); // WorldManager.Instance.GetHeight(character.Transform.ZoneId, character.LocalPingPosition.X, character.LocalPingPosition.Y, character.LocalPingPosition.Z);
-            if (height == 0f)
-            {
-                CommandManager.SendNormalText(this, messageOutput,
-                    $"|cFFFFFFFFX:{character.LocalPingPosition.X:0.0} Y:{character.LocalPingPosition.Y:0.0} Z: ???|r");
-            }
-            else
-            {
-                CommandManager.SendNormalText(this, messageOutput,
-                    $"|cFFFFFFFFX:{character.LocalPingPosition.X:0.0} Y:{character.LocalPingPosition.Y:0.0} Z:{height:0.0}|r");
-            }
+            var surface = CommandSurfaceResult.Resolve(character.ParentWorld.Template,
+                character.LocalPingPosition.AsPositionVector());
+            CommandManager.SendNormalText(this, messageOutput, BuildReport(surface));
         }
     }
+
+    internal static string BuildReport(CommandSurfaceResult surface) =>
+        $"|cFFFFFFFFX:{CommandSurfaceResult.Format(surface.QueryPosition.X)} " +
+        $"Y:{CommandSurfaceResult.Format(surface.QueryPosition.Y)} " +
+        $"referenceZ:{CommandSurfaceResult.Format(surface.QueryPosition.Z)} {surface.FormatHeights()}|r";
 }
