@@ -100,6 +100,38 @@ public class WaterBodiesNativeRiverTests
     }
 
     [Test]
+    public async Task AddFromCellData_SerializedArea_DoesNotTreatRenderShapeAsGameplayWater()
+    {
+        List<Vector3> contour =
+        [
+            new(0f, 100f, 10f),
+            new(100f, 100f, 10f),
+            new(100f, 200f, 10f),
+            new(0f, 200f, 10f)
+        ];
+        List<Vector3> renderShape =
+        [
+            new(0f, 0f, 10f),
+            new(0f, 40f, 10f),
+            new(200f, 0f, 10f),
+            new(200f, 40f, 10f)
+        ];
+        // Serialized r208022 type 2 is Area. The old enum interpreted it as River and created an
+        // extra corridor through renderShape, making dry ground outside the physics contour wet.
+        var areaObject = CreateWaterObject((WaterObjectVolumeType)2, 0f, contour, shape: renderShape);
+        var water = CreateWaterBodiesWithObject(areaObject);
+
+        await Assert.That(water.Areas.Count).IsEqualTo(1);
+        var area = water.Areas.Single();
+        var realWater = water.IsWater(new Vector3(50f, 150f, 9f), out _);
+        var dryGround = water.IsWater(new Vector3(100f, 20f, 9f), out _);
+
+        await Assert.That(area.AreaType).IsEqualTo(WaterBodyAreaType.Polygon);
+        await Assert.That(realWater).IsTrue();
+        await Assert.That(dryGround).IsFalse();
+    }
+
+    [Test]
     public async Task AddFromCellData_TiltedFogPlane_ReturnsLocalSurfaceHeight()
     {
         List<Vector3> contour =
@@ -299,10 +331,11 @@ public class WaterBodiesNativeRiverTests
     }
 
     private static ObjectDataType11Water CreateWaterObject(WaterObjectVolumeType volumeType, float speed,
-        List<Vector3> contour, Vector3? fogPlaneNormal = null, float fogPlaneD = -10f)
+        List<Vector3> contour, Vector3? fogPlaneNormal = null, float fogPlaneD = -10f,
+        List<Vector3> shape = null)
     {
         const int HeaderSize = 0x7B;
-        List<Vector3> shape =
+        shape ??=
         [
             new(0f, 0f, 10f),
             new(0f, 15f, 10f),
