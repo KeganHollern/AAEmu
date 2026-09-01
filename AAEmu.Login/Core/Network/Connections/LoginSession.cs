@@ -1,3 +1,4 @@
+using AAEmu.Commons.Network;
 using AAEmu.Login.Core.Authentication;
 using AAEmu.Login.Core.Controllers;
 using AAEmu.Login.Core.Network.Login;
@@ -23,6 +24,7 @@ public sealed class LoginSession(
     private const string EnterWorldCompletedEventName = "login.enter_world.completed";
     private readonly TimeSpan _enterWorldTimeout = appConfig.Value.EnterWorldTimeout;
     private readonly Lock _lock = new();
+    private readonly ConnectionEventLimiter _authenticationDenialEvents = new();
 
     private LoginState _state = LoginState.Connected;
     private IAuthenticationFlow? _currentAuthFlow;
@@ -70,9 +72,12 @@ public sealed class LoginSession(
         {
             if (_state != LoginState.Connected)
             {
-                logger.LogWarning(
-                    "Cannot authenticate: invalid state {State} for connection {ConnectionId}",
-                    _state, Connection.Id);
+                if (_authenticationDenialEvents.TryConsume())
+                {
+                    logger.LogWarning(
+                        "Cannot authenticate: invalid state {State} for connection {ConnectionId}",
+                        _state, Connection.Id);
+                }
                 canProceed = false;
             }
             else
@@ -105,17 +110,23 @@ public sealed class LoginSession(
         {
             if (_state != LoginState.Authenticating)
             {
-                logger.LogWarning(
-                    "Cannot continue auth: invalid state {State} for connection {ConnectionId}",
-                    _state, Connection.Id);
+                if (_authenticationDenialEvents.TryConsume())
+                {
+                    logger.LogWarning(
+                        "Cannot continue auth: invalid state {State} for connection {ConnectionId}",
+                        _state, Connection.Id);
+                }
                 flow = null;
                 earlyDenial = LoginDeniedReason.BadResponse;
             }
             else if (_currentAuthFlow is not TFlow typedFlow)
             {
-                logger.LogWarning(
-                    "Auth flow type mismatch: expected {Expected}, got {Actual} for connection {ConnectionId}",
-                    typeof(TFlow).Name, _currentAuthFlow?.GetType().Name ?? "null", Connection.Id);
+                if (_authenticationDenialEvents.TryConsume())
+                {
+                    logger.LogWarning(
+                        "Auth flow type mismatch: expected {Expected}, got {Actual} for connection {ConnectionId}",
+                        typeof(TFlow).Name, _currentAuthFlow?.GetType().Name ?? "null", Connection.Id);
+                }
                 _currentAuthFlow = null;
                 _state = LoginState.Disconnected;
                 flow = null;
@@ -188,6 +199,9 @@ public sealed class LoginSession(
     private void LogAuthenticationOutcome(AuthFlowResult result, IAuthenticationFlow flow)
     {
         if (result is AuthFlowResult.Pending)
+            return;
+
+        if (result is AuthFlowResult.Denied && !_authenticationDenialEvents.TryConsume())
             return;
 
         var outcome = result is AuthFlowResult.Success ? "success" : "denied";

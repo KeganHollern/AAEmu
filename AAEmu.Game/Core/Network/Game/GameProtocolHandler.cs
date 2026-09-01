@@ -219,6 +219,9 @@ public class GameProtocolHandler : BaseProtocolHandler
     /// <param name="stream"></param>
     private static void HandleUnknownPacket(GameConnection connection, uint type, byte level, PacketStream stream)
     {
+        if (!connection.UnknownPacketEvents.TryConsume())
+            return;
+
         Logger.Warn(
             "{EventName}: Rejected unknown {Network} packet 0x{PacketOpcode:X4} at level {PacketLevel} with " +
             "{PacketLength} unread bytes on connection {ConnectionId} from {RemoteIp}",

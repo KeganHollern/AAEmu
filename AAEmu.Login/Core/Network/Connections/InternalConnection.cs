@@ -13,6 +13,7 @@ public class InternalConnection(ISession session)
     public GameServer? GameServer { get; set; }
     public bool Block { get; set; }
     public PacketStream? LastPacket { get; set; }
+    internal ConnectionEventLimiter UnknownPacketEvents { get; } = new();
 
     public static void OnConnect()
     {

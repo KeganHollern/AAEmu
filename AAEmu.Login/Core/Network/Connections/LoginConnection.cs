@@ -16,6 +16,7 @@ public sealed class LoginConnection : ILoginConnectionOwner
     private readonly ILoginProtocolHandler _protocolHandler;
     private readonly SemaphoreSlim _writeLock = new(1);
     private readonly ILogger _logger;
+    private readonly ConnectionEventLimiter _unknownPacketEvents = new();
     private ILoginSession? _session;
 
     public ConnectionId Id => _connectionIdLease.Id;
@@ -189,6 +190,9 @@ public sealed class LoginConnection : ILoginConnectionOwner
 
     private void HandleUnknownPacket(uint type, PacketStream stream)
     {
+        if (!_unknownPacketEvents.TryConsume())
+            return;
+
         _logger.LogWarning(
             "{EventName}: Rejected unknown {Network} packet 0x{PacketOpcode:X4} with {PacketLength} bytes " +
             "on connection {ConnectionId} from {RemoteIp}",

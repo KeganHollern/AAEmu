@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Net;
+using AAEmu.Commons.Network;
 using AAEmu.Login.Core.Authentication;
 using AAEmu.Login.Core.Controllers;
 using AAEmu.Login.Core.Network.Connections;
@@ -100,6 +101,75 @@ public class LoginSessionTests
         await Assert.That(_sentPackets.Count).IsEqualTo(1);
         await Assert.That(_sentPackets[0].GetType()).IsEqualTo(typeof(ACLoginDeniedPacket));
         await Assert.That(_session.State).IsEqualTo(LoginState.Connected);
+    }
+
+    [Test]
+    public async Task AuthenticateAsync_RepeatedDenials_BoundsEventsWithoutChangingResponses(
+        CancellationToken cancellationToken)
+    {
+        const int ExtraAttempts = 2;
+        var attempts = ConnectionEventLimiter.DefaultLimit + ExtraAttempts;
+
+        for (var i = 0; i < attempts; i++)
+        {
+            var flow = CreateMockFlow(new AuthFlowResult.Denied(LoginDeniedReason.BadAccount));
+            await _session.AuthenticateAsync(flow.Object, cancellationToken);
+        }
+
+        var entries = GetLogEntries("login.authentication.completed").ToList();
+        await Assert.That(entries.Count).IsEqualTo(ConnectionEventLimiter.DefaultLimit);
+        await Assert.That(entries.All(entry => Equals(entry.Properties["Outcome"], "denied"))).IsTrue();
+        await Assert.That(entries[0].Properties["ConnectionId"]).IsEqualTo(s_testConnectionId.Value);
+        await Assert.That(entries[0].Properties["AuthenticationMethod"]).IsEqualTo("unknown");
+        await Assert.That(entries[0].Properties["Reason"]).IsEqualTo(LoginDeniedReason.BadAccount.ToString());
+        await Assert.That(entries[0].Properties.ContainsKey("AccountId")).IsFalse();
+        await Assert.That(entries[0].Properties.ContainsKey("Username")).IsFalse();
+        await Assert.That(_sentPackets.Count).IsEqualTo(attempts);
+        await Assert.That(_sentPackets.All(packet => packet is ACLoginDeniedPacket)).IsTrue();
+        await Assert.That(_session.State).IsEqualTo(LoginState.Connected);
+        _mockConnection.Shutdown().WasCalled(Times.Never);
+    }
+
+    [Test]
+    public async Task ContinueAuthAsync_RepeatedInvalidStateDenials_BoundsWarningsWithoutChangingResponses(
+        CancellationToken cancellationToken)
+    {
+        const int ExtraAttempts = 2;
+        var attempts = ConnectionEventLimiter.DefaultLimit + ExtraAttempts;
+
+        for (var i = 0; i < attempts; i++)
+        {
+            await _session.ContinueAuthAsync<IAuthenticationFlow>(
+                _ => Task.FromResult<AuthFlowResult>(new AuthFlowResult.Success(s_testAccountId)),
+                cancellationToken);
+        }
+
+        await Assert.That(_logger.Entries.Count(entry => entry.Level == LogLevel.Warning))
+            .IsEqualTo(ConnectionEventLimiter.DefaultLimit);
+        await Assert.That(_sentPackets.Count).IsEqualTo(attempts);
+        await Assert.That(_sentPackets.All(packet => packet is ACLoginDeniedPacket)).IsTrue();
+        await Assert.That(_session.State).IsEqualTo(LoginState.Connected);
+    }
+
+    [Test]
+    public async Task AuthenticateAsync_SuccessAfterDenialLimit_StillLogsAndAuthenticates(
+        CancellationToken cancellationToken)
+    {
+        for (var i = 0; i < ConnectionEventLimiter.DefaultLimit + 1; i++)
+        {
+            var flow = CreateMockFlow(new AuthFlowResult.Denied(LoginDeniedReason.BadAccount));
+            await _session.AuthenticateAsync(flow.Object, cancellationToken);
+        }
+
+        var successFlow = CreateMockFlow(new AuthFlowResult.Success(s_testAccountId, "testuser"));
+        await _session.AuthenticateAsync(successFlow.Object, cancellationToken);
+
+        var successEntry = GetLogEntries("login.authentication.completed")
+            .Single(entry => Equals(entry.Properties["Outcome"], "success"));
+        await Assert.That(successEntry.Level).IsEqualTo(LogLevel.Information);
+        await Assert.That(_session.State).IsEqualTo(LoginState.Authenticated);
+        await Assert.That(_sentPackets[^2]).IsTypeOf<ACJoinResponsePacket>();
+        await Assert.That(_sentPackets[^1]).IsTypeOf<ACAuthResponsePacket>();
     }
 
     [Test]
@@ -404,6 +474,9 @@ public class LoginSessionTests
     }
 
     private LogEntry GetLogEntry(string eventName) => _logger.Entries.Single(entry =>
+        entry.Properties.TryGetValue("EventName", out var value) && Equals(value, eventName));
+
+    private IEnumerable<LogEntry> GetLogEntries(string eventName) => _logger.Entries.Where(entry =>
         entry.Properties.TryGetValue("EventName", out var value) && Equals(value, eventName));
 
     private sealed class CapturingLogger<T> : ILogger<T>

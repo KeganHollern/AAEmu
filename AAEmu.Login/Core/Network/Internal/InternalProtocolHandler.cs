@@ -88,7 +88,7 @@ public class InternalProtocolHandler(
                 var type = stream2.ReadUInt16();
                 if (!_packets.TryGetValue(type, out var packetDescriptor))
                 {
-                    HandleUnknownPacket(session, type, stream2);
+                    HandleUnknownPacket(connection, type, stream2);
                 }
                 else
                 {
@@ -111,11 +111,14 @@ public class InternalProtocolHandler(
         }
     }
 
-    private void HandleUnknownPacket(ISession session, uint type, PacketStream stream)
+    private void HandleUnknownPacket(InternalConnection connection, uint type, PacketStream stream)
     {
+        if (!connection.UnknownPacketEvents.TryConsume())
+            return;
+
         logger.LogWarning(
             "{EventName}: Rejected unknown {Network} packet 0x{PacketOpcode:X4} with {PacketLength} bytes " +
             "on connection {ConnectionId} from {RemoteIp}",
-            "login.packet.rejected", "internal", type, stream.Count - stream.Pos, session.SessionId, session.Ip);
+            "login.packet.rejected", "internal", type, stream.Count - stream.Pos, connection.Id, connection.Ip);
     }
 }

@@ -15,6 +15,7 @@ public class StreamConnection(ISession session)
     public IPAddress Ip => session.Ip;
     public GameConnection GameConnection { get; set; }
     public PacketStream LastPacket { get; set; }
+    internal ConnectionEventLimiter UnknownPacketEvents { get; } = new();
 
     public int GetNextRequestId(Doodad[] doodads)
     {
