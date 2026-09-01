@@ -28,7 +28,9 @@ public class CSSpawnCharacterPacket() : GamePacket(CSOffsets.CSSpawnCharacterPac
         Connection.SendPacket(new SCUnitStatePacket(Connection.ActiveChar));
 
         Connection.ActiveChar.PushSubscriber(
-            TimeManager.Instance.Subscribe(Connection, new TimeOfDayObserver(Connection.ActiveChar))
+            TimeManager.Instance.Subscribe(
+                Connection,
+                new TimeOfDayObserver(Connection.ActiveChar, TimeManager.Instance.ClientSpeed))
         );
         TowerDefenseManager.SendSnapshotIfAvailable(Connection.ActiveChar);
 

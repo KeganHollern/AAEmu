@@ -3,7 +3,7 @@ using AAEmu.Game.Models.Game.Char;
 
 namespace AAEmu.Game.Models.Observers;
 
-public class TimeOfDayObserver(Character owner) : IObserver<float>
+public class TimeOfDayObserver(Character owner, float speed) : IObserver<float>
 {
     public void OnCompleted()
     {
@@ -17,6 +17,7 @@ public class TimeOfDayObserver(Character owner) : IObserver<float>
 
     public void OnNext(float value)
     {
-        owner.SendPacket(new SCTimeOfDayPacket(value));
+        // The r208022 simple packet ignores clock corrections below 0.1 hours.
+        owner.SendPacket(new SCDetailedTimeOfDayPacket(value, speed));
     }
 }
