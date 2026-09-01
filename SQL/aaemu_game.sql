@@ -40,6 +40,16 @@ FOR EACH ROW
    SET NEW.last_updated = UTC_TIMESTAMP();
 
 
+CREATE TABLE IF NOT EXISTS `account_daily_login_claims` (
+  `account_id` INT NOT NULL,
+  `reward_date` DATE NOT NULL,
+  `credits_amount` INT NOT NULL,
+  `loyalty_amount` INT NOT NULL,
+  `claimed_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`account_id`, `reward_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Durable idempotency ledger for daily account login rewards';
+
+
 CREATE TABLE IF NOT EXISTS `actabilities` (
   `id` int unsigned NOT NULL,
   `point` int unsigned NOT NULL DEFAULT '0',

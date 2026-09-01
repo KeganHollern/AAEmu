@@ -405,6 +405,8 @@ public static class Program
 
                 // -- Lazy<T> wrappers for circular-dep break patterns --
                 // MS DI does NOT auto-wrap registered types in Lazy<T>; they must be registered explicitly.
+                // AccountManager -> TimedRewardsManager -> AccountManager circular dep.
+                services.AddSingleton(sp => new Lazy<IAccountManager>(sp.GetRequiredService<IAccountManager>));
                 // WorldManager takes these three as Lazy<T> to break the circular dependency.
                 services.AddSingleton(sp => new Lazy<IZoneManager>(sp.GetRequiredService<IZoneManager>));
                 services.AddSingleton(sp => new Lazy<IIndunManager>(sp.GetRequiredService<IIndunManager>));

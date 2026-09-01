@@ -8,20 +8,36 @@ namespace AAEmu.Game.Models.Tasks.Quests;
 /// </summary>
 public class QuestDailyResetTask : Task
 {
+    private readonly IWorldManager _worldManager;
+    private readonly ITimedRewardsManager _timedRewardsManager;
+    private readonly TimeProvider _timeProvider;
+
     /// <summary>
     /// Task used to do the quest resets for daily quests
     /// </summary>
     public QuestDailyResetTask()
     {
+    }
 
+    internal QuestDailyResetTask(
+        IWorldManager worldManager,
+        ITimedRewardsManager timedRewardsManager,
+        TimeProvider timeProvider)
+    {
+        _worldManager = worldManager;
+        _timedRewardsManager = timedRewardsManager;
+        _timeProvider = timeProvider;
     }
 
     public override void Execute()
     {
-        foreach (var character in WorldManager.Instance.GetAllCharacters())
+        var rewardDate = DateOnly.FromDateTime(
+            (_timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime);
+        foreach (var character in (_worldManager ?? WorldManager.Instance).GetAllCharacters())
         {
             character.Quests.ResetDailyQuests(true);
-            TimedRewardsManager.Instance.DoDailyAccountLogin(character.AccountId);
+            (_timedRewardsManager ?? TimedRewardsManager.Instance)
+                .DoDailyAccountLogin(character.AccountId, rewardDate);
         }
     }
 }
