@@ -10,6 +10,7 @@ namespace AAEmu.Game.Models.Game.Quests.Acts;
 public class QuestActObjZoneKill(QuestComponentTemplate parentComponent) : QuestActTemplate(parentComponent)
 {
     public override bool CountsAsAnObjective => true;
+    public override int Count => Math.Max(CountNpc, CountPlayerKill);
     public int CountPlayerKill { get; set; }
     public int CountNpc { get; set; }
     /// <summary>
@@ -78,31 +79,13 @@ public class QuestActObjZoneKill(QuestComponentTemplate parentComponent) : Quest
         if (CountNpc > 0 && victimNpc != null)
         {
             // NPC kills
-            if (NpcFactionId > 0)
-            {
-                if (NpcFactionExclusive && victimNpc.Faction.Id != NpcFactionId)
-                    valid = true;
-                if (!NpcFactionExclusive && victimNpc.Faction.Id == NpcFactionId)
-                    valid = true;
-            }
-
-            if (victimNpc.Level < LvlMinNpc || victimNpc.Level > LvlMaxNpc)
-                valid = false;
+            valid = MatchesKillTarget(victimNpc, NpcFactionId, NpcFactionExclusive, LvlMinNpc, LvlMaxNpc);
         }
 
         if (CountPlayerKill > 0 && victimPc != null)
         {
-            if (PcFactionId > 0)
-            {
-                // Player kills
-                if (PcFactionExclusive && victimPc.Faction.Id != PcFactionId)
-                    valid = true;
-                if (!PcFactionExclusive && victimPc.Faction.Id == PcFactionId)
-                    valid = true;
-            }
-
-            if (victimPc.Level < LvlMin || victimPc.Level > LvlMax)
-                valid = false;
+            // Player kills
+            valid = MatchesKillTarget(victimPc, PcFactionId, PcFactionExclusive, LvlMin, LvlMax);
         }
 
         if (valid)
@@ -133,5 +116,16 @@ public class QuestActObjZoneKill(QuestComponentTemplate parentComponent) : Quest
                 }
             }
         }
+    }
+
+    private static bool MatchesKillTarget(Unit victim, FactionsEnum factionId, bool factionExclusive, int levelMin, int levelMax)
+    {
+        var matchesFaction = factionId == FactionsEnum.Invalid ||
+                             (victim.Faction != null && (factionExclusive
+                                 ? victim.Faction.Id != factionId
+                                 : victim.Faction.Id == factionId));
+        var matchesLevel = (levelMin <= 0 || victim.Level >= levelMin) &&
+                           (levelMax <= 0 || victim.Level <= levelMax);
+        return matchesFaction && matchesLevel;
     }
 }

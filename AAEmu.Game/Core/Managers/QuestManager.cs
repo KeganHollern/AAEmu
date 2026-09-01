@@ -1555,7 +1555,6 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
                     {
                         DetailId = actId, CountPlayerKill = reader.GetInt32("count_pk"), CountNpc = reader.GetInt32("count_npc")
                     };
-                    template.Count = Math.Max(template.CountNpc, template.CountPlayerKill); // Exception since we have 2 possible values here
                     template.ZoneId = reader.GetUInt32("zone_id", 0);
                     template.TeamShare = reader.GetBoolean("team_share", true);
                     template.UseAlias = reader.GetBoolean("use_alias", true);
