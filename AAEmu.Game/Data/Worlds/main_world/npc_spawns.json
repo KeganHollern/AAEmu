@@ -169886,6 +169886,7 @@
     },
     {
         "UnitId": 1893,
+        "PreserveAuthoredHeight": true,
         "Position": {
             "X": 12556.48,
             "Y": 15459.12,
@@ -172076,6 +172077,7 @@
     },
     {
         "UnitId": 8206,
+        "PreserveAuthoredHeight": true,
         "Position": {
             "X": 12551.75,
             "Y": 15460.18,
