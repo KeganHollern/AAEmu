@@ -30,11 +30,14 @@ public class Height : ICommand
         var targetPlayer = character;
         if (args.Length > 0)
         {
-            targetPlayer = WorldManager.Instance.GetTargetOrSelf(character, args[0], out var firstArg);
+            targetPlayer = WorldManager.Instance.GetTargetOrSelf(character, args[0], out _);
         }
 
-        var floorHeight = WorldManager.Instance.GetHeight(targetPlayer.Transform.ZoneId, targetPlayer.Transform.World.Position.X, targetPlayer.Transform.World.Position.Y, targetPlayer.Transform.World.Position.Z);
-        var navMeshHeight = targetPlayer.ParentWorld.Template.GeoData.GetHeight(targetPlayer.Transform.World.Position); // WorldManager.Instance.GetHeight(targetPlayer.Transform.ZoneId, targetPlayer.Transform.World.Position.X, targetPlayer.Transform.World.Position.Y, targetPlayer.Transform.World.Position.Z);
-        CommandManager.SendNormalText(this, messageOutput, $"{targetPlayer.Name} Z-Pos: {character.Transform.World.Position.Z} - Floor: {floorHeight}, NavMeshHeight: {navMeshHeight}");
+        var surface = CommandSurfaceResult.Resolve(targetPlayer.ParentWorld.Template,
+            targetPlayer.Transform.World.Position);
+        CommandManager.SendNormalText(this, messageOutput, BuildReport(targetPlayer.Name, surface));
     }
+
+    internal static string BuildReport(string targetName, CommandSurfaceResult surface) =>
+        $"{targetName} Z-Pos: {CommandSurfaceResult.Format(surface.QueryPosition.Z)} - {surface.FormatHeights()}";
 }
