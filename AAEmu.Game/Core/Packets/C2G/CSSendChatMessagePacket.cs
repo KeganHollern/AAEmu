@@ -27,6 +27,13 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
                 return;
         }
 
+        var spamCheck = ChatSpamManager.Instance.CheckMessage(Connection.ActiveChar, type, message);
+        if (!spamCheck.IsAllowed)
+        {
+            Connection.ActiveChar.SendErrorMessage(spamCheck.ErrorMessage);
+            return;
+        }
+
         // Sidenote: Trino mixed up /faction and /nation back then, it was supposed to be the other way around
         switch (type)
         {
