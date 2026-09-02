@@ -31,11 +31,18 @@ public class SpawnEffect : EffectTemplate
 
     public override bool OnActionTime => false;
 
+    private bool UsesAuthoredZeroSlaveDistance()
+    {
+        // Mirage test-drive effects are the only Slave effects that author this target and orientation pair.
+        return PosDirId == 1 && OriDirId == 3;
+    }
+
     internal PositionAndRotation ResolveSlaveSpawnPosition(PositionAndRotation source)
     {
         var spawnPosition = source.Clone();
-        spawnPosition.AddDistanceToFront(PosDistance);
-        spawnPosition.Rotate(spawnPosition.Rotation with { Z = OriAngle.DegToRad() });
+        var distance = PosDistance == 0f && !UsesAuthoredZeroSlaveDistance() ? 2f : PosDistance;
+        spawnPosition.AddDistanceToFront(distance);
+        spawnPosition.Rotate(0f, 0f, OriAngle.DegToRad());
         return spawnPosition;
     }
 
