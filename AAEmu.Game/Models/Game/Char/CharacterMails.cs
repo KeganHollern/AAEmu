@@ -50,7 +50,8 @@ public class CharacterMails
 
     public void ReadMail(bool isSent, long id)
     {
-        if (MailManager.Instance._allPlayerMails.TryGetValue(id, out var mail))
+        if (MailManager.Instance._allPlayerMails.TryGetValue(id, out var mail) &&
+            (isSent ? mail.Header.SenderId == Self.Id : mail.Header.ReceiverId == Self.Id))
         {
             if (mail.Header.Status == MailStatus.Unread && !isSent)
             {
@@ -134,10 +135,11 @@ public class CharacterMails
 
     public bool GetAttached(long mailId, bool takeMoney, bool takeItems, bool takeAllSelected, ulong specifiedItemId = 0)
     {
-        var res = true;
+        var res = false;
         if (MailManager.Instance._allPlayerMails.TryGetValue(mailId, out var thisMail) &&
             thisMail.Header.ReceiverId == Self.Id)
         {
+            res = true;
             var tookMoney = false;
             var tookAuctionItem = false;
             if (thisMail.MailType == MailType.AucOffSuccess && thisMail.Body.CopperCoins > 0 && takeMoney)
@@ -286,14 +288,15 @@ public class CharacterMails
 
     public void DeleteMail(long id, bool isSent)
     {
-        if (MailManager.Instance._allPlayerMails.ContainsKey(id) && !isSent)
+        if (MailManager.Instance._allPlayerMails.TryGetValue(id, out var mail) &&
+            !isSent && mail.Header.ReceiverId == Self.Id)
         {
-            if (MailManager.Instance._allPlayerMails[id].Header.Attachments <= 0)
+            if (mail.Header.Attachments <= 0)
             {
                 // ReSharper disable ConditionIsAlwaysTrueOrFalse
-                if (MailManager.Instance._allPlayerMails[id].Header.Status != MailStatus.Read)
+                if (mail.Header.Status != MailStatus.Read)
                 {
-                    UnreadMailCount.UpdateReceived(MailManager.Instance._allPlayerMails[id].MailType, -1);
+                    UnreadMailCount.UpdateReceived(mail.MailType, -1);
                     Self.SendPacket(new SCMailDeletedPacket(isSent, id, true, UnreadMailCount));
                 }
                 else
@@ -301,19 +304,19 @@ public class CharacterMails
                     Self.SendPacket(new SCMailDeletedPacket(isSent, id, false, UnreadMailCount));
                 }
                 // ReSharper enable ConditionIsAlwaysTrueOrFalse
-                var deletedMail = MailManager.Instance._allPlayerMails[id];
                 if (MailManager.Instance.DeleteMail(id))
-                    MailManager.Instance.NotifyMailRemovedIfSenderOnline(deletedMail);
+                    MailManager.Instance.NotifyMailRemovedIfSenderOnline(mail);
             }
         }
     }
 
     public void ReturnMail(long id)
     {
-        if (MailManager.Instance._allPlayerMails.TryGetValue(id, out var thisMail))
+        if (MailManager.Instance._allPlayerMails.TryGetValue(id, out var thisMail) &&
+            thisMail.Header.ReceiverId == Self.Id)
         {
             var itemSlots = new List<(SlotType slotType, byte slot)>();
-            for (var i = 0; i < MailBody.MaxMailAttachments; i++)
+            for (var i = 0; i < thisMail.Body.Attachments.Count; i++)
             {
                 var item = ItemManager.Instance.GetItemByItemId(thisMail.Body.Attachments[i].Id);
                 itemSlots.Add(item.SlotType == SlotType.None
