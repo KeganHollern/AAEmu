@@ -1,14 +1,15 @@
-﻿using AAEmu.Game.Core.Packets;
-using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Packets;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Skills.Effects.Enums;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects;
@@ -29,6 +30,21 @@ public class SpawnEffect : EffectTemplate
     public MateState MateStateId { get; set; }
 
     public override bool OnActionTime => false;
+
+    private bool UsesAuthoredZeroSlaveDistance()
+    {
+        // Mirage test-drive effects are the only Slave effects that author this target and orientation pair.
+        return PosDirId == 1 && OriDirId == 3;
+    }
+
+    internal PositionAndRotation ResolveSlaveSpawnPosition(PositionAndRotation source)
+    {
+        var spawnPosition = source.Clone();
+        var distance = PosDistance == 0f && !UsesAuthoredZeroSlaveDistance() ? 2f : PosDistance;
+        spawnPosition.AddDistanceToFront(distance);
+        spawnPosition.Rotate(0f, 0f, OriAngle.DegToRad());
+        return spawnPosition;
+    }
 
     public override void Apply(BaseUnit caster, SkillCaster casterObj, BaseUnit target, SkillCastTarget targetObj,
         CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time,
@@ -87,9 +103,8 @@ public class SpawnEffect : EffectTemplate
                     {
                         // TODO: Implement OriDirId, PosDirId and MateStateId
                         using var transform = player.Transform.CloneDetached();
-                        if (PosDistance == 0) { PosDistance = 2; }
-                        transform.World.AddDistanceToFront(PosDistance);
-                        transform.World.Rotate(transform.World.Rotation with { Z = OriAngle.DegToRad() });
+                        var spawnPosition = ResolveSlaveSpawnPosition(transform.World);
+                        transform.Local.SetPosition(spawnPosition.Position, spawnPosition.Rotation);
 
                         var slave = player.ParentWorld.SlaveManager.Create(SubType, true, transform);
                         if (slave is { Template: null })
