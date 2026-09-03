@@ -29,7 +29,7 @@ while ($true) {
 # Get the necessary files
 # Prepare the folders
 Write-Host "Creating the folders needed to work"
-mkdir ".server_files\AAEmu.Database\mysql", ".server_files\AAEmu.Login", ".server_files\AAEmu.Game", ".server_files\AAEmu.Game\Data", `
+mkdir ".server_files\AAEmu.Database\mysql", ".server_files\AAEmu.Game", ".server_files\AAEmu.Game\Data", `
       ".server_files\AAEmu.Game\ClientData", ".server_files\AAEmu.Game\Configurations"
 Write-Host "Done"
 
@@ -51,8 +51,6 @@ if ((Test-Path -Path ".env" -PathType leaf) -eq $False) {
 }
 Write-Host "Done"
 
-Write-Host "Copying file AAEmu\AAEmu.Login\Config.json to AAEmu\.server_files\AAEmu.Login\Config.json if not already present."
-Copy-Item -Path "AAEmu.Login\Config.json" -Destination ".server_files\AAEmu.Login\Config.json" -Force -PassThru
 Write-Host "Done"
 
 Write-Host "Copying file AAEmu\AAEmu.Game\Config.json to AAEmu\.server_files\AAEmu.Game\Config.json if not already present."
@@ -68,13 +66,6 @@ Copy-Item -Path "AAEmu.Game\Data" -Destination ".server_files\AAEmu.Game\" -Recu
 Write-Host "Done"
 
 # Now configuring files in place
-# Configuring Login Server Config.json
-Write-Host "Configuring Config.json for the Login Server..."
-(Get-Content -Path ".server_files\AAEmu.Login\Config.json") -replace '"SecretKey": "test"', "`"SecretKey`": `"$SECRET_KEY`"" | Set-Content -Path ".server_files\AAEmu.Login\Config.json"
-(Get-Content -Path ".server_files\AAEmu.Login\Config.json") -replace "%db_host%", "db" | Set-Content -Path ".server_files\AAEmu.Login\Config.json"
-(Get-Content -Path ".server_files\AAEmu.Login\Config.json") -replace "%db_port%", "3306" | Set-Content -Path ".server_files\AAEmu.Login\Config.json"
-(Get-Content -Path ".server_files\AAEmu.Login\Config.json") -replace "%db_user%", "root" | Set-Content -Path ".server_files\AAEmu.Login\Config.json"
-(Get-Content -Path ".server_files\AAEmu.Login\Config.json") -replace "%db_password%", "$DB_PASSWORD" | Set-Content -Path ".server_files\AAEmu.Login\Config.json"
 Write-Host "Done"
 # Configuring Game Server Config.json
 Write-Host "Configuring Config.json for the Game Server..."

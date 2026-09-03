@@ -31,13 +31,9 @@
     <File Path="Scripts/docker-update-local.sh" />
     <File Path="Scripts/publish.sh" />
     <File Path="Scripts/start AAEmu.Game.bat" />
-    <File Path="Scripts/start AAEmu.Login.bat" />
     <File Path="Scripts/start_game.sh" />
-    <File Path="Scripts/start_login.sh" />
     <File Path="Scripts/StartGameServer.bat" />
-    <File Path="Scripts/StartLoginServer.bat" />
     <File Path="Scripts/WatchGameServer.ps1" />
-    <File Path="Scripts/WatchLoginServer.ps1" />
     <File Path="Scripts/start_AAEmu_publish.bat" />
   </Folder>
   <Folder Name="/Additional Files/SQL/">
@@ -117,12 +113,10 @@
     <Project Path="AAEmu.Aspire.AppHost/AAEmu.Aspire.AppHost.csproj" />
     <Project Path="AAEmu.Commons/AAEmu.Commons.csproj" />
     <Project Path="AAEmu.Game/AAEmu.Game.csproj" />
-    <Project Path="AAEmu.Login/AAEmu.Login.csproj" />
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="Tools/AAEmu.ContentStudio.Tests/AAEmu.ContentStudio.Tests.csproj" />
     <Project Path="AAEmu.IntegrationTests/AAEmu.IntegrationTests.csproj" />
-    <Project Path="AAEmu.Login.IntegrationTests/AAEmu.Login.IntegrationTests.csproj" />
     <Project Path="AAEmu.UnitTests/AAEmu.UnitTests.csproj" />
   </Folder>
   <Folder Name="/Tools/">

@@ -33,7 +33,6 @@ done
 # Prepare the folders
 echo -e "Creating the folders needed to works"
 mkdir -p .server_files/AAEmu.Database/mysql
-mkdir -p .server_files/AAEmu.Login
 mkdir -p .server_files/AAEmu.Game
 mkdir -p .server_files/AAEmu.Game/Data
 mkdir -p .server_files/AAEmu.Game/ClientData
@@ -55,10 +54,6 @@ echo -e "Copying file AAEmu/.env.example to Copying file AAEmu/.env if not alrea
 cp -n .env.example .env
 echo -e "Done"
 
-echo -e "Copying file AAEmu/AAEmu.Login/Config.json to AAEmu/.server_files/AAEmu.Login/Config.json if not already present."
-cp -n AAEmu.Login/Config.json .server_files/AAEmu.Login/Config.json
-echo -e "Done"
-
 echo -e "Copying file AAEmu/AAEmu.Game/Config.json to AAEmu/.server_files/AAEmu.Game/Config.json if not already present."
 cp -n AAEmu.Game/Config.json .server_files/AAEmu.Game/Config.json
 echo -e "Done"
@@ -72,14 +67,6 @@ cp -n -r AAEmu.Game/Data .server_files/AAEmu.Game/
 echo -e "Done"
 
 # Now configuring files in place
-# Configuring Login Server Config.json
-echo -e "Configuring Config.json for the Login Server..."
-sed -i "s|\"SecretKey\": \"test\"|\"SecretKey\": \"$SECRET_KEY\"|" .server_files/AAEmu.Login/Config.json
-sed -i "s|%db_host%|db|" .server_files/AAEmu.Login/Config.json
-sed -i "s|%db_port%|3306|" .server_files/AAEmu.Login/Config.json
-sed -i "s|%db_user%|root|" .server_files/AAEmu.Login/Config.json
-sed -i "s|%db_password%|$DB_PASSWORD|" .server_files/AAEmu.Login/Config.json
-echo -e "Done"
 # Configuring Game Server Config.json
 echo -e "Configuring Config.json for the Game Server..."
 sed -i "s|\"SecretKey\": \"test\"|\"SecretKey\": \"$SECRET_KEY\"|" .server_files/AAEmu.Game/Config.json
@@ -87,7 +74,7 @@ sed -i "s|%db_host%|db|" .server_files/AAEmu.Game/Config.json
 sed -i "s|%db_port%|3306|" .server_files/AAEmu.Game/Config.json
 sed -i "s|%db_user%|root|" .server_files/AAEmu.Game/Config.json
 sed -i "s|%db_password%|$DB_PASSWORD|" .server_files/AAEmu.Game/Config.json
-sed -i "s|%login_host%|login|" .server_files/AAEmu.Game/Config.json
+sed -i "s|%login_host%|host.docker.internal|" .server_files/AAEmu.Game/Config.json
 sed -i "s|%login_port%|1234|" .server_files/AAEmu.Game/Config.json
 echo -e "Done"
 # Configuring .env

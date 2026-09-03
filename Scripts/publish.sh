@@ -14,7 +14,7 @@ for runtime in "win7-x64" "win7-x86" "win8-x64" "win8-x86" "win81-x64" "win81-x8
 	
 	mkdir -p publish/$CONFIGURATION/$runtime;
 	
-	for project in "AAEmu.Login" "AAEmu.Game"; do
+	for project in "AAEmu.Game"; do
 		mkdir -p publish/$CONFIGURATION/$runtime/$project;
 		mv $project/bin/$CONFIGURATION/$FRAMEWORK/$runtime/publish/* publish/$CONFIGURATION/$runtime/$project;
 		rm -R $project/bin/$CONFIGURATION/$FRAMEWORK/$runtime;
