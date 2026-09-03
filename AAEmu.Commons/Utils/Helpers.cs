@@ -51,13 +51,13 @@ public static class Helpers
 
     public static DateTime UnixTime(long time)
     {
-        if (time > DateTime.MaxValue.Second)
+        if (time > DateTimeOffset.MaxValue.ToUnixTimeSeconds())
             return DateTime.MaxValue;
 
-        if (time < DateTime.MinValue.Second)
+        if (time < DateTimeOffset.MinValue.ToUnixTimeSeconds())
             return DateTime.MinValue;
 
-        return DateTime.UnixEpoch.AddSeconds(time);
+        return DateTimeOffset.FromUnixTimeSeconds(time).UtcDateTime;
     }
 
     public static long UnixTimeNow()

@@ -687,15 +687,19 @@ public class CharacterQuests(Character owner)
                         TemplateId = templateId,
                         Status = (QuestStatus)reader.GetByte("status")
                     };
-                    var oldStatus = quest.Status;
                     quest.ReadData((byte[])reader.GetValue("data"));
-                    quest.Status = oldStatus;
-                    ActiveQuests.Add(quest.TemplateId, quest);
-                    quest.QuestInitialized();
-                    quest.RequestEvaluation();
+                    AddLoadedQuest(quest);
                 }
             }
         }
+    }
+
+    internal void AddLoadedQuest(Quest quest)
+    {
+        ActiveQuests.Add(quest.TemplateId, quest);
+        quest.RestoreLoadedState();
+        quest.QuestInitialized();
+        quest.RequestEvaluation();
     }
 
     /// <summary>

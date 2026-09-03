@@ -1939,6 +1939,19 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
     /// <returns>False if this quest already has a timer running</returns>
     public bool AddQuestTimer(ICharacter owner, Quest quest, int limitTime)
     {
+        return AddQuestTimer(owner, quest, TimeSpan.FromMilliseconds(limitTime), true);
+    }
+
+    /// <summary>
+    /// Restores a persisted quest timer without changing its absolute deadline.
+    /// </summary>
+    internal bool RestoreQuestTimer(ICharacter owner, Quest quest, TimeSpan remaining)
+    {
+        return AddQuestTimer(owner, quest, remaining, false);
+    }
+
+    private bool AddQuestTimer(ICharacter owner, Quest quest, TimeSpan delay, bool setDeadline)
+    {
         // Grab or Create the TimeOutTask list for this player
         if (!QuestTimeoutTask.TryGetValue(owner.Id, out var playerTimerTasks))
         {
@@ -1953,16 +1966,17 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
             return false;
         }
 
-        // Fill in the new end time for this quest
-        quest.Time = DateTime.UtcNow.AddMilliseconds(limitTime);
+        if (setDeadline)
+            quest.Time = DateTime.UtcNow.Add(delay);
 
         // Create new Task and add them to the dictionary for this player
         var timeoutTask = new QuestTimeoutTask(owner, quest.TemplateId);
         playerTimerTasks.Add(quest.TemplateId, timeoutTask);
 
         // Actually schedule the task
-        taskManager.Schedule(timeoutTask, TimeSpan.FromMilliseconds(limitTime));
-        owner.SendDebugMessage($"[Quest] Quest ({quest.Id}) will end in {limitTime / 60000} minutes.");
+        taskManager.Schedule(timeoutTask, delay);
+        timeoutTask.TriggerTime = quest.Time;
+        owner.SendDebugMessage($"[Quest] Quest ({quest.Id}) will end in {(int)delay.TotalMinutes} minutes.");
         return true;
     }
 
