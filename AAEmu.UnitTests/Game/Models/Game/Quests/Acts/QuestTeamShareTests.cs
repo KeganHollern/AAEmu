@@ -223,6 +223,47 @@ public sealed class QuestTeamShareTests
     }
 
     [Test]
+    public async Task OnZoneKill_TagShareDirectDelivery_DoesNotDuplicateOrdinaryTeamFanOut()
+    {
+        AppConfiguration.Instance.World.QuestTeamShareRange = QuestTeamShareRange + 50f;
+        var fixture = CreateFixture(
+            component => new QuestActObjZoneKill(component)
+            {
+                CountNpc = 5,
+                IsParty = true,
+                LvlMinNpc = 1,
+                LvlMaxNpc = 55,
+                NpcFactionId = FactionsEnum.Monstrosity,
+                TeamShare = true
+            },
+            rangeOriginX: 500f);
+        var nearbyPersonalQuest = CreateQuest(fixture.Nearby, component => new QuestActObjZoneKill(component)
+        {
+            CountNpc = 5,
+            LvlMinNpc = 1,
+            LvlMaxNpc = 55,
+            NpcFactionId = FactionsEnum.Monstrosity
+        });
+        nearbyPersonalQuest.Step = QuestComponentKind.Progress;
+        var victim = CreateVictim(500f);
+        var questManager = new QuestManager(Mock.Of<ITaskManager>().Object, Mock.Of<IZoneManager>().Object);
+        HashSet<uint> directTagShareRecipients = [fixture.Nearby.Id];
+        var nearbyMonsterHuntDeliveries = 0;
+        fixture.Nearby.Events.OnMonsterHunt += (_, _) => nearbyMonsterHuntDeliveries++;
+
+        questManager.DoOnMonsterHuntEvents(fixture.Source, victim, false, directTagShareRecipients);
+        questManager.DoOnMonsterHuntEvents(fixture.Nearby, victim, true, directTagShareRecipients);
+
+        await Assert.That(fixture.Quests[fixture.Source.Id].Objectives[0]).IsEqualTo(1);
+        await Assert.That(fixture.Quests[fixture.Nearby.Id].Objectives[0]).IsEqualTo(1);
+        await Assert.That(fixture.Quests[fixture.Distant.Id].Objectives[0]).IsEqualTo(1);
+        await Assert.That(nearbyPersonalQuest.Objectives[0]).IsEqualTo(1);
+        await Assert.That(nearbyMonsterHuntDeliveries).IsEqualTo(1);
+        await Assert.That(fixture.Quests[fixture.Disconnected.Id].Objectives[0]).IsEqualTo(0);
+        await Assert.That(fixture.Quests[fixture.CrossInstance.Id].Objectives[0]).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task IsEligibleRecipient_ConfiguredThreeDimensionalRange_IsInclusive()
     {
         AppConfiguration.Instance.World.QuestTeamShareRange = 50f;

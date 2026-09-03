@@ -948,6 +948,7 @@ public partial class Npc : Unit
                     tagShareRecipients.Add(contributor);
             }
         }
+        var tagShareRecipientIds = tagShareRecipients.Select(character => character.Id).ToHashSet();
 
         var questCreditedPlayers = new HashSet<Character>();
 
@@ -956,7 +957,11 @@ public partial class Npc : Unit
             if (!questCreditedPlayers.Add(character))
                 return;
 
-            QuestManager.Instance.DoOnMonsterHuntEvents(character, this, teamShareAlreadyDistributed);
+            QuestManager.Instance.DoOnMonsterHuntEvents(
+                character,
+                this,
+                teamShareAlreadyDistributed,
+                tagShareRecipientIds);
         }
 
         if (eligiblePlayers.Count == 0 && killerOwner != null)
@@ -1079,16 +1084,16 @@ public partial class Npc : Unit
         {
             var teamQuestDeliveryCount = DistributeEligibleTeamQuestCredit(taggedTeam, killerOwner, CreditQuest);
             if (teamQuestDeliveryCount == 0 && eligiblePlayers.Count == 0 && killerOwner != null)
-                CreditQuest(killerOwner, tagShareRecipients.Contains(killerOwner));
+                CreditQuest(killerOwner, tagShareRecipientIds.Contains(killerOwner.Id));
         }
         else if (eligiblePlayers.Count > 0)
         {
             foreach (var character in eligiblePlayers)
-                CreditQuest(character, tagShareRecipients.Contains(character));
+                CreditQuest(character, tagShareRecipientIds.Contains(character.Id));
         }
         else if (killerOwner != null)
         {
-            CreditQuest(killerOwner, tagShareRecipients.Contains(killerOwner));
+            CreditQuest(killerOwner, tagShareRecipientIds.Contains(killerOwner.Id));
         }
 
         // ── Tag Share toggle ──────────────────────────────────────────────

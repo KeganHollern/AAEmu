@@ -118,7 +118,14 @@ public class QuestActObjZoneKill(QuestComponentTemplate parentComponent) : Quest
             {
                 args.TeamShareAlreadyDistributed = true;
                 // Directly call OnZoneKill on eligible team members to avoid loops/duplicates
-                ShareWithEligibleTeamMembers(player, teamMember => teamMember.Events.OnZoneKill(sender, args), args.Victim.Transform);
+                ShareWithEligibleTeamMembers(
+                    player,
+                    teamMember =>
+                    {
+                        if (args.TeamShareRecipientExclusions?.Contains(teamMember.Id) != true)
+                            teamMember.Events.OnZoneKill(sender, args);
+                    },
+                    args.Victim.Transform);
             }
         }
     }

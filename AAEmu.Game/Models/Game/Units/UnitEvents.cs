@@ -199,6 +199,7 @@ public class OnZoneKillArgs : EventArgs
     public ICharacter Killer { get; set; }
     public Unit Victim { get; set; }
     internal bool TeamShareAlreadyDistributed { get; set; }
+    internal IReadOnlySet<uint> TeamShareRecipientExclusions { get; set; }
 }
 
 public class OnCinemaStartedArgs : EventArgs
