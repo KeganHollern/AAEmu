@@ -10,22 +10,38 @@ Use this page for common startup and connection problems.
 
 ### Missing tables or SQL errors on startup
 
-Confirm you imported `SQL/aaemu_login.sql` and `SQL/aaemu_game.sql` (manual
-path), or let Aspire initialize DB (Aspire path).
+Game server: confirm you imported `SQL/aaemu_game.sql` (manual path), or let
+Aspire initialize `aaemu_game` (Aspire path).
 
-### `DataAnnotation validation failed ... GameServers`
+Login server: confirm the `aaemu_login` database exists. The Go login server
+creates the tables at first start when the `users` table is missing. It does
+not create the database. If the log shows `Unknown database`, create an empty
+`aaemu_login` database and restart the login server.
 
-Login configuration is missing `GameServers`.
-Add it in `AAEmu.Login/Config.Local.json` or environment variables.
+### Login server exits with a configuration error
+
+A required `AAEMU_LOGIN_*` variable is missing or invalid.
+`AAEMU_LOGIN_SECRET_KEY`, `AAEMU_LOGIN_MYSQL_HOST`, `AAEMU_LOGIN_MYSQL_USER`,
+and `AAEMU_LOGIN_GAME_SERVERS` are required. See `server/README.md` in
+`aaemu-cluster`.
 
 ### Server list is empty in client
 
-Verify `GameServers__0__Host` and `GameServers__0__Port` are reachable by the
-client.
+Verify the `host` and `port` in `AAEMU_LOGIN_GAME_SERVERS` are reachable by
+the client, and that the game server registered. The login server log shows
+`game server registered` on success.
+
+### Server list shows Maintenance
+
+The game server did not register with the login server. Check:
+
+1. the Go login server is running and listens on `1234`,
+1. the game `LoginNetwork` host and port point at that listener,
+1. the game `SecretKey` equals `AAEMU_LOGIN_SECRET_KEY`.
 
 ### Crash after selecting server
 
-Usually this means wrong game host or port in login `GameServers` config.
+Usually this means wrong game host or port in `AAEMU_LOGIN_GAME_SERVERS`.
 
 ### Aspire does not start services
 
@@ -44,7 +60,9 @@ Increase OS file descriptor limits for the server process.
 ## Important change
 
 Do not rely on MySQL `aaemu_login.game_servers` as a source of server listings.
-Login server listings are configuration-driven now.
+The login server is now the Go binary in `KeganHollern/aaemu-cluster`
+(`server/cmd/login`). Server listings come from its `AAEMU_LOGIN_GAME_SERVERS`
+environment variable.
 
 ## Related
 

@@ -14,8 +14,6 @@ RUN dotnet publish ./AAEmu.Game/AAEmu.Game.csproj -c $CONFIGURATION -o /app/publ
 FROM mcr.microsoft.com/dotnet/runtime:10.0-alpine
 
 ARG CONFIGURATION
-ARG LOGIN_HOST
-ARG LOGIN_PORT
 ARG DB_HOST
 ARG DB_PORT
 ARG DB_USER

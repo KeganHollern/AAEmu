@@ -71,49 +71,40 @@ Nested extract folders: move contents up so the paths above resolve.
 
 | Port | Role |
 | --- | --- |
-| 1237 | Login **public** (client) |
-| 1234 | Login **internal** (game registration) default |
+| 1237 | Go login server **public** (client), `AAEMU_LOGIN_CLIENT_LISTEN` |
+| 1234 | Go login server **internal** (game registration), `AAEMU_LOGIN_INTERNAL_LISTEN` default |
 | 1235 | Suggested alternate internal if 1234 busy |
+| 8080 | Go login server launcher API and health, `AAEMU_LOGIN_HTTP_LISTEN` |
+| 9090 | Go login server Prometheus metrics, `AAEMU_LOGIN_METRICS_LISTEN` |
 | 1239 | Game public |
 | 1250 | Game stream |
 | 1280 | Game Web API (optional) |
 | 3306 | Host MySQL (Path B) |
 | 15133 | Aspire dashboard (Path A, http profile) |
 
-Server list for the client comes from login **`GameServers` config**, not MySQL `game_servers` rows.
+Server list for the client comes from the login server **`AAEMU_LOGIN_GAME_SERVERS`** JSON, not MySQL `game_servers` rows.
 
 ## Config.Local templates
 
-### Login (`AAEmu.Login/Config.Local.json`) — Path B (+ optional port remap)
+### Go login server environment (Path B, optional port remap)
 
-```json
-{
-  "SecretKey": "test",
-  "AutoAccount": true,
-  "InternalNetwork": {
-    "Host": "*",
-    "Port": 1235
-  },
-  "Connections": {
-    "MySQLProvider": {
-      "Host": "127.0.0.1",
-      "Port": "3306",
-      "User": "root",
-      "Password": "YOUR_HOST_MYSQL_PASSWORD",
-      "Database": "aaemu_login"
-    }
-  },
-  "GameServers": [
-    {
-      "Id": 1,
-      "Name": "AAEmu.Game",
-      "Host": "127.0.0.1",
-      "Port": 1239,
-      "Hidden": false
-    }
-  ]
-}
+The login server is `server/cmd/login` in the `KeganHollern/aaemu-cluster`
+repo. It has no JSON config. Set environment variables, then run
+`go run ./cmd/login` from `aaemu-cluster/server`:
+
+```bash
+AAEMU_LOGIN_SECRET_KEY=test
+AAEMU_LOGIN_AUTO_ACCOUNT=true
+AAEMU_LOGIN_INTERNAL_LISTEN=0.0.0.0:1235   # only if 1234 is busy
+AAEMU_LOGIN_MYSQL_HOST=127.0.0.1
+AAEMU_LOGIN_MYSQL_PORT=3306
+AAEMU_LOGIN_MYSQL_USER=root
+AAEMU_LOGIN_MYSQL_PASSWORD=YOUR_HOST_MYSQL_PASSWORD
+AAEMU_LOGIN_MYSQL_DATABASE=aaemu_login
+AAEMU_LOGIN_GAME_SERVERS='[{"id":1,"name":"AAEmu.Game","host":"127.0.0.1","port":1239,"hidden":false}]'
 ```
+
+Full variable table: `aaemu-cluster/server/README.md`, section Configuration.
 
 ### Game (`AAEmu.Game/Config.Local.json`)
 
@@ -144,7 +135,7 @@ Path A often only needs `ClientData`. Path B needs DB + LoginNetwork + ClientDat
 }
 ```
 
-Replace `REPO_ROOT` with the absolute repo path. Keep `SecretKey` identical on both sides.
+Replace `REPO_ROOT` with the absolute repo path. Keep the Game `SecretKey` equal to `AAEMU_LOGIN_SECRET_KEY`. Keep `LoginNetwork.Port` equal to the `AAEMU_LOGIN_INTERNAL_LISTEN` port (`1234` default, `1235` in the remap example above).
 
 Game load order: `Config.json` → `Configurations/*.json` → **`Config.Local.json`**.
 
@@ -154,41 +145,46 @@ Game load order: `Config.json` → `Configurations/*.json` → **`Config.Local.j
 
 - `dotnet run --project AAEmu.Aspire.AppHost --launch-profile http`
 - MySQL container + volume managed by Aspire (password in user secrets)
-- Login/Game are **not** Docker app containers
+- Aspire starts only the Game. The Go login server runs outside Aspire on the host. Neither one is a Docker app container
+- AppHost parameters `login-host` (default `127.0.0.1`) and `login-port` (default `1234`) set the Game `LoginNetwork`
 - Dashboard token is printed at startup
 
 ## Path B — Host MySQL
 
 ```text
 [ ] MySQL 8 host service up
-[ ] aaemu_login / aaemu_game created and SQL imported
-[ ] Config.Local on Login + Game
-[ ] SecretKey match; internal ports match and free
+[ ] aaemu_game created and SQL imported. aaemu_login created empty (Go login server creates the tables)
+[ ] AAEMU_LOGIN_* environment for the Go login server. Config.Local on Game
+[ ] Game SecretKey equals AAEMU_LOGIN_SECRET_KEY. Internal ports match and free
 [ ] compact.sqlite3 + game_pak OK (inventory script)
-[ ] Login, then Game
-[ ] Log: Registered GameServer
+[ ] Go login server, then Game
+[ ] Log: game server registered
 ```
 
 ```bash
 mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS aaemu_login; CREATE DATABASE IF NOT EXISTS aaemu_game;"
-mysql -u root -p aaemu_login < SQL/aaemu_login.sql
 mysql -u root -p aaemu_game  < SQL/aaemu_game.sql
 ```
+
+Do not import a login SQL file. The Go login server creates the `aaemu_login`
+tables at first start when the `users` table is missing.
 
 ## Process / log hygiene
 
 **Windows (PowerShell agents):**
 
 - Detach launcher/server windows (`Win32_Process.Create`) so agent Job Objects do not kill them.
-- Tee logs: `dotnet app.dll 2>&1 | Tee-Object -FilePath .server_files/logs/login.log`
+- Tee logs: `go run ./cmd/login 2>&1 | Tee-Object -FilePath .server_files/logs/login.log` (from `aaemu-cluster/server`, with the `AAEMU_LOGIN_*` variables set)
 
 **Linux / macOS (bash agents):**
 
-- Run Login/Game in separate terminals or `tmux`/`screen`, or:
+- Run the Go login server and Game in separate terminals or `tmux`/`screen`, or:
 
 ```bash
 mkdir -p .server_files/logs
-dotnet run --project AAEmu.Login 2>&1 | tee .server_files/logs/login.log
+# In aaemu-cluster/server, with the AAEMU_LOGIN_* variables exported:
+go run ./cmd/login 2>&1 | tee REPO_ROOT/.server_files/logs/login.log
+# In this repo:
 dotnet run --project AAEmu.Game  2>&1 | tee .server_files/logs/game.log
 ```
 
@@ -198,17 +194,17 @@ dotnet run --project AAEmu.Game  2>&1 | tee .server_files/logs/game.log
 
 | Symptom | Likely cause |
 | --- | --- |
-| **Maintenance** on server list | Game not registered (port 1234 conflict, bad LoginNetwork, SecretKey) |
+| **Maintenance** on server list | Game not registered (port 1234 conflict, bad LoginNetwork, Game SecretKey differs from AAEMU_LOGIN_SECRET_KEY) |
 | Aspire dies at start | Docker/Podman not running |
 | Missing data / sqlite errors | No `compact.sqlite3` |
 | Bad client data | Wrong `ClientData.Sources` |
 | Lost characters after path switch | Path A and Path B databases are separate |
 | Multi‑GB download again | Agent skipped inventory — always run `Test-AaemuAssets.ps1` or `test-aaemu-assets.sh` first |
 
-Success line:
+Success line (login server JSON log):
 
 ```text
-Registered GameServer ... (AAEmu.Game) from ...
+"msg":"game server registered"
 ```
 
 ## Not supported as “the” path
