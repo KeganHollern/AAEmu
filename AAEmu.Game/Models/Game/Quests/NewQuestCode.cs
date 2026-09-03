@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Units;
 
@@ -241,6 +242,19 @@ public partial class Quest
     {
         if (!QuestSteps.TryGetValue(QuestComponentKind.Progress, out var currentStep))
             return QuestObjectiveStatus.QuestComplete;
+
+        foreach (var questComponent in currentStep.Components.Values)
+        {
+            if (!questComponent.IsCurrentlyActive)
+                continue;
+
+            foreach (var questAct in questComponent.Acts)
+            {
+                if (questAct.Template is QuestActEtcItemObtain itemObtain &&
+                    !IsEtcItemObtainComplete(questAct.Id, itemObtain.Count))
+                    return QuestObjectiveStatus.NotReady;
+            }
+        }
 
         if (!currentStep.ContainsObjectives())
             return QuestObjectiveStatus.QuestComplete;

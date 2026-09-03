@@ -17,6 +17,7 @@ namespace AAEmu.Game.Models.Game.Quests;
 public partial class Quest : PacketMarshaler
 {
     private const int MaxObjectiveCount = 5;
+    private const byte EtcItemObtainProgressDataVersion = 1;
     private readonly IQuestManager _questManager;
     private readonly ITaskManager _taskManager;
     private readonly ISkillManager _skillManager;
@@ -43,6 +44,8 @@ public partial class Quest : PacketMarshaler
     /// Objective counters for the Progress step
     /// </summary>
     internal int[] Objectives { get; set; }
+
+    private Dictionary<uint, int> EtcItemObtainProgress { get; } = [];
 
     /// <summary>
     /// Used to check Progress step
@@ -482,6 +485,29 @@ public partial class Quest : PacketMarshaler
         RequestEvaluationFlag = true;
     }
 
+    internal int GetEtcItemObtainProgress(uint actId)
+    {
+        return EtcItemObtainProgress.GetValueOrDefault(actId);
+    }
+
+    internal bool IsEtcItemObtainComplete(uint actId, int requiredCount)
+    {
+        return requiredCount <= 0 || GetEtcItemObtainProgress(actId) >= requiredCount;
+    }
+
+    internal void AddEtcItemObtainProgress(uint actId, int amount, int requiredCount)
+    {
+        if (amount <= 0 || requiredCount <= 0)
+            return;
+
+        var currentCount = GetEtcItemObtainProgress(actId);
+        if (currentCount >= requiredCount)
+            return;
+
+        EtcItemObtainProgress[actId] = currentCount + Math.Min(amount, requiredCount - currentCount);
+        RequestEvaluation();
+    }
+
     /// <summary>
     /// Runs initializers for Acts that need to be activated at the start of the quest
     /// </summary>
@@ -556,6 +582,7 @@ public partial class Quest : PacketMarshaler
     public void ReadData(byte[] data)
     {
         var stream = new PacketStream(data);
+        EtcItemObtainProgress.Clear();
 
         // Read Objectives
         var newObjectives = new int[MaxObjectiveCount];
@@ -573,6 +600,22 @@ public partial class Quest : PacketMarshaler
         ComponentId = stream.ReadUInt32();
         AcceptorId = stream.ReadUInt32();
         Time = stream.ReadDateTime();
+
+        if (stream.LeftBytes < 2)
+            return;
+
+        var progressDataVersion = stream.ReadByte();
+        if (progressDataVersion != EtcItemObtainProgressDataVersion)
+            return;
+
+        var progressCount = stream.ReadByte();
+        for (var i = 0; i < progressCount && stream.LeftBytes >= sizeof(uint) + sizeof(int); i++)
+        {
+            var actId = stream.ReadUInt32();
+            var progress = stream.ReadInt32();
+            if (progress > 0)
+                EtcItemObtainProgress[actId] = progress;
+        }
     }
 
     public byte[] WriteData()
@@ -588,6 +631,18 @@ public partial class Quest : PacketMarshaler
         stream.Write(ComponentId);
         stream.Write(AcceptorId);
         stream.Write(Time);
+
+        var itemObtainProgress = EtcItemObtainProgress
+            .Where(entry => entry.Value > 0)
+            .OrderBy(entry => entry.Key)
+            .ToArray();
+        stream.Write(EtcItemObtainProgressDataVersion);
+        stream.Write(checked((byte)itemObtainProgress.Length));
+        foreach (var (actId, progress) in itemObtainProgress)
+        {
+            stream.Write(actId);
+            stream.Write(progress);
+        }
         return stream.GetBytes();
     }
 

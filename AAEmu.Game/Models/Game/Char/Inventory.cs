@@ -922,7 +922,7 @@ public class Inventory
             //Owner?.Quests?.OnItemGather(item, count);
             // инициируем событие
             //Task.Run(() => QuestManager.Instance.DoAcquiredEvents((Character)Owner, item.TemplateId, item.Count));
-            QuestManager.Instance.DoItemsAcquiredEvents(Owner, item.TemplateId, item.Count);
+            QuestManager.Instance.DoItemsAcquiredEvents(Owner, item.TemplateId, count);
 
             if (Owner is Character character)
             {
