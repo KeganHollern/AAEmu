@@ -133,6 +133,12 @@ Example:
 - **Type**: `number`
 - **Description**: Server-side actability points multiplier.
 
+### `QuestTeamShareRange`
+
+- **Type**: `number`
+- **Default**: `200.0`
+- **Description**: Maximum 3D distance in meters from a team-shared quest event, including monster credit expanded by `TagShareEnabled`. The NPC or victim position is used when available; otherwise the originating player's position is used. Only online members in the same world instance and within this range receive shared credit.
+
 ## Ship wind
 
 ### `WindModel`

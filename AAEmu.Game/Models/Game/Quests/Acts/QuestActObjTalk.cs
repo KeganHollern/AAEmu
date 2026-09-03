@@ -1,5 +1,4 @@
-﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Models.Game.Quests.Templates;
+﻿using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Quests.Acts;
@@ -47,34 +46,24 @@ public class QuestActObjTalk(QuestComponentTemplate parentComponent) : QuestActT
             return;
 
         var player = questAct.QuestComponent.Parent.Parent.Owner;
+        var isSourcePlayer = player.Id == args.SourcePlayer?.Id;
+        if (!isSourcePlayer &&
+            (!TeamShare || !QuestTeamShareEligibility.IsEligibleMember(args.SourcePlayer, player, args.Transform)))
+            return;
+
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnTalkMade: Quest: {questAct.QuestComponent.Parent.Parent.TemplateId}, Owner {player.Name} ({player.Id}), NpcId {args.NpcId}, Source {args.SourcePlayer.Name} ({args.SourcePlayer.Id})");
         SetObjective(questAct, 1);
 
-        if (player.Id == args.SourcePlayer.Id)
+        if (isSourcePlayer)
         {
             // Handle interaction that only apply to source player
 
             // Handle Team sharing (if needed)
-            if (TeamShare)
+            if (TeamShare && !args.TeamShareAlreadyDistributed)
             {
-                // Delegate also to other team members
-                var myTeam = TeamManager.Instance.GetTeamByObjId(player.ObjId);
-                if (myTeam != null)
-                {
-                    foreach (var teamMember in myTeam.Members)
-                    {
-                        if (teamMember == null)
-                            continue;
-                        // Skip self
-                        if (teamMember.Character.Id == player.Id)
-                            continue;
-
-                        // TODO: Range check?
-
-                        // Directly call OnTalkMade on team members to avoid loops/duplicates
-                        teamMember.Character.Events.OnTalkMade(sender, args);
-                    }
-                }
+                args.TeamShareAlreadyDistributed = true;
+                // Directly call OnTalkMade on eligible team members to avoid loops/duplicates
+                ShareWithEligibleTeamMembers(player, teamMember => teamMember.Events.OnTalkMade(sender, args), args.Transform);
             }
         }
     }

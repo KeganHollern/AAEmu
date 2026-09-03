@@ -116,6 +116,7 @@ public class OnTalkMadeArgs : EventArgs
     public uint QuestActId { get; set; }
     public Transform Transform { get; set; }
     public ICharacter SourcePlayer { get; set; }
+    internal bool TeamShareAlreadyDistributed { get; set; }
 }
 
 public class OnTalkNpcGroupMadeArgs : EventArgs
@@ -149,6 +150,7 @@ public class OnInteractionArgs : EventArgs
 {
     public uint DoodadId { get; set; } // Doodad.TemplateId
     public ICharacter SourcePlayer { get; set; }
+    internal bool TeamShareAlreadyDistributed { get; set; }
 }
 
 public class OnCraftArgs : EventArgs
@@ -196,6 +198,7 @@ public class OnZoneKillArgs : EventArgs
     public uint ZoneGroupId { get; set; }
     public ICharacter Killer { get; set; }
     public Unit Victim { get; set; }
+    internal bool TeamShareAlreadyDistributed { get; set; }
 }
 
 public class OnCinemaStartedArgs : EventArgs

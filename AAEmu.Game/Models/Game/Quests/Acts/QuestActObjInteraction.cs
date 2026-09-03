@@ -1,5 +1,4 @@
-﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Models.Game.Quests.Templates;
+﻿using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 
@@ -50,36 +49,26 @@ public class QuestActObjInteraction(QuestComponentTemplate parentComponent) : Qu
         if (args.DoodadId != DoodadId)
             return;
 
+        var player = questAct.QuestComponent.Parent.Parent.Owner;
+        var isSourcePlayer = player.Id == args.SourcePlayer?.Id;
+        if (!isSourcePlayer &&
+            (!TeamShare || !QuestTeamShareEligibility.IsEligibleMember(args.SourcePlayer, player)))
+            return;
+
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnInteraction: Quest: {questAct.QuestComponent.Parent.Parent.TemplateId}, Owner {questAct.QuestComponent.Parent.Parent.Owner.Name} ({questAct.QuestComponent.Parent.Parent.Owner.Id}), WorldInteractionId {WorldInteractionId}, DoodadId {DoodadId}, TeamShare {TeamShare}, Phase {Phase}.");
         AddObjective(questAct, 1);
 
-        var player = questAct.QuestComponent.Parent.Parent.Owner;
-        if (player.Id == args.SourcePlayer.Id)
+        if (isSourcePlayer)
         {
             // Handle interaction that only apply to source player
             // TODO Verify: Is Phase here what is actually used to move the Doodad to that phase, or is it the WI that causes the change
 
             // Handle Team sharing (if needed)
-            if (TeamShare)
+            if (TeamShare && !args.TeamShareAlreadyDistributed)
             {
-                // Delegate also to other team members
-                var myTeam = TeamManager.Instance.GetTeamByObjId(player.ObjId);
-                if (myTeam != null)
-                {
-                    foreach (var teamMember in myTeam.Members)
-                    {
-                        if (teamMember == null)
-                            continue;
-                        // Skip self
-                        if (teamMember.Character.Id == player.Id)
-                            continue;
-
-                        // TODO: Range check?
-
-                        // Directly call OnInteraction on team members to avoid loops/duplicates
-                        teamMember.Character.Events.OnInteraction(sender, args);
-                    }
-                }
+                args.TeamShareAlreadyDistributed = true;
+                // Directly call OnInteraction on eligible team members to avoid loops/duplicates
+                ShareWithEligibleTeamMembers(player, teamMember => teamMember.Events.OnInteraction(sender, args));
             }
         }
     }
