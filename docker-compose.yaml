@@ -8,7 +8,6 @@ services:
         restart: unless-stopped
         # command: --default_authentication_plugin=mysql_native_password
         volumes:
-            - ./SQL/aaemu_login.sql:/docker-entrypoint-initdb.d/aaemu_login.sql
             - ./SQL/aaemu_game.sql:/docker-entrypoint-initdb.d/aaemu_game.sql
             - ./.server_files/AAEmu.Database/mysql:/var/lib/mysql
             # - db_data:/var/lib/mysql
@@ -30,11 +29,18 @@ services:
             ADMINER_DEFAULT_DB_HOST: db
             ADMINER_DESIGN: nette
         ports:
-            - 8080:8080
+            # 8081 on the host: the Go login server uses 8080 for its launcher API.
+            - 8081:8080
         depends_on:
             db:
               condition: service_healthy
 
+    # The login server is the Go binary from aaemu-cluster (server/cmd/login).
+    # Run it on the host with its MySQL settings pointed at this db service
+    # (host port 3306) and the Game listed in AAEMU_LOGIN_GAME_SERVERS; see
+    # aaemu-cluster/server/README.md "Run locally". The Game reaches it
+    # through host.docker.internal:1234, which extra_hosts maps to the host
+    # gateway on Linux as well as Docker Desktop.
     game:
         build:
             context: .
@@ -47,12 +53,10 @@ services:
                 - DB_PORT=3306
                 - DB_USER=${DB_USER}
                 - DB_PASSWORD=${DB_PASSWORD}
-                # The login server is the Go binary from aaemu-cluster/server;
-                # run it on the host or point these at its address.
-                - LOGIN_HOST=host.docker.internal
-                - LOGIN_PORT=1234
         image: aaemu-game:${PROJECT_VERSION_PREFIX}-${PROJECT_VERSION_SUFFIX}
         restart: unless-stopped
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
         volumes:
           - "./.server_files/AAEmu.Game/ClientData:/app/ClientData:ro"
           - "./.server_files/AAEmu.Game/Data:/app/Data:ro"

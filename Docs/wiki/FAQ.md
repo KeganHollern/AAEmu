@@ -43,10 +43,24 @@ Yes. Both are still supported:
 - [Installation & Setup](Installation-&-Setup)
 - [Docker Installation Guide](Docker-Installation-Guide)
 
+### Where is the login server
+
+The login server is not in this repository. It is the Go binary
+`server/cmd/login` in `KeganHollern/aaemu-cluster`. Run it from
+`aaemu-cluster/server` with `go run ./cmd/login`. Its configuration is
+environment variables (`AAEMU_LOGIN_*`), documented in `server/README.md` in
+that repo.
+
+### Do I import a login SQL file
+
+No. Create an empty `aaemu_login` database. The Go login server creates the
+tables at first start when the `users` table is missing.
+
 ### Do I still insert game servers into MySQL `aaemu_login.game_servers`
 
-No. Server listings are now defined in login configuration (`GameServers`) via
-JSON and/or environment variables.
+No. Server listings are defined in the login server environment variable
+`AAEMU_LOGIN_GAME_SERVERS`, a JSON array such as
+`[{"id":1,"name":"Local","host":"127.0.0.1","port":1239}]`.
 
 ### Config precedence after the recent PR wave
 
@@ -76,31 +90,41 @@ see [Dependencies and Downloads](Dependencies-and-Downloads).
 
 Common defaults:
 
-- `1237`: login public
+- `1237`: login public (Go login server)
+- `1234`: login internal game link (Go login server)
+- `8080`: login launcher API and health (Go login server)
+- `9090`: login metrics (Go login server)
 - `1239`: game public
 - `1250`: game stream
 - `1280`: optional game Web API
 - `1281`: game liveness and readiness checks
 
-### What should `GameServers` host be for local use
+### What should the `AAEMU_LOGIN_GAME_SERVERS` host be for local use
 
 Use `127.0.0.1` for local machine tests.
 For LAN or external players, set a reachable address.
 
+### Which secret must match
+
+The game server `SecretKey` (in `AAEmu.Game/Config.json` or
+`Config.Local.json`) must equal the login server `AAEMU_LOGIN_SECRET_KEY`.
+If they differ, the game server cannot register and clients see Maintenance.
+
 ## Troubleshooting
 
-### `DataAnnotation validation failed ... GameServers` on login startup
+### Login server exits at startup with a configuration error
 
-Your login config is missing `GameServers`.
-Add at least one entry in `AAEmu.Login/Config.Local.json` or environment
-variables.
+A required `AAEMU_LOGIN_*` variable is missing. `AAEMU_LOGIN_SECRET_KEY`,
+`AAEMU_LOGIN_MYSQL_HOST`, `AAEMU_LOGIN_MYSQL_USER`, and
+`AAEMU_LOGIN_GAME_SERVERS` are required. See `server/README.md` in
+`aaemu-cluster`.
 
 ### Client crashes or cannot enter world
 
 Check:
 
-1. login and game services are both running,
-1. `GameServers` host/port are reachable,
+1. the Go login server and the game server are both running,
+1. `AAEMU_LOGIN_GAME_SERVERS` host/port are reachable,
 1. `game_pak` path and `compact.sqlite3` are valid.
 
 ### First stop for common setup failures

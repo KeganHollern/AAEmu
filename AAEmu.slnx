@@ -38,11 +38,9 @@
   </Folder>
   <Folder Name="/Additional Files/SQL/">
     <File Path="SQL/aaemu_game.sql" />
-    <File Path="SQL/aaemu_login.sql" />
   </Folder>
   <Folder Name="/Additional Files/SQL/Examples/">
     <File Path="SQL/examples/example-ics-default-en.sql" />
-    <File Path="SQL/examples/test-user.sql" />
   </Folder>
   <Folder Name="/Additional Files/SQL/Updates/">
     <File Path="SQL/updates/2019-02-04_aaemu_game.sql" />
@@ -101,12 +99,8 @@
     <File Path="SQL/updates/2024-10-30_aaemu_game_auction_house_update.sql" />
     <File Path="SQL/updates/2024-10-30_aaemu_game_item_containers_update.sql" />
     <File Path="SQL/updates/2024-10-30_aaemu_game_items_update.sql" />
-    <File Path="SQL/updates/2025-02-05_aaemu_login_ban_basics.sql" />
     <File Path="SQL/updates/2025-02-15_aaemu_game_audit_char_sus.sql" />
-    <File Path="SQL/updates/2026-01-31_aaemu_login_game_servers.sql" />
-    <File Path="SQL/updates/2026-03-14_aaemu_login_users.sql" />
     <File Path="SQL/updates/2026-03-15_aaemu_game_crime.sql" />
-    <File Path="SQL/updates/2026-03-15_aaemu_login_user_2fa.sql" />
     <File Path="SQL/updates/readme.txt" />
   </Folder>
   <Folder Name="/Applications/">

@@ -74,7 +74,7 @@ Write-Host "Configuring Config.json for the Game Server..."
 (Get-Content -Path ".server_files\AAEmu.Game\Config.json") -replace "%db_port%", "3306" | Set-Content -Path ".server_files\AAEmu.Game\Config.json"
 (Get-Content -Path ".server_files\AAEmu.Game\Config.json") -replace "%db_user%", "root" | Set-Content -Path ".server_files\AAEmu.Game\Config.json"
 (Get-Content -Path ".server_files\AAEmu.Game\Config.json") -replace "%db_password%", "$DB_PASSWORD" | Set-Content -Path ".server_files\AAEmu.Game\Config.json"
-(Get-Content -Path ".server_files\AAEmu.Game\Config.json") -replace "%login_host%", "login" | Set-Content -Path ".server_files\AAEmu.Game\Config.json"
+(Get-Content -Path ".server_files\AAEmu.Game\Config.json") -replace "%login_host%", "host.docker.internal" | Set-Content -Path ".server_files\AAEmu.Game\Config.json"
 (Get-Content -Path ".server_files\AAEmu.Game\Config.json") -replace "%login_port%", "1234" | Set-Content -Path ".server_files\AAEmu.Game\Config.json"
 Write-Host "Done"
 # Configuring .env

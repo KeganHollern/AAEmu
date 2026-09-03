@@ -3,7 +3,8 @@ name: aaemu-setup
 description: >
   Guide anyone (player or contributor) through getting AAEmu running and
   playable: asset inventory, Human-in-the-Loop downloads, config, then either
-  Docker/Podman + Aspire or non-Docker host MySQL + standalone Login/Game.
+  Docker/Podman + Aspire or non-Docker host MySQL + standalone Game. The login
+  server is the Go binary from aaemu-cluster on both paths.
   Use when the user wants to set up AAEmu, install/run the server, play on a
   local server, get the client/launcher working, choose Docker vs non-Docker,
   or mentions game_pak, compact.sqlite3, Aspire, Config.Local, or Maintenance.
@@ -20,8 +21,8 @@ language; use technical detail only when needed for the chosen path.
 
 | Environment | Path | Database | Login / Game |
 | --- | --- | --- | --- |
-| Docker Desktop **or** Podman available | **A – Aspire** | MySQL **container** (AppHost) | Started by Aspire as host projects |
-| **No** container runtime | **B – Standalone** | **Host MySQL 8 only** | Host processes; Login then Game |
+| Docker Desktop **or** Podman available | **A – Aspire** | MySQL **container** (AppHost) | Login: Go server from `aaemu-cluster/server`, run on the host. Game: started by Aspire as a host project |
+| **No** container runtime | **B – Standalone** | **Host MySQL 8 only** | Host processes. Go login server first, then Game |
 
 Non-Docker means **zero** containers, including MySQL. Never invent “Docker only for the database” for Path B.
 
@@ -104,9 +105,14 @@ Details and URLs: [REFERENCE.md](REFERENCE.md#downloads-and-hitl).
 ### Step 2 — Machine prerequisites
 
 - **Both paths:** .NET **10** SDK (`dotnet --version`).
+- **Both paths:** Go toolchain (`go version`) and a clone of
+  `KeganHollern/aaemu-cluster`. The login server is `server/cmd/login` in that
+  repo. Its README (`server/README.md`) lists all environment variables.
 - **Path A:** Docker Desktop or Podman **running**.
 - **Path B:** MySQL **8** installed and running **on the host** (service),
-  schemas imported once (`SQL/aaemu_login.sql`, `SQL/aaemu_game.sql`).
+  `aaemu_game` schema imported once (`SQL/aaemu_game.sql`), `aaemu_login`
+  database created empty. Do not import a login SQL file. The Go login server
+  creates the login tables at first start.
 
 Help non-developers install these with OS-appropriate steps; do not skip
 waiting for services to actually start.
@@ -116,12 +122,34 @@ waiting for services to actually start.
 Write/update (templates in [REFERENCE.md](REFERENCE.md#configlocal-templates)):
 
 - `AAEmu.Game/Config.Local.json` — at least `ClientData.Sources` (+ DB/LoginNetwork on Path B)
-- `AAEmu.Login/Config.Local.json` — Path B: DB + `GameServers` (+ `InternalNetwork` if port remap)
+- Go login server: environment variables, not a JSON file:
+  `AAEMU_LOGIN_SECRET_KEY`, `AAEMU_LOGIN_MYSQL_HOST/PORT/USER/PASSWORD`,
+  `AAEMU_LOGIN_AUTO_ACCOUNT`, `AAEMU_LOGIN_GAME_SERVERS`
+  (+ `AAEMU_LOGIN_INTERNAL_LISTEN` if port remap)
 
-Use absolute paths under this repo for `game_pak`. Match `SecretKey` on both
-servers. Rebuild after creating `Config.Local.json` so it copies to output.
+Use absolute paths under this repo for `game_pak`. Set the Game `SecretKey`
+equal to `AAEMU_LOGIN_SECRET_KEY`. Keep the Game `LoginNetwork.Port` equal to
+the login server internal port (default `1234`). Rebuild after creating
+`Config.Local.json` so it copies to output.
 
 ### Step 4 — Start servers
+
+**Both paths, Go login server first** (from the `aaemu-cluster` clone):
+
+```bash
+cd aaemu-cluster/server
+AAEMU_LOGIN_SECRET_KEY=test \
+AAEMU_LOGIN_MYSQL_HOST=127.0.0.1 AAEMU_LOGIN_MYSQL_PORT=3306 \
+AAEMU_LOGIN_MYSQL_USER=root AAEMU_LOGIN_MYSQL_PASSWORD=YOUR_MYSQL_PASSWORD \
+AAEMU_LOGIN_AUTO_ACCOUNT=true \
+AAEMU_LOGIN_GAME_SERVERS='[{"id":1,"name":"Local","host":"127.0.0.1","port":1239}]' \
+go run ./cmd/login
+```
+
+The server waits for MySQL, creates the `aaemu_login` tables when the `users`
+table is missing, then listens on 1237 (client), 1234 (internal), 8080
+(launcher API), and 9090 (metrics). The `aaemu_login` database must already
+exist (empty is fine). See `aaemu-cluster/server/README.md` for every variable.
 
 **Path A** (same `dotnet` commands on PowerShell or bash):
 
@@ -129,15 +157,19 @@ servers. Rebuild after creating `Config.Local.json` so it copies to output.
 dotnet run --project AAEmu.Aspire.AppHost --launch-profile http
 ```
 
-Share the dashboard login URL/token from the console. Only MySQL is a container;
-Login/Game are normal processes.
+Share the dashboard login URL/token from the console. Only MySQL is a container.
+The Go login server and Game are normal host processes. Aspire creates only
+`aaemu_game`. Create an empty `aaemu_login` database in the Aspire MySQL
+container once, then point `AAEMU_LOGIN_MYSQL_*` at that container. Read its
+host port and root password from the `db` resource in the dashboard. If the
+Game started before the login server was ready, restart the `game-server`
+resource. AppHost parameters `login-host` (default `127.0.0.1`) and
+`login-port` (default `1234`) tell the Game where the login server listens.
 
 **Path B:**
 
 ```bash
 dotnet build
-dotnet run --project AAEmu.Login
-# then
 dotnet run --project AAEmu.Game
 ```
 
@@ -148,17 +180,19 @@ watch progress. Detach Windows GUIs so agent shells do not kill them.
 
 1. Start `.client_files/launcher/AAEmu.Launcher/AAEmu.Launcher.exe` (detached).
 2. Path to Game → `.../bin32/archeage.exe`; server IP → `127.0.0.1`.
-3. Account: AutoAccount usually creates on first login.
+3. Account: `AAEMU_LOGIN_AUTO_ACCOUNT=true` creates the account on first login.
 
 ### Step 6 — Verify “ready to play”
 
 - [ ] Login port **1237** listening  
 - [ ] Game ports **1239** and **1250** listening  
-- [ ] Path B: login log contains `Registered GameServer`  
+- [ ] Login log contains `game server registered`  
 - [ ] Client server list is **not** stuck on Maintenance  
 
 If Maintenance: almost always game failed to register (often **port 1234**
-taken). Remap internal Login+Game ports together — see REFERENCE.
+taken, or `SecretKey` differs from `AAEMU_LOGIN_SECRET_KEY`). Remap
+`AAEMU_LOGIN_INTERNAL_LISTEN` and the Game `LoginNetwork.Port` together. See
+REFERENCE.
 
 ## Agent behavior
 
