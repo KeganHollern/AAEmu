@@ -21,11 +21,25 @@ namespace AAEmu.Game.Models.Game.Char;
 public class CharacterQuests(Character owner)
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
+    private readonly Func<CompletedQuest, bool> _completedQuestPersistenceOverride;
+    private readonly Action<uint> _removedQuestPersistenceOverride;
     private readonly List<uint> _removed = [];
 
     private Character Owner { get; set; } = owner;
     public Dictionary<uint, Quest> ActiveQuests { get; } = [];
     private Dictionary<ushort, CompletedQuest> CompletedQuests { get; } = [];
+
+    internal CharacterQuests(
+        Character owner,
+        Func<CompletedQuest, bool> completedQuestPersistenceOverride,
+        Action<uint> removedQuestPersistenceOverride)
+        : this(owner)
+    {
+        ArgumentNullException.ThrowIfNull(completedQuestPersistenceOverride);
+        ArgumentNullException.ThrowIfNull(removedQuestPersistenceOverride);
+        _completedQuestPersistenceOverride = completedQuestPersistenceOverride;
+        _removedQuestPersistenceOverride = removedQuestPersistenceOverride;
+    }
 
     public bool HasQuest(uint questId)
     {
@@ -336,7 +350,7 @@ public class CharacterQuests(Character owner)
         quest.FinalizeQuestActs();
         ActiveQuests.Remove(questId);
         _removed.Add(questId);
-        FlushRemovedQuest(questId);
+        (_removedQuestPersistenceOverride ?? FlushRemovedQuest)(questId);
 
         if (forcibly)
         {
@@ -499,7 +513,7 @@ public class CharacterQuests(Character owner)
         return SetCompletedQuestFlag(
             questId,
             isCompleted,
-            FlushCompletedQuestBlock,
+            _completedQuestPersistenceOverride ?? FlushCompletedQuestBlock,
             out persisted,
             out firstCompletion);
     }
