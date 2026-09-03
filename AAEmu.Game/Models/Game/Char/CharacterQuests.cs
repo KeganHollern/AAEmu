@@ -99,8 +99,8 @@ public class CharacterQuests(Character owner)
             return false;
 
         // Check if start step components are active
-        var startComponentTemplate = template.GetComponents(QuestComponentKind.Start);
-        foreach (var questComponentTemplate in startComponentTemplate)
+        var startComponentTemplates = template.GetComponents(QuestComponentKind.Start);
+        foreach (var questComponentTemplate in startComponentTemplates)
         {
             if (!UnitRequirementsGameData.Instance.CanComponentRun(questComponentTemplate, Owner))
             {
@@ -125,10 +125,15 @@ public class CharacterQuests(Character owner)
             }
         }
 
+        if (startComponentTemplates.Length == 0)
+        {
+            Logger.Warn($"Tried to start a quest without a starter component Quest: {questId}");
+            return false;
+        }
+
         // Create new Quest Object
         var quest = new Quest(template, Owner)
         {
-            Id = QuestIdManager.Instance.GetNextId(),
             Status = QuestStatus.Invalid,
             Condition = QuestConditionObj.Progress,
             QuestAcceptorType = questAcceptorType,
@@ -144,17 +149,12 @@ public class CharacterQuests(Character owner)
             }
         }
 
-        // Actually start the quest by setting step to Start and send the quest start packets
-        var res = quest.StartQuest();
-        if (!res)
-        {
-            // If it failed to start, drop the quest here
-            DropQuest(questId, true);
-            return false;
-        }
+        var questIdManager = QuestIdManager.Instance;
 
-        // Add it to the Active Quests
-        ActiveQuests.Add(quest.TemplateId, quest);
+        // Actually start the quest and transfer ownership of its runtime ID to the active quest collection
+        if (!TryStartQuest(quest, questIdManager))
+            return false;
+
         quest.Owner.SendDebugMessage($"[Quest] {Owner.Name}, quest {questId} added.");
 
         // Execute the first Step
@@ -170,6 +170,36 @@ public class CharacterQuests(Character owner)
 
         quest.QuestInitialized();
         return true;
+    }
+
+    internal bool TryStartQuest(Quest quest, IQuestIdManager questIdManager)
+    {
+        var runtimeId = questIdManager.GetNextId();
+        var activeQuestOwnsId = false;
+        try
+        {
+            quest.Id = runtimeId;
+            if (!quest.StartQuest())
+                return false;
+
+            ActiveQuests.Add(quest.TemplateId, quest);
+            activeQuestOwnsId = true;
+            return true;
+        }
+        finally
+        {
+            if (!activeQuestOwnsId)
+            {
+                try
+                {
+                    quest.FinalizeQuestActs();
+                }
+                finally
+                {
+                    questIdManager.ReleaseId(runtimeId);
+                }
+            }
+        }
     }
 
     /// <summary>

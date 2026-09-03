@@ -1,10 +1,51 @@
+using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Quests;
+using AAEmu.Game.Models.Game.Quests.Static;
+using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
 
 public sealed class CharacterQuestsTests
 {
+    [Test]
+    public async Task TryStartQuest_FailedStart_ReusesRuntimeId()
+    {
+        var owner = new CharacterMock { Id = 7, Name = "Questor" };
+        var quests = new CharacterQuests(owner);
+        owner.Quests = quests;
+
+        var template = new QuestTemplate { Id = 1_533 };
+        var rewardComponent = new QuestComponentTemplate(template)
+        {
+            Id = 15_331,
+            KindId = QuestComponentKind.Reward
+        };
+        template.Components.Add(rewardComponent.Id, rewardComponent);
+
+        var quest = new Quest(
+            template,
+            owner,
+            Mock.Of<IQuestManager>().Object,
+            Mock.Of<ITaskManager>().Object,
+            Mock.Of<ISkillManager>().Object,
+            Mock.Of<IExpressTextManager>().Object,
+            Mock.Of<IWorldManager>().Object);
+        var questIdManager = new QuestIdManager();
+        questIdManager.Initialize(true);
+        var runtimeId = questIdManager.GetNextId();
+        questIdManager.ReleaseId(runtimeId);
+
+        var result = quests.TryStartQuest(quest, questIdManager);
+
+        await Assert.That(result).IsFalse();
+        await Assert.That(quests.ActiveQuests).IsEmpty();
+        await Assert.That(questIdManager.GetNextId()).IsEqualTo(runtimeId);
+    }
+
     [Test]
     public async Task SetCompletedQuestFlag_FailedWriteRestoresStateForRetry()
     {
