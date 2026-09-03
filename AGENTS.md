@@ -4,7 +4,7 @@ Guidance for coding agents working in this repository.
 
 ## What this repo is
 
-Open-source **ArcheAge** server emulator in **.NET** (`AAEmu.Login`, `AAEmu.Game`, shared `AAEmu.Commons`). Preferred local orchestration is **.NET Aspire** (`AAEmu.Aspire.AppHost`). Branch of record for active work: **`develop`**.
+Open-source **ArcheAge** server emulator in **.NET** (`AAEmu.Game`, shared `AAEmu.Commons`). The login server for this fork is the Go binary in [`KeganHollern/aaemu-cluster`](https://github.com/KeganHollern/aaemu-cluster) under `server/`; `AAEmu.Login` was removed from this fork after that rewrite. Preferred local orchestration is **.NET Aspire** (`AAEmu.Aspire.AppHost`). Branch of record for active work: **`develop`**.
 
 Target client: **ArcheAge 1.2** (`r208022`).
 
@@ -43,8 +43,9 @@ Wiki mirrors: `Docs/wiki/Installation-&-Setup.md`, `Aspire-Development-Guide.md`
 
 ```text
                     ┌─────────────────┐
-  Client 1.2 ──────►│  AAEmu.Login    │◄── MySQL aaemu_login (accounts)
-  (launcher)        │  :1237 public   │
+  Client 1.2 ──────►│  Go login server│◄── MySQL aaemu_login (accounts)
+  (launcher)        │  (aaemu-cluster)│
+                    │  :1237 public   │
                     │  :1234 internal │
                     └────────┬────────┘
                              │ GameServer register + enter-world
@@ -59,7 +60,7 @@ Wiki mirrors: `Docs/wiki/Installation-&-Setup.md`, `Aspire-Development-Guide.md`
 
 | Component | Role |
 | --- | --- |
-| **Login** | Auth, world list, enter-world handoff. Public client TCP via **ASP.NET Core Kestrel**. Internal TCP for Game registration. |
+| **Login** | Go server in `aaemu-cluster/server` (not in this repo). Auth, world list, enter-world handoff, launcher API. Internal TCP for Game registration. |
 | **Game** | World simulation: packets, managers, entities, combat, quests, housing, etc. Generic host + `GameService`. |
 | **Stream** | Side channel on Game (`:1250`) for UCC/emblems and related transfers. |
 | **Aspire AppHost** | Local orchestration only; does **not** replace Login/Game. |
@@ -80,12 +81,10 @@ Authoritative component diagram: [`Docs/wiki/Components.md`](Docs/wiki/Component
 | `Directory.Packages.props` | Central package versions (CPM) — bump deps here |
 | `Directory.Build.props` | Shared MSBuild props |
 | `AAEmu.Commons/` | Shared network primitives (`PacketStream`, `PacketBase`), MySQL helpers, `Singleton<T>`, AAPak, utilities |
-| `AAEmu.Login/` | Login server |
 | `AAEmu.Game/` | Game server (largest codebase) |
 | `AAEmu.Aspire.AppHost/` | .NET Aspire orchestrator |
 | `AAEmu.UnitTests/` | xUnit unit tests (mirror source layout) |
 | `AAEmu.IntegrationTests/` | Game-focused integration tests |
-| `AAEmu.Login.IntegrationTests/` | Login + Testcontainers MySQL |
 | `SQL/` | Base schema + incremental updates |
 | `Docs/wiki/` | Human-facing setup and architecture docs |
 | `Docs/customized/` | All new custom plans, research, design, decision, and project documentation |
@@ -117,28 +116,12 @@ Do not commit client packs, launcher binaries, `compact.sqlite3`, or secrets.
 | `Data/` | Runtime data files (`compact.sqlite3`, worlds JSON, paths) |
 | `Configurations/` | Split JSON config fragments |
 
-### Login project layout
-
-| Path under `AAEmu.Login/` | Role |
-| --- | --- |
-| `Program.cs` | Kestrel + DI; options validation |
-| `LoginService.cs` | Hosted service lifecycle |
-| `Core/Network/Login/` | Public client TCP (Kestrel connection handler) |
-| `Core/Network/Internal/` | Game ↔ Login internal protocol |
-| `Core/Packets/{C2L,L2C,G2L,L2G}/` | Packet DTOs + offset constants |
-| `Core/PacketHandlers/` | Handlers separate from packet types (DI-registered) |
-| `Core/Controllers/` | Login / Game / Request controllers |
-| `Core/Authentication/` | Auth flows (password, Korea challenge, OTP/2FA, reconnect) |
-| `Core/Services/` | Password, 2FA, etc. |
-| `Docs/networking.md` | Login networking deep-dive |
-
 ---
 
 ## Configuration rules
 
 - Game config load order: `Config.json` → `Configurations/*.json` → **`Config.Local.json` (wins)**.
-- Login: `Config.json` → `Config.Local.json` → env vars / command line (Aspire injects env).
-- Login listings: **`GameServers` in config**, not MySQL `game_servers` inserts.
+- Login: `AAEMU_LOGIN_*` environment variables of the Go server (see `aaemu-cluster/server/README.md`); game listings come from `AAEMU_LOGIN_GAME_SERVERS`.
 - `SecretKey` must match between Login and Game.
 - `ClientData.Sources` should include the 1.2 `game_pak` (absolute path under `.client_files/` is fine).
 - `compact.sqlite3` → `AAEmu.Game/Data/` (required for game data).
@@ -299,7 +282,6 @@ Per-character / world mutable state → managers + MySQL.
 | --- | --- |
 | Client packet handling (gameplay action) | `Core/Packets/C2G/CS*.cs` → related `*Manager` / model |
 | Server→client notify | `Core/Packets/G2C/SC*.cs` |
-| Login auth / world list | `AAEmu.Login/Core/PacketHandlers/`, `Authentication/`, `Controllers/` |
 | New manager | Class + `I*` in `Core/Managers/`; implement `ILoadable`/`IInitializable` if needed; **register both concrete and interface in `Program.cs`** |
 | Static template data | `GameData/*` + SQLite schema; optional `SQL/patches/compact/` |
 | Character behavior | `Models/Game/Char/Character*.cs` + `UnitManagers/CharacterManager` |
@@ -327,7 +309,7 @@ dotnet test
 - SDK: .NET **10** (`global.json`).
 - Solution: `AAEmu.slnx`.
 - Filter example: `dotnet test --filter "FullyQualifiedName~GameNetworkTests"`.
-- Test projects: `AAEmu.UnitTests` (primary), `AAEmu.IntegrationTests`, `AAEmu.Login.IntegrationTests`.
+- Test projects: `AAEmu.UnitTests` (primary), `AAEmu.IntegrationTests`.
 - Unit test bases: `TestBase`, `SqliteTestBase`, `IntegrationTestBase`; mocks under `Utils/Mocks/`.
 - Naming: `MethodName_Scenario_ExpectedResult` (see `AAEmu.UnitTests/README.md`).
 - Subsystem test priorities: [`Docs/TestingPlan_en.md`](Docs/TestingPlan_en.md).
@@ -350,7 +332,6 @@ When asked to modify, fix, or improve code, **do not invent conventions**. Inspe
    - [`Documentation-Maintenance.md`](Docs/wiki/Documentation-Maintenance.md) — when and how to update wiki pages.
    - [`Home.md`](Docs/wiki/Home.md) — documentation map.
 5. **[`Docs/TestingPlan_en.md`](Docs/TestingPlan_en.md)** — subsystem map and testing priorities.
-6. **Login networking** — [`AAEmu.Login/Docs/networking.md`](AAEmu.Login/Docs/networking.md).
 
 ### C# style highlights (from `.editorconfig`)
 

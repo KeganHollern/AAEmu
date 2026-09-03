@@ -1,4 +1,4 @@
-﻿<Project Sdk="Aspire.AppHost.Sdk/13.1.0">
+<Project Sdk="Aspire.AppHost.Sdk/13.1.0">
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
@@ -12,9 +12,6 @@
     </ItemGroup>
   
     <ItemGroup>
-      <None Include="..\SQL\aaemu_login.sql" Link="init_aaemu_login.sql">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      </None>
       <None Include="..\SQL\aaemu_game.sql" Link="init_aaemu_game.sql">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
@@ -22,7 +19,6 @@
 
     <ItemGroup>
       <ProjectReference Include="..\AAEmu.Game\AAEmu.Game.csproj" />
-      <ProjectReference Include="..\AAEmu.Login\AAEmu.Login.csproj" />
     </ItemGroup>
 
 </Project>

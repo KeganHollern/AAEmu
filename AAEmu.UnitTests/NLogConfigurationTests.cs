@@ -19,7 +19,6 @@ public class NLogConfigurationTests
     public static IEnumerable<(string ConfigurationPath, string ServiceName)> ConfigurationPaths()
     {
         yield return (GetConfigurationPath("AAEmu.Game"), "aaemu-game");
-        yield return (GetConfigurationPath("AAEmu.Login"), "aaemu-login");
     }
 
     [Test]
@@ -84,23 +83,6 @@ public class NLogConfigurationTests
         await Assert.That(rule.IsLoggingEnabledForLevel(LogLevel.Trace)).IsFalse();
         await Assert.That(rule.IsLoggingEnabledForLevel(LogLevel.Debug)).IsTrue();
         await Assert.That(rule.IsLoggingEnabledForLevel(LogLevel.Info)).IsTrue();
-    }
-
-    [Test]
-    [Arguments("Microsoft.AspNetCore.Hosting.Diagnostics")]
-    [Arguments("Microsoft.AspNetCore.Routing.EndpointMiddleware")]
-    public async Task Configuration_LoginSuppressesRoutineAspNetCoreRequestLogs(string loggerName)
-    {
-        using var environment = new EnvironmentVariableScope(MinimumLevelEnvironmentVariable, null);
-        using var logFactory = new LogFactory();
-        logFactory.Configuration = new XmlLoggingConfiguration(GetConfigurationPath("AAEmu.Login"), logFactory);
-
-        var frameworkLogger = logFactory.GetLogger(loggerName);
-        await Assert.That(frameworkLogger.IsInfoEnabled).IsFalse();
-        await Assert.That(frameworkLogger.IsWarnEnabled).IsTrue();
-
-        var applicationLogger = logFactory.GetLogger("AAEmu.Login.Test");
-        await Assert.That(applicationLogger.IsInfoEnabled).IsTrue();
     }
 
     private static string GetConfigurationPath(string projectName, [CallerFilePath] string sourceFilePath = "")

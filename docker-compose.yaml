@@ -35,43 +35,6 @@ services:
             db:
               condition: service_healthy
 
-    login:
-        build:
-            context: .
-            dockerfile: ./AAEmu.Login/Dockerfile
-            args:
-                - CONFIGURATION=${BUILD_CONFIGURATION}
-                - FRAMEWORK=${BUILD_FRAMEWORK}
-                - RUNTIME=${BUILD_RUNTIME}
-                - DB_HOST=db
-                - DB_PORT=3306
-                - DB_USER=${DB_USER}
-                - DB_PASSWORD=${DB_PASSWORD}
-        image: aaemu-login:${PROJECT_VERSION_PREFIX}-${PROJECT_VERSION_SUFFIX}
-        restart: unless-stopped
-        volumes:
-          - "./.server_files/AAEmu.Login/Config.json:/app/Config.json:ro"
-        environment:
-            DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 1
-            GameServers__0__ID: 1
-            GameServers__0__Name: AAEmu.Game
-            GameServers__0__Host: 127.0.0.1
-            GameServers__0__Port: 1239
-        ports:
-            - 1237:1237
-        develop:
-            watch:
-                - path: ./AAEmu.Login
-                  action: rebuild
-        healthcheck:
-            test: ["CMD-SHELL", "ping -c 1 db || exit 1"]
-            interval: 5s
-            timeout: 5s
-            retries: 20
-        depends_on:
-            db:
-              condition: service_healthy
-
     game:
         build:
             context: .
@@ -84,7 +47,9 @@ services:
                 - DB_PORT=3306
                 - DB_USER=${DB_USER}
                 - DB_PASSWORD=${DB_PASSWORD}
-                - LOGIN_HOST=login
+                # The login server is the Go binary from aaemu-cluster/server;
+                # run it on the host or point these at its address.
+                - LOGIN_HOST=host.docker.internal
                 - LOGIN_PORT=1234
         image: aaemu-game:${PROJECT_VERSION_PREFIX}-${PROJECT_VERSION_SUFFIX}
         restart: unless-stopped
@@ -109,8 +74,6 @@ services:
             retries: 20
         depends_on:
             db:
-              condition: service_healthy
-            login:
               condition: service_healthy
             
 # volumes:
