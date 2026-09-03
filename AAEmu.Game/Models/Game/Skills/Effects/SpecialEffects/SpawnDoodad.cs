@@ -1,5 +1,9 @@
-﻿using AAEmu.Game.Core.Managers.UnitManagers;
+﻿using System.Numerics;
+
+using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Utils;
 
@@ -49,30 +53,56 @@ public class SpawnDoodad : SpecialEffectAction
             Logger.Debug($"Special effects: SpawnDoodad doodadId {doodadId}, delay {delay}, createTradePack {createTradePack}, value4 {value4}");
         }
 
-        var doodad = DoodadManager.Instance.Create(caster.ParentWorld, 0, (uint)doodadId, caster, true);
-
-        doodad.Transform = caster.Transform.CloneDetached(doodad);
         var rpy = target.Transform.World.ToRollPitchYawDegrees();
-        switch (skill?.Template.TargetSelection ?? 0)
+        var placementSource = (skill?.Template.TargetSelection ?? 0) switch
         {
-            case SkillTargetSelection.Source:
-                doodad.Transform = caster.Transform.CloneDetached(doodad);
-                break;
-            case SkillTargetSelection.Target:
-                doodad.Transform = target.Transform.CloneDetached(doodad);
-                break;
-            case SkillTargetSelection.Line:
-            case SkillTargetSelection.Location:
-            default:
-                doodad.Transform = caster.Transform.CloneDetached(doodad);
-                break;
+            SkillTargetSelection.Target => target,
+            _ => caster
+        };
+        var placementPolicy = placementSource.Transform.Parent is not null ||
+                              placementSource.Transform.StickyParent is not null
+            ? DynamicDoodadPlacementPolicy.PreserveParentedHeight
+            : DynamicDoodadPlacementPolicy.GroundToNearbySurface;
+        if (!TryResolvePlacement(caster.ParentWorld.Template.GeoData, placementSource.Transform.World.Position,
+                rpy.Z, placementPolicy, out var placementPosition))
+        {
+            Logger.Warn($"Special effects: SpawnDoodad cannot place doodadId {doodadId} at {placementSource.Transform.World.Position}");
+            return;
         }
-        var (xx, yy) = MathUtil.AddDistanceToFrontDeg(1f, doodad.Transform.World.Position.X, doodad.Transform.World.Position.Y, rpy.Z + 90f); //  + 90f to Front
-        var zz = doodad.ParentWorld.Template.GeoData.GetHeight(doodad.Transform.World.Position); // WorldManager.Instance.GetHeight(doodad.Transform);
-        doodad.SetPosition(xx, yy, zz, rpy.X, rpy.Y, rpy.Z);
+
+        var doodad = DoodadManager.Instance.Create(caster.ParentWorld, 0, (uint)doodadId, caster, true);
+        if (doodad == null)
+        {
+            Logger.Warn($"Special effects: SpawnDoodad could not create doodadId {doodadId}");
+            return;
+        }
+
+        doodad.Transform = placementSource.Transform.CloneDetached(doodad);
+        doodad.SetPosition(placementPosition.X, placementPosition.Y, placementPosition.Z, rpy.X, rpy.Y, rpy.Z);
         doodad.InitDoodad();
         if (delay > 0)
             Thread.Sleep(delay);
         doodad.Spawn();
+    }
+
+    internal static bool TryResolvePlacement(AiGeoDataManager geoData, Vector3 sourcePosition, float yawDegrees,
+        DynamicDoodadPlacementPolicy placementPolicy, out Vector3 placementPosition)
+    {
+        var candidate = CreatePlacementCandidate(sourcePosition, yawDegrees);
+        return DynamicDoodadPlacement.TryResolve(geoData, candidate, placementPolicy, out placementPosition);
+    }
+
+    internal static bool TryResolvePlacement(Vector3 sourcePosition, float yawDegrees,
+        DynamicDoodadPlacementPolicy placementPolicy, DynamicDoodadPlacement.GroundSurfaceResolver surfaceResolver,
+        out Vector3 placementPosition)
+    {
+        var candidate = CreatePlacementCandidate(sourcePosition, yawDegrees);
+        return DynamicDoodadPlacement.TryResolve(candidate, placementPolicy, surfaceResolver, out placementPosition);
+    }
+
+    private static Vector3 CreatePlacementCandidate(Vector3 sourcePosition, float yawDegrees)
+    {
+        var (x, y) = MathUtil.AddDistanceToFrontDeg(1f, sourcePosition.X, sourcePosition.Y, yawDegrees + 90f);
+        return new Vector3(x, y, sourcePosition.Z);
     }
 }
