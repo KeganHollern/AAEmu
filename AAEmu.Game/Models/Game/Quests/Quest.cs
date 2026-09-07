@@ -413,6 +413,22 @@ public partial class Quest : PacketMarshaler
     }
 
     /// <summary>
+    /// Completes the quest and runs the cleanup callbacks for all acts.
+    /// </summary>
+    public void Complete()
+    {
+        foreach (var questComponentTemplate in Template.Components.Values)
+        {
+            foreach (var actTemplate in questComponentTemplate.ActTemplates)
+            {
+                actTemplate.QuestCleanup(this);
+            }
+        }
+
+        CurrentStep?.FinalizeStep();
+    }
+
+    /// <summary>
     /// Drops the quest as a result of the player requesting it
     /// </summary>
     /// <param name="update">Should an update packet be sent to the player</param>
@@ -458,20 +474,6 @@ public partial class Quest : PacketMarshaler
     public int[] GetObjectives(QuestComponentKind step)
     {
         return Objectives;
-    }
-
-    /// <summary>
-    /// Runs the QuestCleanup code of all the quest's acts
-    /// </summary>
-    public void Cleanup()
-    {
-        foreach (var questComponentTemplate in Template.Components.Values)
-        {
-            foreach (var actTemplate in questComponentTemplate.ActTemplates)
-            {
-                actTemplate.QuestCleanup(this);
-            }
-        }
     }
 
     /// <summary>
