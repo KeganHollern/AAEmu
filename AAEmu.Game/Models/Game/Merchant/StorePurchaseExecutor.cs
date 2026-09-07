@@ -41,13 +41,13 @@ public static class StorePurchaseExecutor
                 }
 
                 var grade = ItemManager.Instance.GetGradeTemplate(item.Grade);
-                if (grade == null)
+                if (!MerchantRefund.TryCalculate(item, grade, out var itemRefund))
                 {
                     character.SendErrorMessage(ErrorMessageType.StoreInvalidItem);
                     return;
                 }
 
-                buyBackCost += (long)(item.Template.Refund * grade.RefundMultiplier / 100f) * item.Count;
+                buyBackCost = checked(buyBackCost + itemRefund);
                 if (buyBackCost > int.MaxValue)
                 {
                     character.SendErrorMessage(ErrorMessageType.StoreInvalidItem);
