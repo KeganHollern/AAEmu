@@ -4,12 +4,17 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Tasks.TimedRewards;
 
+using Microsoft.Extensions.Options;
+
 namespace AAEmu.Game.Core.Managers;
 
 /// <summary>
 /// For timed adding credits and loyalty
 /// </summary>
-public class TimedRewardsManager(ITaskManager taskManager) : Singleton<TimedRewardsManager>, ITimedRewardsManager
+public class TimedRewardsManager(
+    ITaskManager taskManager,
+    Lazy<IAccountManager> accountManager,
+    IOptions<AppConfiguration> options) : Singleton<TimedRewardsManager>, ITimedRewardsManager
 {
     private const short MaxLabor = 2000;
     private const short MaxLaborPremium = 5000;
@@ -85,15 +90,13 @@ public class TimedRewardsManager(ITaskManager taskManager) : Singleton<TimedRewa
         }
     }
 
-    public void DoDailyAccountLogin(uint accountId)
+    public void DoDailyAccountLogin(uint accountId, DateOnly rewardDate)
     {
-        if (AppConfiguration.Instance.Credits.DailyLogin > 0)
-            AccountManager.Instance.AddCredits(accountId, AppConfiguration.Instance.Credits.DailyLogin);
-
-        if (AppConfiguration.Instance.Loyalty.DailyLogin > 0)
-            AccountManager.Instance.AddLoyalty(accountId, AppConfiguration.Instance.Loyalty.DailyLogin);
-
-        AccountManager.Instance.UpdateDivineClock(accountId, 0, 0);
+        accountManager.Value.TryClaimDailyLoginReward(
+            accountId,
+            rewardDate,
+            options.Value.Credits.DailyLogin,
+            options.Value.Loyalty.DailyLogin);
     }
 
     public void AddOfflineLabor(GameConnection connection, DateTime lastLoginTime, short currentLabor)

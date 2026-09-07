@@ -5,6 +5,8 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Account;
 
+using MySql.Data.MySqlClient;
+
 using NLog;
 
 namespace AAEmu.Game.Core.Managers;
@@ -12,7 +14,10 @@ namespace AAEmu.Game.Core.Managers;
 /// <summary>
 /// Manages Connections and Game Account settings
 /// </summary>
-public class AccountManager(ITickManager tickManager, ITimedRewardsManager timedRewardsManager) : Singleton<AccountManager>, IAccountManager
+public class AccountManager(
+    ITickManager tickManager,
+    ITimedRewardsManager timedRewardsManager,
+    TimeProvider timeProvider) : Singleton<AccountManager>, IAccountManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -26,16 +31,17 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
 
     public void Add(GameConnection connection)
     {
-        if (_accounts.ContainsKey(connection.AccountId))
-            return;
-        _accounts.TryAdd(connection.AccountId, connection);
-        var lastLogin = UpdateLoginTime(connection.AccountId, DateTime.UtcNow);
-        var accountDetails = GetAccountDetails(connection.AccountId);
-        if (lastLogin < DateTime.UtcNow.Date)
+        var loginTime = timeProvider.GetUtcNow().UtcDateTime;
+        var rewardDate = DateOnly.FromDateTime(loginTime);
+        if (!_accounts.TryAdd(connection.AccountId, connection))
         {
-            // Logged in for a new day
-            timedRewardsManager.DoDailyAccountLogin(connection.AccountId);
+            timedRewardsManager.DoDailyAccountLogin(connection.AccountId, rewardDate);
+            return;
         }
+
+        var lastLogin = UpdateLoginTime(connection.AccountId, loginTime);
+        var accountDetails = GetAccountDetails(connection.AccountId);
+        timedRewardsManager.DoDailyAccountLogin(connection.AccountId, rewardDate);
         // Add offline labor
         timedRewardsManager.AddOfflineLabor(connection, lastLogin, accountDetails.Labor);
     }
@@ -211,6 +217,111 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
                 Logger.Error($"{e.Message}\n{e.StackTrace}");
                 return false;
             }
+        }
+    }
+
+    public bool TryClaimDailyLoginReward(
+        uint accountId,
+        DateOnly rewardDate,
+        int creditsAmount,
+        int loyaltyAmount)
+    {
+        creditsAmount = Math.Max(creditsAmount, 0);
+        loyaltyAmount = Math.Max(loyaltyAmount, 0);
+
+        object accLock;
+        lock (_locks)
+        {
+            if (!_locks.TryGetValue(accountId, out accLock))
+            {
+                accLock = new object();
+                _locks.Add(accountId, accLock);
+            }
+        }
+
+        lock (accLock)
+        {
+            try
+            {
+                using var connection = MySQL.CreateConnection();
+                using var transaction = connection.BeginTransaction();
+                var commitAttempted = false;
+                try
+                {
+                    using var command = connection.CreateCommand();
+                    command.Transaction = transaction;
+                    command.CommandText =
+                        "SELECT `account_id` FROM `accounts` WHERE `account_id` = @account_id FOR UPDATE";
+                    command.Parameters.AddWithValue("@account_id", accountId);
+                    if (command.ExecuteScalar() == null)
+                        throw new InvalidOperationException($"Account {accountId} does not exist");
+
+                    command.CommandText = """
+                        INSERT INTO `account_daily_login_claims`
+                            (`account_id`, `reward_date`, `credits_amount`, `loyalty_amount`, `claimed_at`)
+                        VALUES
+                            (@account_id, @reward_date, @credits_amount, @loyalty_amount, UTC_TIMESTAMP(3))
+                        """;
+                    command.Parameters.AddWithValue("@reward_date", rewardDate.ToDateTime(TimeOnly.MinValue));
+                    command.Parameters.AddWithValue("@credits_amount", creditsAmount);
+                    command.Parameters.AddWithValue("@loyalty_amount", loyaltyAmount);
+                    command.ExecuteNonQuery();
+
+                    command.CommandText = """
+                        UPDATE `accounts`
+                        SET `credits` = `credits` + @credits_amount,
+                            `loyalty` = `loyalty` + @loyalty_amount,
+                            `divine_clock_time` = 0,
+                            `divine_clock_taken` = 0
+                        WHERE `account_id` = @account_id
+                        """;
+                    command.ExecuteNonQuery();
+
+                    commitAttempted = true;
+                    transaction.Commit();
+                    return true;
+                }
+                catch (MySqlException e) when (!commitAttempted && e.Number == 1062)
+                {
+                    RollbackDailyLoginReward(transaction, accountId, rewardDate);
+                    return false;
+                }
+                catch (Exception e)
+                {
+                    RollbackDailyLoginReward(transaction, accountId, rewardDate);
+                    Logger.Error(e,
+                        "Failed to claim daily login reward for account {AccountId} on {RewardDate}",
+                        accountId,
+                        rewardDate);
+                    return false;
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.Error(e,
+                    "Failed to start daily login reward claim for account {AccountId} on {RewardDate}",
+                    accountId,
+                    rewardDate);
+                return false;
+            }
+        }
+    }
+
+    private static void RollbackDailyLoginReward(
+        MySqlTransaction transaction,
+        uint accountId,
+        DateOnly rewardDate)
+    {
+        try
+        {
+            transaction.Rollback();
+        }
+        catch (Exception e)
+        {
+            Logger.Error(e,
+                "Failed to roll back daily login reward for account {AccountId} on {RewardDate}",
+                accountId,
+                rewardDate);
         }
     }
 

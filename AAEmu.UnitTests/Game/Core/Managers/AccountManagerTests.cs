@@ -10,7 +10,7 @@ public class AccountManagerTests
         var mockTick = Mock.Of<ITickManager>();
         var mockTimedRewards = Mock.Of<ITimedRewardsManager>();
 
-        var manager = new AccountManager(mockTick.Object, mockTimedRewards.Object);
+        var manager = new AccountManager(mockTick.Object, mockTimedRewards.Object, TimeProvider.System);
 
         await Assert.That(manager).IsNotNull();
         Mock.VerifyNoOtherCalls(mockTick);
@@ -23,7 +23,10 @@ public class AccountManagerTests
         var mockTick = Mock.Of<ITickManager>();
         mockTick.OnTick.Returns(new TickManager.TickEventHandler());
 
-        var manager = new AccountManager(mockTick.Object, Mock.Of<ITimedRewardsManager>().Object);
+        var manager = new AccountManager(
+            mockTick.Object,
+            Mock.Of<ITimedRewardsManager>().Object,
+            TimeProvider.System);
         manager.Initialize();
 
         mockTick.OnTick.WasCalled(Times.Once);
