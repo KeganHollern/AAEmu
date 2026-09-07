@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
@@ -127,6 +128,38 @@ public partial class QuestManager
         {
             owner?.Events?.OnItemGroupGather(owner, new OnItemGroupGatherArgs { ItemId = templateId, Count = count, ItemGroupId = itemGroup });
         }
+
+        if (count <= 0 || owner?.Inventory == null || owner.Quests == null)
+            return;
+
+        foreach (var questStarter in GetItemGainQuestStarters(owner, templateId))
+            owner.Quests.AddQuestFromItem(questStarter.ParentQuestTemplate.Id, templateId);
+    }
+
+    internal IReadOnlyList<QuestActConAcceptItemGain> GetItemGainQuestStarters(ICharacter owner, uint itemTemplateId)
+    {
+        if (owner?.Inventory == null || owner.Quests == null ||
+            !_actTemplatesByDetailType.TryGetValue(nameof(QuestActConAcceptItemGain), out var itemGainActs))
+            return [];
+
+        var result = new List<QuestActConAcceptItemGain>();
+        var matchedQuestIds = new HashSet<uint>();
+        foreach (var itemGainAct in itemGainActs.Values.OfType<QuestActConAcceptItemGain>())
+        {
+            var questTemplate = itemGainAct.ParentQuestTemplate;
+            var questId = questTemplate.Id;
+            if (itemGainAct.ItemId != itemTemplateId ||
+                itemGainAct.ParentComponent.KindId != QuestComponentKind.Start ||
+                !owner.Inventory.CheckItems(SlotType.Inventory, itemTemplateId, itemGainAct.Count) ||
+                owner.Quests.HasQuest(questId) ||
+                (owner.Quests.HasQuestCompleted(questId) && !questTemplate.Repeatable) ||
+                !matchedQuestIds.Add(questId))
+                continue;
+
+            result.Add(itemGainAct);
+        }
+
+        return result;
     }
 
     /// <summary>
