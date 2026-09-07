@@ -26,7 +26,7 @@ public class TestHouse : ICommand
         return "Available commands;\n" +
                "|cFFFFFFFFinfo|r -> Shows various house info\n" +
                "|cFFFFFFFFtaxmail|r -> Creates a tax due mail for the house owner\n" +
-               "|cFFFFFFFFsetforsale <money> [buyer]|r -> Forces a house for sale to be set, with optional [buyer] specified. Specify 0 money to clear the sale. (does not return any certificates)\n" +
+               "|cFFFFFFFFsetforsale <money> [buyer]|r -> Lists your selected house for sale using appraisal certificates, with an optional [buyer]. Specify 0 to cancel and return the certificates.\n" +
                "|cFFFFFFFFsettaxpaid|r -> Sets the house's taxdue date as if just build and paid for.\n" +
                "|cFFFFFFFFsettaxdue|r -> Sets the house's taxdue date to now.\n" +
                "|cFFFFFFFFsettaxduesoon|r -> Sets the house's taxdue date to 20 seconds from now.\n" +
@@ -159,7 +159,7 @@ public class TestHouse : ICommand
                         return;
                     }
 
-                    if (HousingManager.Instance.SetForSale(house, price, buyerId, null))
+                    if (HousingManager.Instance.SetForSale(house, price, buyerId, character))
                     {
                         CommandManager.SendNormalText(this, messageOutput,
                             $"Setting {house.Name} for sale with a price of {price} to buy for {buyer}.");
@@ -177,8 +177,7 @@ public class TestHouse : ICommand
                         return;
                     }
 
-                    // Remove sale (for GM commands we don't return certificates)
-                    if (HousingManager.Instance.CancelForSale(house, false))
+                    if (HousingManager.Instance.CancelForSale(house, character))
                     {
                         CommandManager.SendNormalText(this, messageOutput, $"{house.Name} is no longer for sale");
                     }
