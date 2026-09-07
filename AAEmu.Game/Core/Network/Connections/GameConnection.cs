@@ -34,6 +34,7 @@ public class GameConnection
     public Task LeaveTask { get; set; }
     public CancellationTokenSource CancelTokenSource { get; set; }
     public DateTime LastPing { get; set; }
+    internal ConnectionEventLimiter UnknownPacketEvents { get; } = new();
 
     public GameConnection(ISession session)
     {

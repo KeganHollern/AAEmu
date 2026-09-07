@@ -14,6 +14,7 @@ public class LoginConnection(ISession session)
 
     public bool Block { get; set; }
     public PacketStream LastPacket { get; set; }
+    internal ConnectionEventLimiter UnknownPacketEvents { get; } = new();
 
     public void OnConnect()
     {
