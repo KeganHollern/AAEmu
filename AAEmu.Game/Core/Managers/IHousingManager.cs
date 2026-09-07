@@ -27,7 +27,7 @@ public interface IHousingManager
     House GetHouseById(uint houseId);
     void UpdateOwnedHousingFaction(uint characterId, FactionsEnum factionId);
     bool SetForSale(ushort houseTlId, uint price, uint buyerId, Character seller);
-    bool CancelForSale(ushort houseTlId, bool returnCertificates = true);
+    bool CancelForSale(ushort houseTlId, Character seller);
     bool BuyHouse(ushort houseTlId, uint money, Character character);
     void CheckHousingTaxes();
     void UpdateTaxInfo(House house);
