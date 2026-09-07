@@ -5,6 +5,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
@@ -263,6 +264,59 @@ public sealed class ItemContainerConsumptionTests
         await Assert.That(_bag.Items).HasSingleItem();
     }
 
+    [Test]
+    public async Task NewStackRejectedAfterExistingGrant_ReturnsPartialProgressAndReleasesUnusedId()
+    {
+        var existing = AddItem(1, 100, 99);
+        var granted = 0;
+
+        // A synchronous acquisition callback can use the last free slot before the next stack.
+        var result = _bag.AcquireDefaultItemEx(ItemTaskType.Invalid, 100, 2, 0, out var created,
+            out var updated, 0, onGranted: count =>
+            {
+                granted += count;
+                _bag.ContainerSize = 1;
+            });
+
+        await Assert.That(result).IsFalse();
+        await Assert.That(existing.Count).IsEqualTo(100);
+        await Assert.That(granted).IsEqualTo(1);
+        await Assert.That(created).IsEmpty();
+        await Assert.That(updated).HasSingleItem();
+        await Assert.That(updated[0]).IsSameReferenceAs(existing);
+        await Assert.That(_removedItems).IsEquivalentTo([1_000UL]);
+        await Assert.That(_items.GetItemByItemId(1_000)).IsNull();
+        await Assert.That(_bag.Items).HasSingleItem();
+    }
+
+    [Test]
+    public async Task HouseTaxGate_PreventsConcurrentInventoryMutation()
+    {
+        var item = AddItem(1, 100, 3);
+        var house = new House();
+        using var started = new ManualResetEventSlim();
+        Task<int> consume;
+        bool completedEarly;
+        int countDuringHouseOperation;
+        lock (house.TaxPaymentSyncRoot)
+        {
+            consume = Task.Run(() =>
+            {
+                started.Set();
+                return _bag.ConsumeItem(ItemTaskType.Invalid, 100, 1, null);
+            });
+            started.Wait(TimeSpan.FromSeconds(10));
+            completedEarly = consume.Wait(TimeSpan.FromMilliseconds(100));
+            countDuringHouseOperation = item.Count;
+        }
+        var consumed = await consume.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(completedEarly).IsFalse();
+        await Assert.That(countDuringHouseOperation).IsEqualTo(3);
+        await Assert.That(consumed).IsEqualTo(1);
+        await Assert.That(item.Count).IsEqualTo(2);
+    }
+
     private ItemTemplate Template(uint templateId)
     {
         if (!_templates.TryGetValue(templateId, out var template))
@@ -273,7 +327,7 @@ public sealed class ItemContainerConsumptionTests
         return template;
     }
 
-    private Item AddItem(uint id, uint templateId, int count)
+    private ItemMock AddItem(uint id, uint templateId, int count)
     {
         var item = new ItemMock(id, Template(templateId), count);
         PutItem(item);
