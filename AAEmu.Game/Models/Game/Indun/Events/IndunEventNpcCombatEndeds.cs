@@ -7,12 +7,12 @@ internal class IndunEventNpcCombatEndeds : IndunEvent
 {
     public uint NpcId { get; set; }
 
-    public override void Subscribe(WorldInstance worldInstance)
+    protected override void SubscribeCore(WorldInstance worldInstance)
     {
         worldInstance.Events.OnUnitCombatEnd += OnUnitCombatEnd;
     }
 
-    public override void UnSubscribe(WorldInstance worldInstance)
+    protected override void UnSubscribeCore(WorldInstance worldInstance)
     {
         worldInstance.Events.OnUnitCombatEnd -= OnUnitCombatEnd;
     }

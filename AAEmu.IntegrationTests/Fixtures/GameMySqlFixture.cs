@@ -48,6 +48,14 @@ public sealed class GameMySqlFixture : IAsyncLifetime
         await command.ExecuteNonQueryAsync();
         await command.ExecuteNonQueryAsync();
 
+        command.CommandText = "DROP TABLE `zone_conflict_states`";
+        await command.ExecuteNonQueryAsync();
+        var zoneUpdatePath = Path.Combine(AppContext.BaseDirectory, "SQL", "updates",
+            "2026-09-07_aaemu_game_zone_conflict_states.sql");
+        command.CommandText = await File.ReadAllTextAsync(zoneUpdatePath);
+        await command.ExecuteNonQueryAsync();
+        await command.ExecuteNonQueryAsync();
+
         var builder = new MySqlConnectionStringBuilder(_container.GetConnectionString());
         MySQL.SetConfiguration(new MySqlConnectionSettings
         {

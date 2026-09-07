@@ -7,12 +7,12 @@ internal class IndunEventNpcCombatStarteds : IndunEvent
 {
     public uint NpcId { get; set; }
 
-    public override void Subscribe(WorldInstance worldInstance)
+    protected override void SubscribeCore(WorldInstance worldInstance)
     {
         worldInstance.Events.OnUnitCombatStart += OnNpcCombatStarted;
     }
 
-    public override void UnSubscribe(WorldInstance worldInstance)
+    protected override void UnSubscribeCore(WorldInstance worldInstance)
     {
         worldInstance.Events.OnUnitCombatStart -= OnNpcCombatStarted;
     }

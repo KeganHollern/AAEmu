@@ -1,59 +1,40 @@
-﻿using AAEmu.Game.Core.Managers.World;
-using AAEmu.Game.Models.Game.Char;
-using AAEmu.Game.Models.Game.World;
-using NLog;
+﻿using NLog;
+using DotNetTask = System.Threading.Tasks.Task;
 using Task = AAEmu.Game.Models.Tasks.Task;
 
 namespace AAEmu.Game.Models.Game.Indun;
 
-public class DungeonLoaderTask(WorldTemplate worldTemplate, Dungeon dungeon, uint dungeonInstanceId, Character notifyPlayer) : Task
+public class DungeonLoaderTask(Dungeon dungeon) : Task
 {
     // ReSharper disable once InconsistentNaming
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
     public override void Execute()
     {
-        // TODO: Channel related things
-        // Thread.Sleep(10000); // debug delay 
+        ExecuteAsync().GetAwaiter().GetResult();
+    }
 
-        // Create a new WorldInstance linked to this Dungeon
-        if (dungeon.World == null)
+    public override async DotNetTask ExecuteAsync()
+    {
+        // The constructor creates the world before scheduling this task. A missing world
+        // here belongs to a dungeon that has already been torn down; do not recreate it.
+        var world = dungeon.World;
+        if (world == null || dungeon.IsDestroyed || dungeon.FinishedLoading)
+            return;
+
+        try
         {
-            Logger.Debug($"[???-{worldTemplate.Name}({worldTemplate.Id})] Creating new dungeon instance of  ...");
-            dungeon.World = WorldManager.Instance.CreateWorldInstance(worldTemplate, 0, true, dungeonInstanceId, notifyPlayer);
-            dungeon.World.DungeonInstance = dungeon;
-            Thread.Sleep(1000);
-            Logger.Info($"[{dungeon.World})] New Dungeon instance created!");
+            Logger.Debug($"[{world}] Spawning dungeon game objects...");
+            world.SpawnManager.SpawnAll();
+            await DotNetTask.WhenAll(world.SpawnManager.SpawnTasks).ConfigureAwait(false);
+            Logger.Debug($"[{world}] Finished spawning dungeon game objects.");
+
+            dungeon.CompleteLoading(world);
         }
-
-        // Spawn all world elements for this dungeon
-        Logger.Debug($"[{dungeon.World})] Spawning game objects Npc, Doodad, Slave, Gimmick...");
-        dungeon.World.SpawnManager.SpawnAll();
-        // Wait for spawns to finish
-        System.Threading.Tasks.Task.WhenAll(dungeon.World.SpawnManager.SpawnTasks);
-        Logger.Debug($"[{dungeon.World})] Finished spawning game objects Npc, Doodad, Slave, Gimmick...");
-
-        // Register events
-        dungeon.RegisterIndunEvents();
-        Logger.Info($"[{dungeon.World})] Dungeon instance ready!");
-        
-        dungeon.FinishedLoading = true;
-
-        Thread.Sleep(1000);
-
-        // Spawn players
-        if (dungeon.EnterRequests.Count > 0)
+        catch (Exception exception)
         {
-            Logger.Info($"[{dungeon.World})] Moving players to dungeon instance ...");
-            foreach (var dungeonEnterRequestPlayer in dungeon.EnterRequests)
-            {
-                if (dungeonEnterRequestPlayer?.IsOnline ?? false)
-                {
-                    dungeon.AddPlayer(dungeonEnterRequestPlayer);
-                }
-            }
-
-            dungeon.EnterRequests.Clear();
+            Logger.Error(exception, $"[{world}] Dungeon loading failed.");
+            throw;
         }
     }
 }

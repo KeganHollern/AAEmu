@@ -1,5 +1,6 @@
 ﻿using System.Reflection;
 
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
@@ -61,7 +62,7 @@ public class ZoneManagerClimateTests
 
     private static ZoneManager CreateManager()
     {
-        var manager = new ZoneManager(Mock.Of<IWorldManager>().Object);
+        var manager = new ZoneManager(Mock.Of<IWorldManager>().Object, Mock.Of<ITaskManager>().Object);
         SetPrivateField(manager, "_zones", new Dictionary<uint, Zone>
         {
             [ZoneKey] = new Zone { ZoneKey = ZoneKey, ZoneClimateId = 6 }

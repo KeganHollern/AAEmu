@@ -8,12 +8,12 @@ internal class IndunEventNpcKilleds : IndunEvent
 {
     public uint NpcId { get; set; }
 
-    public override void Subscribe(WorldInstance worldInstance)
+    protected override void SubscribeCore(WorldInstance worldInstance)
     {
         worldInstance.Events.OnUnitKilled += OnUnitKilled;
     }
 
-    public override void UnSubscribe(WorldInstance worldInstance)
+    protected override void UnSubscribeCore(WorldInstance worldInstance)
     {
         worldInstance.Events.OnUnitKilled -= OnUnitKilled;
     }

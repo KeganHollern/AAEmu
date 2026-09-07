@@ -13,14 +13,14 @@ public class DoodadFuncGrowthTask(BaseUnit caster, Doodad owner, uint skillId, i
     private readonly Doodad _owner = owner;
     private readonly uint _skillId = skillId;
 
-    public override void Execute()
+    protected override void ExecuteCurrent()
     {
         if (Logger.IsTraceEnabled)
             Logger.Trace("[Doodad] DoodadFuncGrowthTask: Doodad {0}, TemplateId {1}. Using skill {2} with doodad phase {3}", _owner.ObjId, _owner.TemplateId, _skillId, _owner.FuncGroupId);
 
         _owner.Scale = endScale;
 
-        _owner.FuncTask = null;
+        ClearCurrentTask();
 
         _owner.DoChangePhase(_caster, nextPhase);
     }

@@ -1,16 +1,19 @@
 ﻿using System.Numerics;
 
 using AAEmu.Commons.Utils;
+using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
+using AAEmu.Game.Models.Tasks.Zones;
 using AAEmu.Game.Utils.DB;
 
+using MySql.Data.MySqlClient;
 using NLog;
 
 namespace AAEmu.Game.Core.Managers.World;
 
-public class ZoneManager(IWorldManager worldManager) : Singleton<ZoneManager>, IZoneManager
+public class ZoneManager(IWorldManager worldManager, ITaskManager taskManager) : Singleton<ZoneManager>, IZoneManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -20,6 +23,7 @@ public class ZoneManager(IWorldManager worldManager) : Singleton<ZoneManager>, I
     private Dictionary<ushort, ZoneConflict> _conflicts;
     private Dictionary<uint, ZoneGroupBannedTag> _groupBannedTags;
     private Dictionary<uint, ZoneClimateElem> _climateElem;
+    private bool _initialized;
 
     public ZoneConflict[] GetConflicts() => _conflicts.Values.ToArray();
 
@@ -153,11 +157,6 @@ public class ZoneManager(IWorldManager worldManager) : Singleton<ZoneManager>, I
 
                             _groups[zoneGroupId].Conflict = template;
                             _conflicts.Add(zoneGroupId, template);
-
-                            // Only do intial setup when the zone isn't closed
-                            if (!template.Closed)
-                                template.SetState(ZoneConflictType
-                                    .Conflict); // Set to Conflict for testing, normally it should start at Tension
                         }
                         else
                             Logger.Warn("ZoneGroupId: {0} doesn't exist for conflict", zoneGroupId);
@@ -207,6 +206,59 @@ public class ZoneManager(IWorldManager worldManager) : Singleton<ZoneManager>, I
 
             Logger.Info("Loaded {0} climate elems", _climateElem.Count);
         }
+
+        using var stateConnection = MySQL.CreateConnection();
+        RestoreStates(stateConnection);
+    }
+
+    internal void RestoreStates(MySqlConnection connection)
+    {
+        using var stateCommand = connection.CreateCommand();
+        stateCommand.CommandText = "SELECT zone_group_id, state, kill_count, next_state_time FROM zone_conflict_states";
+        var savedStates = new Dictionary<ushort, ZoneConflictSnapshot>();
+        using (var reader = stateCommand.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                savedStates.Add(reader.GetUInt16("zone_group_id"), new ZoneConflictSnapshot(
+                    (ZoneConflictType)reader.GetByte("state"), reader.GetUInt32("kill_count"),
+                    reader.IsDBNull(reader.GetOrdinal("next_state_time")) ? DateTime.MinValue :
+                        DateTime.SpecifyKind(reader.GetDateTime("next_state_time"), DateTimeKind.Utc)));
+            }
+        }
+        foreach (var conflict in _conflicts.Values)
+            conflict.Restore(savedStates.TryGetValue(conflict.ZoneGroupId, out var state) ? state : null);
+    }
+
+    public void Initialize()
+    {
+        if (_initialized)
+            return;
+        _initialized = true;
+        foreach (var conflict in _conflicts.Values.Where(conflict => !conflict.Closed))
+        {
+            conflict.CheckTimer();
+            taskManager.Schedule(new ZoneStateChangeTask(conflict), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        }
+    }
+
+    public int Save(MySqlConnection connection, MySqlTransaction transaction)
+    {
+        foreach (var conflict in _conflicts.Values)
+        {
+            var state = conflict.GetSnapshot();
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "INSERT INTO zone_conflict_states (zone_group_id, state, kill_count, next_state_time) " +
+                "VALUES (@zone, @state, @kills, @deadline) ON DUPLICATE KEY UPDATE " +
+                "state = @state, kill_count = @kills, next_state_time = @deadline";
+            command.Parameters.AddWithValue("@zone", conflict.ZoneGroupId);
+            command.Parameters.AddWithValue("@state", (byte)state.State);
+            command.Parameters.AddWithValue("@kills", state.KillCount);
+            command.Parameters.AddWithValue("@deadline", state.NextStateTime == DateTime.MinValue ? DBNull.Value : state.NextStateTime);
+            command.ExecuteNonQuery();
+        }
+        return _conflicts.Count;
     }
 
     public Vector2 GetZoneOriginCell(uint zoneId)
