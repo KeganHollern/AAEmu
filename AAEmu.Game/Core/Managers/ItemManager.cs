@@ -54,7 +54,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
     // Loot related
     private Dictionary<uint, List<LootPackDroppingNpc>> _lootPackDroppingNpc;
-    private Dictionary<uint, List<LootPackConvertFish>> _lootPackConvertFish;
+    private Dictionary<(uint DoodadFunctionId, uint ItemId), LootPackConvertFish> _lootPackConvertFish = [];
     private Dictionary<int, GradeDistributions> _itemGradeDistributions;
 
     // ItemLookConvert
@@ -122,66 +122,40 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         return _lootPackDroppingNpc.TryGetValue(npcId, out var value) ? value : [];
     }
 
-    /// <summary>
-    /// GetLootPackIdByItemId - designed to transform fish into trophies
-    /// </summary>
-    /// <param name="itemId"></param>
-    /// <returns></returns>
-    private List<LootPackConvertFish> GetLootPackIdByItemId(uint itemId)
-    {
-        return _lootPackConvertFish.TryGetValue(itemId, out var value) ? value : [];
-    }
-
     public List<ItemTemplate> GetAllItems()
     {
         return _templates.Values.ToList();
     }
 
-    public List<Item> GetLootConvertFish(uint templateId)
+    internal void AddFishConversion(LootPackConvertFish conversion)
     {
-        var items = new List<Item>();
-        var lootPackConvertFishes = GetLootPackIdByItemId(templateId);
+        if (conversion.DoodadFuncConvertFishId == 0 || conversion.ItemId == 0 || conversion.LootPackId == 0)
+            throw new InvalidDataException($"Invalid fish conversion association {conversion.Id}.");
 
-        if (lootPackConvertFishes.Count <= 0)
-        {
-            return items;
-        }
+        var key = (conversion.DoodadFuncConvertFishId, conversion.ItemId);
+        if (!_lootPackConvertFish.TryAdd(key, conversion))
+            throw new InvalidDataException($"Duplicate fish conversion for function {key.DoodadFuncConvertFishId}, item {key.ItemId}.");
+    }
 
-        foreach (var lootPackConvertFish in lootPackConvertFishes)
-        {
-            var lootPacks = LootGameData.Instance.GetPack(lootPackConvertFish.LootPackId);
-            var dropRateMax = (uint)0;
-            for (var ui = 0; ui < lootPacks.Loots?.Count; ui++)
-            {
-                dropRateMax += lootPacks.Loots[ui].DropRate;
-            }
-            var dropRateItem = Random.Shared.Next(0, dropRateMax);
-            var dropRateItemId = 0u;
-            for (var uii = 0; uii < (lootPacks.Loots?.Count ?? 0); uii++)
-            {
-                if (lootPacks.Loots?[uii].DropRate + dropRateItemId >= dropRateItem)
-                {
-                    var item = new Item
-                    {
-                        TemplateId = lootPacks.Loots[uii].ItemId,
-                        CreateTime = DateTime.UtcNow,
-                        Id = Instance.GetNewId(),
-                        MadeUnitId = templateId,
-                        Count = Random.Shared.Next(lootPacks.Loots[uii].MinAmount, lootPacks.Loots[uii].MaxAmount)
-                    };
-                    items.Add(item);
-                    break;
-                }
+    public bool TryGetFishConversion(uint doodadFunctionId, uint templateId, out Loot output)
+    {
+        output = null;
+        if (!_lootPackConvertFish.TryGetValue((doodadFunctionId, templateId), out var conversion))
+            return false;
 
-                if (lootPacks.Loots != null)
-                {
-                    dropRateItemId += lootPacks.Loots[uii].DropRate;
-                }
-            }
-            break; // TODO use only the first item
-        }
+        var pack = LootGameData.Instance.GetPack(conversion.LootPackId);
+        // All r208022 conversion packs contain one guaranteed trophy. Reject unsupported
+        // data before inventory mutation rather than choosing an arbitrary mapping or roll.
+        if (pack?.Loots is not { Count: 1 })
+            return false;
 
-        return items;
+        var loot = pack.Loots[0];
+        if (loot == null || loot.DropRate != 10_000_000 || loot.MinAmount != 1 || loot.MaxAmount != 1 ||
+            GetTemplate(templateId) == null || GetTemplate(loot.ItemId) == null)
+            return false;
+
+        output = loot;
+        return true;
     }
 
     public GradeDistributions GetGradeDistributions(byte id)
@@ -1265,7 +1239,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
             using (var command = connection.CreateCommand())
             {
-                command.CommandText = "SELECT * FROM doodad_func_convert_fish_items";
+                command.CommandText = "SELECT c.* FROM doodad_func_convert_fish_items c INNER JOIN doodad_func_convert_fishes f ON f.id = c.doodad_func_convert_fish_id";
                 command.Prepare();
                 using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
                 {
@@ -1278,16 +1252,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                             LootPackId = reader.GetUInt32("loot_pack_id"),
                             DoodadFuncConvertFishId = reader.GetUInt32("doodad_func_convert_fish_id")
                         };
-                        List<LootPackConvertFish> lootPackConvertFish;
-                        if (_lootPackConvertFish.TryGetValue(template.ItemId, out var value))
-                            lootPackConvertFish = value;
-                        else
-                        {
-                            lootPackConvertFish = [];
-                            _lootPackConvertFish.Add(template.ItemId, lootPackConvertFish);
-                        }
-
-                        lootPackConvertFish.Add(template);
+                        AddFishConversion(template);
                     }
                 }
             }
