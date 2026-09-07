@@ -201,7 +201,7 @@ public class UnitRequirementsGameData : Singleton<UnitRequirementsGameData>, IGa
                     lastFailedCheckResult = lastCheckResult;
             }
 
-            if (skillTemplate.OrUnitReqs)
+            if (skillTemplate.OrUnitReqs && reqRes)
             {
                 // If OrUnitReqs is set, stop checking at the first hit
                 res = true;
@@ -228,7 +228,7 @@ public class UnitRequirementsGameData : Singleton<UnitRequirementsGameData>, IGa
             var validateRes = unitReq.Validate(ownerUnit, target);
             var reqRes = validateRes.ResultKey == SkillResultKeys.ok;
 
-            if (sphere.OrUnitReqs)
+            if (sphere.OrUnitReqs && reqRes)
             {
                 // If OrUnitReqs is set, stop checking at the first hit
                 res = true;
@@ -252,7 +252,7 @@ public class UnitRequirementsGameData : Singleton<UnitRequirementsGameData>, IGa
             var validateRes = unitReq.Validate(ownerUnit, target);
             var reqRes = validateRes.ResultKey == SkillResultKeys.ok;
 
-            if (questComponent.OrUnitReqs)
+            if (questComponent.OrUnitReqs && reqRes)
             {
                 // If OrUnitReqs is set, stop checking at the first hit
                 res = true;
