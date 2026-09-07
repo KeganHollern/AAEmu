@@ -14,6 +14,7 @@ public class DoodadFuncCloutTask(BaseUnit caster, Doodad owner, uint skillId, in
     private readonly BaseUnit _caster = caster;
     private readonly Doodad _owner = owner;
     private readonly uint _skillId = skillId;
+    private int _triggerRemoved;
 
     protected override void ExecuteCurrent()
     {
@@ -22,10 +23,21 @@ public class DoodadFuncCloutTask(BaseUnit caster, Doodad owner, uint skillId, in
 
         ClearCurrentTask();
 
+        RemoveTrigger();
         if (nextPhase == -1)
             _owner.Delete();
 
-        AreaTriggerManager.Instance.RemoveAreaTrigger(areaTrigger);
         _owner.DoChangePhase(_caster, nextPhase);
+    }
+
+    protected override void OnRetired() => RemoveTrigger();
+
+    private void RemoveTrigger()
+    {
+        if (Interlocked.Exchange(ref _triggerRemoved, 1) != 0)
+            return;
+
+        areaTrigger.Owner?.AttachAreaTriggers.Remove(areaTrigger);
+        AreaTriggerManager.Instance.RemoveAreaTrigger(areaTrigger);
     }
 }

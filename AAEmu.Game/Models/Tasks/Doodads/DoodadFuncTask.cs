@@ -16,11 +16,34 @@ public abstract class DoodadFuncTask : Task
     {
         // Cancellation can race the task runner after it has dispatched a callback.
         // The occurrence must still own this task when its phase effects execute.
+        var executed = false;
         if (_taskOwner?.Spawner is { } spawner)
-            spawner.ExecutePhaseTask(_taskOwner, this, ExecuteCurrent);
+            spawner.ExecutePhaseTask(_taskOwner, this, () =>
+            {
+                executed = true;
+                ExecuteCurrent();
+            });
         else if (ReferenceEquals(_taskOwner?.FuncTask, this))
+        {
+            executed = true;
             ExecuteCurrent();
+        }
+
+        if (!executed)
+            OnRetired();
     }
+
+    internal void Retire()
+    {
+        Cancel();
+        // A dispatched callback is already absent from the queue, so Cancel may
+        // return false without invoking OnCancel. Its resources still belong here.
+        OnRetired();
+    }
+
+    public override void OnCancel() => OnRetired();
+
+    protected virtual void OnRetired() { }
 
     protected void ClearCurrentTask()
     {

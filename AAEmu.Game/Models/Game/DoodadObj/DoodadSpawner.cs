@@ -282,7 +282,7 @@ public class DoodadSpawner : Spawner<Doodad>
 
             if (status != GameScheduleManager.PeriodStatus.NotFound)
             {
-                doodad.FuncTask?.Cancel();
+                doodad.FuncTask?.Retire();
                 doodad.FuncTask = null;
             }
             Despawn(doodad);

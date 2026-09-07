@@ -5,11 +5,15 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
+using AAEmu.Game.Models.Game.Schedules;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Tasks.Doodads;
+
+using Microsoft.Extensions.Time.Testing;
 
 namespace AAEmu.UnitTests.Game.Models.Game.DoodadObj;
 
@@ -134,6 +138,94 @@ public sealed class DoodadPhaseTaskOwnershipTests
         await Assert.That(owner.FuncTask).IsNull();
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ScheduledExpiry_CloutOnDistinctOrigin_CleansTriggerEvenAfterDispatch(bool alreadyDispatched)
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2030, 1, 1, 4, 0, 0, TimeSpan.Zero));
+        var schedules = new GameScheduleManager(Mock.Of<IGameDataManager>().Object, clock);
+        schedules.LoadGameSchedules(new()
+        {
+            [1] = new GameSchedules
+            {
+                Id = 1, StYear = 2030, StMonth = 1, StDay = 1, StHour = 4,
+                EdYear = 2030, EdMonth = 1, EdDay = 1, EdHour = 6
+            }
+        });
+        schedules.LoadGameScheduleDoodads(new()
+        {
+            [1] = new GameScheduleDoodads { Id = 1, GameScheduleId = 1, DoodadId = 1 }
+        });
+        ReplaceSingleton(schedules);
+        var objectIdField = typeof(ObjectIdManager).GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        _previousInstances[objectIdField] = objectIdField.GetValue(null);
+        var objectIds = new ObjectIdManager();
+        objectIds.Initialize();
+        objectIdField.SetValue(null, objectIds);
+
+        var phaseOwner = CreateOwner();
+        phaseOwner.ObjId = objectIds.GetNextId();
+        var spawner = new DoodadSpawner { UnitId = 1, Last = phaseOwner };
+        spawner._spawned.Add(phaseOwner);
+        phaseOwner.Spawner = spawner;
+        var origin = CreateOwner();
+        origin.IsVisible = true;
+        var originTask = new DoodadFuncTimerTask(null, origin, 0, 0);
+        origin.FuncTask = originTask;
+        var trigger = new AreaTrigger { Owner = origin };
+        AreaTriggerManager.Instance.AddAreaTrigger(trigger);
+        var phaseTask = new DoodadFuncCloutTask(null, origin, 0, (int)NextPhase, trigger, phaseOwner);
+        phaseOwner.FuncTask = phaseTask;
+        TaskManager.Instance.Schedule(phaseTask, TimeSpan.FromHours(4));
+        if (alreadyDispatched)
+            TaskManager.Instance.Cancel(phaseTask); // Simulate the runner already holding the callback.
+
+        clock.Advance(TimeSpan.FromHours(2));
+        spawner.DoDespawn(phaseOwner);
+        phaseTask.Execute();
+        phaseTask.Retire();
+
+        var removals = (List<AreaTrigger>)typeof(AreaTriggerManager)
+            .GetField("_removeQueue", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(AreaTriggerManager.Instance)!;
+        await Assert.That(removals).HasSingleItem();
+        await Assert.That(removals[0]).IsSameReferenceAs(trigger);
+        await Assert.That(origin.AttachAreaTriggers).IsEmpty();
+        await Assert.That(origin.IsVisible).IsTrue();
+        await Assert.That(origin.FuncTask).IsSameReferenceAs(originTask);
+        await Assert.That(origin.FuncGroupId).IsEqualTo(0u);
+        await Assert.That(origin.DeleteCalls).IsEqualTo(0);
+        await Assert.That(phaseOwner.DeleteCalls).IsEqualTo(1);
+        await Assert.That(phaseOwner.FuncTask).IsNull();
+        await Assert.That(_phaseEffect.Calls).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CurrentClout_FinalPhase_DetachesTriggerBeforeDeletingOrigin()
+    {
+        var owner = CreateOwner();
+        var trigger = new AreaTrigger { Owner = owner };
+        AreaTriggerManager.Instance.AddAreaTrigger(trigger);
+        owner.BeforeDelete = () =>
+        {
+            if (owner.AttachAreaTriggers.Contains(trigger))
+                throw new InvalidOperationException("Doodad deletion would clean the same trigger a second time.");
+        };
+        var task = new DoodadFuncCloutTask(null, owner, 0, -1, trigger, owner);
+        owner.FuncTask = task;
+
+        task.Execute();
+        task.Retire();
+
+        var removals = (List<AreaTrigger>)typeof(AreaTriggerManager)
+            .GetField("_removeQueue", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(AreaTriggerManager.Instance)!;
+        await Assert.That(removals).HasSingleItem();
+        await Assert.That(owner.DeleteCalls).IsEqualTo(1);
+        await Assert.That(owner.FuncTask).IsNull();
+    }
+
     private static RecordingDoodad CreateOwner()
     {
         return new RecordingDoodad { TemplateId = 1, Template = new DoodadTemplate { Id = 1 } };
@@ -169,7 +261,12 @@ public sealed class DoodadPhaseTaskOwnershipTests
     private sealed class RecordingDoodad : Doodad
     {
         public int DeleteCalls { get; private set; }
-        public override void Delete() => DeleteCalls++;
+        public Action BeforeDelete { get; set; }
+        public override void Delete()
+        {
+            BeforeDelete?.Invoke();
+            DeleteCalls++;
+        }
     }
 
     private sealed class RecordingPhaseFunc : DoodadPhaseFuncTemplate
