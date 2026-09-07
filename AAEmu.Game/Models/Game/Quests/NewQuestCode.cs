@@ -184,6 +184,11 @@ public partial class Quest
                     }
 
                     Owner.Quests.CompleteQuest(TemplateId);
+                    Owner.Events?.OnQuestComplete(Owner, new OnQuestCompleteArgs
+                    {
+                        QuestId = TemplateId,
+                        Selected = SelectedRewardIndex
+                    });
                     Owner.SendPacket(new SCQuestContextCompletedPacket(TemplateId, body, 0));
 
                     return;
