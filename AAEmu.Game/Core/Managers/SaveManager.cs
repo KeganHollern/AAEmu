@@ -18,7 +18,8 @@ public class SaveManager(
     IItemManager itemManager,
     IAuctionManager auctionManager,
     ICrimeManager crimeManager,
-    IWorldManager worldManager) : Singleton<SaveManager>, ISaveManager
+    IWorldManager worldManager,
+    IZoneManager zoneManager) : Singleton<SaveManager>, ISaveManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -89,6 +90,8 @@ public class SaveManager(
                         // Crimes
                         var savedCrimes = crimeManager.Save(connection, transaction);
 
+                        var savedConflicts = zoneManager.Save(connection, transaction);
+
                         // Characters
                         var savedCharacters = 0;
                         foreach (var c in worldManager.GetAllCharacters())
@@ -118,6 +121,7 @@ public class SaveManager(
                         totalCommits += savedCrimes.Item1 + savedCrimes.Item2;
                         totalCommits += savedCharacters;
                         totalCommits += savedSlaves;
+                        totalCommits += savedConflicts;
 
                         if (totalCommits <= 0)
                         {

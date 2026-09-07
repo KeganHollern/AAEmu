@@ -117,7 +117,8 @@ public partial class Character
         var conflictData = victimZone != null
             ? ZoneManager.Instance.GetConflicts().FirstOrDefault(c => c.ZoneGroupId == victimZone.GroupId)
             : null;
-        var zoneState = conflictData?.CurrentZoneState ?? ZoneConflictType.Peace;
+        var relationState = killer.GetRelationStateTo(this);
+        var zoneState = RecordZoneConflictKill(conflictData, killer is Character && relationState != RelationState.Friendly);
 
         var achievementKiller = killer?.GetOwnerCharacter();
         RecordPvpDeathAchievements(
@@ -125,7 +126,6 @@ public partial class Character
             victimZone?.GroupId ?? 0,
             Buffs.CheckBuffTag((uint)BuffConstants.TagWanted));
 
-        var relationState = killer.GetRelationStateTo(this);
         var possibleArrest = false;
         Character arrestor = null;
         if (killer is Character enemy)
@@ -135,7 +135,7 @@ public partial class Character
             if (relationState != RelationState.Friendly)
             {
                 enemy.HostileFactionKills++;
-                AwardPvpHonor(enemy, victimZone, conflictData, zoneState);
+                AwardPvpHonor(enemy, victimZone, zoneState);
 
                 // Mark victim as PvP death (prevents Weakened Body debuff on temple-revive)
                 DiedInPvp = true;
@@ -211,12 +211,19 @@ public partial class Character
         Logger.Debug($"Death #{_consecutiveDeathCount} for {Name}: respawn wait = {waitSeconds}s");
     }
 
+    internal static ZoneConflictType RecordZoneConflictKill(ZoneConflict conflictData, bool qualifyingKill)
+    {
+        // Honor and death penalties use the phase at the kill, before escalation.
+        if (conflictData == null)
+            return ZoneConflictType.Peace;
+        return qualifyingKill ? conflictData.AddZoneKill() : conflictData.CurrentZoneState;
+    }
+
     /// <summary>
     /// Awards PvP honor to the killer (and assists) based on zone conflict state.
     /// Conflict: 10 solo (6 killer + 4 each assist). War: 20 solo (16 killer + 4 each assist).
-    /// Also registers the kill in the zone conflict system.
     /// </summary>
-    private void AwardPvpHonor(Character killer, Zone victimZone, ZoneConflict conflictData, ZoneConflictType zoneState)
+    private void AwardPvpHonor(Character killer, Zone victimZone, ZoneConflictType zoneState)
     {
         int soloHonor, killerShareHonor, assistShareHonor;
         switch (zoneState)
@@ -235,9 +242,6 @@ public partial class Character
                 // No honor outside Conflict/War zones
                 return;
         }
-
-        // Register zone kill (drives zone state escalation)
-        conflictData?.AddZoneKill();
 
         var pvpRate = AppConfiguration.Instance.World.PvpHonorRate;
         var assistIds = CollectAssists(killer);

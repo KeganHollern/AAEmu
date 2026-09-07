@@ -1,4 +1,4 @@
-using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
@@ -15,6 +15,7 @@ public class SaveManagerTests
         var mockAuction = Mock.Of<IAuctionManager>();
         var mockCrime = Mock.Of<ICrimeManager>();
         var mockWorld = Mock.Of<IWorldManager>();
+        var mockZone = Mock.Of<IZoneManager>();
 
         var manager = new SaveManager(
             mockTask.Object,
@@ -23,7 +24,8 @@ public class SaveManagerTests
             mockItem.Object,
             mockAuction.Object,
             mockCrime.Object,
-            mockWorld.Object);
+            mockWorld.Object,
+            mockZone.Object);
 
         await Assert.That(manager).IsNotNull();
         Mock.VerifyNoOtherCalls(mockTask);
@@ -33,5 +35,6 @@ public class SaveManagerTests
         Mock.VerifyNoOtherCalls(mockAuction);
         Mock.VerifyNoOtherCalls(mockCrime);
         Mock.VerifyNoOtherCalls(mockWorld);
+        Mock.VerifyNoOtherCalls(mockZone);
     }
 }

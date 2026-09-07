@@ -80,7 +80,8 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
 
             foreach (var conflict in ZoneManager.Instance.GetConflicts())
             {
-                Connection.SendPacket(new SCConflictZoneStatePacket(conflict.ZoneGroupId, conflict.CurrentZoneState, conflict.NextStateTime));
+                var state = conflict.GetSnapshot();
+                Connection.SendPacket(new SCConflictZoneStatePacket(conflict.ZoneGroupId, state.State, state.NextStateTime));
             }
 
             FactionManager.Instance.SendFactions(Connection.ActiveChar);

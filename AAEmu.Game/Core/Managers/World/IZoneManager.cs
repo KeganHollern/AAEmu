@@ -1,12 +1,14 @@
-using System.Numerics;
+﻿using System.Numerics;
+using MySql.Data.MySqlClient;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.World.Zones;
 
 namespace AAEmu.Game.Core.Managers.World;
 
-public interface IZoneManager : ILoadable
+public interface IZoneManager : ILoadable, IInitializable
 {
     ZoneConflict[] GetConflicts();
+    int Save(MySqlConnection connection, MySqlTransaction transaction);
     Zone GetZoneById(uint zoneId);
     Zone GetZoneByKey(uint zoneKey);
     ZoneGroup GetZoneGroupById(uint zoneId);
