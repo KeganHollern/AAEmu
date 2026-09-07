@@ -47,10 +47,27 @@ public class QuestActCheckTimer(QuestComponentTemplate parentComponent) : QuestA
 
     public override void InitializeAction(Quest quest, QuestAct questAct)
     {
+        if (quest.IsRestoringLoadedState)
+            return;
+
         base.InitializeAction(quest, questAct);
+        InitializeTimer(quest, questAct);
+    }
+
+    internal void RestoreAction(Quest quest, QuestAct questAct, TimeSpan remaining)
+    {
+        base.InitializeAction(quest, questAct);
+        InitializeTimer(quest, questAct, remaining);
+    }
+
+    private void InitializeTimer(Quest quest, QuestAct questAct, TimeSpan? remaining = null)
+    {
         Logger.Debug($"{QuestActTemplateName}({DetailId}).InitializeAction Quest: {quest.TemplateId}, Owner {quest.Owner.Name} ({quest.Owner.Id})");
 
-        if (!QuestManager.Instance.AddQuestTimer(quest.Owner, quest, LimitTime))
+        var timerAdded = remaining.HasValue
+            ? QuestManager.Instance.RestoreQuestTimer(quest.Owner, quest, remaining.Value)
+            : QuestManager.Instance.AddQuestTimer(quest.Owner, quest, LimitTime);
+        if (!timerAdded)
             Logger.Warn($"{QuestActTemplateName}({DetailId}).InitializeAction Timer Already running, Quest {quest.TemplateId}, Owner {quest.Owner.Name} ({quest.Owner.Id})");
         else
             quest.Owner.Events.OnTimerExpired += questAct.OnTimerExpired;
