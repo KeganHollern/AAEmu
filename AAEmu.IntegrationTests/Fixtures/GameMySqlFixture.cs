@@ -9,6 +9,8 @@ namespace AAEmu.IntegrationTests.Fixtures;
 public sealed class GameMySqlFixture : IAsyncLifetime
 {
     private readonly MySqlContainer _container = new MySqlBuilder("mysql:8.0")
+        // The disposable test database loads schema triggers and failure-injection triggers.
+        .WithCommand("--log-bin-trust-function-creators=1")
         .WithDatabase("aaemu_game")
         .WithUsername("test")
         .WithPassword("test")

@@ -450,6 +450,46 @@ public class AccountManager(
     }
 
     /// <summary>
+    /// Adds elapsed online time without overwriting a concurrent daily clock reset.
+    /// </summary>
+    public void AddDivineClockTime(uint accountId, uint elapsedSeconds)
+    {
+        if (elapsedSeconds == 0)
+            return;
+
+        object accLock;
+        lock (_locks)
+        {
+            if (!_locks.TryGetValue(accountId, out accLock))
+            {
+                accLock = new object();
+                _locks.Add(accountId, accLock);
+            }
+        }
+
+        lock (accLock)
+        {
+            try
+            {
+                using var connection = MySQL.CreateConnection();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    UPDATE `accounts`
+                    SET `divine_clock_time` = `divine_clock_time` + @elapsed_seconds
+                    WHERE `account_id` = @account_id
+                    """;
+                command.Parameters.AddWithValue("@account_id", accountId);
+                command.Parameters.AddWithValue("@elapsed_seconds", elapsedSeconds);
+                command.ExecuteNonQuery();
+            }
+            catch (Exception e)
+            {
+                Logger.Error(e, "Failed to add divine clock time for account {AccountId}", accountId);
+            }
+        }
+    }
+
+    /// <summary>
     /// Updates the divine_clock_time and divine_clock_taken values for given account
     /// </summary>
     /// <param name="accountId"></param>
