@@ -47,10 +47,27 @@ public class QuestActCheckTimer(QuestComponentTemplate parentComponent) : QuestA
 
     public override void InitializeAction(Quest quest, QuestAct questAct)
     {
+        if (quest.IsRestoringLoadedState)
+            return;
+
         base.InitializeAction(quest, questAct);
+        InitializeTimer(quest, questAct);
+    }
+
+    internal void RestoreAction(Quest quest, QuestAct questAct, TimeSpan remaining)
+    {
+        base.InitializeAction(quest, questAct);
+        InitializeTimer(quest, questAct, remaining);
+    }
+
+    private void InitializeTimer(Quest quest, QuestAct questAct, TimeSpan? remaining = null)
+    {
         Logger.Debug($"{QuestActTemplateName}({DetailId}).InitializeAction Quest: {quest.TemplateId}, Owner {quest.Owner.Name} ({quest.Owner.Id})");
 
-        if (!QuestManager.Instance.AddQuestTimer(quest.Owner, quest, LimitTime))
+        var timerAdded = remaining.HasValue
+            ? QuestManager.Instance.RestoreQuestTimer(quest.Owner, quest, remaining.Value)
+            : QuestManager.Instance.AddQuestTimer(quest.Owner, quest, LimitTime);
+        if (!timerAdded)
             Logger.Warn($"{QuestActTemplateName}({DetailId}).InitializeAction Timer Already running, Quest {quest.TemplateId}, Owner {quest.Owner.Name} ({quest.Owner.Id})");
         else
             quest.Owner.Events.OnTimerExpired += questAct.OnTimerExpired;
@@ -90,7 +107,7 @@ public class QuestActCheckTimer(QuestComponentTemplate parentComponent) : QuestA
     /// <param name="args"></param>
     public override void OnTimerExpired(QuestAct questAct, object sender, OnTimerExpiredArgs args)
     {
-        if (questAct.Id != ActId)
+        if (questAct.Id != ActId || questAct.QuestComponent.Parent.Parent.TemplateId != args.QuestId)
             return;
 
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnTimerExpired Quest {args.QuestId}, Owner {questAct.QuestComponent.Parent.Parent.Owner.Name} ({questAct.QuestComponent.Parent.Parent.Owner.Id})");
@@ -108,7 +125,7 @@ public class QuestActCheckTimer(QuestComponentTemplate parentComponent) : QuestA
     /// <param name="args"></param>
     public override void OnQuestStepChanged(QuestAct questAct, object sender, OnQuestStepChangedArgs args)
     {
-        if (questAct.Id != ActId)
+        if (questAct.Id != ActId || questAct.QuestComponent.Parent.Parent.TemplateId != args.QuestId)
             return;
 
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnTimerExpired Quest {questAct.QuestComponent.Parent.Parent.TemplateId}, Owner {questAct.QuestComponent.Parent.Parent.Owner.Name} ({questAct.QuestComponent.Parent.Parent.Owner.Id})");

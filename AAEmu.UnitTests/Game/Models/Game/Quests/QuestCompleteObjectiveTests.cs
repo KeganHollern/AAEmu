@@ -108,8 +108,7 @@ public sealed class QuestCompleteObjectiveTests
 
         var parent = CreateParentQuest(owner, _manager, false);
         parent.ReadData(persistedParentData);
-        owner.Quests.ActiveQuests.Add(parent.TemplateId, parent);
-        parent.QuestInitialized();
+        owner.Quests.AddLoadedQuest(parent);
         _manager.DoQueuedEvaluations();
 
         for (var i = 0; i < s_targetQuestIds.Length - 1; i++)

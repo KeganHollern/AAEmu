@@ -1,5 +1,4 @@
-﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Models.Game.Char;
+﻿using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -10,6 +9,7 @@ namespace AAEmu.Game.Models.Game.Quests.Acts;
 public class QuestActObjZoneKill(QuestComponentTemplate parentComponent) : QuestActTemplate(parentComponent)
 {
     public override bool CountsAsAnObjective => true;
+    public override int Count => Math.Max(CountNpc, CountPlayerKill);
     public int CountPlayerKill { get; set; }
     public int CountNpc { get; set; }
     /// <summary>
@@ -56,13 +56,17 @@ public class QuestActObjZoneKill(QuestComponentTemplate parentComponent) : Quest
 
     public override void OnZoneKill(QuestAct questAct, object sender, OnZoneKillArgs args)
     {
-        if (questAct.Id != ActId)
+        if (questAct.Id != ActId || args.ZoneGroupId != ZoneId)
             return;
 
         var player = questAct.QuestComponent.Parent.Parent.Owner;
+        var isSourcePlayer = player.Id == args.Killer?.Id;
+        if (!isSourcePlayer &&
+            (!TeamShare || !QuestTeamShareEligibility.IsEligibleMember(args.Killer, player, args.Victim?.Transform)))
+            return;
 
         // If Party kills is not allowed, only allow kills from self
-        if (!IsParty && args.Killer.Id != player.Id)
+        if (!IsParty && !isSourcePlayer)
             return;
 
         // Ignore if victim is the killer (e.g. death from fall-damage)
@@ -78,31 +82,13 @@ public class QuestActObjZoneKill(QuestComponentTemplate parentComponent) : Quest
         if (CountNpc > 0 && victimNpc != null)
         {
             // NPC kills
-            if (NpcFactionId > 0)
-            {
-                if (NpcFactionExclusive && victimNpc.Faction.Id != NpcFactionId)
-                    valid = true;
-                if (!NpcFactionExclusive && victimNpc.Faction.Id == NpcFactionId)
-                    valid = true;
-            }
-
-            if (victimNpc.Level < LvlMinNpc || victimNpc.Level > LvlMaxNpc)
-                valid = false;
+            valid = MatchesKillTarget(victimNpc, NpcFactionId, NpcFactionExclusive, LvlMinNpc, LvlMaxNpc);
         }
 
         if (CountPlayerKill > 0 && victimPc != null)
         {
-            if (PcFactionId > 0)
-            {
-                // Player kills
-                if (PcFactionExclusive && victimPc.Faction.Id != PcFactionId)
-                    valid = true;
-                if (!PcFactionExclusive && victimPc.Faction.Id == PcFactionId)
-                    valid = true;
-            }
-
-            if (victimPc.Level < LvlMin || victimPc.Level > LvlMax)
-                valid = false;
+            // Player kills
+            valid = MatchesKillTarget(victimPc, PcFactionId, PcFactionExclusive, LvlMin, LvlMax);
         }
 
         if (valid)
@@ -111,27 +97,30 @@ public class QuestActObjZoneKill(QuestComponentTemplate parentComponent) : Quest
             AddObjective(questAct, 1);
 
             // Handle Team sharing (if needed)
-            if (TeamShare)
+            if (TeamShare && isSourcePlayer && !args.TeamShareAlreadyDistributed)
             {
-                // Delegate also to other team members
-                var myTeam = TeamManager.Instance.GetTeamByObjId(player.ObjId);
-                if (myTeam != null)
-                {
-                    foreach (var teamMember in myTeam.Members)
+                args.TeamShareAlreadyDistributed = true;
+                // Directly call OnZoneKill on eligible team members to avoid loops/duplicates
+                ShareWithEligibleTeamMembers(
+                    player,
+                    teamMember =>
                     {
-                        if (teamMember == null)
-                            continue;
-                        // Skip self
-                        if (teamMember.Character.Id == player.Id)
-                            continue;
-
-                        // TODO: Range check?
-
-                        // Directly call OnZoneKill on team members to avoid loops/duplicates
-                        teamMember.Character.Events.OnZoneKill(sender, args);
-                    }
-                }
+                        if (args.TeamShareRecipientExclusions?.Contains(teamMember.Id) != true)
+                            teamMember.Events.OnZoneKill(sender, args);
+                    },
+                    args.Victim.Transform);
             }
         }
+    }
+
+    private static bool MatchesKillTarget(Unit victim, FactionsEnum factionId, bool factionExclusive, int levelMin, int levelMax)
+    {
+        var matchesFaction = factionId == FactionsEnum.Invalid ||
+                             (victim.Faction != null && (factionExclusive
+                                 ? victim.Faction.Id != factionId
+                                 : victim.Faction.Id == factionId));
+        var matchesLevel = (levelMin <= 0 || victim.Level >= levelMin) &&
+                           (levelMax <= 0 || victim.Level <= levelMax);
+        return matchesFaction && matchesLevel;
     }
 }
