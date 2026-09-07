@@ -1,5 +1,4 @@
-﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Models.Game.Char;
+﻿using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -61,9 +60,13 @@ public class QuestActObjZoneKill(QuestComponentTemplate parentComponent) : Quest
             return;
 
         var player = questAct.QuestComponent.Parent.Parent.Owner;
+        var isSourcePlayer = player.Id == args.Killer?.Id;
+        if (!isSourcePlayer &&
+            (!TeamShare || !QuestTeamShareEligibility.IsEligibleMember(args.Killer, player, args.Victim?.Transform)))
+            return;
 
         // If Party kills is not allowed, only allow kills from self
-        if (!IsParty && args.Killer.Id != player.Id)
+        if (!IsParty && !isSourcePlayer)
             return;
 
         // Ignore if victim is the killer (e.g. death from fall-damage)
@@ -94,26 +97,18 @@ public class QuestActObjZoneKill(QuestComponentTemplate parentComponent) : Quest
             AddObjective(questAct, 1);
 
             // Handle Team sharing (if needed)
-            if (TeamShare)
+            if (TeamShare && isSourcePlayer && !args.TeamShareAlreadyDistributed)
             {
-                // Delegate also to other team members
-                var myTeam = TeamManager.Instance.GetTeamByObjId(player.ObjId);
-                if (myTeam != null)
-                {
-                    foreach (var teamMember in myTeam.Members)
+                args.TeamShareAlreadyDistributed = true;
+                // Directly call OnZoneKill on eligible team members to avoid loops/duplicates
+                ShareWithEligibleTeamMembers(
+                    player,
+                    teamMember =>
                     {
-                        if (teamMember == null)
-                            continue;
-                        // Skip self
-                        if (teamMember.Character.Id == player.Id)
-                            continue;
-
-                        // TODO: Range check?
-
-                        // Directly call OnZoneKill on team members to avoid loops/duplicates
-                        teamMember.Character.Events.OnZoneKill(sender, args);
-                    }
-                }
+                        if (args.TeamShareRecipientExclusions?.Contains(teamMember.Id) != true)
+                            teamMember.Events.OnZoneKill(sender, args);
+                    },
+                    args.Victim.Transform);
             }
         }
     }

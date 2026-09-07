@@ -1,6 +1,8 @@
-﻿using NLog;
-
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World.Transform;
+using NLog;
 
 namespace AAEmu.Game.Models.Game.Quests.Templates;
 
@@ -201,6 +203,34 @@ public class QuestActTemplate(QuestComponentTemplate parentComponent)
     public virtual void QuestDropped(Quest quest)
     {
         // Nothing by default
+    }
+
+    /// <summary>
+    /// Forwards a team-shared quest event to eligible members near its origin.
+    /// </summary>
+    /// <param name="sourcePlayer">Player that originated the quest event.</param>
+    /// <param name="shareAction">Event callback to invoke for each eligible member.</param>
+    /// <param name="rangeOrigin">Event transform used for the range check, or the source player's transform.</param>
+    protected static void ShareWithEligibleTeamMembers(
+        ICharacter sourcePlayer,
+        Action<Character> shareAction,
+        Transform rangeOrigin = null)
+    {
+        if (sourcePlayer == null)
+            return;
+
+        var team = TeamManager.Instance.GetTeamByObjId(sourcePlayer.ObjId);
+        if (team == null)
+            return;
+
+        foreach (var teamMember in team.Members)
+        {
+            var character = teamMember?.Character;
+            if (!QuestTeamShareEligibility.IsEligibleMember(sourcePlayer, character, rangeOrigin, team))
+                continue;
+
+            shareAction(character);
+        }
     }
 
     // The handlers here are the ones that actually do something.

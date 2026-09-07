@@ -193,7 +193,17 @@ public partial class QuestManager
     /// </summary>
     /// <param name="owner"></param>
     /// <param name="npc"></param>
-    public void DoOnMonsterHuntEvents(ICharacter owner, Npc npc)
+    /// <param name="teamShareAlreadyDistributed">
+    /// Whether <paramref name="owner"/> was selected by an upstream team-credit fan-out.
+    /// </param>
+    /// <param name="teamShareRecipientExclusions">
+    /// Team members that will receive the same kill through a separate direct delivery.
+    /// </param>
+    public void DoOnMonsterHuntEvents(
+        ICharacter owner,
+        Npc npc,
+        bool teamShareAlreadyDistributed = false,
+        IReadOnlySet<uint> teamShareRecipientExclusions = null)
     {
         if (npc == null)
             return;
@@ -225,7 +235,9 @@ public partial class QuestManager
         {
             ZoneGroupId = npcZoneGroupId,
             Killer = owner,
-            Victim = npc
+            Victim = npc,
+            TeamShareAlreadyDistributed = teamShareAlreadyDistributed,
+            TeamShareRecipientExclusions = teamShareRecipientExclusions
         });
     }
 
