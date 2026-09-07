@@ -183,7 +183,7 @@ public partial class Quest
                         character.Achievements?.Increment(progressEvents);
                     }
 
-                    Owner.Quests.DropQuest(TemplateId, false, false);
+                    Owner.Quests.CompleteQuest(TemplateId);
                     Owner.SendPacket(new SCQuestContextCompletedPacket(TemplateId, body, 0));
 
                     return;

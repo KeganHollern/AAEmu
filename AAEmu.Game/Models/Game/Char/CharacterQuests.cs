@@ -321,7 +321,20 @@ public class CharacterQuests(Character owner)
     }
 
     /// <summary>
-    /// Removes a quest
+    /// Completes a quest and removes it from the active quest list.
+    /// </summary>
+    /// <param name="questId"></param>
+    public void CompleteQuest(uint questId)
+    {
+        if (!ActiveQuests.TryGetValue(questId, out var quest)) { return; }
+
+        quest.SkipUpdatePackets(); // make sure no further "update packets" are send to the player
+        quest.Complete();
+        RemoveQuest(questId, quest, false);
+    }
+
+    /// <summary>
+    /// Drops a quest and removes it from the active quest list.
     /// </summary>
     /// <param name="questId"></param>
     /// <param name="update"></param>
@@ -331,8 +344,12 @@ public class CharacterQuests(Character owner)
         if (!ActiveQuests.TryGetValue(questId, out var quest)) { return; }
 
         quest.SkipUpdatePackets(); // make sure no further "update packets" are send to the player
-        quest.Cleanup();
         quest.Drop(update);
+        RemoveQuest(questId, quest, forcibly);
+    }
+
+    private void RemoveQuest(uint questId, Quest quest, bool forcibly)
+    {
         quest.FinalizeQuestActs();
         ActiveQuests.Remove(questId);
         _removed.Add(questId);
