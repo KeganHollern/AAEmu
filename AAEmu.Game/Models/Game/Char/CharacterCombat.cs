@@ -1,10 +1,11 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Achievement.Enums;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
@@ -405,34 +406,46 @@ public partial class Character
                 }
             }
 
-            if (backpackDoodadId > 0 && Inventory.SystemContainer.AddOrMoveExistingItem(Items.Actions.ItemTaskType.DropBackpack, item))
+            if (backpackDoodadId == 0)
+                return;
+
+            var placementPolicy = Transform.Parent is not null || Transform.StickyParent is not null
+                ? DynamicDoodadPlacementPolicy.PreserveParentedHeight
+                : DynamicDoodadPlacementPolicy.GroundToNearbySurface;
+            if (!DynamicDoodadPlacement.TryResolve(ParentWorld.Template.GeoData, Transform.World.Position,
+                    placementPolicy, out var placementPosition))
             {
-                // Spawn doodad
-                Logger.Trace("Spawn tradepack on floor on death");
-
-                var doodad = DoodadManager.Instance.Create(ParentWorld, 0, backpackDoodadId, this, true);
-                if (doodad == null)
-                {
-                    Logger.Warn($"Doodad {backpackDoodadId}, from BackpackDoodadId could not be created");
-                    return;
-                }
-
-                doodad.IsPersistent = true;
-                doodad.Transform = Transform.CloneDetached(doodad);
-                doodad.Transform.Local.SetHeight(doodad.ParentWorld.Template.GeoData.GetHeight(doodad.Transform.World.Position));
-                doodad.AttachPoint = AttachPointKind.None;
-                doodad.ItemId = item.Id;
-                doodad.ItemTemplateId = item.Template.Id;
-                doodad.UccId = item.UccId;
-                doodad.SetScale(1f);
-                doodad.PlantTime = DateTime.UtcNow;
-                doodad.InitDoodad();
-                doodad.Spawn();
-                doodad.Save();
-
-                BroadcastPacket(new SCUnitEquipmentsChangedPacket(ObjId, (byte)EquipmentItemSlot.Backpack, null), false);
+                Logger.Warn($"Cannot place trade pack doodad {backpackDoodadId} for character {Id} at {Transform.World.Position}");
+                return;
             }
 
+            if (!Inventory.SystemContainer.AddOrMoveExistingItem(Items.Actions.ItemTaskType.DropBackpack, item))
+                return;
+
+            // Spawn doodad
+            Logger.Trace("Spawn tradepack on floor on death");
+
+            var doodad = DoodadManager.Instance.Create(ParentWorld, 0, backpackDoodadId, this, true);
+            if (doodad == null)
+            {
+                Logger.Warn($"Doodad {backpackDoodadId}, from BackpackDoodadId could not be created");
+                return;
+            }
+
+            doodad.IsPersistent = true;
+            doodad.Transform = Transform.CloneDetached(doodad);
+            doodad.Transform.Local.SetPosition(placementPosition);
+            doodad.AttachPoint = AttachPointKind.None;
+            doodad.ItemId = item.Id;
+            doodad.ItemTemplateId = item.Template.Id;
+            doodad.UccId = item.UccId;
+            doodad.SetScale(1f);
+            doodad.PlantTime = DateTime.UtcNow;
+            doodad.InitDoodad();
+            doodad.Spawn();
+            doodad.Save();
+
+            BroadcastPacket(new SCUnitEquipmentsChangedPacket(ObjId, (byte)EquipmentItemSlot.Backpack, null), false);
         }
     }
 

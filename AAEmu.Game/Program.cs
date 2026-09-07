@@ -146,6 +146,9 @@ public static class Program
                 services.AddSingleton<ChatManager>();
                 services.AddSingleton<IChatManager>(sp => sp.GetRequiredService<ChatManager>());
 
+                services.AddSingleton<ChatSpamManager>();
+                services.AddSingleton<IChatSpamManager>(sp => sp.GetRequiredService<ChatSpamManager>());
+
                 services.AddSingleton<CommandManager>();
                 services.AddSingleton<ICommandManager>(sp => sp.GetRequiredService<CommandManager>());
 

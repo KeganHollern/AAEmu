@@ -1,4 +1,6 @@
-﻿using AAEmu.Commons.Utils;
+﻿using System.Globalization;
+
+using AAEmu.Commons.Utils;
 using AAEmu.Game.GameData;
 using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.Models.Game.Schedules;
@@ -14,18 +16,20 @@ using DayOfWeek = AAEmu.Game.Models.Game.Schedules.DayOfWeek;
 namespace AAEmu.Game.Core.Managers;
 
 public class GameScheduleManager(
-    IGameDataManager gameDataManager  // ensures GameDataManager.Load() runs before this Load()
+    IGameDataManager gameDataManager, // ensures GameDataManager.Load() runs before this Load()
+    TimeProvider timeProvider
 ) : Singleton<GameScheduleManager>, IGameScheduleManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private readonly IGameDataManager _gameDataManager = gameDataManager;
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private bool _loaded = false;
-    private Dictionary<int, GameSchedules> _gameSchedules; // GameScheduleId, GameSchedules
-    private Dictionary<int, GameScheduleSpawners> _gameScheduleSpawners;
-    private Dictionary<int, List<int>> _gameScheduleSpawnerIds;
-    private Dictionary<int, GameScheduleDoodads> _gameScheduleDoodads;
-    private Dictionary<int, List<int>> _gameScheduleDoodadIds;
-    private Dictionary<int, GameScheduleQuests> _gameScheduleQuests;
+    private Dictionary<int, GameSchedules> _gameSchedules = []; // GameScheduleId, GameSchedules
+    private Dictionary<int, GameScheduleSpawners> _gameScheduleSpawners = [];
+    private Dictionary<int, List<int>> _gameScheduleSpawnerIds = [];
+    private Dictionary<int, GameScheduleDoodads> _gameScheduleDoodads = [];
+    private Dictionary<int, List<int>> _gameScheduleDoodadIds = [];
+    private Dictionary<int, GameScheduleQuests> _gameScheduleQuests = [];
     private List<int> GameScheduleId { get; set; }
 
     public void Load()
@@ -36,8 +40,6 @@ public class GameScheduleManager(
         Logger.Info("Loading schedules...");
 
         SchedulesGameData.Instance.PostLoad();
-
-        LoadGameScheduleSpawnersData(); // добавил разделение spawnerId для Npc & Doodads
 
         Logger.Info("Loaded schedules");
 
@@ -57,11 +59,35 @@ public class GameScheduleManager(
     public void LoadGameScheduleSpawners(Dictionary<int, GameScheduleSpawners> gameScheduleSpawners)
     {
         _gameScheduleSpawners = gameScheduleSpawners;
+        _gameScheduleSpawnerIds = [];
+        foreach (var gameScheduleSpawner in _gameScheduleSpawners.Values)
+        {
+            if (!_gameScheduleSpawnerIds.TryGetValue(gameScheduleSpawner.SpawnerId, out var gameScheduleIds))
+            {
+                _gameScheduleSpawnerIds.Add(gameScheduleSpawner.SpawnerId, [gameScheduleSpawner.GameScheduleId]);
+            }
+            else
+            {
+                gameScheduleIds.Add(gameScheduleSpawner.GameScheduleId);
+            }
+        }
     }
 
     public void LoadGameScheduleDoodads(Dictionary<int, GameScheduleDoodads> gameScheduleDoodads)
     {
         _gameScheduleDoodads = gameScheduleDoodads;
+        _gameScheduleDoodadIds = [];
+        foreach (var gameScheduleDoodad in _gameScheduleDoodads.Values)
+        {
+            if (!_gameScheduleDoodadIds.TryGetValue(gameScheduleDoodad.DoodadId, out var gameScheduleIds))
+            {
+                _gameScheduleDoodadIds.Add(gameScheduleDoodad.DoodadId, [gameScheduleDoodad.GameScheduleId]);
+            }
+            else
+            {
+                gameScheduleIds.Add(gameScheduleDoodad.GameScheduleId);
+            }
+        }
     }
 
     public void LoadGameScheduleQuests(Dictionary<int, GameScheduleQuests> gameScheduleQuests)
@@ -161,139 +187,52 @@ public class GameScheduleManager(
     /// <returns>The overall period status.</returns>
     private PeriodStatus CheckPeriodStatus(List<int> ids)
     {
-        // var hasNotStarted = true;  // Assume that no period has started
-        var hasInProgress = false; // Assume that no period is in progress
-        var hasEnded = false;      // Assume that no period has ended
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var hasSchedule = false;
+        var hasNotEnded = false;
 
         foreach (var gameScheduleId in ids)
         {
             if (_gameSchedules.TryGetValue(gameScheduleId, out var gs))
             {
-                var (started, ended) = CheckData(gs);
-
-                if (started && !ended)
-                {
-                    hasInProgress = true;  // The period has started, but has not yet ended
-                    // hasNotStarted = false; // At least one period has started, so "hasn't started" = false
-                }
-                else if (ended)
-                {
-                    hasEnded = true;       // At least one period has ended
-                    // hasNotStarted = false; // At least one period has ended, so "hasn't started" = false
-                }
+                hasSchedule = true;
+                var (isActive, hasEnded) = CheckData(gs, now);
+                if (isActive)
+                    return PeriodStatus.InProgress;
+                if (!hasEnded)
+                    hasNotEnded = true;
             }
         }
 
-        // Determine the final status
-        if (hasInProgress)
-            return PeriodStatus.InProgress;
-        if (hasEnded)
-            return PeriodStatus.Ended;
-        return PeriodStatus.NotStarted;
-    }
-
-    public string GetCronRemainingTime(int spawnerId, bool start = true)
-    {
-        var cronExpression = Empty;
-        if (!_gameScheduleSpawnerIds.TryGetValue(spawnerId, out var _gameScheduleIds))
-        {
-            return cronExpression;
-        }
-
-        foreach (var gameScheduleId in _gameScheduleIds)
-        {
-            if (!_gameSchedules.TryGetValue(gameScheduleId, out var gameSchedules)) { continue; }
-
-            try
-            {
-                cronExpression = start ? GetCronExpression(gameSchedules, true) : GetCronExpression(gameSchedules, false);
-            }
-            catch (Exception e)
-            {
-                Logger.Info($"Error Spawning Npc {e}");
-                throw;
-            }
-        }
-
-        return cronExpression;
-    }
-
-    public string GetDoodadCronRemainingTime(int doodadId, bool start = true)
-    {
-        var cronExpression = Empty;
-        if (!_gameScheduleDoodadIds.TryGetValue(doodadId, out var value))
-        {
-            return cronExpression;
-        }
-
-        foreach (var gameScheduleId in value)
-        {
-            if (!_gameSchedules.TryGetValue(gameScheduleId, out var gameSchedules)) { continue; }
-
-            cronExpression = start ? GetCronExpression(gameSchedules, true) : GetCronExpression(gameSchedules, false);
-        }
-
-        return cronExpression;
+        return hasSchedule && !hasNotEnded ? PeriodStatus.Ended : PeriodStatus.NotStarted;
     }
 
     public TimeSpan GetRemainingTime(int spawnerId, bool start = true)
     {
-        if (!_gameScheduleSpawnerIds.TryGetValue(spawnerId, out var value))
-        {
+        if (!_gameScheduleSpawnerIds.TryGetValue(spawnerId, out var gameScheduleIds))
             return TimeSpan.Zero;
-        }
 
-        var remainingTime = TimeSpan.MaxValue;
+        return GetRemainingTime(gameScheduleIds, start);
+    }
 
-        foreach (var gameScheduleId in value)
-        {
-            if (!_gameSchedules.TryGetValue(gameScheduleId, out var gameSchedules)) { continue; }
+    public TimeSpan GetDoodadRemainingTime(int doodadId, bool start = true)
+    {
+        if (!_gameScheduleDoodadIds.TryGetValue(doodadId, out var gameScheduleIds))
+            return TimeSpan.Zero;
 
-            var timeSpan = start ? GetRemainingTimeStart(gameSchedules) : GetRemainingTimeEnd(gameSchedules);
-            if (timeSpan <= remainingTime)
-            {
-                remainingTime = timeSpan;
-            }
-        }
+        return GetRemainingTime(gameScheduleIds, start);
+    }
 
-        return remainingTime;
+    private TimeSpan GetRemainingTime(IReadOnlyList<int> gameScheduleIds, bool start)
+    {
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var occurrence = FindNextOccurrence(gameScheduleIds, start, now);
+        return occurrence.HasValue ? occurrence.Value.OccursAt - now : TimeSpan.MaxValue;
     }
 
     public bool HasGameScheduleSpawnersData(uint spawnerTemplateId)
     {
         return _gameScheduleSpawners.Values.Any(gss => gss.SpawnerId == spawnerTemplateId);
-    }
-
-    private void LoadGameScheduleSpawnersData()
-    {
-        // Spawners
-        _gameScheduleSpawnerIds = [];
-        foreach (var gss in _gameScheduleSpawners.Values)
-        {
-            if (!_gameScheduleSpawnerIds.TryGetValue(gss.SpawnerId, out var gameScheduleIds))
-            {
-                _gameScheduleSpawnerIds.Add(gss.SpawnerId, [gss.GameScheduleId]);
-            }
-            else
-            {
-                gameScheduleIds.Add(gss.GameScheduleId);
-            }
-        }
-
-        // Doodads
-        _gameScheduleDoodadIds = [];
-        foreach (var gsd in _gameScheduleDoodads.Values)
-        {
-            if (!_gameScheduleDoodadIds.TryGetValue(gsd.DoodadId, out var gameScheduleIds))
-            {
-                _gameScheduleDoodadIds.Add(gsd.DoodadId, [gsd.GameScheduleId]);
-            }
-            else
-            {
-                gameScheduleIds.Add(gsd.GameScheduleId);
-            }
-        }
-        //TODO: quests data
     }
 
     public bool GetGameScheduleDoodadsData(uint doodadId)
@@ -318,108 +257,192 @@ public class GameScheduleManager(
         return GameScheduleId.Count != 0;
     }
 
-    private static (bool hasStarted, bool hasEnded) CheckData(GameSchedules value)
+    private ScheduleOccurrence? FindNextOccurrence(IReadOnlyList<int> gameScheduleIds, bool start, DateTime now)
     {
-        var now = DateTime.UtcNow;
-        var currentTime = now.TimeOfDay;
-        var currentDate = now.Date;
+        ScheduleOccurrence? next = null;
 
-        // Преобразуем стандартный DayOfWeek в ваш кастомный DayOfWeek
-        var currentDayOfWeek = (DayOfWeek)((int)now.DayOfWeek + 1);
-
-        // Проверка на нулевые дату и месяц
-        var startDate = value is { StYear: > 0, StMonth: > 0, StDay: > 0 }
-            ? new DateTime(value.StYear, value.StMonth, value.StDay)
-            : DateTime.MinValue;
-
-        var endDate = value is { EdYear: > 0, EdMonth: > 0, EdDay: > 0 }
-            ? new DateTime(value.EdYear, value.EdMonth, value.EdDay)
-            : DateTime.MaxValue;
-
-        var startTime = new TimeSpan(value.StartTime, value.StartTimeMin, 0);
-        var endTime = new TimeSpan(value.EndTime, value.EndTimeMin, 0);
-
-        var hasStarted = false;
-        var hasEnded = false;
-
-        // Проверка на попадание в период по дате и времени
-        if ((startDate == DateTime.MinValue || currentDate > startDate || (currentDate == startDate && currentTime >= startTime)) &&
-            (endDate == DateTime.MaxValue || currentDate < endDate || (currentDate == endDate && currentTime <= endTime)))
+        foreach (var gameScheduleId in gameScheduleIds)
         {
-            // Проверка на попадание в период по дню недели
-            if (currentDayOfWeek == value.DayOfWeekId || value.DayOfWeekId == DayOfWeek.Invalid)
+            if (!_gameSchedules.TryGetValue(gameScheduleId, out var gameSchedule))
+                continue;
+
+            var candidate = GetNextOccurrence(gameScheduleId, gameSchedule, start, now);
+            if (!candidate.HasValue)
+                continue;
+
+            if (!next.HasValue || candidate.Value.OccursAt < next.Value.OccursAt ||
+                (candidate.Value.OccursAt == next.Value.OccursAt && candidate.Value.ScheduleId < next.Value.ScheduleId))
             {
-                hasStarted = true;
+                next = candidate;
             }
         }
 
-        // Проверка на окончание периода
-        if (endDate != DateTime.MaxValue && (currentDate > endDate || (currentDate == endDate && currentTime >= endTime)))
-        {
-            hasEnded = true;
-        }
-
-        return (hasStarted, hasEnded);
+        return next;
     }
 
-    private static (bool hasStarted, bool hasEnded) CheckData0(GameSchedules value)
+    internal static (bool isActive, bool hasEnded) CheckData(GameSchedules value, DateTime now)
     {
-        var now = DateTime.UtcNow;
+        var absoluteStart = GetAbsoluteBoundary(value, true);
+        var absoluteEnd = GetAbsoluteBoundary(value, false);
+
+        if (absoluteEnd.HasValue && now >= absoluteEnd.Value)
+            return (false, true);
+        if (absoluteStart.HasValue && now < absoluteStart.Value)
+            return (false, false);
+
+        return (IsInRecurringWindow(value, now), false);
+    }
+
+    private static ScheduleOccurrence? GetNextOccurrence(int scheduleId, GameSchedules value, bool start, DateTime now)
+    {
+        var absoluteEnd = GetAbsoluteBoundary(value, false);
+        if (absoluteEnd.HasValue && now >= absoluteEnd.Value)
+            return null;
+
+        return HasRecurrence(value)
+            ? GetNextRecurringOccurrence(scheduleId, value, start, now)
+            : GetNextAbsoluteOccurrence(scheduleId, value, start, now);
+    }
+
+    private static ScheduleOccurrence? GetNextAbsoluteOccurrence(int scheduleId, GameSchedules value, bool start, DateTime now)
+    {
+        var boundary = GetAbsoluteBoundary(value, start);
+        if (!boundary.HasValue || boundary.Value <= now)
+            return null;
+
+        return new ScheduleOccurrence(boundary.Value, scheduleId);
+    }
+
+    private static ScheduleOccurrence? GetNextRecurringOccurrence(int scheduleId, GameSchedules value, bool start, DateTime now)
+    {
+        var absoluteStart = GetAbsoluteBoundary(value, true);
+        var absoluteEnd = GetAbsoluteBoundary(value, false);
+        var cronExpression = GetCronExpression(value, start);
+        var schedule = CrontabSchedule.Parse(cronExpression, TaskManager.s_crontabScheduleParseOptions);
+        var searchFrom = absoluteStart.HasValue && absoluteStart.Value > now
+            ? absoluteStart.Value.AddTicks(-1)
+            : now;
+        DateTime? nextTime = null;
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var candidate = schedule.GetNextOccurrence(searchFrom);
+            var withinEnd = !absoluteEnd.HasValue || (start ? candidate < absoluteEnd.Value : candidate <= absoluteEnd.Value);
+            if (!withinEnd)
+                break;
+
+            var isTransition = start
+                ? IsInRecurringWindow(value, candidate)
+                : candidate > DateTime.MinValue &&
+                  (!absoluteStart.HasValue || candidate.AddTicks(-1) >= absoluteStart.Value) &&
+                  IsInRecurringWindow(value, candidate.AddTicks(-1));
+            if (isTransition)
+            {
+                nextTime = candidate;
+                break;
+            }
+
+            searchFrom = candidate;
+        }
+
+        if (start && absoluteStart.HasValue && absoluteStart.Value > now &&
+            (!absoluteEnd.HasValue || absoluteStart.Value < absoluteEnd.Value) &&
+            IsInRecurringWindow(value, absoluteStart.Value) &&
+            (!nextTime.HasValue || absoluteStart.Value < nextTime.Value))
+        {
+            nextTime = absoluteStart.Value;
+        }
+
+        if (!start && absoluteEnd.HasValue && absoluteEnd.Value > now)
+        {
+            var justBeforeEnd = absoluteEnd.Value.AddTicks(-1);
+            if ((!absoluteStart.HasValue || justBeforeEnd >= absoluteStart.Value) &&
+                IsInRecurringWindow(value, justBeforeEnd) &&
+                (!nextTime.HasValue || absoluteEnd.Value < nextTime.Value))
+            {
+                nextTime = absoluteEnd.Value;
+            }
+        }
+
+        return nextTime.HasValue
+            ? new ScheduleOccurrence(nextTime.Value, scheduleId)
+            : null;
+    }
+
+    private static bool IsInRecurringWindow(GameSchedules value, DateTime now)
+    {
+        if (!HasRecurringClock(value))
+            return IsScheduledWeekday(value, now.DayOfWeek);
+
         var currentTime = now.TimeOfDay;
-        var currentDate = now.Date;
+        var startTime = GetRecurringTime(value, true);
+        var endTime = GetRecurringTime(value, false);
 
-        var startDate = new DateTime(value.StYear, value.StMonth, value.StDay);
-        var endDate = new DateTime(value.EdYear, value.EdMonth, value.EdDay);
-        var startTime = new TimeSpan(value.StartTime, value.StartTimeMin, 0);
-        var endTime = new TimeSpan(value.EndTime, value.EndTimeMin, 0);
-
-        var hasStarted = false;
-        var hasEnded = false;
-
-        // Check if the period has started
-        if (currentDate > startDate || (currentDate == startDate && currentTime >= startTime))
+        if (startTime < endTime)
         {
-            hasStarted = true;
+            return IsScheduledWeekday(value, now.DayOfWeek) &&
+                   currentTime >= startTime && currentTime < endTime;
         }
 
-        // Check if the period has ended
-        if (currentDate > endDate || (currentDate == endDate && currentTime >= endTime))
-        {
-            hasEnded = true;
-        }
-
-        return (hasStarted, hasEnded);
+        var previousDay = (System.DayOfWeek)(((int)now.DayOfWeek + 6) % 7);
+        return (IsScheduledWeekday(value, now.DayOfWeek) && currentTime >= startTime) ||
+               (IsScheduledWeekday(value, previousDay) && currentTime < endTime);
     }
 
-    private static TimeSpan GetRemainingTimeStart(GameSchedules value)
+    private static bool IsScheduledWeekday(GameSchedules value, System.DayOfWeek dayOfWeek)
     {
-        var cronExpression = GetCronExpression(value, true);
-        var schedule = CrontabSchedule.Parse(cronExpression, TaskManager.s_crontabScheduleParseOptions);
-        return schedule.GetNextOccurrence(DateTime.UtcNow) - DateTime.UtcNow;
+        var cronDay = GetCronDayOfWeek(value.DayOfWeekId);
+        return !cronDay.HasValue || cronDay.Value == (int)dayOfWeek;
     }
 
-    private static TimeSpan GetRemainingTimeEnd(GameSchedules value)
+    private static bool HasRecurrence(GameSchedules value)
     {
-        var cronExpression = GetCronExpression(value, false);
-        var schedule = CrontabSchedule.Parse(cronExpression, TaskManager.s_crontabScheduleParseOptions);
-        return schedule.GetNextOccurrence(DateTime.UtcNow) - DateTime.UtcNow;
+        return HasRecurringClock(value) || GetCronDayOfWeek(value.DayOfWeekId).HasValue;
     }
 
-    private static string GetCronExpression(GameSchedules value, bool start = true)
+    private static bool HasRecurringClock(GameSchedules value)
     {
-        /*
-            Cron-выражение состоит из 6 или 7 полей:
-            1. Секунды (0-59)
-            2. Минуты (0-59)
-            3. Часы (0-23)
-            4. День месяца (1-31)
-            5. Месяц (1-12)
-            6. День недели (0-7, где 0 и 7 — воскресенье)
-            7. Год (опционально, не поддерживается в стандартных cron)
-        */
+        return value.StartTime != 0 || value.StartTimeMin != 0 || value.EndTime != 0 || value.EndTimeMin != 0;
+    }
 
-        // Convert DayOfWeek to cron format (0-7, where 0 and 7 are Sunday)
-        var dayOfWeek = value.DayOfWeekId switch
+    private static TimeSpan GetRecurringTime(GameSchedules value, bool start)
+    {
+        return start
+            ? new TimeSpan(value.StartTime, value.StartTimeMin, 0)
+            : new TimeSpan(value.EndTime, value.EndTimeMin, 0);
+    }
+
+    private static DateTime? GetAbsoluteBoundary(GameSchedules value, bool start)
+    {
+        var year = start ? value.StYear : value.EdYear;
+        var month = start ? value.StMonth : value.EdMonth;
+        var day = start ? value.StDay : value.EdDay;
+        if (year <= 0 || month <= 0 || day <= 0)
+            return null;
+
+        var hour = start ? value.StHour : value.EdHour;
+        var minute = start ? value.StMin : value.EdMin;
+        return new DateTime(year, month, day, hour, minute, 0, DateTimeKind.Utc);
+    }
+
+    internal static string GetCronExpression(GameSchedules value, bool start = true)
+    {
+        if (!HasRecurrence(value))
+            return Empty;
+
+        var hour = start ? value.StartTime : value.EndTime;
+        var minute = start ? value.StartTimeMin : value.EndTimeMin;
+        var dayOfWeek = GetCronDayOfWeek(value.DayOfWeekId);
+        if (!start && dayOfWeek.HasValue && GetRecurringTime(value, false) <= GetRecurringTime(value, true))
+            dayOfWeek = (dayOfWeek.Value + 1) % 7;
+
+        var dayOfWeekField = dayOfWeek.HasValue ? FormatCronValue(dayOfWeek.Value) : "*";
+        return $"0 {FormatCronValue(minute)} {FormatCronValue(hour)} * * {dayOfWeekField}";
+    }
+
+    private static int? GetCronDayOfWeek(DayOfWeek dayOfWeek)
+    {
+        return dayOfWeek switch
         {
             DayOfWeek.Sunday => 0,
             DayOfWeek.Monday => 1,
@@ -428,172 +451,14 @@ public class GameScheduleManager(
             DayOfWeek.Thursday => 4,
             DayOfWeek.Friday => 5,
             DayOfWeek.Saturday => 6,
-            _ => (int)DayOfWeek.Invalid // Use Invalid to mean "not specified".
+            _ => null
         };
-
-        // Get time and date values
-        var stMonth = value.StMonth;
-        var stDay = value.StDay;
-        var stHour = start ? value.StHour : value.EdHour;
-        var stMinute = start ? value.StMin : value.EdMin;
-
-        var edMonth = value.EdMonth;
-        var edDay = value.EdDay;
-        var edHour = value.EdHour;
-        var edMinute = value.EdMin;
-
-        var startTime = value.StartTime;
-        var startTimeMin = value.StartTimeMin;
-        var endTime = value.EndTime;
-        var endTimeMin = value.EndTimeMin;
-
-        string cronExpression;
-
-        if (value.DayOfWeekId == DayOfWeek.Invalid)
-        {
-            switch (start)
-            {
-                case true:
-                    {
-                        switch (value)
-                        {
-                            case { StartTime: 0, EndTime: 0, StMonth: 0, StDay: 0, StHour: 0 }:
-                                {
-                                    cronExpression = BuildCronExpression(0, 0, 0, stDay, stMonth, (int)DayOfWeek.Invalid);
-                                    break;
-                                }
-                            case { EndTime: > 0, StMonth: 0, StDay: 0, StHour: 0 }:
-                            case { EndTime: > 0, StMonth: > 0, StDay: > 0 }:
-                                {
-                                    cronExpression = BuildCronExpression(0, startTimeMin, startTime, stDay, stMonth, (int)DayOfWeek.Invalid);
-                                    break;
-                                }
-                            //case { StartTime: 0, EndTime: 0, StMonth: 0, StDay: 0 }:
-                            //case { StartTime: 0, EndTime: 0, StMonth: > 0, StDay: > 0 }:
-                            //    {
-                            //        cronExpression = BuildCronExpression(0, stMinute, stHour, stDay, stMonth, (int)DayOfWeek.Invalid);
-                            //        break;
-                            //    }
-                            default:
-                                {
-                                    cronExpression = BuildCronExpression(0, stMinute, stHour, stDay, stMonth, (int)DayOfWeek.Invalid);
-                                    break;
-                                }
-                        }
-
-                        break;
-                    }
-                default:
-                    {
-                        switch (value)
-                        {
-                            case { StartTime: 0, EndTime: 0, EdMonth: 0, EdDay: 0, EdHour: 0 }:
-                                {
-                                    cronExpression = BuildCronExpression(0, 0, 0, edDay, edMonth, (int)DayOfWeek.Invalid);
-                                    break;
-                                }
-                            case { EndTime: > 0, EdMonth: 0, EdDay: 0, EdHour: 0 }:
-                            case { EndTime: > 0, EdMonth: > 0, EdDay: > 0 }:
-                                {
-                                    cronExpression = BuildCronExpression(0, endTimeMin, endTime, edDay, edMonth, (int)DayOfWeek.Invalid);
-                                    break;
-                                }
-                            //case { StartTime: 0, EndTime: 0, EdMonth: 0, EdDay: 0 }:
-                            //case { StartTime: 0, EndTime: 0, EdMonth: > 0, EdDay: > 0 }:
-                            //    {
-                            //        cronExpression = BuildCronExpression(0, edMinute, edHour, edDay, edMonth, (int)DayOfWeek.Invalid);
-                            //        break;
-                            //    }
-                            default:
-                                {
-                                    cronExpression = BuildCronExpression(0, edMinute, edHour, edDay, edMonth, (int)DayOfWeek.Invalid);
-                                    break;
-                                }
-                        }
-
-                        break;
-                    }
-            }
-        }
-        else
-        {
-            switch (start)
-            {
-                case true:
-                    {
-                        switch (value)
-                        {
-                            case { StartTime: 0, EndTime: 0, StMonth: 0, StDay: 0, StHour: 0 }:
-                                {
-                                    cronExpression = BuildCronExpression(0, 0, 0, stDay, stMonth, dayOfWeek);
-                                    break;
-                                }
-                            case { EndTime: > 0, StMonth: 0, StDay: 0, StHour: 0 }:
-                            case { EndTime: > 0, StMonth: > 0, StDay: > 0 }:
-                                {
-                                    cronExpression = BuildCronExpression(0, startTimeMin, startTime, stDay, stMonth, dayOfWeek);
-                                    break;
-                                }
-                            //case { StartTime: 0, EndTime: 0, StMonth: 0, StDay: 0 }:
-                            //case { StartTime: 0, EndTime: 0, StMonth: > 0, StDay: > 0 }:
-                            //    {
-                            //        cronExpression = BuildCronExpression(stMinute, stHour, stDay, stMonth, dayOfWeek);
-                            //        break;
-                            //    }
-                            default:
-                                {
-                                    cronExpression = BuildCronExpression(0, stMinute, stHour, stDay, stMonth, dayOfWeek);
-                                    break;
-                                }
-                        }
-
-                        break;
-                    }
-                default:
-                    {
-                        switch (value)
-                        {
-                            case { StartTime: 0, EndTime: 0, EdMonth: 0, EdDay: 0, EdHour: 0 }:
-                                {
-                                    cronExpression = BuildCronExpression(0, 0, 0, edDay, edMonth, dayOfWeek);
-                                    break;
-                                }
-                            case { EndTime: > 0, EdMonth: 0, EdDay: 0, EdHour: 0 }:
-                            case { EndTime: > 0, EdMonth: > 0, EdDay: > 0 }:
-                                {
-                                    cronExpression = BuildCronExpression(0, endTimeMin, endTime, edDay, edMonth, dayOfWeek);
-                                    break;
-                                }
-                            //case { StartTime: 0, EndTime: 0, EdMonth: 0, EdDay: 0 }:
-                            //case { StartTime: 0, EndTime: 0, EdMonth: > 0, EdDay: > 0 }:
-                            //    {
-                            //        cronExpression = BuildCronExpression(edMinute, edHour, edDay, edMonth, dayOfWeek);
-                            //        break;
-                            //    }
-                            default:
-                                {
-                                    cronExpression = BuildCronExpression(0, edMinute, edHour, edDay, edMonth, dayOfWeek);
-                                    break;
-                                }
-                        }
-
-                        break;
-                    }
-            }
-        }
-
-        cronExpression = cronExpression.Replace("?", "*"); // Crontab doesn't support ?, so we replace it with */1 instead
-
-        return cronExpression;
-
-        // Local function for forming cron-expression
-        string BuildCronExpression(int seconds, int minute, int hour, int day, int month, int dayOfWeekCron)
-        {
-            return dayOfWeek switch
-            {
-                8 => $"{seconds} {minute} {hour} {day} {month} *",
-                _ => $"{seconds} {minute} {hour} {day} {month} {dayOfWeekCron}"
-            };
-        }
     }
+
+    private static string FormatCronValue(int value)
+    {
+        return value.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private readonly record struct ScheduleOccurrence(DateTime OccursAt, int ScheduleId);
 }
