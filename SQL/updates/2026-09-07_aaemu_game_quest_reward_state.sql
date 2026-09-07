@@ -1,0 +1,1 @@
+ALTER TABLE `quests` MODIFY COLUMN `data` BLOB NOT NULL;

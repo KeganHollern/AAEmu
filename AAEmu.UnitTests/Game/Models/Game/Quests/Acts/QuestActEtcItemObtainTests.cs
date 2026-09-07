@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
@@ -108,7 +108,9 @@ public sealed class QuestActEtcItemObtainTests
         var owner = CreateOwner(7);
         var quest = CreateQuest(template, owner);
         quest.Step = QuestComponentKind.Progress;
-        var legacyData = quest.WriteData()[..^2];
+        // Original persisted fields: five objectives, step/acceptor kind, two IDs, and a 64-bit timestamp.
+        const int legacyDataLength = 5 * sizeof(int) + 2 * sizeof(byte) + 2 * sizeof(uint) + sizeof(long);
+        var legacyData = quest.WriteData()[..legacyDataLength];
 
         _questManager.DoItemsAcquiredEvents(owner, ItemTemplateId, 2);
         await Assert.That(GetObtainAct(quest, ObtainActId).RunAct()).IsTrue();

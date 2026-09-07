@@ -4,7 +4,7 @@ using AAEmu.Game.Models.Game.Quests.Templates;
 
 namespace AAEmu.Game.Core.Managers;
 
-public interface IQuestManager : ILoadable
+public interface IQuestManager : ILoadable, IInitializable
 {
     void FailQuest(ICharacter owner, uint questId);
     bool CheckGroupItem(uint groupId, uint itemId);

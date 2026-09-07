@@ -1,5 +1,4 @@
-﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Models.Game.Char;
+﻿using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Quests.Static;
@@ -34,17 +33,11 @@ public class QuestActSupplyItem(QuestComponentTemplate parentComponent) : QuestA
         if (ParentComponent.KindId < QuestComponentKind.Reward && quest.Owner.Inventory.GetAllItemsByTemplate(null, ItemId, -1, out _, out var foundCount))
             toAddCount -= foundCount;
 
-        if (toAddCount < 0)
+        if (toAddCount <= 0)
             return true;
 
-        if (quest.Owner is Character player)
+        if (quest.Owner is Character)
         {
-            // If a backpack, directly handle it, otherwise use the reward pool
-            if (ItemManager.Instance.IsAutoEquipTradePack(ItemId))
-            {
-                return player.Inventory.TryEquipNewBackPack(ItemTaskType.QuestSupplyItems, ItemId, toAddCount, GradeId);
-            }
-
             // Add item to reward pool (pool gets distributed and reset at the end of each step)
             quest.QuestRewardItemsPool.Add(new ItemCreationDefinition(ItemId, toAddCount, GradeId));
             return true;

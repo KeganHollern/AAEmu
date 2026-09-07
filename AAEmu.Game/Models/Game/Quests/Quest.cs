@@ -314,45 +314,18 @@ public partial class Quest : PacketMarshaler
     /// <returns></returns>
     public bool DistributeRewards(bool addBaseQuestReward)
     {
-        var res = true;
-        // Distribute Items if needed
-        if (QuestRewardItemsPool.Count > 0 && AllowItemRewards)
-        {
-            // TODO: Add a way to distribute honor or vocation badges in mail as well
-            if (Owner.Inventory.Bag.FreeSlotCount < QuestRewardItemsPool.Count)
-            {
-                var mails = MailManager.Instance.CreateQuestRewardMails(Owner, this, QuestRewardItemsPool, QuestRewardCoinsPool);
-                QuestRewardCoinsPool = 0; // Coins will be distributed in mail if any mail needed to be sent, so set to zero again
-                foreach (var mail in mails)
-                    if (!mail.Send())
-                    {
-                        Owner.SendErrorMessage(ErrorMessageType.MailUnknownFailure);
-                        res = false;
-                    }
+        lock (SaveManager.PersistenceSyncRoot)
+            return DistributeRewardsLocked(addBaseQuestReward);
+    }
 
-                Owner.SendPacket(new SCQuestRewardedByMailPacket([TemplateId]));
-            }
-            else
-            {
-                var pool = QuestRewardItemsPool.ToList();
-                foreach (var item in pool)
-                {
-                    if (ItemManager.Instance.IsAutoEquipTradePack(item.TemplateId))
-                    {
-                        Owner.Inventory.TryEquipNewBackPack(ItemTaskType.QuestSupplyItems, item.TemplateId, item.Count, item.GradeId);
-                    }
-                    else
-                    {
-                        Owner.Inventory.Bag.AcquireDefaultItem(ItemTaskType.QuestSupplyItems, item.TemplateId, item.Count, item.GradeId);
-                    }
-                }
-            }
-
-            QuestRewardItemsPool.Clear();
-        }
+    private bool DistributeRewardsLocked(bool addBaseQuestReward)
+    {
+        if (!DistributeItemRewards())
+            return false;
+        _rewardFailureReported = false;
 
         // Add quest level based rewards
-        if (addBaseQuestReward && Template.Level > 0 && Step == QuestComponentKind.Reward)
+        if (addBaseQuestReward && !_baseRewardsQueued && Template.Level > 0 && Step == QuestComponentKind.Reward)
         {
             var levelBasedRewards = QuestManager.Instance.GetSupplies(Template.Level);
             if (levelBasedRewards != null)
@@ -388,6 +361,7 @@ public partial class Quest : PacketMarshaler
                     QuestRewardRatio = 1f;
                 }
 
+                _baseRewardsQueued = true;
                 QuestRewardExpPool += levelBasedRewards.Exp;
                 QuestRewardCoinsPool += levelBasedRewards.Copper;
             }
@@ -420,7 +394,7 @@ public partial class Quest : PacketMarshaler
             QuestCleanupItemsPool.Clear();
         }
 
-        return res;
+        return true;
     }
 
     /// <summary>
@@ -683,6 +657,11 @@ public partial class Quest : PacketMarshaler
     {
         var stream = new PacketStream(data);
         EtcItemObtainProgress.Clear();
+        AppliedSideEffectActIds.Clear();
+        AppliedComponentEffectIds.Clear();
+        QuestRewardItemsPool.Clear();
+        QuestCleanupItemsPool.Clear();
+        _baseRewardsQueued = false;
 
         var objectives = new int[MaxObjectiveCount];
         for (var i = 0; i < MaxObjectiveCount; i++)
@@ -716,6 +695,7 @@ public partial class Quest : PacketMarshaler
             if (progress > 0)
                 EtcItemObtainProgress[actId] = progress;
         }
+        ReadRewardState(stream);
     }
 
     public byte[] WriteData()
@@ -743,6 +723,7 @@ public partial class Quest : PacketMarshaler
             stream.Write(actId);
             stream.Write(progress);
         }
+        WriteRewardState(stream);
         return stream.GetBytes();
     }
 

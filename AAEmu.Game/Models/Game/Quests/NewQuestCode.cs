@@ -64,6 +64,14 @@ public partial class Quest
     /// <returns></returns>
     public bool RunCurrentStep()
     {
+        lock (AAEmu.Game.Core.Managers.SaveManager.PersistenceSyncRoot)
+            return RunCurrentStepLocked();
+    }
+
+    private bool RunCurrentStepLocked()
+    {
+        if (!Owner.Quests.ActiveQuests.TryGetValue(TemplateId, out var activeQuest) || !ReferenceEquals(activeQuest, this))
+            return false;
         if (!QuestSteps.TryGetValue(Step, out var questStep))
             return false;
 
@@ -75,7 +83,8 @@ public partial class Quest
             Template.Score > 0 &&
             Template.LetItDone &&
             GetQuestObjectivePercent() >= 1f &&
-            !QuestSteps.ContainsKey(QuestComponentKind.Ready))
+            !QuestSteps.ContainsKey(QuestComponentKind.Ready) &&
+            !_rewardFailureReported && QuestRewardItemsPool.Count == 0)
         {
             res = true;
         }
@@ -133,7 +142,7 @@ public partial class Quest
                     return;
                 case QuestComponentKind.Ready:
                     Step = QuestComponentKind.Reward; // Go to Reward when turning in the quest 
-                    Status = QuestStatus.Completed;
+                    Status = QuestStatus.Ready;
                     break;
                 case QuestComponentKind.Drop:
                     // This quest is being dropped, there is no next step
@@ -157,6 +166,8 @@ public partial class Quest
                             Owner.Id);
                         return;
                     }
+
+                    Status = QuestStatus.Completed;
 
                     // copy body data for packet
                     var body = new byte[8];

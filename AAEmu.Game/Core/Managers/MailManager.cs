@@ -674,58 +674,86 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         return resultList;
     }
 
-    public List<BaseMail> CreateQuestRewardMails(ICharacter character, Quest quest, List<ItemCreationDefinition> itemCreationDefinitions, int mailCopper)
+    public bool TryCreateQuestRewardMails(ICharacter character, Quest quest,
+        List<ItemCreationDefinition> itemCreationDefinitions, out List<QuestRewardMail> mails)
     {
-        var resultList = new List<BaseMail>();
-
-        MailPlayerToPlayer mail = null;
-        var questName = localizationManager.Get("quest_contexts", "name", quest.TemplateId, quest.TemplateId.ToString());
-
-        // Generate a finalized list of all reward items in the mail attachments container of the player
-        var totalRewardsItemsList = new List<Item>();
-        foreach (var item in itemCreationDefinitions)
+        mails = [];
+        // Check every reference before allocating any item or mail.
+        foreach (var definition in itemCreationDefinitions)
         {
-            var itemTemplate = itemManager.GetTemplate(item.TemplateId);
-            var itemGrade = itemTemplate.FixedGrade;
-            if (itemGrade <= 0)
-                itemGrade = 0;
-            if (item.GradeId > 0)
-                itemGrade = item.GradeId;
-
-            character.Inventory.MailAttachments.AcquireDefaultItemEx(ItemTaskType.Invalid, item.TemplateId, item.Count,
-                itemGrade, out var newItemsList, out _, 0, -1);
-
-            foreach (var newItem in newItemsList)
+            var template = itemManager.GetTemplate(definition.TemplateId);
+            if (template == null || template.MaxCount <= 0 || definition.Count < 0)
             {
-                totalRewardsItemsList.Add(newItem);
+                Logger.Error("Cannot prepare quest reward mail: quest={QuestId}, item={ItemId}, count={Count}",
+                    quest.TemplateId, definition.TemplateId, definition.Count);
+                return false;
             }
         }
 
-        // Distribute the quest rewards
-        foreach (var item in totalRewardsItemsList)
+        var createdItems = new List<Item>();
+        var rewardItems = new List<(Item Item, ItemCreationDefinition Reward)>();
+        try
         {
-            if (mail == null || mail.Body.Attachments.Count >= 10)
+            foreach (var definition in itemCreationDefinitions)
             {
-                mail = new MailPlayerToPlayer(character, character.Name)
+                var template = itemManager.GetTemplate(definition.TemplateId);
+                var grade = template.FixedGrade >= 0 && !template.Gradable
+                    ? template.FixedGrade
+                    : Math.Max(0, definition.GradeId < 0 ? template.FixedGrade : definition.GradeId);
+                var acquired = character.Inventory.MailAttachments.AcquireDefaultItemEx(ItemTaskType.Invalid,
+                    definition.TemplateId, definition.Count, grade, out var items, out _, 0,
+                    notifyInventory: false);
+                createdItems.AddRange(items);
+                rewardItems.AddRange(items.Select(item => (item, definition)));
+                if (!acquired)
                 {
-                    Header = { SenderId = 0, SenderName = ".questReward" }, MailType = MailType.SysExpress, // NOTE: On newer versions, this uses the .title / .body format, but this doesn't seem to work on 1.2
-                    // mail.Title = $".title('{questName}')";
-                    // mail.Body.Text = $".body('{questName}')";
-                    Title = questName,
-                    Body = { Text = $"Reward for quest {questName}.", CopperCoins = mailCopper }
-                };
-                mailCopper = 0;
-                resultList.Add(mail);
+                    DiscardQuestRewardAttachments(createdItems);
+                    return false;
+                }
             }
 
-            mail.Body.Attachments.Add(item);
+            var questName = localizationManager.Get("quest_contexts", "name", quest.TemplateId, quest.TemplateId.ToString());
+            foreach (var attachments in rewardItems.Chunk(10))
+            {
+                // Attachments already belong to the mail container; no inventory notifications or second move.
+                var mail = new BaseMail
+                {
+                    Header = { SenderId = 0, SenderName = ".questReward", ReceiverId = character.Id },
+                    ReceiverName = character.Name,
+                    MailType = MailType.SysExpress,
+                    Title = questName,
+                    Body = { Text = $"Reward for quest {questName}." }
+                };
+                mail.Body.Attachments.AddRange(attachments.Select(attachment => attachment.Item));
+                mails.Add(new QuestRewardMail(mail, attachments.Select(attachment => (attachment.Reward, attachment.Item.Count)).ToArray()));
+            }
+            return true;
         }
-
-        foreach (var baseMail in resultList)
+        catch
         {
-            (baseMail as MailPlayerToPlayer)?.FinalizeAttachments();
+            DiscardQuestRewardAttachments(createdItems);
+            throw;
         }
+    }
 
-        return resultList;
+    public void DiscardUnsentQuestRewardMails(IEnumerable<BaseMail> mails)
+    {
+        foreach (var mail in mails)
+        {
+            // A successful send owns these attachments. Never delete or reuse its IDs.
+            _allPlayerMails.TryGetValue(mail.Id, out var existing);
+            var idInUse = existing != null;
+            if (ReferenceEquals(existing, mail))
+                continue;
+            DiscardQuestRewardAttachments(mail.Body.Attachments);
+            if (mail.Id > 0 && !idInUse)
+                mailIdManager.ReleaseId(checked((uint)mail.Id));
+        }
+    }
+
+    private static void DiscardQuestRewardAttachments(IEnumerable<Item> items)
+    {
+        foreach (var item in items.ToArray())
+            item._holdingContainer?.RemoveItem(ItemTaskType.Invalid, item, true);
     }
 }
