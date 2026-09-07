@@ -43,9 +43,7 @@ public class CharacterOnlineTrackingTask : Task
                 character.Achievements?.UpdatePlayTime(character.OnlineTime);
 
             // Update Account Divine Clock time
-            var (time, taken) = AccountManager.Instance.GetDivineClock(character.AccountId);
-            time += deltaSeconds;
-            AccountManager.Instance.UpdateDivineClock(character.AccountId, time, taken);
+            AccountManager.Instance.AddDivineClockTime(character.AccountId, deltaSeconds);
 
             // TODO: Add divine clock feedback packets
         }
