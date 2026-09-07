@@ -16,15 +16,25 @@ public class DoodadFuncRespawn : DoodadPhaseFuncTemplate
         // Doodad spawn
         if (caster is Character character)
         {
-            using var spawnPos = character.Transform.Clone();
-            spawnPos.Local.AddDistanceToFront(1f);
-            spawnPos.Local.SetHeight(caster.ParentWorld.Template.GeoData.GetHeight(spawnPos.World.Position)); // WorldManager.Instance.GetHeight(spawnPos));
+            var placementPolicy = character.Transform.Parent is not null || character.Transform.StickyParent is not null
+                ? DynamicDoodadPlacementPolicy.PreserveParentedHeight
+                : DynamicDoodadPlacementPolicy.GroundToNearbySurface;
+            var spawnPosition = DynamicDoodadPlacement.CreateForwardWorldPosition(character.Transform, 1f);
+            if (!DynamicDoodadPlacement.TryResolve(caster.ParentWorld.Template.GeoData,
+                    spawnPosition.AsPositionVector(),
+                    placementPolicy, out var placementPosition))
+            {
+                Logger.Warn($"DoodadFuncRespawn: Cannot place doodad {owner.TemplateId} at {spawnPosition}");
+                return false;
+            }
+
+            spawnPosition.Z = placementPosition.Z;
             var doodad = new DoodadSpawner
             {
                 ParentWorld = character.ParentWorld,
                 Id = owner.ObjId,
                 UnitId = owner.TemplateId,
-                Position = spawnPos.CloneAsSpawnPosition()
+                Position = spawnPosition
             };
             doodad.Spawn(0);
         }

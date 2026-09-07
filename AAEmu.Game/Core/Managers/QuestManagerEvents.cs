@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
@@ -127,6 +128,38 @@ public partial class QuestManager
         {
             owner?.Events?.OnItemGroupGather(owner, new OnItemGroupGatherArgs { ItemId = templateId, Count = count, ItemGroupId = itemGroup });
         }
+
+        if (count <= 0 || owner?.Inventory == null || owner.Quests == null)
+            return;
+
+        foreach (var questStarter in GetItemGainQuestStarters(owner, templateId))
+            owner.Quests.AddQuestFromItem(questStarter.ParentQuestTemplate.Id, templateId);
+    }
+
+    internal IReadOnlyList<QuestActConAcceptItemGain> GetItemGainQuestStarters(ICharacter owner, uint itemTemplateId)
+    {
+        if (owner?.Inventory == null || owner.Quests == null ||
+            !_actTemplatesByDetailType.TryGetValue(nameof(QuestActConAcceptItemGain), out var itemGainActs))
+            return [];
+
+        var result = new List<QuestActConAcceptItemGain>();
+        var matchedQuestIds = new HashSet<uint>();
+        foreach (var itemGainAct in itemGainActs.Values.OfType<QuestActConAcceptItemGain>())
+        {
+            var questTemplate = itemGainAct.ParentQuestTemplate;
+            var questId = questTemplate.Id;
+            if (itemGainAct.ItemId != itemTemplateId ||
+                itemGainAct.ParentComponent.KindId != QuestComponentKind.Start ||
+                !owner.Inventory.CheckItems(SlotType.Inventory, itemTemplateId, itemGainAct.Count) ||
+                owner.Quests.HasQuest(questId) ||
+                (owner.Quests.HasQuestCompleted(questId) && !questTemplate.Repeatable) ||
+                !matchedQuestIds.Add(questId))
+                continue;
+
+            result.Add(itemGainAct);
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -193,7 +226,17 @@ public partial class QuestManager
     /// </summary>
     /// <param name="owner"></param>
     /// <param name="npc"></param>
-    public void DoOnMonsterHuntEvents(ICharacter owner, Npc npc)
+    /// <param name="teamShareAlreadyDistributed">
+    /// Whether <paramref name="owner"/> was selected by an upstream team-credit fan-out.
+    /// </param>
+    /// <param name="teamShareRecipientExclusions">
+    /// Team members that will receive the same kill through a separate direct delivery.
+    /// </param>
+    public void DoOnMonsterHuntEvents(
+        ICharacter owner,
+        Npc npc,
+        bool teamShareAlreadyDistributed = false,
+        IReadOnlySet<uint> teamShareRecipientExclusions = null)
     {
         if (npc == null)
             return;
@@ -225,7 +268,9 @@ public partial class QuestManager
         {
             ZoneGroupId = npcZoneGroupId,
             Killer = owner,
-            Victim = npc
+            Victim = npc,
+            TeamShareAlreadyDistributed = teamShareAlreadyDistributed,
+            TeamShareRecipientExclusions = teamShareRecipientExclusions
         });
     }
 

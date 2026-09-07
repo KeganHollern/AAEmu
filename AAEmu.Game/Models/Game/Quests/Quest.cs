@@ -5,6 +5,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Skills;
@@ -17,12 +18,20 @@ namespace AAEmu.Game.Models.Game.Quests;
 public partial class Quest : PacketMarshaler
 {
     private const int MaxObjectiveCount = 5;
+    private const byte EtcItemObtainProgressDataVersion = 1;
+    // Older builds decoded normal Unix timestamps as DateTime.MaxValue, which autosaves could persist.
+    private static readonly DateTime s_legacyCorruptTimerDeadline =
+        DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.MaxValue.ToUnixTimeSeconds()).UtcDateTime;
+
     private readonly IQuestManager _questManager;
     private readonly ITaskManager _taskManager;
     private readonly ISkillManager _skillManager;
     private readonly IExpressTextManager _expressTextManager;
     private readonly IWorldManager _worldManager;
     private QuestComponentKind _step;
+    private bool _restoringLoadedState;
+
+    internal bool IsRestoringLoadedState => _restoringLoadedState;
 
     /// <summary>
     /// DB ID
@@ -43,6 +52,8 @@ public partial class Quest : PacketMarshaler
     /// Objective counters for the Progress step
     /// </summary>
     internal int[] Objectives { get; set; }
+
+    private Dictionary<uint, int> EtcItemObtainProgress { get; } = [];
 
     /// <summary>
     /// Used to check Progress step
@@ -413,6 +424,22 @@ public partial class Quest : PacketMarshaler
     }
 
     /// <summary>
+    /// Completes the quest and runs the cleanup callbacks for all acts.
+    /// </summary>
+    public void Complete()
+    {
+        foreach (var questComponentTemplate in Template.Components.Values)
+        {
+            foreach (var actTemplate in questComponentTemplate.ActTemplates)
+            {
+                actTemplate.QuestCleanup(this);
+            }
+        }
+
+        CurrentStep?.FinalizeStep();
+    }
+
+    /// <summary>
     /// Drops the quest as a result of the player requesting it
     /// </summary>
     /// <param name="update">Should an update packet be sent to the player</param>
@@ -461,25 +488,34 @@ public partial class Quest : PacketMarshaler
     }
 
     /// <summary>
-    /// Runs the QuestCleanup code of all the quest's acts
-    /// </summary>
-    public void Cleanup()
-    {
-        foreach (var questComponentTemplate in Template.Components.Values)
-        {
-            foreach (var actTemplate in questComponentTemplate.ActTemplates)
-            {
-                actTemplate.QuestCleanup(this);
-            }
-        }
-    }
-
-    /// <summary>
     /// Sets the RequestEvaluationFlag to true signalling the server that it should check this quest's progress again
     /// </summary>
     public void RequestEvaluation()
     {
         RequestEvaluationFlag = true;
+    }
+
+    internal int GetEtcItemObtainProgress(uint actId)
+    {
+        return EtcItemObtainProgress.GetValueOrDefault(actId);
+    }
+
+    internal bool IsEtcItemObtainComplete(uint actId, int requiredCount)
+    {
+        return requiredCount <= 0 || GetEtcItemObtainProgress(actId) >= requiredCount;
+    }
+
+    internal void AddEtcItemObtainProgress(uint actId, int amount, int requiredCount)
+    {
+        if (amount <= 0 || requiredCount <= 0)
+            return;
+
+        var currentCount = GetEtcItemObtainProgress(actId);
+        if (currentCount >= requiredCount)
+            return;
+
+        EtcItemObtainProgress[actId] = currentCount + Math.Min(amount, requiredCount - currentCount);
+        RequestEvaluation();
     }
 
     /// <summary>
@@ -527,6 +563,96 @@ public partial class Quest : PacketMarshaler
             _questManager.EnqueueEvaluation(this);
     }
 
+    /// <summary>
+    /// Activates a quest after all of its persisted state has been deserialized and the quest has been
+    /// registered with its owner.
+    /// </summary>
+    internal void RestoreLoadedState()
+    {
+        var persistedObjectives = Objectives.ToArray();
+        var persistedComponentId = ComponentId;
+        var timerAct = GetTimerActToRestore();
+        var timerTemplate = timerAct?.Template as QuestActCheckTimer;
+
+        if (timerTemplate != null && !IsRestorableTimerDelay(Time, Time - DateTime.UtcNow))
+        {
+            // The persisted step has never been active on this Quest instance, so there is nothing to finalize.
+            _step = QuestComponentKind.Invalid;
+            _questManager.FailQuest(Owner, TemplateId);
+            return;
+        }
+
+        _restoringLoadedState = true;
+        try
+        {
+            if (QuestSteps.TryGetValue(_step, out var questStep))
+                questStep.InitializeStep();
+        }
+        finally
+        {
+            _restoringLoadedState = false;
+        }
+
+        // Step activation can derive objective and packet context values. The persisted values remain authoritative
+        // during a relog, but must already be present while activation side effects run.
+        Objectives = persistedObjectives;
+        ComponentId = persistedComponentId;
+
+        if (timerTemplate != null)
+        {
+            var remaining = Time - DateTime.UtcNow;
+            if (!IsRestorableTimerDelay(Time, remaining))
+            {
+                _questManager.FailQuest(Owner, TemplateId);
+                return;
+            }
+
+            timerTemplate.RestoreAction(this, timerAct, remaining);
+        }
+
+        RequestEvaluation();
+    }
+
+    private static bool IsRestorableTimerDelay(DateTime deadline, TimeSpan remaining)
+    {
+        return remaining > TimeSpan.Zero && deadline < s_legacyCorruptTimerDeadline;
+    }
+
+    private QuestAct GetTimerActToRestore()
+    {
+        var currentStepOrder = GetActiveStepOrder(_step);
+        if (currentStepOrder < 0)
+            return null;
+
+        foreach (var questStep in QuestSteps.Values)
+        {
+            var timerStepOrder = GetActiveStepOrder(questStep.ThisStep);
+            if (timerStepOrder < 0 || timerStepOrder > currentStepOrder)
+                continue;
+
+            foreach (var questComponent in questStep.Components.Values)
+            {
+                var timerAct = questComponent.Acts.FirstOrDefault(act => act.Template is QuestActCheckTimer);
+                if (timerAct != null)
+                    return timerAct;
+            }
+        }
+
+        return null;
+    }
+
+    private static int GetActiveStepOrder(QuestComponentKind step)
+    {
+        return step switch
+        {
+            QuestComponentKind.Start => 0,
+            QuestComponentKind.None => 1,
+            QuestComponentKind.Supply => 2,
+            QuestComponentKind.Progress => 3,
+            _ => -1
+        };
+    }
+
     #region Packets and Database
 
     public override PacketStream Write(PacketStream stream)
@@ -556,23 +682,40 @@ public partial class Quest : PacketMarshaler
     public void ReadData(byte[] data)
     {
         var stream = new PacketStream(data);
+        EtcItemObtainProgress.Clear();
 
-        // Read Objectives
-        var newObjectives = new int[MaxObjectiveCount];
+        var objectives = new int[MaxObjectiveCount];
         for (var i = 0; i < MaxObjectiveCount; i++)
-            newObjectives[i] = stream.ReadInt32();
+            objectives[i] = stream.ReadInt32();
 
-        // Read Current Step
-        Step = (QuestComponentKind)stream.ReadByte();
+        var step = (QuestComponentKind)stream.ReadByte();
+        var questAcceptorType = (QuestAcceptorType)stream.ReadByte();
+        var componentId = stream.ReadUInt32();
+        var acceptorId = stream.ReadUInt32();
+        var time = stream.ReadDateTime();
 
-        // Reset objectives counts only after setting the step, or they will reset
-        for (var i = 0; i < MaxObjectiveCount; i++)
-            Objectives[i] = newObjectives[i];
+        Objectives = objectives;
+        QuestAcceptorType = questAcceptorType;
+        ComponentId = componentId;
+        AcceptorId = acceptorId;
+        Time = time;
+        _step = step;
 
-        QuestAcceptorType = (QuestAcceptorType)stream.ReadByte();
-        ComponentId = stream.ReadUInt32();
-        AcceptorId = stream.ReadUInt32();
-        Time = stream.ReadDateTime();
+        if (stream.LeftBytes < 2)
+            return;
+
+        var progressDataVersion = stream.ReadByte();
+        if (progressDataVersion != EtcItemObtainProgressDataVersion)
+            return;
+
+        var progressCount = stream.ReadByte();
+        for (var i = 0; i < progressCount && stream.LeftBytes >= sizeof(uint) + sizeof(int); i++)
+        {
+            var actId = stream.ReadUInt32();
+            var progress = stream.ReadInt32();
+            if (progress > 0)
+                EtcItemObtainProgress[actId] = progress;
+        }
     }
 
     public byte[] WriteData()
@@ -588,6 +731,18 @@ public partial class Quest : PacketMarshaler
         stream.Write(ComponentId);
         stream.Write(AcceptorId);
         stream.Write(Time);
+
+        var itemObtainProgress = EtcItemObtainProgress
+            .Where(entry => entry.Value > 0)
+            .OrderBy(entry => entry.Key)
+            .ToArray();
+        stream.Write(EtcItemObtainProgressDataVersion);
+        stream.Write(checked((byte)itemObtainProgress.Length));
+        foreach (var (actId, progress) in itemObtainProgress)
+        {
+            stream.Write(actId);
+            stream.Write(progress);
+        }
         return stream.GetBytes();
     }
 

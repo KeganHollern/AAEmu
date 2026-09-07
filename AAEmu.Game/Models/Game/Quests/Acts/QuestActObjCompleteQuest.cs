@@ -1,4 +1,5 @@
 using AAEmu.Game.Models.Game.Quests.Templates;
+using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Quests.Acts;
 
@@ -27,5 +28,25 @@ public class QuestActObjCompleteQuest(QuestComponentTemplate parentComponent) : 
             SetObjective(quest, 1);
 
         return GetObjective(quest) > 0;
+    }
+
+    public override void InitializeAction(Quest quest, QuestAct questAct)
+    {
+        base.InitializeAction(quest, questAct);
+        quest.Owner.Events.OnQuestComplete += questAct.OnQuestComplete;
+    }
+
+    public override void FinalizeAction(Quest quest, QuestAct questAct)
+    {
+        quest.Owner.Events.OnQuestComplete -= questAct.OnQuestComplete;
+        base.FinalizeAction(quest, questAct);
+    }
+
+    public override void OnQuestComplete(QuestAct questAct, object sender, OnQuestCompleteArgs args)
+    {
+        if (questAct.Id != ActId || args.QuestId != QuestId)
+            return;
+
+        SetObjective(questAct, 1);
     }
 }

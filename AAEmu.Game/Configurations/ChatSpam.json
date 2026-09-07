@@ -1,0 +1,11 @@
+{
+    "ChatSpam": {
+        "Enabled": true,
+        "RateMessageCount": 10,
+        "RateWindowSeconds": 5,
+        "RepeatMessageCount": 5,
+        "RepeatWindowSeconds": 60,
+        "MinimumRepeatLength": 10,
+        "MuteSeconds": 600
+    }
+}

@@ -21,11 +21,28 @@ namespace AAEmu.Game.Models.Game.Char;
 public class CharacterQuests(Character owner)
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
+    private readonly Func<CompletedQuest, bool> _completedQuestPersistenceOverride;
+    private readonly Action<uint> _removedQuestPersistenceOverride;
+    private readonly Action<Quest> _activeQuestPersistenceOverride;
     private readonly List<uint> _removed = [];
 
     private Character Owner { get; set; } = owner;
     public Dictionary<uint, Quest> ActiveQuests { get; } = [];
     private Dictionary<ushort, CompletedQuest> CompletedQuests { get; } = [];
+
+    internal CharacterQuests(
+        Character owner,
+        Func<CompletedQuest, bool> completedQuestPersistenceOverride,
+        Action<uint> removedQuestPersistenceOverride,
+        Action<Quest> activeQuestPersistenceOverride = null)
+        : this(owner)
+    {
+        ArgumentNullException.ThrowIfNull(completedQuestPersistenceOverride);
+        ArgumentNullException.ThrowIfNull(removedQuestPersistenceOverride);
+        _completedQuestPersistenceOverride = completedQuestPersistenceOverride;
+        _removedQuestPersistenceOverride = removedQuestPersistenceOverride;
+        _activeQuestPersistenceOverride = activeQuestPersistenceOverride;
+    }
 
     public bool HasQuest(uint questId)
     {
@@ -99,8 +116,8 @@ public class CharacterQuests(Character owner)
             return false;
 
         // Check if start step components are active
-        var startComponentTemplate = template.GetComponents(QuestComponentKind.Start);
-        foreach (var questComponentTemplate in startComponentTemplate)
+        var startComponentTemplates = template.GetComponents(QuestComponentKind.Start);
+        foreach (var questComponentTemplate in startComponentTemplates)
         {
             if (!UnitRequirementsGameData.Instance.CanComponentRun(questComponentTemplate, Owner))
             {
@@ -125,10 +142,15 @@ public class CharacterQuests(Character owner)
             }
         }
 
+        if (startComponentTemplates.Length == 0)
+        {
+            Logger.Warn($"Tried to start a quest without a starter component Quest: {questId}");
+            return false;
+        }
+
         // Create new Quest Object
         var quest = new Quest(template, Owner)
         {
-            Id = QuestIdManager.Instance.GetNextId(),
             Status = QuestStatus.Invalid,
             Condition = QuestConditionObj.Progress,
             QuestAcceptorType = questAcceptorType,
@@ -144,17 +166,12 @@ public class CharacterQuests(Character owner)
             }
         }
 
-        // Actually start the quest by setting step to Start and send the quest start packets
-        var res = quest.StartQuest();
-        if (!res)
-        {
-            // If it failed to start, drop the quest here
-            DropQuest(questId, true);
-            return false;
-        }
+        var questIdManager = QuestIdManager.Instance;
 
-        // Add it to the Active Quests
-        ActiveQuests.Add(quest.TemplateId, quest);
+        // Actually start the quest and transfer ownership of its runtime ID to the active quest collection
+        if (!TryStartQuest(quest, questIdManager))
+            return false;
+
         quest.Owner.SendDebugMessage($"[Quest] {Owner.Name}, quest {questId} added.");
 
         // Execute the first Step
@@ -166,10 +183,40 @@ public class CharacterQuests(Character owner)
         // every quest accepted since the last tick (aaemu-cluster#81). The quest may have
         // auto-completed inside RunCurrentStep, so only flush if it is still active.
         if (ActiveQuests.ContainsKey(quest.TemplateId))
-            FlushQuest(quest);
+            (_activeQuestPersistenceOverride ?? FlushQuest)(quest);
 
         quest.QuestInitialized();
         return true;
+    }
+
+    internal bool TryStartQuest(Quest quest, IQuestIdManager questIdManager)
+    {
+        var runtimeId = questIdManager.GetNextId();
+        var activeQuestOwnsId = false;
+        try
+        {
+            quest.Id = runtimeId;
+            if (!quest.StartQuest())
+                return false;
+
+            ActiveQuests.Add(quest.TemplateId, quest);
+            activeQuestOwnsId = true;
+            return true;
+        }
+        finally
+        {
+            if (!activeQuestOwnsId)
+            {
+                try
+                {
+                    quest.FinalizeQuestActs();
+                }
+                finally
+                {
+                    questIdManager.ReleaseId(runtimeId);
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -321,7 +368,20 @@ public class CharacterQuests(Character owner)
     }
 
     /// <summary>
-    /// Removes a quest
+    /// Completes a quest and removes it from the active quest list.
+    /// </summary>
+    /// <param name="questId"></param>
+    public void CompleteQuest(uint questId)
+    {
+        if (!ActiveQuests.TryGetValue(questId, out var quest)) { return; }
+
+        quest.SkipUpdatePackets(); // make sure no further "update packets" are send to the player
+        quest.Complete();
+        RemoveQuest(questId, quest, false);
+    }
+
+    /// <summary>
+    /// Drops a quest and removes it from the active quest list.
     /// </summary>
     /// <param name="questId"></param>
     /// <param name="update"></param>
@@ -331,12 +391,16 @@ public class CharacterQuests(Character owner)
         if (!ActiveQuests.TryGetValue(questId, out var quest)) { return; }
 
         quest.SkipUpdatePackets(); // make sure no further "update packets" are send to the player
-        quest.Cleanup();
         quest.Drop(update);
+        RemoveQuest(questId, quest, forcibly);
+    }
+
+    private void RemoveQuest(uint questId, Quest quest, bool forcibly)
+    {
         quest.FinalizeQuestActs();
         ActiveQuests.Remove(questId);
         _removed.Add(questId);
-        FlushRemovedQuest(questId);
+        (_removedQuestPersistenceOverride ?? FlushRemovedQuest)(questId);
 
         if (forcibly)
         {
@@ -499,7 +563,7 @@ public class CharacterQuests(Character owner)
         return SetCompletedQuestFlag(
             questId,
             isCompleted,
-            FlushCompletedQuestBlock,
+            _completedQuestPersistenceOverride ?? FlushCompletedQuestBlock,
             out persisted,
             out firstCompletion);
     }
@@ -687,15 +751,19 @@ public class CharacterQuests(Character owner)
                         TemplateId = templateId,
                         Status = (QuestStatus)reader.GetByte("status")
                     };
-                    var oldStatus = quest.Status;
                     quest.ReadData((byte[])reader.GetValue("data"));
-                    quest.Status = oldStatus;
-                    ActiveQuests.Add(quest.TemplateId, quest);
-                    quest.QuestInitialized();
-                    quest.RequestEvaluation();
+                    AddLoadedQuest(quest);
                 }
             }
         }
+    }
+
+    internal void AddLoadedQuest(Quest quest)
+    {
+        ActiveQuests.Add(quest.TemplateId, quest);
+        quest.RestoreLoadedState();
+        quest.QuestInitialized();
+        quest.RequestEvaluation();
     }
 
     /// <summary>

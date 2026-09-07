@@ -117,6 +117,9 @@ public class LoginProtocolHandler : BaseProtocolHandler
 
     private static void HandleUnknownPacket(LoginConnection connection, uint type, PacketStream stream)
     {
+        if (!connection.UnknownPacketEvents.TryConsume())
+            return;
+
         Logger.Warn(
             "{EventName}: Rejected unknown {Network} packet 0x{PacketOpcode:X4} with {PacketLength} unread bytes " +
             "on connection {ConnectionId} from {RemoteIp}",

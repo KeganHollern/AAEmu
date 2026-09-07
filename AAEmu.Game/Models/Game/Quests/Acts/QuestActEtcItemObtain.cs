@@ -1,4 +1,5 @@
 ﻿using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Units;
 
@@ -23,29 +24,30 @@ public class QuestActEtcItemObtain(QuestComponentTemplate parentComponent) : Que
     /// <returns></returns>
     public override bool RunAct(Quest quest, QuestAct questAct, int currentObjectiveCount)
     {
-        Logger.Debug($"{QuestActTemplateName}({DetailId}).RunAct: Quest: {quest.TemplateId}, Owner {quest.Owner.Name} ({quest.Owner.Id}), ItemId {ItemId}, Count {currentObjectiveCount}/{Count}");
-        return true;
-        //return currentObjectiveCount >= Count;
+        var obtainedCount = quest.GetEtcItemObtainProgress(questAct.Id);
+        Logger.Debug($"{QuestActTemplateName}({DetailId}).RunAct: Quest: {quest.TemplateId}, Owner {quest.Owner.Name} ({quest.Owner.Id}), ItemId {ItemId}, Count {obtainedCount}/{Count}");
+        return quest.IsEtcItemObtainComplete(questAct.Id, Count);
     }
 
-    public override void InitializeAction(Quest quest, QuestAct questAct)
+    public override void InitializeQuest(Quest quest, QuestAct questAct)
     {
-        base.InitializeAction(quest, questAct);
+        base.InitializeQuest(quest, questAct);
         quest.Owner.Events.OnItemGather += questAct.OnItemGather;
     }
 
-    public override void FinalizeAction(Quest quest, QuestAct questAct)
+    public override void FinalizeQuest(Quest quest, QuestAct questAct)
     {
         quest.Owner.Events.OnItemGather -= questAct.OnItemGather;
-        base.FinalizeAction(quest, questAct);
+        base.FinalizeQuest(quest, questAct);
     }
 
-    public override void OnItemGather(QuestAct questAct, object sender, OnItemGatherArgs e)
+    public override void OnItemGather(QuestAct questAct, object sender, OnItemGatherArgs args)
     {
-        return;
-        // Check if obtained the specified item, there is no check for removing for EtcItemObtain
-        // if ((questAct.Id == ActId) && (e.ItemId == ItemId) && (e.Count > 0))
-        //     AddObjective((QuestAct)questAct, e.Count);
+        var quest = questAct.QuestComponent.Parent.Parent;
+        if (quest.Step == QuestComponentKind.Invalid || questAct.Id != ActId || args.ItemId != ItemId || args.Count <= 0)
+            return;
+
+        quest.AddEtcItemObtainProgress(questAct.Id, args.Count, Count);
     }
 
     public override void QuestCleanup(Quest quest)

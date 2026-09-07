@@ -146,6 +146,9 @@ public static class Program
                 services.AddSingleton<ChatManager>();
                 services.AddSingleton<IChatManager>(sp => sp.GetRequiredService<ChatManager>());
 
+                services.AddSingleton<ChatSpamManager>();
+                services.AddSingleton<IChatSpamManager>(sp => sp.GetRequiredService<ChatSpamManager>());
+
                 services.AddSingleton<CommandManager>();
                 services.AddSingleton<ICommandManager>(sp => sp.GetRequiredService<CommandManager>());
 
@@ -405,6 +408,8 @@ public static class Program
 
                 // -- Lazy<T> wrappers for circular-dep break patterns --
                 // MS DI does NOT auto-wrap registered types in Lazy<T>; they must be registered explicitly.
+                // AccountManager -> TimedRewardsManager -> AccountManager circular dep.
+                services.AddSingleton(sp => new Lazy<IAccountManager>(sp.GetRequiredService<IAccountManager>));
                 // WorldManager takes these three as Lazy<T> to break the circular dependency.
                 services.AddSingleton(sp => new Lazy<IZoneManager>(sp.GetRequiredService<IZoneManager>));
                 services.AddSingleton(sp => new Lazy<IIndunManager>(sp.GetRequiredService<IIndunManager>));

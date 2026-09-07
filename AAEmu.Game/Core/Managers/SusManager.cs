@@ -14,6 +14,7 @@ public class SusManager(IWorldManager worldManager) : Singleton<SusManager>, ISu
     public static string CategoryBot => "Bot";
     public static string CategoryBotReport => "BotReport";
     public static string CategoryCheating => "Cheat";
+    public static string CategoryChatSpam => "ChatSpam";
     public static string CategoryRmt => "RMT";
     
     private Dictionary<uint, (Vector3 pos, float skipTime)> LastPlayerPositions { get; } = [];

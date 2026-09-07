@@ -1255,14 +1255,29 @@ public class HousingManager(
                 var yMultiplier = postId / 2 == 0 ? -1 : 1f;
                 var zRot = (135f + 90f * postId % 360).DegToRad();
 
-                var doodad = doodadManager.Create(house.ParentWorld,  0, ForSaleMarkerDoodadId, null, true);
+                var markerPosition = house.Transform.World.Position;
+                markerPosition.X += house.Template.GardenRadius * xMultiplier;
+                markerPosition.Y += house.Template.GardenRadius * yMultiplier;
+                var placementPolicy = house.Transform.Parent is not null || house.Transform.StickyParent is not null
+                    ? DynamicDoodadPlacementPolicy.PreserveParentedHeight
+                    : DynamicDoodadPlacementPolicy.GroundToNearbySurface;
+                if (!DynamicDoodadPlacement.TryResolve(world.Template.GeoData, markerPosition, placementPolicy,
+                        out var resolvedMarkerPosition))
+                {
+                    Logger.Warn($"Cannot place for-sale marker for house {house.Id} at {markerPosition}");
+                    continue;
+                }
+
+                markerPosition = resolvedMarkerPosition;
+                var doodad = doodadManager.Create(house.ParentWorld, 0, ForSaleMarkerDoodadId, null, true);
+                if (doodad == null)
+                {
+                    Logger.Warn($"Cannot create for-sale marker doodad {ForSaleMarkerDoodadId} for house {house.Id}");
+                    continue;
+                }
+
                 // location
-                doodad.Transform.Local.SetPosition(
-                    house.Template.GardenRadius * xMultiplier + house.Transform.World.Position.X,
-                    house.Template.GardenRadius * yMultiplier + house.Transform.World.Position.Y,
-                    +house.Transform.World.Position.Z);
-                // adjust height to the floor
-                doodad.Transform.Local.SetHeight(doodad.ParentWorld.Template.GeoData.GetHeight(doodad.Transform.World.Position));// worldManager.GetHeight(doodad.Transform)));
+                doodad.Transform.Local.SetPosition(markerPosition);
                 doodad.Transform.Local.SetZRotation(zRot);
                 //doodad.Transform.WorldId = world.Template.Id;
                 doodad.Transform.InstanceId = world.Id;

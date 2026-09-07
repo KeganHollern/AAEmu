@@ -6,6 +6,9 @@ public class DoodadSpawnerDoSpawnTask(DoodadSpawner doodadSpawner) : Task
 {
     public override void Execute()
     {
-        doodadSpawner.DoSpawn();
+        if (doodadSpawner.Last == null)
+            doodadSpawner.Spawn(0);
+        else
+            doodadSpawner.DoSpawn();
     }
 }

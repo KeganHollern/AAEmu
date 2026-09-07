@@ -73,14 +73,33 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
                 duel.Challenged.IsInDuel = true;
 
                 // spawn flag
+                var flagPosition = duel.Challenger.Transform.CloneAsSpawnPosition();
+                flagPosition.X = duel.Challenger.Transform.World.Position.X -
+                                 (duel.Challenger.Transform.World.Position.X - duel.Challenged.Transform.World.Position.X) / 2;
+                flagPosition.Y = duel.Challenger.Transform.World.Position.Y -
+                                 (duel.Challenger.Transform.World.Position.Y - duel.Challenged.Transform.World.Position.Y) / 2;
+                var placementPolicy = duel.Challenger.Transform.Parent is not null ||
+                                      duel.Challenger.Transform.StickyParent is not null ||
+                                      duel.Challenged.Transform.Parent is not null ||
+                                      duel.Challenged.Transform.StickyParent is not null
+                    ? DynamicDoodadPlacementPolicy.PreserveParentedHeight
+                    : DynamicDoodadPlacementPolicy.GroundToNearbySurface;
+                if (!DynamicDoodadPlacement.TryResolve(challenged.ParentWorld.Template.GeoData,
+                        flagPosition.AsPositionVector(), placementPolicy, out var resolvedFlagPosition))
+                {
+                    Logger.Warn($"DuelAccepted: Cannot place combat flag for challengerId={challengerId} at {flagPosition}");
+                    DuelCleanUp(challengerId);
+                    return;
+                }
+
+                flagPosition.Z = resolvedFlagPosition.Z;
                 _combatFlag = new DoodadSpawner
                 {
-                    ParentWorld = challenged.ParentWorld, Id = 0, UnitId = 5014, // Combat Flag Id=5014;
-                    Position = duel.Challenger.Transform.CloneAsSpawnPosition()
+                    ParentWorld = challenged.ParentWorld,
+                    Id = 0,
+                    UnitId = 5014, // Combat Flag Id=5014;
+                    Position = flagPosition
                 };
-                _combatFlag.Position.X = duel.Challenger.Transform.World.Position.X - (duel.Challenger.Transform.World.Position.X - duel.Challenged.Transform.World.Position.X) / 2;
-                _combatFlag.Position.Y = duel.Challenger.Transform.World.Position.Y - (duel.Challenger.Transform.World.Position.Y - duel.Challenged.Transform.World.Position.Y) / 2;
-                _combatFlag.Position.Z = challenged.ParentWorld.Template.GeoData.GetHeight(_combatFlag.Position.AsPositionVector());
 
                 duel.DuelFlag = _combatFlag.Spawn(0); // set CombatFlag
 

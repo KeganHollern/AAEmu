@@ -14,6 +14,7 @@ using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Models;
+using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
@@ -870,6 +871,68 @@ public partial class Npc : Unit
         character.Achievements.Increment(progressEvents);
     }
 
+    internal int DistributeEligibleTeamQuestCredit(
+        GameTeam team,
+        Character personalRecipient,
+        Action<Character, bool> creditQuest)
+    {
+        var delivered = new HashSet<Character>();
+        if (team == null)
+            return 0;
+
+        uint? personalRecipientId = personalRecipient != null && team.IsMember(personalRecipient.Id)
+            ? personalRecipient.Id
+            : null;
+        foreach (var member in team.Members)
+        {
+            var character = member?.Character;
+            if (character != null &&
+                (character.Id == personalRecipientId || QuestTeamShareEligibility.IsEligibleRecipient(character, Transform)) &&
+                delivered.Add(character))
+                creditQuest(character, true);
+        }
+
+        return delivered.Count;
+    }
+
+    internal void DistributeQuestCredit(
+        GameTeam taggedTeam,
+        HashSet<Character> eligiblePlayers,
+        Character killerOwner,
+        HashSet<Character> tagShareRecipients,
+        Action<Character, bool, IReadOnlySet<uint>> creditQuest)
+    {
+        var tagShareRecipientIds = tagShareRecipients.Select(character => character.Id).ToHashSet();
+        var questCreditedPlayers = new HashSet<Character>();
+
+        void CreditQuest(Character character, bool teamShareAlreadyDistributed)
+        {
+            if (questCreditedPlayers.Add(character))
+                creditQuest(character, teamShareAlreadyDistributed, tagShareRecipientIds);
+        }
+
+        // Quest-credit range and world eligibility are independent of XP and loot eligibility.
+        // A tagged team is already fully expanded here, so its ZoneKill events must not fan out again.
+        if (taggedTeam != null)
+        {
+            DistributeEligibleTeamQuestCredit(taggedTeam, killerOwner, CreditQuest);
+            if (eligiblePlayers.Count == 0 && killerOwner != null)
+                CreditQuest(killerOwner, tagShareRecipientIds.Contains(killerOwner.Id));
+        }
+        else if (eligiblePlayers.Count > 0)
+        {
+            foreach (var character in eligiblePlayers)
+                CreditQuest(character, tagShareRecipientIds.Contains(character.Id));
+        }
+        else if (killerOwner != null)
+        {
+            CreditQuest(killerOwner, tagShareRecipientIds.Contains(killerOwner.Id));
+        }
+
+        foreach (var contributor in tagShareRecipients)
+            CreditQuest(contributor, true);
+    }
+
     public override void DoDie(BaseUnit killer, KillReason killReason)
     {
         DeadTime = DateTime.UtcNow;
@@ -913,10 +976,19 @@ public partial class Npc : Unit
         // Logger.Warn($"Eligible killers count is {eligiblePlayers.Count }");
 
         var killerOwner = killer?.GetOwnerCharacter();
+        var tagShareRecipients = new HashSet<Character>();
+        if (AppConfiguration.Instance.World.TagShareEnabled)
+        {
+            var contributors = CharacterTagging.GetAllContributors(AppConfiguration.Instance.World.QuestTeamShareRange);
+            foreach (var contributor in contributors)
+            {
+                if (QuestTeamShareEligibility.IsEligibleRecipient(contributor, Transform))
+                    tagShareRecipients.Add(contributor);
+            }
+        }
         if (eligiblePlayers.Count == 0 && killerOwner != null)
         {
             RecordKillAchievements(killerOwner, eligiblePlayers, taggedTeam);
-            QuestManager.Instance.DoOnMonsterHuntEvents(killerOwner, this); // No eligible owner, but the killer belongs to a character.
             killerOwner.AddExp(KillExp, true);
             var mateList = killerOwner.ParentWorld.MateManager.GetActiveMates(killerOwner.Id);
             foreach (var mate in mateList)
@@ -1025,42 +1097,17 @@ public partial class Npc : Unit
                 // инициируем событие
                 // Task.Run(() => QuestManager.Instance.DoOnMonsterHuntEvents(character, this));
                 RecordKillAchievements(pl, eligiblePlayers, taggedTeam);
-                QuestManager.Instance.DoOnMonsterHuntEvents(pl, this);
             }
         }
 
-        // ── Tag Share toggle ──────────────────────────────────────────────
-        // When enabled, fan out monster-hunt quest events to every player
-        // that dealt damage (plus their party / raid mates in range). This
-        // runs AFTER both branches above (eligible-players loop AND the
-        // killer-only fallback) so two parties or two raids hitting the
-        // same mob can both progress kill quests, even when neither broke
-        // the 50% HP tag threshold. XP and loot are NOT affected — only
-        // quest progress fans out.
-        if (AppConfiguration.Instance.World.TagShareEnabled)
-        {
-            // The killer was credited above ONLY when eligiblePlayers was empty
-            // (the killer-only fallback path at line ~872 fires DoOnMonsterHuntEvents
-            // on the killer directly). If a tag team exists and the killing blow
-            // came from a player *outside* that team, the killer is NOT in
-            // eligiblePlayers and was NOT credited — they're a damage dealer who
-            // should receive TagShare credit, so don't pre-mark them as credited.
-            var alreadyCredited = new HashSet<Character>(eligiblePlayers);
-            if (eligiblePlayers.Count == 0 && killerOwner != null)
-            {
-                alreadyCredited.Add(killerOwner);
-            }
-
-            var contributors = CharacterTagging.GetAllContributors(LootingContainer.MaxLootingRange);
-            foreach (var contributor in contributors)
-            {
-                if (!alreadyCredited.Add(contributor))
-                {
-                    continue;
-                }
-                QuestManager.Instance.DoOnMonsterHuntEvents(contributor, this);
-            }
-        }
+        DistributeQuestCredit(
+            taggedTeam,
+            eligiblePlayers,
+            killerOwner,
+            tagShareRecipients,
+            (character, teamShareAlreadyDistributed, tagShareRecipientIds) =>
+                QuestManager.Instance.DoOnMonsterHuntEvents(
+                    character, this, teamShareAlreadyDistributed, tagShareRecipientIds));
 
         base.DoDie(killer, killReason);
         ClearAllAggroTargetsAndCheckCombatState();
