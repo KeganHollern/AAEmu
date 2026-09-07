@@ -174,9 +174,10 @@ public sealed class QuestReportValidationTests
 
     [Test]
     [Arguments(-1, false)]
-    [Arguments(0, true)]
+    [Arguments(0, false)]
     [Arguments(1, true)]
-    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
     public async Task SourceLessReport_SelectiveReward_RequiresAuthoredIndex(int selected, bool accepted)
     {
         var owner = CreateOwnerWithItems();
@@ -200,11 +201,11 @@ public sealed class QuestReportValidationTests
             {
                 ["QuestComponent"] = [new UnitReqs { OwnerId = 555_552, KindType = UnitReqsKindType.Level, Value1 = 50 }]
             });
-            await Assert.That(quest.IsValidSelectedRewardIndex(0)).IsFalse();
-            await Assert.That(quest.TryReportWithoutSource(0)).IsFalse();
+            await Assert.That(quest.IsValidSelectedRewardIndex(1)).IsFalse();
+            await Assert.That(quest.TryReportWithoutSource(1)).IsFalse();
             owner.Level = 50;
-            await Assert.That(quest.IsValidSelectedRewardIndex(0)).IsTrue();
-            await Assert.That(quest.TryReportWithoutSource(0)).IsTrue();
+            await Assert.That(quest.IsValidSelectedRewardIndex(1)).IsTrue();
+            await Assert.That(quest.TryReportWithoutSource(1)).IsTrue();
         }
         finally
         {
@@ -343,8 +344,8 @@ public sealed class QuestReportValidationTests
         if (selective)
         {
             var reward = new QuestComponentTemplate(template) { Id = 555_552, KindId = QuestComponentKind.Reward };
-            reward.ActTemplates.Add(new QuestActSupplySelectiveItem(reward) { ActId = 300, ThisSelectiveIndex = 0, ItemId = 500 });
-            reward.ActTemplates.Add(new QuestActSupplySelectiveItem(reward) { ActId = 301, ThisSelectiveIndex = 1, ItemId = 501 });
+            reward.ActTemplates.Add(new QuestActSupplySelectiveItem(reward) { ActId = 300, ThisSelectiveIndex = 1, ItemId = 500 });
+            reward.ActTemplates.Add(new QuestActSupplySelectiveItem(reward) { ActId = 301, ThisSelectiveIndex = 2, ItemId = 501 });
             template.Components.Add(reward.Id, reward);
         }
         var quest = new Quest(template, owner, _questManager, Mock.Of<ITaskManager>().Object,
