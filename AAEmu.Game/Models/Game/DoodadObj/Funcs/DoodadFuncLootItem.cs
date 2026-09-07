@@ -41,7 +41,7 @@ public class DoodadFuncLootItem : DoodadFuncTemplate
 
         if (ItemId == 500)
         {
-            character.Money += count;
+            character.ApplyMoneyDelta(count);
             res = character.AddMoney(SlotType.Inventory, count);
         }
         else

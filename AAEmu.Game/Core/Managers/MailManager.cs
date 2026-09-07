@@ -97,8 +97,13 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public bool DeleteMail(long id)
     {
-        return DeleteMail(id, true);
+        if (!_allPlayerMails.TryGetValue(id, out var mail))
+            return false;
+        return DeleteMail(id, !IsAuctionClaimMail(mail));
     }
+
+    private static bool IsAuctionClaimMail(BaseMail mail) =>
+        mail.MailType is MailType.AucBidWin or MailType.AucOffSuccess;
 
     private bool DeleteMail(long id, bool releaseId)
     {
@@ -427,8 +432,8 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public bool PayChargeMoney(Character character, long mailId, bool autoUseAAPoint)
     {
-        // SaveManager holds this lock for the complete cross-manager database snapshot.
-        // Keep the house, mail, inventory, and character mutations in one save epoch.
+        // Character store state is always locked before the cross-manager save epoch.
+        lock (character.StorePurchaseSyncRoot)
         lock (SaveManager.PersistenceSyncRoot)
             return PayChargeMoneyLocked(character, mailId, autoUseAAPoint);
     }

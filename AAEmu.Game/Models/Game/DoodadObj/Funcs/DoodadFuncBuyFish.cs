@@ -28,7 +28,7 @@ public class DoodadFuncBuyFish : DoodadFuncTemplate
 
             // TODO receiving money and removing the back pack
             var total = backpack.Template.Refund;
-            character.Money += total;
+            character.ApplyMoneyDelta(total);
 
             character.Equipment.RemoveItem(ItemTaskType.SkillEffectConsumption, backpack, true);
             character.AddMoney(SlotType.Inventory, total);

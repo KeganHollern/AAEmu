@@ -1957,6 +1957,14 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         itemIdManager.ReleaseId((uint)itemId);
     }
 
+    internal void ForgetCommittedItem(ulong itemId)
+    {
+        lock (_removedItems)
+            _removedItems.Remove(itemId);
+        lock (_allItems)
+            _allItems.Remove(itemId);
+    }
+
     [Obsolete("You can now use directly linked item containers, and no longer need to load them into the character object")]
     public List<Item> LoadPlayerInventory(ICharacter character)
     {
