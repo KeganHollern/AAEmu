@@ -2,6 +2,7 @@
 using AAEmu.Commons.Utils;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Expeditions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -43,6 +44,7 @@ public partial class AppConfiguration
     public ScriptsConfig Scripts { get; set; } = new();
     public JusticeConfig Justice { get; set; } = new();
     public AiChatConfig AiChat { get; set; } = new();
+    public ChatSpamConfig ChatSpam { get; set; } = new();
     public TrionWebConfig TrionWeb { get; set; } = new();
     public TowerDefenseConfig TowerDefense { get; set; } = new();
     public string DefaultLanguage { get; set; } = "en_us";
