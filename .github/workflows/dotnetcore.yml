@@ -28,6 +28,8 @@ jobs:
         run: dotnet test --project AAEmu.UnitTests --configuration Release --no-build --coverage --coverage-output coverage.cobertura.xml --coverage-output-format cobertura --results-directory ./TestResults
       - name: Content Studio Tests
         run: dotnet test --project Tools/AAEmu.ContentStudio.Tests --configuration Release --no-build
+      - name: Game MySQL transaction tests
+        run: dotnet test --project AAEmu.IntegrationTests --configuration Release --no-build -- --filter-trait Category=GameMySql
       - name: Coveralls GitHub Action
         uses: coverallsapp/github-action@v2
         with:

@@ -9,6 +9,7 @@ using Xunit;
 namespace AAEmu.IntegrationTests.Core.Manager;
 
 [Collection("GameMySql")]
+[Trait("Category", "GameMySql")]
 public sealed class AccountDailyLoginRewardTests : IAsyncLifetime
 {
     private const uint FirstAccountId = 1;
