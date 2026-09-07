@@ -345,8 +345,7 @@ public class Item : PacketMarshaler, IComparable<Item>
         mDetailLength -= 1;
         if (mDetailLength > 0)
         {
-            Detail = new byte[mDetailLength];
-            stream.Write(Detail);
+            stream.Write(new byte[mDetailLength]);
         }
     }
 

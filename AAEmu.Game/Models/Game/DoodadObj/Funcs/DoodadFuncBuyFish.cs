@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Models.Game.Char;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
@@ -15,7 +16,10 @@ public class DoodadFuncBuyFish : DoodadFuncTemplate
     {
         Logger.Trace("DoodadFuncBuyFish");
 
-        if (caster is Character character)
+        if (caster is not Character character || owner == null)
+            return;
+
+        lock (SaveManager.PersistenceSyncRoot)
         {
             var backpack = character.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack);
             if (backpack == null)
@@ -24,14 +28,28 @@ public class DoodadFuncBuyFish : DoodadFuncTemplate
                 return;
             }
 
-            owner.ItemTemplateId = backpack.TemplateId; // to display the phase animation correctly for doodad
+            if (backpack.Template == null || backpack.Template.Refund < 0)
+            {
+                character.SendErrorMessage(ErrorMessageType.BagInvalidItem);
+                return;
+            }
 
-            // TODO receiving money and removing the back pack
-            var total = backpack.Template.Refund;
-            character.Money += total;
+            var exchanged = false;
+            using (var mutation = new InventoryMutation(ItemTaskType.SkillEffectConsumption))
+            {
+                if (mutation.TryConsume(character.Equipment, backpack, backpack.Count) &&
+                    mutation.TryChangeMoney(character, backpack.Template.Refund))
+                {
+                    // Display the sold pack only after both sides of the exchange are ready.
+                    owner.ItemTemplateId = backpack.TemplateId;
+                    mutation.Complete();
+                    exchanged = true;
+                }
+            }
 
-            character.Equipment.RemoveItem(ItemTaskType.SkillEffectConsumption, backpack, true);
-            character.AddMoney(SlotType.Inventory, total);
+            // Failed preparation is disposed before publishing a failure to the player.
+            if (!exchanged)
+                character.SendErrorMessage(ErrorMessageType.BagInvalidItem);
         }
     }
 }

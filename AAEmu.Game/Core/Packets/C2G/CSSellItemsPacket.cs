@@ -1,8 +1,8 @@
-﻿using AAEmu.Commons.Network;
-using AAEmu.Game.Core.Managers;
+using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Items;
-using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Merchant;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -11,62 +11,29 @@ public class CSSellItemsPacket() : GamePacket(CSOffsets.CSSellItemsPacket, 1)
     public override void Read(PacketStream stream)
     {
         var npcObjId = stream.ReadBc();
-        var npc = Connection.ActiveChar.ParentWorld.GetNpc(npcObjId);
-        if (npc == null || !npc.Template.Merchant)
-            return;
-
-        var unkObjId = stream.ReadBc();
-
-        var num = stream.ReadByte();
-        var items = new List<Item>();
-
-        for (var i = 0; i < num; i++)
+        _ = stream.ReadBc(); // Existing, unconfirmed secondary object field.
+        var count = stream.ReadByte();
+        var requests = new List<MerchantSaleRequest>(count);
+        for (var i = 0; i < count; i++)
         {
             var slotType = (SlotType)stream.ReadByte();
             var slot = stream.ReadByte();
-
             var itemId = stream.ReadUInt64();
-            var unkId = stream.ReadUInt32();
-
-            Item item = null;
-            if (slotType == SlotType.Equipment)
-                item = Connection.ActiveChar.Inventory.Equipment.GetItemBySlot(slot);
-            else if (slotType == SlotType.Inventory)
-                item = Connection.ActiveChar.Inventory.Bag.GetItemBySlot(slot);
-            //                else if (slotType == SlotType.Bank)
-            //                    item = Connection.ActiveChar.Inventory.Bank[slot];
-            if (item != null && item.Id == itemId)
-                items.Add(item);
+            _ = stream.ReadUInt32(); // Unconfirmed field; this is not an authoritative quantity.
+            requests.Add(new MerchantSaleRequest(slotType, slot, itemId));
         }
 
-        //var tasks = new List<ItemTask>();
-        var money = 0;
-        foreach (var item in items)
+        var character = Connection.ActiveChar;
+        var result = MerchantSaleExecutor.Execute(character, npcObjId, requests);
+        if (result != MerchantSaleResult.Success)
         {
-            if (!item.Template.Sellable)
-                continue;
-
-            if (!Connection.ActiveChar.BuyBackItems.AddOrMoveExistingItem(ItemTaskType.StoreSell, item))
+            // Execute has disposed any failed mutation before an error can trigger callbacks.
+            character?.SendErrorMessage(result switch
             {
-                Logger.Warn($"Failed to move sold itemId {item.Id} ({item.TemplateId}) to BuyBack ItemContainer for {Connection.ActiveChar.Name}");
-            }
-            else
-            {
-                // BuyBack is a non-persisted (SlotType.None) container. Without this the
-                // item's existing persisted row would be reloaded and duplicated on
-                // relogin (#1189). Queue that row for deletion; buying the item back
-                // re-enters a persisted container and re-saves it.
-                ItemManager.Instance.MarkItemForDbDeletion(item.Id);
-            }
-            money += (int)(item.Template.Refund * ItemManager.Instance.GetGradeTemplate(item.Grade).RefundMultiplier / 100f) *
-                     item.Count;
+                MerchantSaleResult.TooFarAway => ErrorMessageType.TooFarAway,
+                MerchantSaleResult.InvalidItem => ErrorMessageType.StoreInvalidItem,
+                _ => ErrorMessageType.StoreHaveProblem
+            });
         }
-
-        Connection.ActiveChar.ChangeMoney(SlotType.Inventory, money);
-        /*
-        Connection.ActiveChar.Money += money;
-        tasks.Add(new MoneyChange(money));
-        Connection.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.StoreSell, itemTasks, new List<ulong>()));
-        */
     }
 }

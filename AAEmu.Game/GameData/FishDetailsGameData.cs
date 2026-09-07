@@ -57,26 +57,26 @@ public class FishDetailsGameData : Singleton<FishDetailsGameData>, IGameDataLoad
         return fish;
     }
 
-    public BigFish Create(Item item)
+    public BigFish CreateTrophy(uint inputTemplateId, uint outputTemplateId)
     {
-        var template = ItemManager.Instance.GetItemTemplateFromItemId(item.TemplateId);
-        if (template == null)
-        {
+        var template = ItemManager.Instance.GetTemplate(outputTemplateId);
+        if (template == null || !_fishDetails.TryGetValue(inputTemplateId, out var details) ||
+            details.MinLength < 0 || details.MaxLength <= 0 || details.MinLength > details.MaxLength ||
+            details.MinWeight < 0 || details.MinWeight > details.MaxWeight)
             return null;
-        }
 
-        var fish = new BigFish(item.Id, template, 1) { CreateTime = DateTime.UtcNow };
-        (fish.Length, fish.Weight) = GetFishSize(item.MadeUnitId);
-
+        // Prepare all fish-specific data before allocating or registering an item.
+        var fish = new BigFish(0, template, 1) { CreateTime = DateTime.UtcNow };
+        (fish.Length, fish.Weight) = GetFishSize(inputTemplateId);
         var byteArray = new byte[16];
         Buffer.BlockCopy(BitConverter.GetBytes(fish.Weight), 0, byteArray, 0, 4);
         Buffer.BlockCopy(BitConverter.GetBytes(fish.Length), 0, byteArray, 4, 4);
         Buffer.BlockCopy(BitConverter.GetBytes(Helpers.UnixTime(fish.CreateTime)), 0, byteArray, 8, 8);
-
         fish.Detail = byteArray;
 
-        ItemManager.Instance.AddItem(fish);
-
+        fish.Id = ItemManager.Instance.ReserveItemId();
+        if (fish.Id == 0 || !ItemManager.Instance.AddItem(fish))
+            return null;
         return fish;
     }
 

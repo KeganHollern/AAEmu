@@ -23,7 +23,7 @@ public interface IItemManager : ILoadable
     ItemGradeEnchantingSupport GetItemGradEnchantingSupportByItemId(uint itemId);
     List<LootPackDroppingNpc> GetLootPackIdByNpcId(uint npcId);
     List<ItemTemplate> GetAllItems();
-    List<Item> GetLootConvertFish(uint templateId);
+    bool TryGetFishConversion(uint doodadFunctionId, uint templateId, out Loot output);
     GradeDistributions GetGradeDistributions(byte id);
     uint GetSocketChance(uint numSockets);
     ItemCapScale GetItemCapScale(uint skillId);
