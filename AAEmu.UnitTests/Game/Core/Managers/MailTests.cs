@@ -22,18 +22,23 @@ namespace AAEmu.UnitTests.Game.Core.Managers;
 public sealed class MailTests
 {
     private CharacterMock _character;
+    private CharacterMock _otherRecipient;
     private CharacterMock _sender;
     private CharacterMails _mails;
+    private CharacterMails _otherRecipientMails;
+    private CharacterMails _senderMails;
     private MailManager _mailManager;
     private Mock<IHousingManager> _housingManager;
     private Mock<IWorldManager> _worldManager;
     private Mock<ISession> _recipientSession;
+    private Mock<ISession> _otherRecipientSession;
     private Mock<ISession> _senderSession;
 
     [Before(Test)]
     public void Setup()
     {
         _recipientSession = Mock.Of<ISession>();
+        _otherRecipientSession = Mock.Of<ISession>();
         _senderSession = Mock.Of<ISession>();
 
         _character = new CharacterMock
@@ -48,26 +53,44 @@ public sealed class MailTests
         {
             AccountId = 2,
             Id = 2,
-            Name = "sender",
+            Name = "Sender",
             Connection = new GameConnection(_senderSession.Object)
+        };
+        _otherRecipient = new CharacterMock
+        {
+            AccountId = 3,
+            Id = 3,
+            Name = "otherRecipient",
+            Money = 1000,
+            Connection = new GameConnection(_otherRecipientSession.Object)
         };
 
         _mails = new CharacterMails(_character);
+        _otherRecipientMails = new CharacterMails(_otherRecipient);
+        _senderMails = new CharacterMails(_sender);
         _character.Mails = _mails;
+        _otherRecipient.Mails = _otherRecipientMails;
+        _sender.Mails = _senderMails;
         _character.Connection.ActiveChar = _character;
+        _otherRecipient.Connection.ActiveChar = _otherRecipient;
         _sender.Connection.ActiveChar = _sender;
 
         var nameManager = new NameManager();
         nameManager.Load([], [], []);
         nameManager.AddCharacter(_character.Id, _character.Name, 1);
         nameManager.AddCharacter(_sender.Id, _sender.Name, 2);
+        nameManager.AddCharacter(_otherRecipient.Id, _otherRecipient.Name, 3);
 
         var mailIdManager = new MailIdManager();
         mailIdManager.Initialize();
 
         _worldManager = Mock.Of<IWorldManager>();
+        _worldManager.GetCharacterById(_character.Id).Returns(_character);
+        _worldManager.GetCharacterById(_otherRecipient.Id).Returns(_otherRecipient);
         _worldManager.GetCharacterById(_sender.Id).Returns(_sender);
         _worldManager.GetCharacter(_character.Name).Returns(_character);
+        _worldManager.GetCharacter(_otherRecipient.Name).Returns(_otherRecipient);
+        _worldManager.GetCharacter(_sender.Name).Returns(_sender);
         _housingManager = Mock.Of<IHousingManager>();
 
         _mailManager = new MailManager(
@@ -103,12 +126,16 @@ public sealed class MailTests
     {
         _mailManager._allPlayerMails = null;
         _character = null;
+        _otherRecipient = null;
         _sender = null;
         _mails = null;
+        _otherRecipientMails = null;
+        _senderMails = null;
         _mailManager = null;
         _housingManager = null;
         _worldManager = null;
         _recipientSession = null;
+        _otherRecipientSession = null;
         _senderSession = null;
 
         FeaturesManager.Fsets.Set(Feature.taxItem, true);
@@ -235,6 +262,193 @@ public sealed class MailTests
 
         await Assert.That(_mailManager.AllPlayerMails.ContainsKey(mail.Id)).IsFalse();
         _senderSession.SendPacket(Any<byte[]>()).WasCalled(Times.Never);
+    }
+
+    [Test]
+    public async Task ReadMail_ReceivedMailOwnedByOtherRecipient_DoesNotDiscloseOrMutate()
+    {
+        var mail = AddReceivedMail();
+        _otherRecipientMails.UnreadMailCount.UpdateReceived(mail.MailType, 3);
+
+        _otherRecipientMails.ReadMail(false, mail.Id);
+
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        await Assert.That(mail.OpenDate).IsEqualTo(default(DateTime));
+        await Assert.That(mail.IsDelivered).IsFalse();
+        await Assert.That(mail.IsDirty).IsFalse();
+        await Assert.That(_otherRecipientMails.UnreadMailCount.Received).IsEqualTo(3);
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailBodyPacket)))
+            .WasCalled(Times.Never);
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailStatusUpdatedPacket)))
+            .WasCalled(Times.Never);
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCCountUnreadMailPacket)))
+            .WasCalled(Times.Never);
+        _senderSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailReceiverOpenedPacket)))
+            .WasCalled(Times.Never);
+
+        _mails.ReadMail(false, mail.Id);
+
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Read);
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailBodyPacket)))
+            .WasCalled(Times.Once);
+    }
+
+    [Test]
+    public async Task ReadMail_SentMailOwnedByOtherSender_DoesNotDisclose()
+    {
+        var mail = AddReceivedMail();
+
+        _otherRecipientMails.ReadMail(true, mail.Id);
+
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailBodyPacket)))
+            .WasCalled(Times.Never);
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailStatusUpdatedPacket)))
+            .WasCalled(Times.Never);
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCCountUnreadMailPacket)))
+            .WasCalled(Times.Never);
+
+        _senderMails.ReadMail(true, mail.Id);
+
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        _senderSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailBodyPacket)))
+            .WasCalled(Times.Once);
+    }
+
+    [Test]
+    public async Task GetAttached_MailOwnedByOtherRecipient_DoesNotClaimMoneyOrItems()
+    {
+        var mail = AddReceivedMail(copperCoins: 25);
+        mail.Body.Attachments.Add(new ItemMock(777)
+        {
+            SlotType = SlotType.Mail,
+            Slot = 0
+        });
+        mail.Header.Attachments = 2;
+        mail.IsDirty = false;
+        _otherRecipientMails.UnreadMailCount.UpdateReceived(mail.MailType, 3);
+        var moneyBeforeClaim = _otherRecipient.Money;
+
+        var result = _otherRecipientMails.GetAttached(mail.Id, true, true, true);
+
+        await Assert.That(result).IsFalse();
+        await Assert.That(_otherRecipient.Money).IsEqualTo(moneyBeforeClaim);
+        await Assert.That(mail.Body.CopperCoins).IsEqualTo(25);
+        await Assert.That(mail.Body.Attachments.Count).IsEqualTo(1);
+        await Assert.That(mail.Body.Attachments[0].Id).IsEqualTo(777ul);
+        await Assert.That(mail.Header.Attachments).IsEqualTo((byte)2);
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        await Assert.That(mail.OpenDate).IsEqualTo(default(DateTime));
+        await Assert.That(mail.IsDirty).IsFalse();
+        await Assert.That(_otherRecipientMails.UnreadMailCount.Received).IsEqualTo(3);
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCAttachmentTakenPacket)))
+            .WasCalled(Times.Never);
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailStatusUpdatedPacket)))
+            .WasCalled(Times.Never);
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCCountUnreadMailPacket)))
+            .WasCalled(Times.Never);
+        _senderSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailReceiverOpenedPacket)))
+            .WasCalled(Times.Never);
+    }
+
+    [Test]
+    public async Task TakeAllAttachment_MailOwnedByOtherRecipient_DoesNotSendStatusOrDelete()
+    {
+        var mail = AddReceivedMail(copperCoins: 25);
+        _otherRecipientMails.UnreadMailCount.UpdateReceived(mail.MailType, 3);
+        var moneyBeforeClaim = _otherRecipient.Money;
+        var stream = new PacketStream().Write(mail.Id);
+        stream.Rollback();
+
+        var packet = new CSTakeAllAttachmentItemPacket { Connection = _otherRecipient.Connection };
+        packet.Read(stream);
+
+        await Assert.That(_mailManager.AllPlayerMails.ContainsKey(mail.Id)).IsTrue();
+        await Assert.That(_otherRecipient.Money).IsEqualTo(moneyBeforeClaim);
+        await Assert.That(mail.Body.CopperCoins).IsEqualTo(25);
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        await Assert.That(_otherRecipientMails.UnreadMailCount.Received).IsEqualTo(3);
+        _otherRecipientSession.SendPacket(Is<byte[]>(data => HasOpcode(data, SCOffsets.SCAttachmentTakenPacket)))
+            .WasCalled(Times.Never);
+        _otherRecipientSession.SendPacket(Is<byte[]>(data => HasOpcode(data, SCOffsets.SCMailStatusUpdatedPacket)))
+            .WasCalled(Times.Never);
+        _otherRecipientSession.SendPacket(Is<byte[]>(data => HasOpcode(data, SCOffsets.SCCountUnreadMailPacket)))
+            .WasCalled(Times.Never);
+        _otherRecipientSession.SendPacket(Is<byte[]>(data => HasOpcode(data, SCOffsets.SCMailDeletedPacket)))
+            .WasCalled(Times.Never);
+        _senderSession.SendPacket(Is<byte[]>(data => HasOpcode(data, SCOffsets.SCMailReceiverOpenedPacket)))
+            .WasCalled(Times.Never);
+        _senderSession.SendPacket(Is<byte[]>(data => HasOpcode(data, SCOffsets.SCMailRemovedPacket)))
+            .WasCalled(Times.Never);
+    }
+
+    [Test]
+    public async Task DeleteMail_MailOwnedByOtherRecipient_DoesNotDeleteOrNotify()
+    {
+        var mail = AddReceivedMail();
+        _otherRecipientMails.UnreadMailCount.UpdateReceived(mail.MailType, 3);
+
+        _otherRecipientMails.DeleteMail(mail.Id, false);
+
+        await Assert.That(_mailManager.AllPlayerMails.ContainsKey(mail.Id)).IsTrue();
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        await Assert.That(_otherRecipientMails.UnreadMailCount.Received).IsEqualTo(3);
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailDeletedPacket)))
+            .WasCalled(Times.Never);
+        _senderSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailRemovedPacket)))
+            .WasCalled(Times.Never);
+    }
+
+    [Test]
+    public async Task ReturnMail_MailOwnedByOtherRecipient_DoesNotReturnOrDelete()
+    {
+        var mail = AddReceivedMail();
+        mail.Body.Text = "Original body";
+        mail.IsDirty = false;
+        var moneyBeforeReturn = _otherRecipient.Money;
+
+        _otherRecipientMails.ReturnMail(mail.Id);
+
+        await Assert.That(_mailManager.AllPlayerMails.Count).IsEqualTo(1);
+        await Assert.That(_mailManager.AllPlayerMails.ContainsKey(mail.Id)).IsTrue();
+        await Assert.That(_otherRecipient.Money).IsEqualTo(moneyBeforeReturn);
+        await Assert.That(mail.Header.SenderId).IsEqualTo(_sender.Id);
+        await Assert.That(mail.Header.ReceiverId).IsEqualTo(_character.Id);
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        await Assert.That(mail.Body.Text).IsEqualTo("Original body");
+        await Assert.That(mail.IsDirty).IsFalse();
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailSentPacket)))
+            .WasCalled(Times.Never);
+        _otherRecipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailDeletedPacket)))
+            .WasCalled(Times.Never);
+        _senderSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCGotMailPacket)))
+            .WasCalled(Times.Never);
+        _senderSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailRemovedPacket)))
+            .WasCalled(Times.Never);
+    }
+
+    [Test]
+    public async Task ReturnMail_OwningRecipient_ReturnsMail()
+    {
+        var mail = AddReceivedMail(status: MailStatus.Read);
+        mail.Body.Text = "Return body";
+        mail.IsDirty = false;
+        var moneyBeforeReturn = _character.Money;
+
+        _mails.ReturnMail(mail.Id);
+
+        await Assert.That(_mailManager.AllPlayerMails.ContainsKey(mail.Id)).IsFalse();
+        await Assert.That(_mailManager.AllPlayerMails.Count).IsEqualTo(1);
+        var returnedMail = _mailManager.AllPlayerMails.Values.Single();
+        await Assert.That(returnedMail.Id).IsNotEqualTo(mail.Id);
+        await Assert.That(returnedMail.Header.SenderId).IsEqualTo(_character.Id);
+        await Assert.That(returnedMail.Header.ReceiverId).IsEqualTo(_sender.Id);
+        await Assert.That(returnedMail.Header.SenderName).IsEqualTo(_character.Name);
+        await Assert.That(returnedMail.ReceiverName).IsEqualTo(_sender.Name);
+        await Assert.That(returnedMail.Title).IsEqualTo(mail.Title);
+        await Assert.That(returnedMail.Body.Text).IsEqualTo(mail.Body.Text);
+        await Assert.That(_character.Money).IsEqualTo(moneyBeforeReturn - MailManager.CostExpress);
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailSentPacket)))
+            .WasCalled(Times.Once);
     }
 
     [Test]
@@ -526,6 +740,11 @@ public sealed class MailTests
                packet[6] == (byte)opcode &&
                packet[7] == (byte)(opcode >> 8) &&
                BitConverter.ToInt64(packet, 8) == mailId;
+    }
+
+    private static bool HasOpcode(byte[] packet, ushort opcode)
+    {
+        return packet.Length >= 8 && BitConverter.ToUInt16(packet, 6) == opcode;
     }
 
     private static bool IsMailRemovedPacket(byte[] packet, long mailId)
