@@ -102,6 +102,27 @@ public sealed class QuestActEtcItemObtainTests
     }
 
     [Test]
+    public async Task ReadData_LegacyBlobWithoutObtainSuffix_RequiresNewAcquisitions()
+    {
+        var template = CreateObtainTemplate((ObtainActId, ItemTemplateId, 2, false));
+        var owner = CreateOwner(7);
+        var quest = CreateQuest(template, owner);
+        quest.Step = QuestComponentKind.Progress;
+        var legacyData = quest.WriteData()[..^2];
+
+        _questManager.DoItemsAcquiredEvents(owner, ItemTemplateId, 2);
+        await Assert.That(GetObtainAct(quest, ObtainActId).RunAct()).IsTrue();
+
+        quest.ReadData(legacyData);
+
+        await Assert.That(quest.Step).IsEqualTo(QuestComponentKind.Progress);
+        await Assert.That(GetObtainAct(quest, ObtainActId).RunAct()).IsFalse();
+
+        _questManager.DoItemsAcquiredEvents(owner, ItemTemplateId, 2);
+        await Assert.That(GetObtainAct(quest, ObtainActId).RunAct()).IsTrue();
+    }
+
+    [Test]
     public async Task ReadData_PartialIndependentProgress_ContinuesAfterRelog()
     {
         var template = CreateObtainTemplate(
@@ -135,7 +156,7 @@ public sealed class QuestActEtcItemObtainTests
     }
 
     [Test]
-    public async Task QuestCleanup_ExistingStack_CreditsOnlyAcquiredDeltaAndKeepsHistoricalProgress()
+    public async Task Complete_ExistingStack_CreditsOnlyAcquiredDeltaAndKeepsHistoricalProgress()
     {
         var (owner, item) = CreateOwnerWithItem(2);
         var template = CreateObtainTemplate((ObtainActId, ItemTemplateId, 4, true));
@@ -156,7 +177,7 @@ public sealed class QuestActEtcItemObtainTests
         owner.Inventory.OnAcquiredItem(item, 1, true);
         await Assert.That(act.RunAct()).IsTrue();
 
-        quest.Cleanup();
+        quest.Complete();
 
         await Assert.That(owner.Inventory.GetItemsCount(ItemTemplateId)).IsEqualTo(1);
         await Assert.That(act.RunAct()).IsTrue();

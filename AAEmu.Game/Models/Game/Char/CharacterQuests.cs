@@ -23,6 +23,7 @@ public class CharacterQuests(Character owner)
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private readonly Func<CompletedQuest, bool> _completedQuestPersistenceOverride;
     private readonly Action<uint> _removedQuestPersistenceOverride;
+    private readonly Action<Quest> _activeQuestPersistenceOverride;
     private readonly List<uint> _removed = [];
 
     private Character Owner { get; set; } = owner;
@@ -32,13 +33,15 @@ public class CharacterQuests(Character owner)
     internal CharacterQuests(
         Character owner,
         Func<CompletedQuest, bool> completedQuestPersistenceOverride,
-        Action<uint> removedQuestPersistenceOverride)
+        Action<uint> removedQuestPersistenceOverride,
+        Action<Quest> activeQuestPersistenceOverride = null)
         : this(owner)
     {
         ArgumentNullException.ThrowIfNull(completedQuestPersistenceOverride);
         ArgumentNullException.ThrowIfNull(removedQuestPersistenceOverride);
         _completedQuestPersistenceOverride = completedQuestPersistenceOverride;
         _removedQuestPersistenceOverride = removedQuestPersistenceOverride;
+        _activeQuestPersistenceOverride = activeQuestPersistenceOverride;
     }
 
     public bool HasQuest(uint questId)
@@ -180,7 +183,7 @@ public class CharacterQuests(Character owner)
         // every quest accepted since the last tick (aaemu-cluster#81). The quest may have
         // auto-completed inside RunCurrentStep, so only flush if it is still active.
         if (ActiveQuests.ContainsKey(quest.TemplateId))
-            FlushQuest(quest);
+            (_activeQuestPersistenceOverride ?? FlushQuest)(quest);
 
         quest.QuestInitialized();
         return true;

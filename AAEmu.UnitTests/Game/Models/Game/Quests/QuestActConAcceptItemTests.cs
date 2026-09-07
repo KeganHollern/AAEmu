@@ -4,6 +4,7 @@ using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
@@ -35,10 +36,13 @@ public sealed class QuestActConAcceptItemTests
     private ServiceProvider _testServiceProvider;
     private ItemManager _itemManager;
     private QuestManager _questManager;
+    private bool _previousDebugInfo;
 
     [Before(Test)]
     public void SetUp()
     {
+        _previousDebugInfo = AppConfiguration.Instance.DebugInfo;
+        AppConfiguration.Instance.DebugInfo = false;
         _previousServiceProvider = SingletonContainer.ServiceProvider;
         _previousItemManager = (ItemManager)s_itemManagerInstanceField.GetValue(null);
         _previousQuestManager = (QuestManager)s_questManagerInstanceField.GetValue(null);
@@ -67,10 +71,32 @@ public sealed class QuestActConAcceptItemTests
     [After(Test)]
     public void TearDown()
     {
+        AppConfiguration.Instance.DebugInfo = _previousDebugInfo;
         SingletonContainer.ServiceProvider = _previousServiceProvider;
         s_itemManagerInstanceField.SetValue(null, _previousItemManager);
         s_questManagerInstanceField.SetValue(null, _previousQuestManager);
         _testServiceProvider?.Dispose();
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task RemoveQuest_StarterItemWithBothFlags_ConsumesExactlyOneItem(bool complete)
+    {
+        var owner = CreateOwnerWithItems();
+        owner.Quests = new CharacterQuests(owner, _ => true, _ => { });
+        var act = CreateAct(owner, out var quest);
+        act.Cleanup = true;
+        act.DestroyWhenDrop = true;
+        owner.Quests.ActiveQuests.Add(quest.TemplateId, quest);
+
+        if (complete)
+            owner.Quests.CompleteQuest(quest.TemplateId);
+        else
+            owner.Quests.DropQuest(quest.TemplateId, false);
+
+        await Assert.That(owner.Inventory.GetItemsCount(ItemTemplateId)).IsEqualTo(InitialItemCount - 1);
+        await Assert.That(owner.Quests.ActiveQuests).IsEmpty();
     }
 
     [Test]

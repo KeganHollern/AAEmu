@@ -4,6 +4,8 @@ using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.GameData;
+using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
@@ -37,10 +39,14 @@ public sealed class QuestItemGainStarterTests
     private ServiceProvider _testServiceProvider;
     private ItemManager _itemManager;
     private QuestManager _questManager;
+    private readonly Dictionary<FieldInfo, object> _previousStartDependencies = [];
+    private bool _previousDebugInfo;
 
     [Before(Test)]
     public void SetUp()
     {
+        _previousDebugInfo = AppConfiguration.Instance.DebugInfo;
+        AppConfiguration.Instance.DebugInfo = false;
         _previousServiceProvider = SingletonContainer.ServiceProvider;
         _previousItemManager = (ItemManager)s_itemManagerInstanceField.GetValue(null);
         _previousQuestManager = (QuestManager)s_questManagerInstanceField.GetValue(null);
@@ -69,10 +75,60 @@ public sealed class QuestItemGainStarterTests
     [After(Test)]
     public void TearDown()
     {
+        AppConfiguration.Instance.DebugInfo = _previousDebugInfo;
         SingletonContainer.ServiceProvider = _previousServiceProvider;
         s_itemManagerInstanceField.SetValue(null, _previousItemManager);
         s_questManagerInstanceField.SetValue(null, _previousQuestManager);
+        foreach (var (field, previousValue) in _previousStartDependencies)
+            field.SetValue(null, previousValue);
+        _previousStartDependencies.Clear();
         _testServiceProvider?.Dispose();
+    }
+
+    [Test]
+    public async Task OnAcquiredItem_StackReachesThreshold_StartsQuestOnceWithMatchingAcceptor()
+    {
+        InitializeQuestStartDependencies();
+        var template = CreateTemplate(QuestId, false, (ItemTemplateId, 5));
+        var progressComponent = new QuestComponentTemplate(template)
+        {
+            Id = QuestId * 10 + 2,
+            KindId = QuestComponentKind.Progress
+        };
+        progressComponent.ActTemplates.Add(new QuestActObjMonsterHunt(progressComponent)
+        {
+            ActId = QuestId * 100 + 2,
+            NpcId = 60_001,
+            Count = 1,
+            ThisComponentObjectiveIndex = 0
+        });
+        template.Components.Add(progressComponent.Id, progressComponent);
+        RegisterTemplate(template);
+        var (owner, items) = CreateOwnerWithItems(7, (ItemTemplateId, 3));
+        var persistedQuests = new List<Quest>();
+        owner.Quests = new CharacterQuests(owner, _ => true, _ => { }, persistedQuests.Add);
+        var item = items[ItemTemplateId];
+
+        item.Count++;
+        owner.Inventory.OnAcquiredItem(item, 1, true);
+        await Assert.That(owner.Quests.ActiveQuests).IsEmpty();
+        await Assert.That(persistedQuests).IsEmpty();
+
+        item.Count++;
+        owner.Inventory.OnAcquiredItem(item, 1, true);
+        _questManager.DoQueuedEvaluations();
+
+        var acceptedQuest = owner.Quests.ActiveQuests[QuestId];
+        await Assert.That(acceptedQuest.QuestAcceptorType).IsEqualTo(QuestAcceptorType.Item);
+        await Assert.That(acceptedQuest.AcceptorId).IsEqualTo(ItemTemplateId);
+        await Assert.That(acceptedQuest.Step).IsEqualTo(QuestComponentKind.Progress);
+        await Assert.That(persistedQuests).HasSingleItem();
+        await Assert.That(persistedQuests[0]).IsSameReferenceAs(acceptedQuest);
+
+        owner.Inventory.OnAcquiredItem(item, 1, true);
+        await Assert.That(owner.Quests.ActiveQuests).HasSingleItem();
+        await Assert.That(owner.Quests.ActiveQuests[QuestId]).IsSameReferenceAs(acceptedQuest);
+        await Assert.That(persistedQuests).HasSingleItem();
     }
 
     [Test]
@@ -224,6 +280,33 @@ public sealed class QuestItemGainStarterTests
                      .SelectMany(component => component.ActTemplates)
                      .OfType<QuestActConAcceptItemGain>())
             itemGainActs.Add(act.DetailId, act);
+    }
+
+    private void InitializeQuestStartDependencies()
+    {
+        SetStartDependency(new UnitRequirementsGameData());
+        SetStartDependency(new TaskManager(Mock.Of<ITickManager>().Object));
+        SetStartDependency(new SkillManager(Mock.Of<IAnimationManager>().Object, Mock.Of<IPlotManager>().Object));
+        SetStartDependency(new ExpressTextManager());
+        SetStartDependency(new WorldManager(
+            Mock.Of<ITickManager>().Object,
+            Mock.Of<IWorldIdManager>().Object,
+            new Lazy<IZoneManager>(() => Mock.Of<IZoneManager>().Object),
+            new Lazy<IIndunManager>(() => Mock.Of<IIndunManager>().Object),
+            new Lazy<IFamilyManager>(() => Mock.Of<IFamilyManager>().Object)));
+
+        var questIdManagerField = typeof(QuestIdManager).GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        _previousStartDependencies.Add(questIdManagerField, questIdManagerField.GetValue(null));
+        var questIdManager = new QuestIdManager();
+        questIdManager.Initialize(true);
+        questIdManagerField.SetValue(null, questIdManager);
+    }
+
+    private void SetStartDependency<T>(T instance) where T : class
+    {
+        var field = typeof(Singleton<T>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        _previousStartDependencies.Add(field, field.GetValue(null));
+        field.SetValue(null, instance);
     }
 
     private static QuestTemplate CreateTemplate(
