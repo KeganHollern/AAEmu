@@ -50,12 +50,12 @@ public class ChatSpamManager : Singleton<ChatSpamManager>, IChatSpamManager
             return ChatSpamCheckResult.Allowed;
 
         message ??= string.Empty;
-        var now = _timeProvider.GetUtcNow();
         ChatSpamCheckResult result;
         string reviewDescription = null;
 
         lock (_lock)
         {
+            var now = _timeProvider.GetUtcNow();
             if (++_checksSinceCleanup >= CleanupInterval)
             {
                 CleanUpExpiredStates(now, config);

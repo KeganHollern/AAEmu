@@ -301,8 +301,72 @@ public class ChatSpamManagerTests
         susManager.LogActivity(SusManager.CategoryChatSpam, character, Any<string>()).WasCalled(Times.Never);
     }
 
+    [Test]
+    public async Task CheckMessage_ConcurrentClockReads_DoNotDiscardLaterMessage()
+    {
+        using var timeProvider = new PausedFirstReadTimeProvider();
+        var manager = CreateManager(timeProvider, Mock.Of<ISusManager>().Object, new ChatSpamConfig
+        {
+            RateMessageCount = 3,
+            RateWindowSeconds = 5,
+            RepeatMessageCount = 0,
+            MuteSeconds = 30
+        });
+        var character = CreateCharacter(1, 10, "ConcurrentClockTester");
+        var first = Task.Factory.StartNew(
+            () => manager.CheckMessage(character, ChatType.White, "first"),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Task<ChatSpamCheckResult> second = null;
+        try
+        {
+            await Assert.That(timeProvider.FirstReadStarted.Wait(TimeSpan.FromSeconds(5))).IsTrue();
+            second = Task.Factory.StartNew(
+                () => manager.CheckMessage(character, ChatType.White, "second"),
+                CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+            // Before the fix the second request records its newer timestamp while the first read
+            // is paused. With serialized clock reads it waits for the first request instead.
+            await Task.WhenAny(second, Task.Delay(TimeSpan.FromSeconds(1)));
+        }
+        finally
+        {
+            timeProvider.ResumeFirstRead.Set();
+        }
+
+        var results = await Task.WhenAll(first, second!).WaitAsync(TimeSpan.FromSeconds(5));
+        var third = manager.CheckMessage(character, ChatType.White, "third");
+
+        await Assert.That(results.All(result => result.IsAllowed)).IsTrue();
+        await Assert.That(third.Violation).IsEqualTo(ChatSpamViolationType.RateLimit);
+    }
+
+    private sealed class PausedFirstReadTimeProvider : TimeProvider, IDisposable
+    {
+        private int _calls;
+        public ManualResetEventSlim FirstReadStarted { get; } = new();
+        public ManualResetEventSlim ResumeFirstRead { get; } = new();
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            var call = Interlocked.Increment(ref _calls);
+            if (call == 1)
+            {
+                FirstReadStarted.Set();
+                if (!ResumeFirstRead.Wait(TimeSpan.FromSeconds(5)))
+                    throw new TimeoutException("First chat timestamp read was not released.");
+            }
+            return DateTimeOffset.UnixEpoch.AddSeconds(call);
+        }
+
+        public void Dispose()
+        {
+            FirstReadStarted.Dispose();
+            ResumeFirstRead.Dispose();
+        }
+    }
+
     private static ChatSpamManager CreateManager(
-        FakeTimeProvider timeProvider,
+        TimeProvider timeProvider,
         ISusManager susManager,
         ChatSpamConfig config,
         ChatSpamGameData gameData = null)
