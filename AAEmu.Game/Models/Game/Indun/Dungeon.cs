@@ -40,6 +40,8 @@ public class Dungeon
     public HashSet<Character> EnterRequests { get; } = [];
     private bool _isTeamOwned;
     private readonly Dictionary<uint, bool> _rooms;
+    private readonly List<IndunEvent> _registeredIndunEvents = [];
+    private WorldInstance _eventWorld;
 
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
     private readonly object _lock = new();
@@ -49,7 +51,7 @@ public class Dungeon
     public Team.Team GetOwnerTeam { get => _ownerTeam; }
     public uint GetZoneGroupId { get => _indunZone.ZoneGroupId; }
     public bool IsSystem { get; init; }
-    public bool FinishedLoading { get; set; }
+    public bool FinishedLoading { get; private set; }
     private readonly DateTime _createTime = DateTime.UtcNow;
 
     /// <summary>
@@ -67,20 +69,27 @@ public class Dungeon
     private static readonly TimeSpan EmptyInstanceGracePeriod = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// For system dungeons like the mirage and the library
+    /// Initializes dungeon state for an already-created world, without scheduling loading.
     /// </summary>
-    /// <param name="indunZone"></param>
-    /// <param name="character"></param>
-    /// <param name="team"></param>
-    /// <param name="overrideInstanceId"></param>
-    /// <param name="fixedInstanceId"></param>
-    /// <param name="channelId"></param>
-    public Dungeon(IndunZone indunZone, Character character, uint channelId, Team.Team team, bool overrideInstanceId = false, uint fixedInstanceId = 0)
+    internal Dungeon(IndunZone indunZone, WorldInstance world)
     {
         _indunZone = indunZone;
         _leaveRequests = new ConcurrentDictionary<uint, DateTime>();
         _rooms = [];
+        World = world;
+        if (world != null)
+        {
+            _zoneInstanceId = new ZoneInstanceId(world.Template.ZoneKeys.First(), world.Id);
+            world.DungeonInstance = this;
+        }
+    }
 
+    /// <summary>
+    /// Creates a dungeon world and schedules its loading.
+    /// </summary>
+    public Dungeon(IndunZone indunZone, Character character, uint channelId, Team.Team team, bool overrideInstanceId = false, uint fixedInstanceId = 0)
+        : this(indunZone, null)
+    {
         _isTeamOwned = team != null;
         _ownerTeam = team;
         _characterOwner = character;
@@ -129,10 +138,8 @@ public class Dungeon
 
         TickManager.Instance.OnTick.Subscribe(AreaClearTick, TimeSpan.FromSeconds(1), true);
 
-        RegisterIndunEvents();
-        
         // Create a loading task to run the loading async
-        var loadTask = new DungeonLoaderTask(worldTemplate, this, World.Id, character);
+        var loadTask = new DungeonLoaderTask(this);
         TaskManager.Instance.Schedule(loadTask, TimeSpan.FromMilliseconds(100), null, 1);
         TickManager.Instance.OnTick.Subscribe(LeaveDungeonTick, TimeSpan.FromSeconds(5), true);
     }
@@ -417,11 +424,14 @@ public class Dungeon
         lock (_lock)
         {
             IsDestroyed = true;
+            FinishedLoading = false;
         }
 
         Logger.Info($"[Dungeon] instanceId={_zoneInstanceId?.InstanceId}, zoneId={_zoneInstanceId?.ZoneId}: Destroying dungeon...");
 
         TickManager.Instance.OnTick.UnSubscribe(AreaClearTick);
+        TickManager.Instance.OnTick.UnSubscribe(LeaveDungeonTick);
+        UnregisterIndunEvents();
 
         // aaemu-cluster#92 (#102): check World before touching it; the empty-instance sweep and the
         // stale-solo-instance cleanup can race the other destroy paths, so this must be safe to
@@ -440,10 +450,6 @@ public class Dungeon
         //{
         //    return false;
         //}
-
-        UnregisterIndunEvents();
-        TickManager.Instance.OnTick.UnSubscribe(LeaveDungeonTick);
-        TickManager.Instance.OnTick.UnSubscribe(AreaClearTick);
 
         World.CleanupInstance();
 
@@ -778,21 +784,68 @@ public class Dungeon
         }
     }
 
-    public void RegisterIndunEvents()
+    internal void CompleteLoading(WorldInstance loadedWorld)
     {
-        Logger.Info($"Registering Indun Events...");
-        foreach (var ev in IndunGameData.Instance.GetIndunEvents(_indunZone.ZoneGroupId))
+        lock (_lock)
         {
-            ev?.Subscribe(World);
+            if (IsDestroyed || FinishedLoading || World != loadedWorld)
+                return;
+
+            // Room events resolve their doodads here, after every spawn task has completed.
+            RegisterIndunEvents();
+            FinishedLoading = true;
+            Logger.Info($"[{World}] Dungeon instance ready!");
+
+            // QueuePlayer uses the same lock, so no request can be lost between publishing
+            // readiness and draining the queue, or modify it during enumeration.
+            foreach (var player in EnterRequests)
+            {
+                if (player?.IsOnline == true)
+                    AddPlayer(player);
+            }
+            EnterRequests.Clear();
         }
     }
 
-    private void UnregisterIndunEvents()
+    public void RegisterIndunEvents()
     {
-        Logger.Info($"Unregistering Indun Events...");
-        foreach (var ev in IndunGameData.Instance.GetIndunEvents(_indunZone.ZoneGroupId))
+        lock (_lock)
         {
-            ev?.UnSubscribe(World);
+            if (_eventWorld != null || IsDestroyed || World == null)
+                return;
+
+            Logger.Info("Registering Indun Events...");
+            _eventWorld = World;
+            try
+            {
+                foreach (var ev in IndunGameData.Instance.GetIndunEvents(_indunZone.ZoneGroupId))
+                {
+                    if (ev == null)
+                        continue;
+                    ev.Subscribe(_eventWorld);
+                    _registeredIndunEvents.Add(ev);
+                }
+            }
+            catch
+            {
+                UnregisterIndunEvents();
+                throw;
+            }
+        }
+    }
+
+    internal void UnregisterIndunEvents()
+    {
+        lock (_lock)
+        {
+            if (_eventWorld == null)
+                return;
+
+            Logger.Info("Unregistering Indun Events...");
+            foreach (var ev in _registeredIndunEvents)
+                ev.UnSubscribe(_eventWorld);
+            _registeredIndunEvents.Clear();
+            _eventWorld = null;
         }
     }
 
@@ -820,11 +873,14 @@ public class Dungeon
     {
         lock (_lock)
         {
-            foreach (var ev in IndunGameData.Instance.GetIndunEvents(_indunZone.ZoneGroupId))
+            if (!FinishedLoading || IsDestroyed || World == null)
+                return;
+
+            foreach (var ev in _registeredIndunEvents)
             {
                 if (ev is not IndunEventNoAliveChInRooms room) { continue; }
 
-                if (IsRoomCleared(room.RoomId)) { return; }
+                if (IsRoomCleared(room.RoomId)) { continue; }
 
                 var indunRoom = IndunGameData.Instance.GetRoom(room.RoomId);
                 var doodad = room.GetRoomDoodad(World.Id);

@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.GameData;
+﻿using System.Collections.Concurrent;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.World;
 
@@ -7,10 +8,10 @@ namespace AAEmu.Game.Models.Game.Indun.Events;
 internal class IndunEventNoAliveChInRooms : IndunEvent
 {
     public uint RoomId { get; set; }
-    private readonly Dictionary<uint, uint> _playerRoomCount = [];
-    private readonly Dictionary<uint, Doodad> _doodads = [];
+    private readonly ConcurrentDictionary<uint, uint> _playerRoomCount = new();
+    private readonly ConcurrentDictionary<uint, Doodad> _doodads = new();
 
-    public override void Subscribe(WorldInstance worldInstance)
+    protected override void SubscribeCore(WorldInstance worldInstance)
     {
         var doodadList = new List<Doodad>();
         var indunRoom = IndunGameData.Instance.GetRoom(RoomId);
@@ -24,30 +25,16 @@ internal class IndunEventNoAliveChInRooms : IndunEvent
             if (doodadList.Count > 1)
                 Logger.Warn("[IndunEvent] DoodadList returned higher than one doodad count.");
 
-            if (_doodads.TryGetValue(worldInstance.Id, out _))
-            {
-                _doodads[worldInstance.Id] = doodadList[0];
-            }
-            else
-            {
-                _doodads.Add(worldInstance.Id, doodadList[0]);
-            }
-            if (_playerRoomCount.TryGetValue(worldInstance.Id, out _))
-            {
-                _playerRoomCount[worldInstance.Id] = 0;
-            }
-            else
-            {
-                _playerRoomCount.Add(worldInstance.Id, 0);
-            }
+            _doodads[worldInstance.Id] = doodadList[0];
+            _playerRoomCount[worldInstance.Id] = 0;
             worldInstance.Events.OnAreaClear += OnAreaClear;
         }
     }
 
-    public override void UnSubscribe(WorldInstance worldInstance)
+    protected override void UnSubscribeCore(WorldInstance worldInstance)
     {
-        _doodads.Remove(worldInstance.Id);
-        _playerRoomCount.Remove(worldInstance.Id);
+        _doodads.TryRemove(worldInstance.Id, out _);
+        _playerRoomCount.TryRemove(worldInstance.Id, out _);
         worldInstance.Events.OnAreaClear -= OnAreaClear;
     }
 

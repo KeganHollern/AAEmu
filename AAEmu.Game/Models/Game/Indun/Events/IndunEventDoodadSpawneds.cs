@@ -8,14 +8,14 @@ internal class IndunEventDoodadSpawneds : IndunEvent
     public uint DoodadAlmightyId { get; set; } // templateId
     public uint DoodadFuncGroupId { get; set; }
 
-    public override void Subscribe(WorldInstance worldInstance)
+    protected override void SubscribeCore(WorldInstance worldInstance)
     {
         worldInstance.Events.OnDoodadSpawn += OnDoodadSpawn;
     }
 
-    public override void UnSubscribe(WorldInstance worldInstance)
+    protected override void UnSubscribeCore(WorldInstance worldInstance)
     {
-        worldInstance.Events.OnDoodadSpawn += OnDoodadSpawn;
+        worldInstance.Events.OnDoodadSpawn -= OnDoodadSpawn;
     }
 
     private void OnDoodadSpawn(object sender, OnDoodadSpawnArgs args)
