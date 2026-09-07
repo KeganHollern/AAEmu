@@ -1012,7 +1012,7 @@ internal sealed class MySqlAuctionMailClaimStore : IAuctionMailClaimStore
             reader.IsDBNull(itemIdOrdinal) ? null : reader.GetUInt64(itemIdOrdinal),
             reader.IsDBNull(itemCountOrdinal) ? null : reader.GetInt32(itemCountOrdinal),
             reader.IsDBNull(itemSlotTypeOrdinal) ? null : (SlotType)reader.GetByte(itemSlotTypeOrdinal),
-            reader.IsDBNull(itemSlotOrdinal) ? null : reader.GetByte(itemSlotOrdinal),
+            reader.IsDBNull(itemSlotOrdinal) ? null : checked((byte)reader.GetUInt16(itemSlotOrdinal)),
             reader.IsDBNull(moneyAmountOrdinal) ? null : reader.GetInt64(moneyAmountOrdinal));
     }
 
