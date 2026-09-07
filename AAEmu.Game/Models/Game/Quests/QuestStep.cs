@@ -29,9 +29,6 @@ public class QuestStep(QuestComponentKind step, Quest parent)
     /// </summary>
     public void InitializeStep()
     {
-        // Distribute any rewards that may still be open so the pool is empty
-        Parent.DistributeRewards(false);
-
         foreach (var questComponent in Components.Values)
             questComponent.InitializeComponent();
     }
@@ -56,6 +53,10 @@ public class QuestStep(QuestComponentKind step, Quest parent)
         // Cache which components are active
         foreach (var questComponent in Components.Values)
             questComponent.IsCurrentlyActive = UnitRequirementsGameData.Instance.CanComponentRun(questComponent.Template, (BaseUnit)Parent.Owner);
+
+        // Validate the whole active step before a valid reward or removal can be applied.
+        if (!Parent.ValidateStepRewardReferences(this))
+            return false;
 
         var componentsOrCheck = Parent.Template.Selective && ThisStep == QuestComponentKind.Progress;
 
@@ -122,7 +123,7 @@ public class QuestStep(QuestComponentKind step, Quest parent)
         }
 
         // Handle Supply/Reward Distribution
-        res &= Parent.DistributeRewards(true);
+        res &= Parent.DistributeRewards(res);
 
         // LetItBeDone type of quests, are always forced forward using the Report Acts
         if (ThisStep == QuestComponentKind.Progress && Parent.Template.LetItDone)

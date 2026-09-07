@@ -6,6 +6,8 @@ namespace AAEmu.Game.Models.Game.Quests.Acts;
 
 public class QuestActSupplyJuryPoint(QuestComponentTemplate parentComponent) : QuestActTemplate(parentComponent)
 {
+    public override bool HasSideEffects => true;
+
     public int Point { get; set; } // is 1 for all entries
 
     /// <summary>

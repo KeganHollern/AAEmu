@@ -95,6 +95,15 @@ public class Inventory
     [Obsolete("You can now use directly linked item containers, and no longer need to load them into the character object")]
     public void Load(MySqlConnection connection, SlotType? slotType = null)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            LoadLocked(connection, slotType);
+        }
+    }
+
+    [Obsolete("You can now use directly linked item containers, and no longer need to load them into the character object")]
+    private void LoadLocked(MySqlConnection connection, SlotType? slotType)
+    {
         // Get all items for this player
         var playeritems = ItemManager.Instance.LoadPlayerInventory(Owner);
 
@@ -275,6 +284,15 @@ public class Inventory
     public bool SplitOrMoveItem(ItemTaskType taskType, ulong fromItemId, SlotType fromType, byte fromSlot,
         ulong toItemId, SlotType toType, byte toSlot, int count = 0)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return SplitOrMoveItemLocked(taskType, fromItemId, fromType, fromSlot, toItemId, toType, toSlot, count);
+        }
+    }
+
+    private bool SplitOrMoveItemLocked(ItemTaskType taskType, ulong fromItemId, SlotType fromType, byte fromSlot,
+        ulong toItemId, SlotType toType, byte toSlot, int count)
+    {
         var fromItem = ItemManager.Instance.GetItemByItemId(fromItemId);
         if (fromItem == null && fromItemId != 0)
         {
@@ -297,6 +315,14 @@ public class Inventory
     }
 
     public bool SplitOrMoveItemEx(ItemTaskType taskType, ItemContainer sourceContainer, ItemContainer targetContainer, ulong fromItemId, SlotType fromType, byte fromSlot, ulong toItemId, SlotType toType, byte toSlot, int count = 0)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return SplitOrMoveItemExLocked(taskType, sourceContainer, targetContainer, fromItemId, fromType, fromSlot, toItemId, toType, toSlot, count);
+        }
+    }
+
+    private bool SplitOrMoveItemExLocked(ItemTaskType taskType, ItemContainer sourceContainer, ItemContainer targetContainer, ulong fromItemId, SlotType fromType, byte fromSlot, ulong toItemId, SlotType toType, byte toSlot, int count)
     {
         Logger.Trace($"SplitOrMoveItem({fromItemId} {fromType}:{fromSlot} => {toItemId} {toType}:{toSlot} - {count})");
 

@@ -46,6 +46,7 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
     public Dictionary<uint, Dictionary<uint, QuestTimeoutTask>> QuestTimeoutTask { get; } = [];
     private Queue<Quest> EvaluationQueue { get; } = new();
     private readonly object _evaluationQueueLock = new();
+    private readonly object _evaluationRunnerLock = new();
 
     /// <summary>
     /// Gets the Template of a Quest by TemplateId
@@ -157,15 +158,25 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
     /// </summary>
     public void DoQueuedEvaluations()
     {
-        lock (_evaluationQueueLock)
+        lock (_evaluationRunnerLock)
         {
-            while (EvaluationQueue.Count > 0)
+            while (true)
             {
-                var quest = EvaluationQueue.Dequeue();
-                quest.StartingEvaluation();
-                if (Logger.IsTraceEnabled)
-                    Logger.Trace($"DoQueuedEvaluations, {quest.Owner.Name} ({quest.Owner.Id}), Quest {quest.TemplateId}");
-                var currentResult = quest.RunCurrentStep();
+                Quest quest;
+                lock (_evaluationQueueLock)
+                {
+                    if (EvaluationQueue.Count == 0)
+                        return;
+                    quest = EvaluationQueue.Dequeue();
+                }
+                // Inventory callbacks enqueue more work. Never hold the queue lock while running them.
+                lock (SaveManager.PersistenceSyncRoot)
+                {
+                    quest.StartingEvaluation();
+                    if (Logger.IsTraceEnabled)
+                        Logger.Trace($"DoQueuedEvaluations, {quest.Owner.Name} ({quest.Owner.Id}), Quest {quest.TemplateId}");
+                    quest.RunCurrentStep();
+                }
             }
         }
     }
@@ -264,6 +275,39 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
         var dailyCron = "0 0 0 */1 * *"; // Crontab
         // TODO: Make sure it obeys server time settings
         taskManager.CronSchedule(new QuestDailyResetTask(), dailyCron);
+    }
+
+    // Initialization runs after all static-data loaders, including ItemManager.
+    public void Initialize()
+    {
+        ValidateRewardReferences(ItemManager.Instance.GetTemplate);
+    }
+
+    internal int ValidateRewardReferences(Func<uint, AAEmu.Game.Models.Game.Items.Templates.ItemTemplate> getTemplate)
+    {
+        var invalidCount = 0;
+        foreach (var quest in _questTemplates.Values)
+        foreach (var component in quest.Components.Values)
+        foreach (var act in component.ActTemplates)
+        {
+            var itemId = act switch
+            {
+                QuestActSupplyItem item => item.ItemId,
+                QuestActSupplySelectiveItem item => item.ItemId,
+                _ => 0u
+            };
+            if (itemId == 0 && act is not QuestActSupplyItem && act is not QuestActSupplySelectiveItem)
+                continue;
+            var template = getTemplate(itemId);
+            if (template != null && template.MaxCount > 0 && act.Count >= 0)
+                continue;
+            invalidCount++;
+            Logger.Error("Invalid quest reward reference: quest={QuestId}, component={ComponentId}, act={ActId}, item={ItemId}, count={Count}. Delivery stays pending. Correct the reward reference or item template in a reviewed content update, then retry the quest; see Docs/customized/quest-reward-delivery.md.",
+                quest.Id, component.Id, act.ActId, itemId, act.Count);
+        }
+        if (invalidCount > 0)
+            Logger.Error("Found {Count} invalid quest reward references; affected rewards are blocked, other quests remain available.", invalidCount);
+        return invalidCount;
     }
 
     /// <summary>

@@ -34,6 +34,9 @@ public class QuestActTemplate(QuestComponentTemplate parentComponent)
     /// </summary>
     public virtual bool CountsAsAnObjective { get; set; }
 
+    /// <summary>True for supplies that must run only after the component conditions succeed.</summary>
+    public virtual bool HasSideEffects => false;
+
     /// <summary>
     /// Resolved short name of this Class
     /// </summary>

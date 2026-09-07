@@ -141,7 +141,8 @@ public sealed class House : Unit
     public DateTime PlaceDate { get => _placeDate; set { _placeDate = value; _isDirty = true; } }
     public DateTime ProtectionEndDate { get => _protectionEndDate; set { _protectionEndDate = value; _isDirty = true; } }
     public DateTime TaxDueDate { get => _protectionEndDate.AddDays(-Math.Max(1u, AppConfiguration.Instance.World.DaysForTaxPayment)); }
-    public object TaxPaymentSyncRoot { get; } = new();
+    // Demolition returns inventory items while tax payment and save already hold this gate.
+    public object TaxPaymentSyncRoot => SaveManager.PersistenceSyncRoot;
     public uint SellToPlayerId { get => _sellToPlayerId; set { _sellToPlayerId = value; _isDirty = true; } }
     public uint SellPrice { get => _sellPrice; set { _sellPrice = value; _isDirty = true; } }
     public bool AllowRecover { get => _allowRecover; set { _allowRecover = value; _isDirty = true; } }

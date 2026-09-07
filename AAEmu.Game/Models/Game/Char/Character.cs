@@ -113,7 +113,9 @@ public partial class Character : Unit, ICharacter
     public int HonorPoint { get; set; }
     public int VocationPoint { get; set; }
     public RemoteShopSession ActiveRemoteShop { get; set; }
-    public object StorePurchaseSyncRoot { get; } = new();
+    // Inventory callbacks may run quests and store actions inside the save epoch.
+    // Use one gate so store -> inventory and quest -> store have the same lock order.
+    public object StorePurchaseSyncRoot => SaveManager.PersistenceSyncRoot;
 
     /// <summary>
     /// Current crime points (/50)

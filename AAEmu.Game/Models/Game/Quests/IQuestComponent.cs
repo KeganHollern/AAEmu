@@ -3,7 +3,6 @@
 public interface IQuestComponent
 {
     public QuestComponentTemplate Template { get; set; }
-    bool OverrideObjectiveCompleted { get; set; }
 
     /// <summary>
     /// Initialize all Acts in this Component (register event handlers)

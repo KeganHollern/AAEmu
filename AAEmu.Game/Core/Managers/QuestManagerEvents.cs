@@ -22,6 +22,11 @@ public partial class QuestManager
     /// <param name="selected">Selected reward (if any)</param>
     public void DoReportEvents(ICharacter owner, uint questContextId, uint npcObjId, uint doodadObjId, int selected)
     {
+        if (!owner.Quests.ActiveQuests.TryGetValue(questContextId, out var quest) ||
+            quest.Step is not (QuestComponentKind.Progress or QuestComponentKind.Ready) ||
+            !quest.IsValidSelectedRewardIndex(selected))
+            return;
+
         if (npcObjId > 0)
         {
             // Turning in at a NPC?
@@ -60,13 +65,7 @@ public partial class QuestManager
         }
         else
         {
-            // Doesn't have a NPC or Doodad to turn in at, just auto-complete it
-            // owner.Quests.CompleteQuest(questContextId, selected, true);
-            if (owner.Quests.ActiveQuests.TryGetValue(questContextId, out var quest))
-            {
-                quest.SelectedRewardIndex = selected;
-                quest.Step = QuestComponentKind.Reward;
-            }
+            quest.TryReportWithoutSource(selected);
         }
     }
 
@@ -78,6 +77,7 @@ public partial class QuestManager
     {
         if (!owner.Quests.ActiveQuests.TryGetValue(questContextId, out var quest) ||
             !quest.Template.LetItDone ||
+            !quest.IsValidSelectedRewardIndex(selected) ||
             quest.Step != QuestComponentKind.Progress ||
             quest.GetQuestObjectiveStatus() < QuestObjectiveStatus.CanEarlyComplete)
             return false;
