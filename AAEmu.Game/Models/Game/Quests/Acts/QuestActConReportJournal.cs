@@ -17,7 +17,7 @@ public class QuestActConReportJournal(QuestComponentTemplate parentComponent) : 
     public override bool RunAct(Quest quest, QuestAct questAct, int currentObjectiveCount)
     {
         Logger.Trace($"{QuestActTemplateName}({DetailId}).RunAct: Quest: {quest.TemplateId}, Owner {quest.Owner.Name} ({quest.Owner.Id})");
-        return questAct.OverrideObjectiveCompleted || true;
+        return questAct.OverrideObjectiveCompleted;
     }
 
     public override void InitializeAction(Quest quest, QuestAct questAct)

@@ -9,6 +9,8 @@ namespace AAEmu.Game.Models.Game.Quests.Acts;
 
 public class QuestActSupplyItem(QuestComponentTemplate parentComponent) : QuestActTemplate(parentComponent), IQuestActGenericItem
 {
+    public override bool HasSideEffects => true;
+
     public uint ItemId { get; set; }
     public byte GradeId { get; set; }
     public bool ShowActionBar { get; set; }

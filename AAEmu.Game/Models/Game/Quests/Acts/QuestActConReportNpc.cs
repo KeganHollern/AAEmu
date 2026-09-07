@@ -1,5 +1,4 @@
-﻿using AAEmu.Game.Models.Game.NPChar;
-using AAEmu.Game.Models.Game.Quests.Static;
+﻿using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Units;
 
@@ -21,8 +20,7 @@ public class QuestActConReportNpc(QuestComponentTemplate parentComponent) : Ques
     public override bool RunAct(Quest quest, QuestAct questAct, int currentObjectiveCount)
     {
         Logger.Debug($"{QuestActTemplateName}({DetailId}).RunAct: Quest: {quest.TemplateId}, Owner {quest.Owner.Name} ({quest.Owner.Id}), NpcId {NpcId}");
-        // TODO Verify: Does it actually have to be targeted?
-        return questAct.OverrideObjectiveCompleted || (quest.Owner.CurrentTarget is Npc npc && npc.TemplateId == NpcId);
+        return questAct.OverrideObjectiveCompleted;
     }
 
     public override void InitializeQuest(Quest quest, QuestAct questAct)

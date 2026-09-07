@@ -5,6 +5,8 @@ namespace AAEmu.Game.Models.Game.Quests.Acts;
 
 public class QuestActSupplySelectiveItem(QuestComponentTemplate parentComponent) : QuestActTemplate(parentComponent)
 {
+    public override bool HasSideEffects => true;
+
     public uint ItemId { get; set; }
     public byte GradeId { get; set; }
 

@@ -4,6 +4,8 @@ namespace AAEmu.Game.Models.Game.Quests.Acts;
 
 public class QuestActSupplyCopper(QuestComponentTemplate parentComponent) : QuestActTemplate(parentComponent)
 {
+    public override bool HasSideEffects => true;
+
     public int Amount { get; set; }
 
     /// <summary>

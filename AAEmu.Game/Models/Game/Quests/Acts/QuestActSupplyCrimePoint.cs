@@ -5,6 +5,8 @@ namespace AAEmu.Game.Models.Game.Quests.Acts;
 
 public class QuestActSupplyCrimePoint(QuestComponentTemplate parentComponent) : QuestActTemplate(parentComponent)
 {
+    public override bool HasSideEffects => true;
+
     public short Point { get; init; }
 
     /// <summary>

@@ -6,6 +6,8 @@ namespace AAEmu.Game.Models.Game.Quests.Acts;
 
 public class QuestActSupplyHonorPoint(QuestComponentTemplate parentComponent) : QuestActTemplate(parentComponent)
 {
+    public override bool HasSideEffects => true;
+
     public int Point { get; set; }
 
     /// <summary>

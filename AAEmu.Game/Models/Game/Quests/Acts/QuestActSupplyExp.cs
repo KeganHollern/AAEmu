@@ -5,6 +5,8 @@ namespace AAEmu.Game.Models.Game.Quests.Acts;
 
 public class QuestActSupplyExp(QuestComponentTemplate parentComponent) : QuestActTemplate(parentComponent)
 {
+    public override bool HasSideEffects => true;
+
     public int Exp { get; set; }
 
     /// <summary>

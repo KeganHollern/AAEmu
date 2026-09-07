@@ -27,8 +27,6 @@ public class QuestAct(QuestComponent parentComponent, QuestActTemplate template)
             if (_overrideObjectiveCompleted == value)
                 return;
             _overrideObjectiveCompleted = value;
-            if (value)
-                QuestComponent.OverrideObjectiveCompleted = true;
             RequestEvaluation();
         }
     }
