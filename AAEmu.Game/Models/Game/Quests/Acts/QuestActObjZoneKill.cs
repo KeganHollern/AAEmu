@@ -56,7 +56,7 @@ public class QuestActObjZoneKill(QuestComponentTemplate parentComponent) : Quest
 
     public override void OnZoneKill(QuestAct questAct, object sender, OnZoneKillArgs args)
     {
-        if (questAct.Id != ActId)
+        if (questAct.Id != ActId || args.ZoneGroupId != ZoneId)
             return;
 
         var player = questAct.QuestComponent.Parent.Parent.Owner;

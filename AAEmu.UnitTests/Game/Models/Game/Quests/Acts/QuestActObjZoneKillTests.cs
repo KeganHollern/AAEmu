@@ -75,6 +75,31 @@ public sealed class QuestActObjZoneKillTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OnZoneKill_VictimInAnotherZone_DoesNotAdvanceObjective(bool playerVictim)
+    {
+        var context = CreateContext(playerVictim ? 0 : 3, playerVictim ? 3 : 0);
+        context.Template.ZoneId = 23;
+        Unit victim = playerVictim
+            ? CreatePlayerVictim(FactionsEnum.Harani, 30)
+            : CreateNpcVictim(FactionsEnum.Monstrosity, 30);
+
+        context.Act.OnZoneKill(context.Owner, new OnZoneKillArgs
+        {
+            Killer = context.Owner,
+            Victim = victim,
+            ZoneGroupId = 16
+        });
+
+        await Assert.That(context.Quest.Objectives[0]).IsEqualTo(0);
+
+        RecordKill(context, victim);
+
+        await Assert.That(context.Quest.Objectives[0]).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(false, FactionsEnum.Monstrosity, 1)]
     [Arguments(false, FactionsEnum.Harani, 0)]
     [Arguments(true, FactionsEnum.Monstrosity, 0)]
@@ -183,7 +208,8 @@ public sealed class QuestActObjZoneKillTests
         context.Act.OnZoneKill(context.Owner, new OnZoneKillArgs
         {
             Killer = context.Owner,
-            Victim = victim
+            Victim = victim,
+            ZoneGroupId = context.Template.ZoneId
         });
     }
 

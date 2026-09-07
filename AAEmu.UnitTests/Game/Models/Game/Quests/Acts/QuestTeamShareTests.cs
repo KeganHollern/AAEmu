@@ -338,6 +338,52 @@ public sealed class QuestTeamShareTests
         await Assert.That(noEligibleDeliveries.Deliveries).IsEmpty();
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NpcQuestCredit_ExtendedRangeTaggedTeam_PreservesOutsideKillerCredit(bool tagShareEnabled)
+    {
+        AppConfiguration.Instance.World.QuestTeamShareRange = 250f;
+        var killer = CreateCharacter(1, 101, 10f, true);
+        var taggedMember = CreateCharacter(2, 102, 225f, true);
+        var taggedTeam = new Team { Id = 11, OwnerId = taggedMember.Id, IsParty = true };
+        taggedTeam.AddMember(taggedMember);
+        GetActiveTeams(_teamManager)[taggedTeam.Id] = taggedTeam;
+        var victim = CreateVictim();
+
+        QuestActObjZoneKill CreateKillAct(QuestComponentTemplate component) => new(component)
+        {
+            CountNpc = 5,
+            IsParty = true,
+            TeamShare = true
+        };
+
+        var killerQuest = CreateQuest(killer, CreateKillAct);
+        var memberQuest = CreateQuest(taggedMember, CreateKillAct);
+        killerQuest.Step = QuestComponentKind.Progress;
+        memberQuest.Step = QuestComponentKind.Progress;
+        var killerDeliveries = 0;
+        var memberDeliveries = 0;
+        killer.Events.OnMonsterHunt += (_, _) => killerDeliveries++;
+        taggedMember.Events.OnMonsterHunt += (_, _) => memberDeliveries++;
+        var questManager = new QuestManager(Mock.Of<ITaskManager>().Object, Mock.Of<IZoneManager>().Object);
+        HashSet<Character> tagShareRecipients = tagShareEnabled ? [killer, taggedMember] : [];
+
+        // The tagged member is outside the fixed 200m XP/loot radius but within the configured quest radius.
+        victim.DistributeQuestCredit(
+            taggedTeam,
+            [],
+            killer,
+            tagShareRecipients,
+            (recipient, alreadyDistributed, exclusions) =>
+                questManager.DoOnMonsterHuntEvents(recipient, victim, alreadyDistributed, exclusions));
+
+        await Assert.That(killerQuest.Objectives[0]).IsEqualTo(1);
+        await Assert.That(memberQuest.Objectives[0]).IsEqualTo(1);
+        await Assert.That(killerDeliveries).IsEqualTo(1);
+        await Assert.That(memberDeliveries).IsEqualTo(1);
+    }
+
     private TeamShareFixture CreateFixture<T>(
         Func<QuestComponentTemplate, T> createTemplate,
         float rangeOriginX = 0f)
