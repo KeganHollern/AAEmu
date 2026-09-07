@@ -18,6 +18,14 @@ public class CSDestroyItemPacket() : GamePacket(CSOffsets.CSDestroyItemPacket, 1
         var slot = stream.ReadByte();
         var count = stream.ReadInt32();
 
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            DestroyItem(itemId, slotType, slot, count);
+        }
+    }
+
+    private void DestroyItem(ulong itemId, SlotType slotType, byte slot, int count)
+    {
         var item = Connection.ActiveChar.Inventory.GetItem(slotType, slot);
         if (item == null || item.Id != itemId || item.Count < count)
         {

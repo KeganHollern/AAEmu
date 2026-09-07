@@ -1,5 +1,4 @@
-﻿using AAEmu.Commons.Exceptions;
-using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
@@ -157,6 +156,14 @@ public class ItemContainer
 
     public void ReNumberSlots(bool reverse = false)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            ReNumberSlotsLocked(reverse);
+        }
+    }
+
+    private void ReNumberSlotsLocked(bool reverse)
+    {
         for (var c = 0; c < Items.Count; c++)
         {
             var i = Items[reverse ? Items.Count - 1 - c : c];
@@ -307,6 +314,18 @@ public class ItemContainer
         int preferredSlot = -1,
         bool notifyInventory = true)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return AddOrMoveExistingItemLocked(taskType, item, preferredSlot, notifyInventory);
+        }
+    }
+
+    private bool AddOrMoveExistingItemLocked(
+        ItemTaskType taskType,
+        Item item,
+        int preferredSlot,
+        bool notifyInventory)
+    {
         if (item == null)
         {
             return false;
@@ -455,7 +474,15 @@ public class ItemContainer
     /// <returns></returns>
     public bool RemoveItem(ItemTaskType task, Item item, bool releaseIdAsWell)
     {
-        if (!item.CanDestroy())
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return RemoveItemLocked(task, item, releaseIdAsWell);
+        }
+    }
+
+    private bool RemoveItemLocked(ItemTaskType task, Item item, bool releaseIdAsWell)
+    {
+        if (item == null || item._holdingContainer != this || !Items.Contains(item) || !item.CanDestroy())
         {
             return false;
         }
@@ -503,6 +530,14 @@ public class ItemContainer
     /// <param name="preferredItem">If not null, use this Item as primary source for consume</param>
     /// <returns>The amount of items that was actually consumed, 0 when failed or not found</returns>
     public int ConsumeItem(ItemTaskType taskType, uint templateId, int amountToConsume, Item preferredItem)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return ConsumeItemLocked(taskType, templateId, amountToConsume, preferredItem);
+        }
+    }
+
+    private int ConsumeItemLocked(ItemTaskType taskType, uint templateId, int amountToConsume, Item preferredItem)
     {
         if (!GetAllItemsByTemplate(templateId, -1, out var foundItems, out _))
         {
@@ -583,6 +618,85 @@ public class ItemContainer
     }
 
     /// <summary>
+    /// Consumes every requested template as one batch. Failed validation changes no items;
+    /// callbacks run only after the complete batch has been removed.
+    /// </summary>
+    public bool TryConsumeItems(ItemTaskType taskType, IReadOnlyDictionary<uint, int> requirements)
+    {
+        ArgumentNullException.ThrowIfNull(requirements);
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            var plan = new List<(Item Item, int Count, byte Slot, GamePacket Expiration)>();
+            foreach (var (templateId, requiredCount) in requirements)
+            {
+                if (requiredCount <= 0)
+                    return false;
+
+                var remaining = requiredCount;
+                foreach (var item in Items.Where(item => item.TemplateId == templateId).OrderBy(item => item.Slot))
+                {
+                    if (item._holdingContainer != this || item.Count <= 0)
+                        return false;
+
+                    var count = Math.Min(item.Count, remaining);
+                    if (count == item.Count && !item.CanDestroy())
+                        return false;
+
+                    GamePacket expiration = null;
+                    if (count == item.Count && (item.ExpirationOnlineMinutesLeft > 0.0 ||
+                        item.ExpirationTime > DateTime.UtcNow || item.UnpackTime > DateTime.UtcNow))
+                        expiration = ItemManager.ExpireItemPacket(item);
+
+                    plan.Add((item, count, (byte)item.Slot, expiration));
+                    remaining -= count;
+                    if (remaining == 0)
+                        break;
+                }
+
+                if (remaining != 0)
+                    return false;
+            }
+
+            // Do not call RemoveItem here: its inventory and container callbacks can
+            // reenter quest evaluation before the remaining requirements are consumed.
+            var tasks = new List<ItemTask>();
+            var removed = new List<(Item Item, byte Slot)>();
+            foreach (var (item, count, slot, _) in plan)
+            {
+                item.Count -= count;
+                if (item.Count == 0)
+                {
+                    tasks.Add(new ItemRemoveSlot(item));
+                    Items.Remove(item);
+                    item._holdingContainer = null;
+                    ItemManager.Instance.ReleaseId(item.Id);
+                    removed.Add((item, slot));
+                }
+                else
+                {
+                    tasks.Add(new ItemCountUpdate(item, -count));
+                }
+            }
+            UpdateFreeSlotCount();
+
+            foreach (var (_, _, _, expiration) in plan)
+            {
+                if (expiration != null)
+                    Owner?.SendPacket(expiration);
+            }
+            if (taskType != ItemTaskType.Invalid && tasks.Count > 0)
+                Owner?.SendPacket(new SCItemTaskSuccessPacket(taskType, tasks, []));
+
+            foreach (var (item, count, _, _) in plan)
+                Owner?.Inventory.OnConsumedItem(item, count);
+            foreach (var (item, slot) in removed)
+                OnLeaveContainer(item, null, slot);
+
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Adds items to container using templateId and gradeToAdd, if items aren't full stacks, those will be updated first, new items will be generated for the remaining amounts
     /// </summary>
     /// <param name="taskType"></param>
@@ -619,7 +733,27 @@ public class ItemContainer
         uint crafterId,
         int preferredSlot = -1,
         bool notifyInventory = true,
-        List<GamePacket> deferredSyncPackets = null)
+        List<GamePacket> deferredSyncPackets = null,
+        Action<int> onGranted = null)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return AcquireDefaultItemExLocked(taskType, templateId, amountToAdd, gradeToAdd, out newItemsList, out updatedItemsList, crafterId, preferredSlot, notifyInventory, deferredSyncPackets, onGranted);
+        }
+    }
+
+    private bool AcquireDefaultItemExLocked(
+        ItemTaskType taskType,
+        uint templateId,
+        int amountToAdd,
+        int gradeToAdd,
+        out List<Item> newItemsList,
+        out List<Item> updatedItemsList,
+        uint crafterId,
+        int preferredSlot,
+        bool notifyInventory,
+        List<GamePacket> deferredSyncPackets,
+        Action<int> onGranted)
     {
         newItemsList = [];
         updatedItemsList = [];
@@ -661,6 +795,7 @@ public class ItemContainer
 
         // First try to add to existing item counts
         var itemTasks = new List<ItemTask>();
+        var syncPackets = new List<GamePacket>();
 
         // Never update in mail or auction containers
         if (ContainerType != SlotType.Mail && ContainerType != SlotType.Auction)
@@ -675,18 +810,18 @@ public class ItemContainer
                     amountToAdd -= addAmount;
                     itemTasks.Add(new ItemCountUpdate(i, addAmount));
                     updatedItemsList.Add(i);
+                    onGranted?.Invoke(addAmount);
                     if (notifyInventory)
                         Owner?.Inventory.OnAcquiredItem(i, addAmount, true);
                 }
 
-                if (amountToAdd < 0)
+                if (amountToAdd <= 0)
                 {
                     break;
                 }
             }
         }
 
-        var syncPackets = new List<GamePacket>();
         while (amountToAdd > 0)
         {
             var addAmount = Math.Min(amountToAdd, template.MaxCount);
@@ -694,6 +829,7 @@ public class ItemContainer
             if (newItem == null)
             {
                 Logger.Error($"Failed to add item with ID {templateId}, possible duplicate entries!");
+                FlushAcquisitionPackets(taskType, itemTasks, syncPackets, deferredSyncPackets);
                 return false;
             }
 
@@ -714,19 +850,20 @@ public class ItemContainer
             }
 
             // Timers
+            var newItemSyncPackets = new List<GamePacket>();
             if (newItem.Template.ExpAbsLifetime > 0)
             {
-                syncPackets.Add(ItemManager.SetItemExpirationTime(newItem, DateTime.UtcNow.AddMinutes(newItem.Template.ExpAbsLifetime)));
+                newItemSyncPackets.Add(ItemManager.SetItemExpirationTime(newItem, DateTime.UtcNow.AddMinutes(newItem.Template.ExpAbsLifetime)));
             }
 
             if (newItem.Template.ExpOnlineLifetime > 0)
             {
-                syncPackets.Add(ItemManager.SetItemOnlineExpirationTime(newItem, newItem.Template.ExpOnlineLifetime));
+                newItemSyncPackets.Add(ItemManager.SetItemOnlineExpirationTime(newItem, newItem.Template.ExpOnlineLifetime));
             }
 
             if (newItem.Template.ExpDate > DateTime.MinValue)
             {
-                syncPackets.Add(ItemManager.SetItemExpirationTime(newItem, newItem.Template.ExpDate));
+                newItemSyncPackets.Add(ItemManager.SetItemExpirationTime(newItem, newItem.Template.ExpDate));
             }
 
             if (newItem is EquipItem equipItem && newItem.Template is EquipItemTemplate equipItemTemplate)
@@ -738,19 +875,31 @@ public class ItemContainer
                 }
             }
 
-            if (AddOrMoveExistingItem(ItemTaskType.Invalid, newItem, prefSlot, notifyInventory)) // Task set to invalid as we send our own packets inside this function
+            if (AddOrMoveExistingItem(ItemTaskType.Invalid, newItem, prefSlot, notifyInventory: false)) // Task set to invalid as we send our own packets inside this function
             {
                 itemTasks.Add(new ItemAdd(newItem));
                 newItemsList.Add(newItem);
+                syncPackets.AddRange(newItemSyncPackets);
+                onGranted?.Invoke(addAmount);
+                if (notifyInventory && ContainerType != SlotType.Mail)
+                    Owner?.Inventory.OnAcquiredItem(newItem, addAmount);
             }
             else
             {
                 ItemManager.Instance.ReleaseId(newItem.Id);
-                throw new GameException("AcquireDefaultItem(); Unable to add new items"); // Inventory should have enough space, something went wrong
+                FlushAcquisitionPackets(taskType, itemTasks, syncPackets, deferredSyncPackets);
+                return false; // Preserve the completed grants in the output lists for the caller.
             }
         }
 
-        if (taskType != ItemTaskType.Invalid)
+        FlushAcquisitionPackets(taskType, itemTasks, syncPackets, deferredSyncPackets);
+        return itemTasks.Count > 0;
+    }
+
+    private void FlushAcquisitionPackets(ItemTaskType taskType, List<ItemTask> itemTasks,
+        List<GamePacket> syncPackets, List<GamePacket> deferredSyncPackets)
+    {
+        if (taskType != ItemTaskType.Invalid && itemTasks.Count > 0)
         {
             Owner?.SendPacket(new SCItemTaskSuccessPacket(taskType, itemTasks, []));
         }
@@ -768,8 +917,6 @@ public class ItemContainer
                     Owner?.SendPacket(sync);
             }
         }
-
-        return itemTasks.Count > 0;
     }
 
     /// <summary>
@@ -875,6 +1022,14 @@ public class ItemContainer
     /// <returns>True if any item was found</returns>
     public bool GetAllItemsByTemplate(uint templateId, int gradeToFind, out List<Item> foundItems, out int unitsOfItemFound)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return GetAllItemsByTemplateLocked(templateId, gradeToFind, out foundItems, out unitsOfItemFound);
+        }
+    }
+
+    private bool GetAllItemsByTemplateLocked(uint templateId, int gradeToFind, out List<Item> foundItems, out int unitsOfItemFound)
+    {
         foundItems = [];
         unitsOfItemFound = 0;
         foreach (var i in Items)
@@ -927,6 +1082,14 @@ public class ItemContainer
     /// Removes and released all items
     /// </summary>
     public void Wipe()
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            WipeLocked();
+        }
+    }
+
+    private void WipeLocked()
     {
         while (Items.Count > 0)
         {
