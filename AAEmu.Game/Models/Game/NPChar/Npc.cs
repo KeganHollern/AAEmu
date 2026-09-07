@@ -39,6 +39,7 @@ public partial class Npc : Unit
     public NpcTemplate Template { get; set; }
     //public Item[] Equip { get; set; }
     public NpcSpawner Spawner { get; set; }
+    internal bool Despawned { get; set; }
     public TowerDefenseSpawnToken TowerDefenseSpawnToken { get; internal set; }
     public DateTime DeadTime { get; set; } = DateTime.MinValue;
 

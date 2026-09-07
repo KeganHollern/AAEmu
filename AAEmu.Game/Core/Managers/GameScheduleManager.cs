@@ -154,6 +154,15 @@ public class GameScheduleManager(
     }
 
     /// <summary>
+    /// Scheduled objects are active only inside the union of their authored windows.
+    /// Objects without schedule associations use their ordinary availability rule.
+    /// </summary>
+    internal static bool IsActivePeriod(PeriodStatus status, bool whenUnscheduled = true)
+    {
+        return status == PeriodStatus.InProgress || status == PeriodStatus.NotFound && whenUnscheduled;
+    }
+
+    /// <summary>
     /// Returns enum that shows the overall period status for all GameSchedules associated with spawnerId.
     /// </summary>
     /// <param name="spawnerId"></param>

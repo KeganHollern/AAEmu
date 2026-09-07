@@ -79,7 +79,7 @@ public class DoodadFuncClout : DoodadPhaseFuncTemplate
 
             // Создаем и назначаем новую задачу
             // Create and assign a new task
-            owner.FuncTask = new DoodadFuncCloutTask(areaTrigger.Caster, areaTrigger.Owner, 0, NextPhase, areaTrigger);
+            owner.FuncTask = new DoodadFuncCloutTask(areaTrigger.Caster, areaTrigger.Owner, 0, NextPhase, areaTrigger, owner);
             TaskManager.Instance.Schedule(owner.FuncTask, TimeSpan.FromMilliseconds(Duration));
         }
         //owner.OverridePhase = NextPhase; // Since phases trigger all at once let the doodad know its okay to stop here if the roll succeeded

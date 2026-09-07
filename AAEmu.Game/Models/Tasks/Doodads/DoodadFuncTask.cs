@@ -5,15 +5,28 @@ namespace AAEmu.Game.Models.Tasks.Doodads;
 
 public abstract class DoodadFuncTask : Task
 {
-    //private BaseUnit _caster;
-    //private Doodad _owner;
-    //private uint _skillId;
+    private readonly Doodad _taskOwner;
 
     protected DoodadFuncTask(BaseUnit caster, Doodad owner, uint skillId)
     {
-        //_caster = caster;
-        //_owner = owner;
-        //_skillId = skillId;
-        //Logger.Warn("[Doodad] DoodadFuncTask: Doodad {0}, TemplateId {1}. Using skill {2} with doodad phase {3}", _owner.ObjId, _owner.TemplateId, _skillId, _owner.FuncGroupId);
+        _taskOwner = owner;
     }
+
+    public sealed override void Execute()
+    {
+        // Cancellation can race the task runner after it has dispatched a callback.
+        // The occurrence must still own this task when its phase effects execute.
+        if (_taskOwner?.Spawner is { } spawner)
+            spawner.ExecutePhaseTask(_taskOwner, this, ExecuteCurrent);
+        else if (ReferenceEquals(_taskOwner?.FuncTask, this))
+            ExecuteCurrent();
+    }
+
+    protected void ClearCurrentTask()
+    {
+        if (ReferenceEquals(_taskOwner.FuncTask, this))
+            _taskOwner.FuncTask = null;
+    }
+
+    protected abstract void ExecuteCurrent();
 }

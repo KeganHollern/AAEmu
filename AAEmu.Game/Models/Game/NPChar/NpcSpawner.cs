@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Numerics;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.GameData;
@@ -28,11 +29,11 @@ public class NpcSpawner : Spawner<Npc>
     public WorldInstance ParentWorld { get; set; }
 
     private int _scheduledCount;
+    private HashSet<Npc> _pendingRespawns = [];
     // Вычисляемое свойство, возвращающее текущее количество NPC из SpawnedNpcs для данного SpawnerId.
     private int CurrentSpawnCount => SpawnedNpcs.TryGetValue(SpawnerId, out var list) ? list.Count : 0;
     private bool IsSpawnScheduled { get; set; } = false;
     private bool IsDespawnScheduled { get; set; } = false;
-    private bool RespawnDenied { get; set; }
     // ReSharper disable once InconsistentNaming
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
     private static readonly object _spawnLock = new(); // Lock for thread safety
@@ -111,6 +112,7 @@ public class NpcSpawner : Spawner<Npc>
         lock (_spawnLock)
         {
             _isActiveOverride = true;
+            _pendingRespawns.Clear();
             IsSpawnScheduled = false;
             IsDespawnScheduled = false;
         }
@@ -146,6 +148,8 @@ public class NpcSpawner : Spawner<Npc>
             }
 
             // Drop pending respawn bookkeeping so nothing pops back up after the wipe.
+            _pendingRespawns.Clear();
+            IsSpawnScheduled = false;
             Interlocked.Exchange(ref _scheduledCount, 0);
         }
     }
@@ -183,26 +187,22 @@ public class NpcSpawner : Spawner<Npc>
                 if (!IsActive)
                     return;
 
-                var didAction = false;
-
-                if (CanDespawnNpcs())
+                if (!IsSpawningScheduleEnabled())
                 {
-                    //Logger.Debug($"[SpawnerId={SpawnerId}, UnitId={UnitId}] Despawning NPCs...");
+                    _pendingRespawns.Clear();
+                    IsSpawnScheduled = false;
+                    Interlocked.Exchange(ref _scheduledCount, 0);
                     DespawnNpcs();
-                    didAction = true;
-                }
-                else if (!IsPlayerInSpawnRadius() && CurrentSpawnCount > 0)
-                {
-                    //Logger.Debug($"[SpawnerId={SpawnerId}, UnitId={UnitId}] Despawning NPCs...");
-                    DespawnNpcsNow();
-                    didAction = true;
+                    return;
                 }
 
-                if (!didAction && CanSpawnNpcs())
+                if (!IsPlayerInSpawnRadius() && CurrentSpawnCount > 0)
                 {
-                    //Logger.Debug($"[SpawnerId={SpawnerId}, UnitId={UnitId}] Spawning NPCs...");
+                    DespawnNpcsNow();
+                }
+                else if (CanSpawnNpcs())
+                {
                     DoSpawn();
-                    didAction = true;
                 }
             }
         }
@@ -217,13 +217,7 @@ public class NpcSpawner : Spawner<Npc>
     /// </summary>
     public bool CanDespawnNpcs()
     {
-        if (!IsDespawningScheduleEnabled(SpawnerId))
-        {
-            //Logger.Debug($"[Despawn] Schedule does not allow despawning for SpawnerId={SpawnerId}.");
-            return false;
-        }
-
-        return true;
+        return CurrentSpawnCount > 0 && !IsSpawningScheduleEnabled();
     }
 
     private void DespawnNpcs()
@@ -474,7 +468,7 @@ public class NpcSpawner : Spawner<Npc>
 
     /// <summary>
     /// Checks if this NPC is allowed to spawn according to the current game schedule.
-    /// Updates IsSpawnScheduled flag and returns true if spawning is allowed.
+    /// Returns whether an authored game schedule exists.
     /// </summary>
     private bool CheckGameScheduleStatus()
     {
@@ -734,41 +728,27 @@ public class NpcSpawner : Spawner<Npc>
     /// </summary>
     public void SpawnAll(bool beginning = false)
     {
-        if (IsSpawningScheduleEnabled())
-            return;
-
         DoSpawn();
-
-        if (IsSpawnScheduled)
-            IsDespawningScheduleEnabled(SpawnerId);
     }
 
     /// <summary>
-    /// Spawns a single NPC with the specified object ID.
+    /// Spawns an NPC only when its authored schedule permits it.
     /// </summary>
     public override Npc Spawn(uint objId)
     {
         DoSpawn();
-
-        return SpawnedNpcs[SpawnerId][0];
+        return SpawnedNpcs.TryGetValue(SpawnerId, out var npcs) ? npcs.FirstOrDefault() : null;
     }
 
     /// <summary>
-    /// Force spawns a single NPC with the specified object ID.
+    /// Explicit spawning still observes the authored schedule window.
     /// </summary>
     public override Npc ForceSpawn(uint objId)
     {
         if (SpawnedNpcs.Count == 0)
-        {
             InitializeSpawnableNpcs(Template);
-        }
 
-        DoSpawn();
-
-        if (IsSpawnScheduled)
-            IsDespawningScheduleEnabled(SpawnerId);
-
-        return SpawnedNpcs[SpawnerId][0];
+        return Spawn(objId);
     }
 
     public Npc ForceSpawnOwned(TowerDefenseSpawnToken token)
@@ -814,9 +794,13 @@ public class NpcSpawner : Spawner<Npc>
         {
             lock (_spawnLock)
             {
+                if (npc.Despawned)
+                    return;
                 RemoveNpcFromSpawnedList(npc);
                 UnregisterAndDeleteNpc(npc);
+                npc.Despawned = true;
                 IsDespawnScheduled = false;
+                ObjectIdManager.Instance.ReleaseId(npc.ObjId);
             }
         }
         catch (Exception ex)
@@ -878,8 +862,10 @@ public class NpcSpawner : Spawner<Npc>
         {
             lock (_spawnLock)
             {
+                if (npc == null || npc.Despawned)
+                    return;
                 // Если условия позволяют, планируем респаун
-                if (RespawnTime > 0 && AreOtherNpcsInSpawnZone().Item2 + _scheduledCount < Template.MaxPopulation)
+                if (IsSpawningScheduleEnabled() && RespawnTime > 0 && AreOtherNpcsInSpawnZone().Item2 + _scheduledCount < Template.MaxPopulation)
                 {
                     // Планируем респаун и обновляем _scheduledCount
                     IncrementCount(true);
@@ -887,6 +873,8 @@ public class NpcSpawner : Spawner<Npc>
                     var deathTime = npc.DeadTime == DateTime.MinValue ? DateTime.UtcNow : npc.DeadTime;
                     npc.Respawn = deathTime.AddSeconds(RespawnTime);
                     npc.ParentWorld.SpawnManager.AddRespawn(npc);
+                    _pendingRespawns.Add(npc);
+                    IsSpawnScheduled = true;
                 }
                 else
                 {
@@ -922,6 +910,8 @@ public class NpcSpawner : Spawner<Npc>
         {
             lock (_spawnLock)
             {
+                if (npc == null || npc.Despawned)
+                    return;
                 // Если планируется немедленный деспаун
                 if (AreOtherNpcsInSpawnZone().Item2 + _scheduledCount < Template.MaxPopulation)
                 {
@@ -942,75 +932,52 @@ public class NpcSpawner : Spawner<Npc>
     /// </summary>
     public void DespawnWithRespawn(Npc npc)
     {
-        if (npc == null)
-            return;
-
-        npc.Delete();
-
-        // Schedules respawn if necessary
-        if (RespawnTime > 0 && AreOtherNpcsInSpawnZone().Item2 < Template.MaxPopulation)
+        lock (_spawnLock)
         {
-            npc.Respawn = DateTime.UtcNow.AddSeconds(RespawnTime);
-            npc.ParentWorld.SpawnManager.AddRespawn(npc);
-            // Логика изменения _scheduledCount (если требуется) остаётся неизменной
-            var newScheduledCount = Interlocked.Increment(ref _scheduledCount);
-            if (_scheduledCount < 0)
+            if (npc == null || npc.Despawned)
+                return;
+
+            npc.Delete();
+
+            // Schedules respawn if necessary
+            if (IsSpawningScheduleEnabled() && RespawnTime > 0 && AreOtherNpcsInSpawnZone().Item2 < Template.MaxPopulation)
             {
-                Interlocked.Exchange(ref _scheduledCount, 0);
+                npc.Respawn = DateTime.UtcNow.AddSeconds(RespawnTime);
+                npc.ParentWorld.SpawnManager.AddRespawn(npc);
+                _pendingRespawns.Add(npc);
+                IsSpawnScheduled = true;
+                // Логика изменения _scheduledCount (если требуется) остаётся неизменной
+                var newScheduledCount = Interlocked.Increment(ref _scheduledCount);
+                if (_scheduledCount < 0)
+                {
+                    Interlocked.Exchange(ref _scheduledCount, 0);
+                }
+                //Logger.Info($"Scheduled respawn for NPC {UnitId}:{SpawnerId}:{npc.ObjId} in {RespawnTime} seconds. New scheduled count: {newScheduledCount}.");
             }
-            //Logger.Info($"Scheduled respawn for NPC {UnitId}:{SpawnerId}:{npc.ObjId} in {RespawnTime} seconds. New scheduled count: {newScheduledCount}.");
         }
     }
 
     /// <summary>
-    /// Despawns all NPCs, excluding those in combat.
+    /// Queues an expired occurrence for removal, including NPCs in combat.
     /// </summary>
     /// <param name="npcs">The list of NPCs to despawn.</param>
     public void DoDespawns(List<Npc> npcs)
     {
-        if (npcs == null)
-        {
-            Logger.Warn("Attempted to despawn a null list of NPCs.");
+        if (npcs == null || IsSpawningScheduleEnabled())
             return;
-        }
 
         lock (_spawnLock)
         {
-            // Установка флага деспауна
-            IsDespawnScheduled = true;
-
-            // Creates a copy of the list for safe iteration
-            var npcsToDespawn = npcs.ToList();
-
-            foreach (var npc in npcsToDespawn)
+            foreach (var npc in npcs.ToList())
             {
-                try
-                {
-                    if (npc == null)
-                    {
-                        Logger.Warn("Attempted to despawn a null NPC.");
-                        continue;
-                    }
-                    // будем деспавнить Npc в любом случае
-                    // we'll despawn the Npc anyway
-                    // Despawns the NPC if it is not in combat
-                    //if (!npc.IsInBattle)
-                    //{
-                    DoDespawn(npc);
-                    //Logger.Debug($"Despawned NPC {npc.ObjId}.");
-                    //}
-                    //else
-                    //{
-                    //    Logger.Debug($"Skipped despawn for NPC {npc.ObjId} because it is in battle.");
-                    //}
-                }
-                catch (Exception ex)
-                {
-                    Logger.Error(ex, $"Failed to despawn NPC {UnitId}:{SpawnerId}:{npc?.ObjId}.");
-                }
+                if (npc == null || npc.Despawned || npc.Despawn != DateTime.MinValue)
+                    continue;
+
+                // Window expiry applies to the whole occurrence, including NPCs in combat.
+                // SpawnManager owns the actual removal and object-ID release.
+                npc.Despawn = DateTime.UtcNow;
+                npc.ParentWorld.SpawnManager.AddDespawn(npc);
             }
-            // Сброс флага после завершения деспауна
-            IsDespawnScheduled = false;
         }
     }
 
@@ -1052,9 +1019,13 @@ public class NpcSpawner : Spawner<Npc>
         }
     }
 
-    public void SetSpawnScheduled(bool value)
+    internal void CompleteRespawn(Npc npc)
     {
-        IsSpawnScheduled = value;
+        lock (_spawnLock)
+        {
+            if (_pendingRespawns.Remove(npc))
+                IsSpawnScheduled = _pendingRespawns.Count > 0;
+        }
     }
 
     /// <summary>
@@ -1062,6 +1033,9 @@ public class NpcSpawner : Spawner<Npc>
     /// </summary>
     public void DoSpawn()
     {
+        if (!IsSpawningScheduleEnabled())
+            return;
+
         // Check if template exists
         if (Template == null)
         {
@@ -1111,7 +1085,7 @@ public class NpcSpawner : Spawner<Npc>
                 lock (_spawnLock)
                 {
                     // Спавним NPC по шаблону
-                    var spawned = npcTemplate.Spawn(this);
+                    var spawned = SpawnNpcDefinition(npcTemplate);
                     if (spawned == null || spawned.Count == 0)
                     {
                         Logger.Warn($"[Spawn] Failed to spawn NPC from template {npcTemplate.SpawnerId}:{npcTemplate.MemberId} for SpawnerId={SpawnerId}");
@@ -1149,140 +1123,36 @@ public class NpcSpawner : Spawner<Npc>
         //Logger.Debug($"[Spawn] Updated spawn count for SpawnerId={SpawnerId}, Current count={CurrentSpawnCount}");
     }
 
+    protected virtual List<Npc> SpawnNpcDefinition(NpcSpawnerNpc definition)
+    {
+        return definition.Spawn(this);
+    }
+
     /// <summary>
-    /// Schedules NPC spawning based on schedule status and optional time window.
+    /// Checks the authored schedule or ordinary game-clock window without changing spawn state.
     /// </summary>
     public bool IsSpawningScheduleEnabled()
     {
-        if (Template == null)
-        {
-            Logger.Warn($"[Spawn] Can't spawn NPC {SpawnerId}:{UnitId} (index={Id}) — template is null.");
+        return IsSpawnWindowActive(Template);
+    }
+
+    private static bool IsSpawnWindowActive(NpcSpawnerTemplate template)
+    {
+        if (template == null)
             return false;
-        }
 
-        IsSpawnScheduled = false;
+        var status = GameScheduleManager.Instance.GetPeriodStatusNpc((int)template.Id);
+        var ordinaryWindow = status != GameScheduleManager.PeriodStatus.NotFound || IsWithinSpawnTime(template);
+        return GameScheduleManager.IsActivePeriod(status, ordinaryWindow);
+    }
 
-        var scheduleStatus = GameScheduleManager.Instance.GetPeriodStatusNpc((int)SpawnerId);
-        switch (scheduleStatus)
-        {
-            case GameScheduleManager.PeriodStatus.InProgress:
-                //Logger.Debug($"[Spawn] NPC {npcId} has active schedule — spawning enabled.");
-                RespawnDenied = true;
-                IsSpawnScheduled = true;
-                return true;
-
-            case GameScheduleManager.PeriodStatus.NotFound:
-                //Logger.Debug($"[Spawn] No schedule found for NPC {npcId}. Falling back to time window.");
-                break; // Переход к проверке времени
-
-            case GameScheduleManager.PeriodStatus.NotStarted:
-                //Logger.Debug($"[Spawn] Schedule not started for NPC {npcId}.");
-                return false;
-
-            case GameScheduleManager.PeriodStatus.Ended:
-                //Logger.Debug($"[Spawn] Schedule ended for NPC {npcId}.");
-                return false;
-
-            default:
-                Logger.Debug($"[Spawn] Unknown schedule status '{scheduleStatus}' for NPC {SpawnerId}.");
-                return false;
-        }
-
-        // Если расписания нет — проверим, задано ли время появления
-        if (IsWithinSpawnTime())
-        {
-            //Logger.Debug($"[Spawn] NPC {npcId} is within spawn time window — spawning enabled.");
-            RespawnDenied = true;
-            IsSpawnScheduled = true;
+    private static bool IsWithinSpawnTime(NpcSpawnerTemplate template)
+    {
+        if (template.StartTime <= 0.0f && template.EndTime <= 0.0f)
             return true;
-        }
 
-        //Logger.Debug($"[Spawn] NPC {npcId} not in spawn time window.");
-        return false;
-    }
-
-    /// <summary>
-    /// Checks if the current time is between NPC spawn start and end time.
-    /// </summary>
-    private bool IsWithinSpawnTime()
-    {
-        if (Template.StartTime > 0.0f || Template.EndTime > 0.0f)
-        {
-            var curTime = TimeManager.Instance.GetTime;
-            var startTime = TimeSpan.FromHours(Template.StartTime);
-            var endTime = TimeSpan.FromHours(Template.EndTime);
-            var currentTime = TimeSpan.FromHours(curTime);
-
-            var result = IsTimeBetween(currentTime, startTime, endTime);
-            //Logger.Debug($"[TimeCheck] NPC {Template.Id} checking time window: now={currentTime}, start={startTime}, end={endTime}, inside={result}");
-            return result;
-        }
-
-        //Logger.Debug($"[TimeCheck] NPC {Template.Id} has no time window defined.");
-        return true; // было false, но не совсем корректно, т.к. надо спавнить, если не в расписании
-    }
-
-    /// <summary>
-    /// Checks if NPCs under the given spawner should remain spawned based on time or schedule.
-    /// </summary>
-    private bool IsDespawningScheduleEnabled(uint spawnerId)
-    {
-        if (!SpawnedNpcs.TryGetValue(spawnerId, out var npcs))
-            return false;
-
-        foreach (var npc in npcs)
-        {
-            if (IsWithinDespawnTime(npc))
-            {
-                //Logger.Debug($"[Despawn] NPC {npc.ObjId} not in allowed time window — stays.");
-                return true;
-            }
-
-            if (IsNpcInTimeWindow(npc))
-            {
-                //Logger.Debug($"[Despawn] NPC {npc.ObjId} is within active schedule — stays.");
-                return true;
-            }
-        }
-
-        //Logger.Debug($"[Despawn] All NPCs under Spawner {spawnerId} are outside of time/schedule — despawn allowed.");
-        return false;
-    }
-
-    private static bool IsWithinDespawnTime(Npc npc)
-    {
-        var template = npc.Spawner?.Template;
-        if (template == null || (template.StartTime <= 0.0f && template.EndTime <= 0.0f))
-            return false;
-
-        var curTime = TimeManager.Instance.GetTime;
-        var startTime = TimeSpan.FromHours(template.StartTime);
-        var endTime = TimeSpan.FromHours(template.EndTime);
-        var currentTime = TimeSpan.FromHours(curTime);
-
-        var outside = !IsTimeBetween(currentTime, startTime, endTime);
-        //Logger.Debug($"[DespawnTime] NPC {npc.ObjId} time check: now={currentTime}, start={startTime}, end={endTime}, outside={outside}");
-        return outside;
-    }
-
-    private static bool IsNpcInTimeWindow(Npc npc)
-    {
-        var status = GameScheduleManager.Instance.GetPeriodStatusNpc((int)npc.Spawner.Template.Id);
-
-        switch (status)
-        {
-            case GameScheduleManager.PeriodStatus.InProgress:
-                return true;
-
-            case GameScheduleManager.PeriodStatus.NotFound:
-            case GameScheduleManager.PeriodStatus.NotStarted:
-            case GameScheduleManager.PeriodStatus.Ended:
-                return false;
-
-            default:
-                Logger.Warn($"[Schedule] Unknown schedule status '{status}' for NPC {npc.ObjId}. Assuming not in progress.");
-                return false;
-        }
+        return IsTimeBetween(TimeSpan.FromHours(TimeManager.Instance.GetTime),
+            TimeSpan.FromHours(template.StartTime), TimeSpan.FromHours(template.EndTime));
     }
 
     /// <summary>
@@ -1290,16 +1160,11 @@ public class NpcSpawner : Spawner<Npc>
     /// </summary>
     public static bool IsTimeBetween(TimeSpan currentTime, TimeSpan startTime, TimeSpan endTime)
     {
-        if (startTime <= endTime)
-        {
-            var result = currentTime >= startTime && currentTime <= endTime;
-            //Logger.Debug($"[TimeCheck] {currentTime} inside range {startTime}-{endTime}? {result}");
-            return result;
-        }
-
-        var resultWrapped = currentTime >= startTime || currentTime <= endTime;
-        //Logger.Debug($"[TimeCheck] {currentTime} inside wrapped range {startTime}-{endTime}? {resultWrapped}");
-        return resultWrapped;
+        if (startTime == endTime)
+            return true;
+        if (startTime < endTime)
+            return currentTime >= startTime && currentTime < endTime;
+        return currentTime >= startTime || currentTime < endTime;
     }
 
     /// <summary>
@@ -1307,6 +1172,9 @@ public class NpcSpawner : Spawner<Npc>
     /// </summary>
     public void DoEventSpawn()
     {
+        if (!IsSpawningScheduleEnabled())
+            return;
+
         if (Template == null)
         {
             Logger.Error("Can't spawn npc {0} from spawnerId {1}", UnitId, Id);
@@ -1323,7 +1191,7 @@ public class NpcSpawner : Spawner<Npc>
         var nsnTask = Template.Npcs.FirstOrDefault(nsn => nsn.MemberId == UnitId);
         if (nsnTask != null)
         {
-            n = nsnTask.Spawn(this);
+            n = SpawnNpcDefinition(nsnTask);
         }
 
         try
@@ -1383,6 +1251,9 @@ public class NpcSpawner : Spawner<Npc>
             Logger.Warn($"No NPC templates available for spawner {spawnerId}.");
             return null;
         }
+        if (!IsSpawnWindowActive(template))
+            return null;
+
         // Select a random NPC template from the template.Npcs
         var npcTemplate = template.Npcs.RandomElementByWeight(x => x.Weight);
         if (npcTemplate == null)
@@ -1436,7 +1307,7 @@ public class NpcSpawner : Spawner<Npc>
     public void DoSpawnEffect(uint spawnerId, SpawnEffect effect, BaseUnit caster, BaseUnit target)
     {
         var template = NpcGameData.Instance.GetNpcSpawnerTemplate(spawnerId);
-        if (template?.Npcs == null)
+        if (template?.Npcs == null || !IsSpawnWindowActive(template))
             return;
 
         var n = new List<Npc>();
@@ -1556,6 +1427,9 @@ public class NpcSpawner : Spawner<Npc>
     {
         var clone = (T)obj.MemberwiseClone();
         clone.Position = obj.Position?.Clone();
+        clone._pendingRespawns = [];
+        clone.IsSpawnScheduled = false;
+        clone._scheduledCount = 0;
 
         return clone;
     }

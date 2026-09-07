@@ -13,7 +13,7 @@ public class DoodadFuncTodTask(BaseUnit caster, Doodad owner, uint skillId, int 
     private readonly Doodad _owner = owner;
     private readonly uint _skillId = skillId;
 
-    public override void Execute()
+    protected override void ExecuteCurrent()
     {
         if (Logger.IsTraceEnabled)
             Logger.Trace("[Doodad] DoodadFuncTodTask: Doodad {0}, TemplateId {1}. Using skill {2} with doodad phase {3}", _owner.ObjId, _owner.TemplateId, _skillId, _owner.FuncGroupId);
@@ -21,7 +21,7 @@ public class DoodadFuncTodTask(BaseUnit caster, Doodad owner, uint skillId, int 
         if (_owner.FuncTask != null)
         {
             _owner.FuncTask.Cancel();
-            _owner.FuncTask = null;
+            ClearCurrentTask();
             if (Logger.IsTraceEnabled)
                 Logger.Trace("DoodadFuncTodTask: The current timer has been ended.");
         }

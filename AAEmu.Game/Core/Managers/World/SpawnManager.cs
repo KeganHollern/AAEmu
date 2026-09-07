@@ -1137,6 +1137,53 @@ public class SpawnManager(WorldInstance parentWorld)
         return res;
     }
 
+    internal void RespawnObject(GameObject obj)
+    {
+        if (obj is Npc npc)
+            npc.Spawner.CompleteRespawn(npc);
+        else if (obj is Doodad doodad)
+            doodad.Spawner.Respawn(doodad);
+        else if (obj is Transfer transfer)
+            transfer.Spawner.Respawn(transfer);
+        else if (obj is Gimmick gimmick)
+            gimmick.Spawner.Respawn(gimmick);
+        RemoveRespawn(obj);
+    }
+
+    internal void DespawnObject(GameObject obj)
+    {
+        // NPC, doodad and gimmick spawners own ID release for direct and queued removal.
+        // A stale callback must never release the ID of an already-retired occurrence.
+        var releaseObjectId = true;
+        if (obj is Npc { Spawner: not null } npc)
+        {
+            releaseObjectId = false;
+            npc.Spawner.Despawn(npc);
+        }
+        else if (obj is Doodad { Spawner: not null } doodadWithSpawner)
+        {
+            releaseObjectId = false;
+            doodadWithSpawner.Spawner.Despawn(doodadWithSpawner);
+        }
+        else if (obj is Transfer { Spawner: not null } transfer)
+            transfer.Spawner.Despawn(transfer);
+        else if (obj is Gimmick { Spawner: not null } gimmick)
+        {
+            releaseObjectId = gimmick.Respawn != DateTime.MinValue || gimmick.ObjId == 0;
+            gimmick.Spawner.Despawn(gimmick);
+        }
+        else if (obj is Slave slave) // slaves don't have a spawner, but this is used for delayed despawn of un-summoned boats
+            slave.Delete();
+        else if (obj is Doodad doodadWithNoSpawner)
+            doodadWithNoSpawner.Delete();
+        else
+            obj.Delete();
+
+        if (releaseObjectId)
+            ObjectIdManager.Instance.ReleaseId(obj.ObjId);
+        RemoveDespawn(obj);
+    }
+
     /// <summary>
     /// Handles timed re-spawning and de-spawning tick
     /// </summary>
@@ -1151,19 +1198,7 @@ public class SpawnManager(WorldInstance parentWorld)
                 {
                     if (obj.Respawn >= DateTime.UtcNow)
                         continue;
-                    if (obj is Npc npc)
-                    {
-                        //npc.Spawner.Respawn(npc);
-                        npc.Spawner.SetSpawnScheduled(false); // in the Update() method, enable spawn
-                    }
-
-                    if (obj is Doodad doodad)
-                        doodad.Spawner.Respawn(doodad);
-                    if (obj is Transfer transfer)
-                        transfer.Spawner.Respawn(transfer);
-                    if (obj is Gimmick gimmick)
-                        gimmick.Spawner.Respawn(gimmick);
-                    RemoveRespawn(obj);
+                    RespawnObject(obj);
                 }
             }
 
@@ -1174,32 +1209,7 @@ public class SpawnManager(WorldInstance parentWorld)
                 {
                     if (obj.Despawn >= DateTime.UtcNow)
                         continue;
-                    // GimmickSpawner.Despawn owns the ObjId release for the gimmicks it retires,
-                    // because the life-time and debug despawn paths call it directly and never reach
-                    // this loop. Releasing it again here would hand the same id out twice.
-                    // (aaemu-cluster#92)
-                    var objIdReleasedBySpawner = false;
-                    if (obj is Npc { Spawner: not null } npc)
-                        npc.Spawner.Despawn(npc);
-                    else if (obj is Doodad { Spawner: not null } doodadWithSpawner)
-                        doodadWithSpawner.Spawner.Despawn(doodadWithSpawner);
-                    else if (obj is Transfer { Spawner: not null } transfer)
-                        transfer.Spawner.Despawn(transfer);
-                    else if (obj is Gimmick { Spawner: not null } gimmick)
-                    {
-                        objIdReleasedBySpawner = gimmick.Respawn == DateTime.MinValue && gimmick.ObjId > 0;
-                        gimmick.Spawner.Despawn(gimmick);
-                    }
-                    else if (obj is Slave slave) // slaves don't have a spawner, but this is used for delayed despawn of un-summoned boats
-                        slave.Delete();
-                    else if (obj is Doodad doodadWithNoSpawner)
-                        doodadWithNoSpawner.Delete();
-                    else
-                        obj.Delete();
-
-                    if (!objIdReleasedBySpawner)
-                        ObjectIdManager.Instance.ReleaseId(obj.ObjId);
-                    RemoveDespawn(obj);
+                    DespawnObject(obj);
                 }
             }
 

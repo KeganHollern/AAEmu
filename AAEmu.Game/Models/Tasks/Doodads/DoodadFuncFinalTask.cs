@@ -29,7 +29,7 @@ public class DoodadFuncFinalTask : DoodadFuncTask
         _delay = delay;
     }
 
-    public override void Execute()
+    protected override void ExecuteCurrent()
     {
         if (Logger.IsTraceEnabled)
             Logger.Trace("[Doodad] DoodadFuncFinalTask: Doodad {0}, TemplateId {1}. Using skill {2} with doodad phase {3}", _owner.ObjId, _owner.TemplateId, _skillId, _owner.FuncGroupId);
@@ -47,11 +47,12 @@ public class DoodadFuncFinalTask : DoodadFuncTask
             var world = WorldManager.Instance.GetWorld(_owner.Transform.InstanceId);
             //_owner.Spawner.DecreaseCount(_owner);
             _owner.Spawner.Position.WorldId = world?.Id ?? WorldManager.DefaultInstanceId;
+            ClearCurrentTask();
             _owner.Spawner.Spawn(0);
         }
         else
         {
-            _owner.FuncTask = null;
+            ClearCurrentTask();
             if (_owner.Spawner != null)
             {
                 _owner.Spawner.Despawn(_owner);
