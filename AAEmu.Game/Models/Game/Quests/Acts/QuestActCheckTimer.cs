@@ -90,7 +90,7 @@ public class QuestActCheckTimer(QuestComponentTemplate parentComponent) : QuestA
     /// <param name="args"></param>
     public override void OnTimerExpired(QuestAct questAct, object sender, OnTimerExpiredArgs args)
     {
-        if (questAct.Id != ActId)
+        if (questAct.Id != ActId || questAct.QuestComponent.Parent.Parent.TemplateId != args.QuestId)
             return;
 
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnTimerExpired Quest {args.QuestId}, Owner {questAct.QuestComponent.Parent.Parent.Owner.Name} ({questAct.QuestComponent.Parent.Parent.Owner.Id})");
@@ -108,7 +108,7 @@ public class QuestActCheckTimer(QuestComponentTemplate parentComponent) : QuestA
     /// <param name="args"></param>
     public override void OnQuestStepChanged(QuestAct questAct, object sender, OnQuestStepChangedArgs args)
     {
-        if (questAct.Id != ActId)
+        if (questAct.Id != ActId || questAct.QuestComponent.Parent.Parent.TemplateId != args.QuestId)
             return;
 
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnTimerExpired Quest {questAct.QuestComponent.Parent.Parent.TemplateId}, Owner {questAct.QuestComponent.Parent.Parent.Owner.Name} ({questAct.QuestComponent.Parent.Parent.Owner.Id})");
