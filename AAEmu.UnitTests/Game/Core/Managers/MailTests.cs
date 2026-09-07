@@ -452,6 +452,38 @@ public sealed class MailTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReturnMail_SendFails_PreservesOriginalMail(bool missingSender)
+    {
+        var mail = AddReceivedMail();
+        mail.Body.Text = "Keep this message";
+        if (missingSender)
+            mail.Header.SenderName = "DeletedSender";
+        else
+            _character.Money = 0;
+        mail.IsDirty = false;
+        var moneyBeforeReturn = _character.Money;
+        var unreadBeforeReturn = _mails.UnreadMailCount.Received;
+
+        _mails.ReturnMail(mail.Id);
+
+        await Assert.That(_mailManager.AllPlayerMails.Count).IsEqualTo(1);
+        await Assert.That(_mailManager.AllPlayerMails[mail.Id]).IsSameReferenceAs(mail);
+        await Assert.That(mail.Body.Text).IsEqualTo("Keep this message");
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        await Assert.That(mail.IsDirty).IsFalse();
+        await Assert.That(_character.Money).IsEqualTo(moneyBeforeReturn);
+        await Assert.That(_mails.UnreadMailCount.Received).IsEqualTo(unreadBeforeReturn);
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailSentPacket)))
+            .WasCalled(Times.Never);
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailDeletedPacket)))
+            .WasCalled(Times.Never);
+        _senderSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailRemovedPacket)))
+            .WasCalled(Times.Never);
+    }
+
+    [Test]
     public async Task PayChargeMoney_ValidTaxMail_ChargesOnceAndOffersNextPeriod()
     {
         var house = CreateTaxHouse();
