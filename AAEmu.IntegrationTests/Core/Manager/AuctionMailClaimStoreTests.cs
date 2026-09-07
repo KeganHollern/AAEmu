@@ -151,7 +151,8 @@ public sealed class AuctionMailClaimStoreTests : IAsyncLifetime
         Assert.Equal(700, await ScalarAsync($"SELECT `container_id` FROM `items` WHERE `id`={destinationId}"));
         Assert.Equal(7, await ScalarAsync($"SELECT `owner` FROM `items` WHERE `id`={destinationId}"));
         Assert.Equal(2, await ScalarAsync($"SELECT `slot` FROM `items` WHERE `id`={destinationId}"));
-        Assert.Equal(2, await ScalarAsync($"SELECT `grade` FROM `items` WHERE `id`={destinationId}"));
+        // The schema uses TINYINT(1), which ExecuteScalar otherwise exposes as a Boolean.
+        Assert.Equal(2, await ScalarAsync($"SELECT CAST(`grade` AS UNSIGNED) FROM `items` WHERE `id`={destinationId}"));
         Assert.Equal(1, await ScalarAsync("SELECT COUNT(*) FROM `items`"));
         Assert.Equal(0, await ScalarAsync("SELECT `attachment0` FROM `mails` WHERE `id`=20002"));
         Assert.Equal(0, await ScalarAsync("SELECT `attachment_count` FROM `mails` WHERE `id`=20002"));
