@@ -30,6 +30,6 @@ public class CSSellHousePacket() : GamePacket(CSOffsets.CSSellHousePacket, 1)
         if (moneyAmount > 0)
             HousingManager.Instance.SetForSale(tl, moneyAmount, sellToId, Connection.ActiveChar);
         else
-            HousingManager.Instance.CancelForSale(tl, true);
+            HousingManager.Instance.CancelForSale(tl, Connection.ActiveChar);
     }
 }
