@@ -1981,6 +1981,14 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
     private static int UpdateItemContainerTimers(TimeSpan delta, ItemContainer itemContainer, Character character)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return UpdateItemContainerTimersLocked(delta, itemContainer, character);
+        }
+    }
+
+    private static int UpdateItemContainerTimersLocked(TimeSpan delta, ItemContainer itemContainer, Character character)
+    {
         var res = 0;
         if (itemContainer == null)
         {
