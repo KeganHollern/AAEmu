@@ -1517,36 +1517,68 @@ public partial class Character : Unit, ICharacter
     {
         lock (StorePurchaseSyncRoot)
         {
+            if (typeFrom is not (SlotType.None or SlotType.Inventory or SlotType.Bank) ||
+                typeTo is not (SlotType.None or SlotType.Inventory or SlotType.Bank) ||
+                (typeFrom == SlotType.None && typeTo == SlotType.None) ||
+                (typeFrom != SlotType.None && amount < 0))
+                return false;
+
+            var money = Money;
+            var bankMoney = Money2;
+            try
+            {
+                checked
+                {
+                    if (typeFrom == SlotType.Inventory)
+                        money -= amount;
+                    else if (typeFrom == SlotType.Bank)
+                        bankMoney -= amount;
+
+                    // Check the source before crediting the destination, including same-wallet requests.
+                    if ((typeFrom == SlotType.Inventory && money < 0) ||
+                        (typeFrom == SlotType.Bank && bankMoney < 0))
+                    {
+                        SendErrorMessage(ErrorMessageType.NotEnoughMoney);
+                        return false;
+                    }
+
+                    if (typeTo == SlotType.Inventory)
+                        money += amount;
+                    else if (typeTo == SlotType.Bank)
+                        bankMoney += amount;
+                }
+            }
+            catch (OverflowException)
+            {
+                return false;
+            }
+
+            if ((typeTo == SlotType.Inventory && money < 0) ||
+                (typeTo == SlotType.Bank && bankMoney < 0))
+            {
+                SendErrorMessage(ErrorMessageType.NotEnoughMoney);
+                return false;
+            }
+
+            // Install both balances before achievements or packet callbacks can observe the transfer.
+            Money = money;
+            Money2 = bankMoney;
             var itemTasks = new List<ItemTask>();
             switch (typeFrom)
             {
                 case SlotType.Inventory:
-                    if (amount > Money)
-                    {
-                        SendErrorMessage(ErrorMessageType.NotEnoughMoney);
-                        return false;
-                    }
-                    Money -= amount;
                     itemTasks.Add(new MoneyChange(-amount));
                     break;
                 case SlotType.Bank:
-                    if (amount > Money2)
-                    {
-                        SendErrorMessage(ErrorMessageType.NotEnoughMoney);
-                        return false;
-                    }
-                    Money2 -= amount;
                     itemTasks.Add(new MoneyChangeBank(-amount));
                     break;
             }
             switch (typeTo)
             {
                 case SlotType.Inventory:
-                    Money += amount;
                     itemTasks.Add(new MoneyChange(amount));
                     break;
                 case SlotType.Bank:
-                    Money2 += amount;
                     itemTasks.Add(new MoneyChangeBank(amount));
                     break;
             }
@@ -1573,7 +1605,7 @@ public partial class Character : Unit, ICharacter
     {
         if (amount < 0)
             return false;
-        return ChangeMoney(SlotType.None, moneyLocation, -amount, itemTaskType);
+        return ChangeMoney(moneyLocation, SlotType.None, amount, itemTaskType);
     }
 
     public void ChangeLabor(short change, int actabilityId)
