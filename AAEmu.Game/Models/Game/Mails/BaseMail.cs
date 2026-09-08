@@ -38,10 +38,13 @@ public class BaseMail
 
     public bool Send()
     {
-        // Update Attachments just in case somebody did manual editing
-        Header.Attachments = GetTotalAttachmentCount();
-        RenumberSlots();
-        return MailManager.Instance.Send(this);
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            // Update Attachments just in case somebody did manual editing
+            Header.Attachments = GetTotalAttachmentCount();
+            RenumberSlots();
+            return MailManager.Instance.Send(this);
+        }
     }
 
     /// <summary>
@@ -55,29 +58,32 @@ public class BaseMail
 
     public bool ReturnToSender()
     {
-        if (!CanReturnMail())
-            return false;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!CanReturnMail())
+                return false;
 
-        var originalReceiver = WorldManager.Instance.GetCharacterById(Header.ReceiverId);
-        var originalSender = WorldManager.Instance.GetCharacterById(Header.SenderId);
+            var originalReceiver = WorldManager.Instance.GetCharacterById(Header.ReceiverId);
+            var originalSender = WorldManager.Instance.GetCharacterById(Header.SenderId);
 
-        if (originalReceiver != null && originalReceiver.IsOnline)
-            originalReceiver.SendPacket(new SCMailReturnedPacket(_id, _header));
+            if (originalReceiver != null && originalReceiver.IsOnline)
+                originalReceiver.SendPacket(new SCMailReturnedPacket(_id, _header));
 
-        var originalReceiverId = Header.ReceiverId;
-        var originalReceiverName = Header.ReceiverName;
-        Header.ReceiverId = Header.SenderId;
-        ReceiverName = Header.SenderName;
-        Header.SenderId = originalReceiverId;
-        Header.SenderName = originalReceiverName;
+            var originalReceiverId = Header.ReceiverId;
+            var originalReceiverName = Header.ReceiverName;
+            Header.ReceiverId = Header.SenderId;
+            ReceiverName = Header.SenderName;
+            Header.SenderId = originalReceiverId;
+            Header.SenderName = originalReceiverName;
 
-        Send();
+            Send();
 
-        if (originalSender != null && originalSender.IsOnline)
-            MailManager.Instance.NotifyNewMailByNameIfOnline(this, originalSender.Name);
+            if (originalSender != null && originalSender.IsOnline)
+                MailManager.Instance.NotifyNewMailByNameIfOnline(this, originalSender.Name);
 
-        // TODO
-        return true;
+            // TODO
+            return true;
+        }
     }
 
     public byte GetTotalAttachmentCount()

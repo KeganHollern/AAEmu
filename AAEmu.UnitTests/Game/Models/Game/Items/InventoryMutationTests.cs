@@ -102,6 +102,28 @@ public sealed class InventoryMutationTests
     }
 
     [Test]
+    public async Task UncertainCommit_RetainsPreparedMoneyAndRemovalWithoutCallbacksOrIdReuse()
+    {
+        var item = AddItem(1, 100, 1);
+        var events = 0;
+        _owner.Events.OnItemGather += (_, _) => events++;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.Invalid);
+            mutation.TryConsume(_bag, item, 1);
+            mutation.TryChangeMoney(_owner, -50);
+            mutation.PreservePreparedState();
+            mutation.PreservePreparedState();
+        }
+        await Assert.That(_owner.Money).IsEqualTo(50L);
+        await Assert.That(_bag.Items).IsEmpty();
+        await Assert.That(item.Count).IsEqualTo(0);
+        await Assert.That(_allItems[1]).IsSameReferenceAs(item);
+        await Assert.That(_deleted).IsEmpty();
+        await Assert.That(events).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task PackExchange_InstallsRewardAndWalletBeforeReentrantConsumption()
     {
         var pack = AddItem(1, 100, 1);
