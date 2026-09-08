@@ -1,5 +1,7 @@
 # Auction listing and settlement integrity (#303)
 
+Issue: <https://github.com/KeganHollern/aaemu-cluster/issues/303>
+
 Posting, bidding, buyout, seller cancellation, and expiry share
 `SaveManager.PersistenceSyncRoot`. Each successful operation checkpoints its
 wallet, original item/container, auction row/deletion, and generated mail through
@@ -30,7 +32,10 @@ the server lifetime so delayed requests cannot act on a different listing.
 `AuctionSettlementTests` exercises the public operations with real inventory
 and mail mutation objects, controlled checkpoint outcomes, notification ordering,
 malformed/foreign/repeated requests, price limits, insufficient funds, and racing
-buyout/bid/cancel calls. `AuctionSettlementPersistenceTests` uses the disposable
+buyout/bid/cancel calls. Reservation regressions verify rejected posts restore
+their fee and source item, reserved wallet funds cannot bid or buy out a listing,
+and bids can spend the remaining unreserved balance.
+`AuctionSettlementPersistenceTests` uses the disposable
 GameMySql fixture and the production save/load paths to check listing failure,
 bid escrow across restart, failed-buyout retry, terminal settlement reload,
 wallets, item identity, and mail proceeds/refunds.
