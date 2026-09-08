@@ -120,6 +120,9 @@ public sealed class PlayerMailSendPersistenceTests
         private readonly ItemManager _oldItems;
         private readonly QuestManager _oldQuests;
         private readonly WorldManager _oldWorld;
+        private readonly MailManager _oldMails;
+        private readonly NameManager _oldNames;
+        private readonly SaveManager _oldSave;
         private readonly Dictionary<ulong, Item> _allItems = [];
         private readonly Dictionary<uint, ItemTemplate> _templates = [];
         private readonly IWorldManager _world;
@@ -179,6 +182,9 @@ public sealed class PlayerMailSendPersistenceTests
             Mails = NewMailStore(Items);
             Save = new SaveManager(_tasks, Mock.Of<IHousingManager>(), Mails, Items,
                 Mock.Of<IAuctionManager>(), Mock.Of<ICrimeManager>(), _world, Mock.Of<IZoneManager>());
+            _oldMails = SwapSingleton(Mails);
+            _oldNames = SwapSingleton(_names);
+            _oldSave = SwapSingleton(Save);
             Assert.True(Save.TryCommitEconomy([Sender]));
         }
 
@@ -216,9 +222,9 @@ public sealed class PlayerMailSendPersistenceTests
         }
 
         public MailResult Send(MailType type, int copper, params byte[] slots) =>
-            PlayerMailSendExecutor.Execute(Sender, type, Receiver.Name, "Persistence test", "Exact attachments",
-                copper, 0, 0, slots.Select(slot => (SlotType.Inventory, slot)).ToArray(), Mails, Items, _names,
-                () => Save.TryCommitEconomy([Sender]));
+            Sender.Mails.SendMailToPlayer(type, Receiver.Name, "Persistence test", "Exact attachments",
+                byte.MaxValue, copper, 0, 0, long.MaxValue,
+                slots.Select(slot => (SlotType.Inventory, slot)).ToList());
 
         public void AssertCommitted(MailType type, int cost, int copper, params Item[] attachments)
         {
@@ -231,6 +237,7 @@ public sealed class PlayerMailSendPersistenceTests
             Assert.Equal(copper, mail.Body.CopperCoins);
             Assert.Equal(attachments, mail.Body.Attachments);
             Assert.Equal(attachments.Length + 1, mail.Header.Attachments);
+            Assert.Equal(0, mail.Header.Extra);
             // Both recipients are offline in this fixture; delivery notification has not run.
             Assert.False(mail.IsDelivered);
             Assert.Equal(type == MailType.Normal ? MailManager.NormalMailDelay : TimeSpan.Zero,
@@ -328,6 +335,9 @@ public sealed class PlayerMailSendPersistenceTests
 
         public void Dispose()
         {
+            SwapSingleton(_oldSave);
+            SwapSingleton(_oldNames);
+            SwapSingleton(_oldMails);
             SwapSingleton(_oldItems);
             SwapSingleton(_oldQuests);
             SwapSingleton(_oldWorld);
