@@ -1,396 +1,445 @@
-﻿using AAEmu.Commons.Utils;
+﻿using AAEmu.Commons.Network;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Items.Containers;
+using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Utils;
+
 using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public class TradeTemplate
-{
-    public uint Id { get; set; }
-    public uint OwnerObjId { get; set; }
-    public uint TargetObjId { get; set; }
-    public bool LockOwner { get; set; }
-    public bool LockTarget { get; set; }
-    public bool OkOwner { get; set; }
-    public bool OkTarget { get; set; }
-    public List<Item> OwnerItems { get; set; }
-    public List<Item> TargetItems { get; set; }
-    public int OwnerMoneyPutup { get; set; }
-    public int TargetMoneyPutup { get; set; }
-}
-
-public class TradeManager(ITradeIdManager tradeIdManager, IWorldManager worldManager) : Singleton<TradeManager>, ITradeManager
+public class TradeManager(ITradeIdManager tradeIdManager, IWorldManager worldManager,
+    IItemManager itemManager, ISaveManager saveManager) : Singleton<TradeManager>, ITradeManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
-    private readonly Dictionary<uint, TradeTemplate> _trades = [];
-
-    private uint GetTradeId(uint objId)
-    {
-        if (_trades.Count > 0)
-        {
-            foreach (var (key, value) in _trades)
-            {
-                if (value.OwnerObjId.Equals(objId)) return key;
-                if (value.TargetObjId.Equals(objId)) return key;
-            }
-        }
-
-        return 0;
-    }
-
-    private bool IsTrading(uint objId)
-    {
-        var tradeId = GetTradeId(objId);
-        if (tradeId == 0) return false;
-
-        CancelTrade(objId, 0, tradeId); // TODO - reason?
-        return true;
-    }
-
-    private void UnlockTrade(Character owner, Character target, uint tradeId)
-    {
-        if (!_trades[tradeId].LockOwner && !_trades[tradeId].LockTarget) return;
-
-        _trades[tradeId].LockOwner = false;
-        _trades[tradeId].LockTarget = false;
-        _trades[tradeId].OkOwner = false;
-        _trades[tradeId].OkTarget = false;
-        owner.SendPacket(new SCTradeLockUpdatePacket(false, false));
-        target.SendPacket(new SCTradeLockUpdatePacket(false, false));
-        Logger.Info("Trade Id:{0} Lockers opened and Ok undone.", tradeId);
-    }
+    // Server interaction rule; the protocol does not supply an authoritative range.
+    internal const float InteractionRange = 5f;
+    private const int MaxSettlementTasks = 30;
+    private readonly Dictionary<uint, TradeState> _trades = [];
+    private readonly Dictionary<uint, TradeState> _participants = [];
+    private readonly Dictionary<uint, Invitation> _invitations = [];
 
     public void CanStartTrade(Character owner, Character target)
     {
-        if (IsTrading(owner.ObjId) || IsTrading(target.ObjId)) return;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!Eligible(owner, target))
+                return;
+            if (_participants.ContainsKey(owner.ObjId) || _invitations.ContainsKey(owner.ObjId))
+            {
+                owner.SendErrorMessage(ErrorMessageType.OnTrading);
+                return;
+            }
+            if (_participants.ContainsKey(target.ObjId) || _invitations.ContainsKey(target.ObjId))
+            {
+                owner.SendErrorMessage(ErrorMessageType.TargetOnTrading);
+                return;
+            }
 
-        // TODO - Check faction and others
-        Logger.Info("{0}({1}) is trying to trade with {2}({3}).", owner.Name, owner.ObjId, target.Name, target.ObjId);
-        target.SendPacket(new SCCanStartTradePacket(owner.ObjId));
+            var invitation = new Invitation(owner, target);
+            _invitations.Add(owner.ObjId, invitation);
+            _invitations.Add(target.ObjId, invitation);
+            target.SendPacket(new SCCanStartTradePacket(owner.ObjId));
+        }
     }
 
     public void StartTrade(Character owner, Character target)
     {
-        if (IsTrading(owner.ObjId) || IsTrading(target.ObjId)) return;
-
-        var nextId = tradeIdManager.GetNextId();
-        var template = new TradeTemplate
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            Id = nextId,
-            OwnerObjId = owner.ObjId,
-            TargetObjId = target.ObjId,
-            LockOwner = false,
-            LockTarget = false,
-            OkOwner = false,
-            OkTarget = false,
-            OwnerItems = [],
-            TargetItems = [],
-            OwnerMoneyPutup = 0,
-            TargetMoneyPutup = 0
+            if (owner == null || target == null ||
+                !_invitations.TryGetValue(target.ObjId, out var invitation) ||
+                !ReferenceEquals(invitation.Owner, owner) || !ReferenceEquals(invitation.Target, target))
+                return;
+            RemoveInvitation(invitation);
+            if (!Eligible(owner, target) || _participants.ContainsKey(owner.ObjId) ||
+                _participants.ContainsKey(target.ObjId))
+                return;
 
-        };
-        _trades.Add(nextId, template);
-
-        Logger.Info("Trade Id:{4} started between {0}({1}) - {2}({3}).", owner.Name, owner.ObjId, target.Name, target.ObjId, nextId);
-        owner.SendPacket(new SCTradeStartedPacket(target.ObjId));
-        target.SendPacket(new SCTradeStartedPacket(owner.ObjId));
+            var id = tradeIdManager.GetNextId();
+            if (id == 0 || _trades.ContainsKey(id))
+                return;
+            var trade = new TradeState(id, owner, target);
+            trade.Reservation = new TradeReservation(() =>
+            {
+                if (_trades.TryGetValue(id, out var current) && ReferenceEquals(current, trade))
+                    Cancel(trade, owner, 0);
+            });
+            _trades.Add(id, trade);
+            _participants.Add(owner.ObjId, trade);
+            _participants.Add(target.ObjId, trade);
+            owner.SendPacket(new SCTradeStartedPacket(target.ObjId));
+            target.SendPacket(new SCTradeStartedPacket(owner.ObjId));
+        }
     }
 
-    public void CancelTrade(uint objId, int reason, uint tradeId = 0u)
+    public void DeclineTrade(Character character, uint ownerObjId, int reason)
     {
-        // TODO - All reasons.
-        tradeId = tradeId == 0 ? GetTradeId(objId) : tradeId;
-        if (tradeId == 0)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            worldManager.GetCharacterByObjId(objId)?.SendPacket(new SCTradeCanceledPacket(reason, true));
-            return;
+            if (character == null || !_invitations.TryGetValue(character.ObjId, out var invitation) ||
+                !ReferenceEquals(invitation.Target, character) || invitation.Owner.ObjId != ownerObjId)
+                return;
+            RemoveInvitation(invitation);
+            SendCancellation(invitation.Owner, new SCCannotStartTradePacket(character.ObjId, reason));
         }
+    }
 
-        var owner = worldManager.GetCharacterByObjId(_trades[tradeId].OwnerObjId);
-        var target = worldManager.GetCharacterByObjId(_trades[tradeId].TargetObjId);
-        _trades.Remove(tradeId);
-
-        Logger.Info("Trade Id:{4} between {0}({1}) - {2}({3}) is canceled.", owner.Name, owner.ObjId, target.Name, target.ObjId, tradeId);
-        var causedByMe = owner.ObjId.Equals(objId);
-        owner.SendPacket(new SCTradeCanceledPacket(reason, causedByMe));
-        target.SendPacket(new SCTradeCanceledPacket(reason, !causedByMe));
+    public void CancelTrade(Character character, int reason)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (character == null)
+                return;
+            if (_participants.TryGetValue(character.ObjId, out var trade) && IsParticipant(trade, character))
+                Cancel(trade, character, reason);
+            if (_invitations.TryGetValue(character.ObjId, out var invitation) &&
+                (ReferenceEquals(invitation.Owner, character) || ReferenceEquals(invitation.Target, character)))
+            {
+                RemoveInvitation(invitation);
+                var other = ReferenceEquals(invitation.Owner, character) ? invitation.Target : invitation.Owner;
+                SendCancellation(other, new SCCannotStartTradePacket(character.ObjId, reason));
+            }
+        }
     }
 
     public void AddItem(Character character, SlotType slotType, byte slot, int amount)
     {
-        var tradeId = GetTradeId(character.ObjId);
-        var item = character.Inventory.GetItem(slotType, slot);
-        if (tradeId != 0 && item.Count >= amount)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            var isOwnerWhoAdd = _trades[tradeId].OwnerObjId.Equals(character.ObjId);
-            var owner = worldManager.GetCharacterByObjId(_trades[tradeId].OwnerObjId);
-            var target = worldManager.GetCharacterByObjId(_trades[tradeId].TargetObjId);
-            if (isOwnerWhoAdd)
+            if (!TryGetTrade(character, out var trade))
+                return;
+            var item = slotType == SlotType.Inventory ? character.Inventory.Bag.GetItemBySlot(slot) : null;
+            if (amount <= 0 || !ValidItem(character, item, slot) || item.Count < amount ||
+                Offers(trade, character).Any(offer => offer.Item.Id == item.Id) ||
+                !trade.Reservation.TryReserve(item, amount))
             {
-                Logger.Info("Trade Id:{0} {1}({2}) added item ({3}-{4}) Amount: {5}.", tradeId, owner.Name, owner.ObjId, slotType, slot, amount);
-                _trades[tradeId].OwnerItems.Add(item);
-                owner.SendPacket(new SCTradeItemPutupPacket(slotType, slot, amount));
-                target.SendPacket(new SCOtherTradeItemPutupPacket(item));
-            }
-            else
-            {
-                Logger.Info("Trade Id:{0} {1}({2}) added item ({3}-{4}) Amount: {5}.", tradeId, target.Name, target.ObjId, slotType, slot, amount);
-                _trades[tradeId].TargetItems.Add(item);
-                owner.SendPacket(new SCOtherTradeItemPutupPacket(item));
-                target.SendPacket(new SCTradeItemPutupPacket(slotType, slot, amount));
+                Cancel(trade, character, 0);
+                return;
             }
 
-            // If trade was Locked, unlock both
-            UnlockTrade(owner, target, tradeId);
-        }
-        else
-        {
-            CancelTrade(character.ObjId, 0, tradeId); // TODO - Reason
-        }
-    }
-
-    public void AddMoney(Character character, int moneyAmount)
-    {
-        var tradeId = GetTradeId(character.ObjId);
-        if (tradeId != 0 && character.Money >= moneyAmount)
-        {
-            var isOwnerWhoAdd = _trades[tradeId].OwnerObjId.Equals(character.ObjId);
-            var owner = worldManager.GetCharacterByObjId(_trades[tradeId].OwnerObjId);
-            var target = worldManager.GetCharacterByObjId(_trades[tradeId].TargetObjId);
-            if (isOwnerWhoAdd)
-            {
-                Logger.Info("Trade Id:{0} {1}({2}) changed Money: {3}.", tradeId, owner.Name, owner.ObjId, moneyAmount);
-                _trades[tradeId].OwnerMoneyPutup = moneyAmount;
-                owner.SendPacket(new SCTradeMoneyPutupPacket(moneyAmount));
-                target.SendPacket(new SCOtherTradeMoneyPutupPacket(moneyAmount));
-            }
-            else
-            {
-                Logger.Info("Trade Id:{0} {1}({2}) changed Money: {3}.", tradeId, target.Name, target.ObjId, moneyAmount);
-                _trades[tradeId].TargetMoneyPutup = moneyAmount;
-                owner.SendPacket(new SCOtherTradeMoneyPutupPacket(moneyAmount));
-                target.SendPacket(new SCTradeMoneyPutupPacket(moneyAmount));
-            }
-
-            // If trade was Locked, unlock both
-            UnlockTrade(owner, target, tradeId);
-        }
-        else
-        {
-            CancelTrade(character.ObjId, 0, tradeId); // TODO - Reason
+            var offer = new Offer(item, amount, slot, Snapshot(item, amount));
+            Offers(trade, character).Add(offer);
+            ResetAgreement(trade);
+            character.SendPacket(new SCTradeItemPutupPacket(slotType, slot, amount));
+            Other(trade, character).SendPacket(new SCOtherTradeItemPutupPacket(item, amount));
         }
     }
 
     public void RemoveItem(Character character, SlotType slotType, byte slot)
     {
-        var tradeId = GetTradeId(character.ObjId);
-        var item = character.Inventory.GetItem(slotType, slot);
-        if (tradeId != 0 && item != null)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            var isOwnerWhoAdd = _trades[tradeId].OwnerObjId.Equals(character.ObjId);
-            var owner = worldManager.GetCharacterByObjId(_trades[tradeId].OwnerObjId);
-            var target = worldManager.GetCharacterByObjId(_trades[tradeId].TargetObjId);
-            if (isOwnerWhoAdd)
+            if (!TryGetTrade(character, out var trade) || slotType != SlotType.Inventory)
+                return;
+            var offers = Offers(trade, character);
+            var offer = offers.FirstOrDefault(entry => entry.Slot == slot);
+            if (offer == null)
+                return;
+            if (!ValidOffer(character, offer))
             {
-                Logger.Info("Trade Id:{0} {1}({2}) tookdown item ({3}-{4}).", tradeId, owner.Name, owner.ObjId, slotType, slot);
-                if (_trades[tradeId].OwnerItems.Count <= 1) _trades[tradeId].OwnerItems.Clear();
-                else _trades[tradeId].OwnerItems.Remove(item);
-                owner.SendPacket(new SCTradeItemTookdownPacket(slotType, slot));
-                target.SendPacket(new SCOtherTradeItemTookdownPacket(item));
-            }
-            else
-            {
-                Logger.Info("Trade Id:{0} {1}({2}) tookdown item ({3}-{4}).", tradeId, target.Name, target.ObjId, slotType, slot);
-                if (_trades[tradeId].TargetItems.Count <= 1) _trades[tradeId].TargetItems.Clear();
-                else _trades[tradeId].TargetItems.Remove(item);
-                owner.SendPacket(new SCOtherTradeItemTookdownPacket(item));
-                target.SendPacket(new SCTradeItemTookdownPacket(slotType, slot));
+                Cancel(trade, character, 0);
+                return;
             }
 
-            // If trade was Locked, unlock both
-            UnlockTrade(owner, target, tradeId);
-        }
-        else
-        {
-            CancelTrade(character.ObjId, 0, tradeId); // TODO - Reason
+            offers.Remove(offer);
+            trade.Reservation.Release(offer.Item);
+            ResetAgreement(trade);
+            character.SendPacket(new SCTradeItemTookdownPacket(slotType, slot));
+            Other(trade, character).SendPacket(new SCOtherTradeItemTookdownPacket(offer.Item, offer.Amount));
         }
     }
 
-    public void LockTrade(Character character, bool _lock)
+    public void AddMoney(Character character, int moneyAmount)
     {
-        var tradeId = GetTradeId(character.ObjId);
-        if (tradeId != 0)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            var isOwnerWhoAdd = _trades[tradeId].OwnerObjId.Equals(character.ObjId);
-
-            // Check if already locked
-            if (isOwnerWhoAdd && _trades[tradeId].LockOwner && _lock) return;
-            if (!isOwnerWhoAdd && _trades[tradeId].LockTarget && _lock) return;
-
-            var owner = worldManager.GetCharacterByObjId(_trades[tradeId].OwnerObjId);
-            var target = worldManager.GetCharacterByObjId(_trades[tradeId].TargetObjId);
-
-            if (!_lock)
+            if (!TryGetTrade(character, out var trade))
+                return;
+            if (moneyAmount < 0 || !trade.Reservation.TryReserve(character, moneyAmount))
             {
-                _trades[tradeId].LockOwner = false;
-                _trades[tradeId].LockTarget = false;
-                Logger.Info("Trade Id:{0} {1}({2}) - {3}({4}) unlocked trade.", tradeId, owner.Name, owner.ObjId, target.Name, target.ObjId);
+                Cancel(trade, character, 0);
+                return;
             }
-            else if (isOwnerWhoAdd)
-            {
 
-                _trades[tradeId].LockOwner = true;
-                Logger.Info("Trade Id:{0} {1}({2}) locked trade.", tradeId, owner.Name, owner.ObjId);
-            }
+            if (ReferenceEquals(trade.Owner, character))
+                trade.OwnerMoney = moneyAmount;
             else
-            {
-                _trades[tradeId].LockTarget = true;
-                Logger.Info("Trade Id:{0} {1}({2}) locked trade.", tradeId, target.Name, target.ObjId);
-            }
-
-            owner.SendPacket(new SCTradeLockUpdatePacket(_trades[tradeId].LockOwner, _trades[tradeId].LockTarget));
-            target.SendPacket(new SCTradeLockUpdatePacket(_trades[tradeId].LockTarget, _trades[tradeId].LockOwner));
+                trade.TargetMoney = moneyAmount;
+            ResetAgreement(trade);
+            character.SendPacket(new SCTradeMoneyPutupPacket(moneyAmount));
+            Other(trade, character).SendPacket(new SCOtherTradeMoneyPutupPacket(moneyAmount));
         }
-        else
+    }
+
+    public void LockTrade(Character character, bool locked)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            CancelTrade(character.ObjId, 0, tradeId); // TODO - Reason
+            if (!TryGetTrade(character, out var trade))
+                return;
+            if (!ValidateOffers(trade))
+            {
+                Cancel(trade, character, 0);
+                return;
+            }
+            if (!locked)
+            {
+                ResetAgreement(trade);
+                return;
+            }
+            if (ReferenceEquals(trade.Owner, character))
+                trade.OwnerLocked = true;
+            else
+                trade.TargetLocked = true;
+            SendLocks(trade);
         }
     }
 
     public void OkTrade(Character character)
     {
-        var tradeId = GetTradeId(character.ObjId);
-        if (tradeId != 0)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            var isOwnerWhoAdd = _trades[tradeId].OwnerObjId.Equals(character.ObjId);
-            // Check if both locked
-            if (!_trades[tradeId].LockOwner && !_trades[tradeId].LockTarget) return;
-
-            var owner = worldManager.GetCharacterByObjId(_trades[tradeId].OwnerObjId);
-            var target = worldManager.GetCharacterByObjId(_trades[tradeId].TargetObjId);
-
-            if (isOwnerWhoAdd)
+            if (!TryGetTrade(character, out var trade) || !trade.OwnerLocked || !trade.TargetLocked)
+                return;
+            if (!ValidateOffers(trade))
             {
-
-                _trades[tradeId].OkOwner = true;
-                Logger.Info("Trade Id:{0} {1}({2}) ok trade.", tradeId, owner.Name, owner.ObjId);
+                Cancel(trade, character, 0);
+                return;
             }
+            if (ReferenceEquals(trade.Owner, character))
+                trade.OwnerConfirmed = true;
             else
+                trade.TargetConfirmed = true;
+            if (!trade.OwnerConfirmed || !trade.TargetConfirmed)
             {
-                _trades[tradeId].OkTarget = true;
-                Logger.Info("Trade Id:{0} {1}({2}) ok trade.", tradeId, target.Name, target.ObjId);
+                SendConfirmations(trade);
+                return;
             }
 
-            // Send ok status
-            owner.SendPacket(new SCTradeOkUpdatePacket(_trades[tradeId].OkOwner, _trades[tradeId].OkTarget));
-            target.SendPacket(new SCTradeOkUpdatePacket(_trades[tradeId].OkTarget, _trades[tradeId].OkOwner));
-
-            // If both ok finish trade
-            if (_trades[tradeId].OkOwner && _trades[tradeId].OkTarget)
-            {
-                // Check inventory space
-                if (owner.Inventory.FreeSlotCount(SlotType.Inventory) < _trades[tradeId].TargetItems.Count) CancelTrade(owner.ObjId, 0, tradeId);
-                if (target.Inventory.FreeSlotCount(SlotType.Inventory) < _trades[tradeId].OwnerItems.Count) CancelTrade(target.ObjId, 0, tradeId);
-
-                // Finish trade
-                FinishTrade(owner, target, tradeId);
-            }
-        }
-        else
-        {
-            CancelTrade(character.ObjId, 0, tradeId); // TODO - Reason
+            // Remove the trade and release its reservations before staging. No other
+            // mutation can enter the persistence gate until settlement finishes.
+            Retire(trade);
+            if (!Settle(trade))
+                SendCanceled(trade, character, 0);
         }
     }
 
-    public void FinishTrade(Character owner, Character target, uint tradeId)
+    private bool Settle(TradeState trade)
     {
-        var tradeInfo = _trades[tradeId];
-
-        // Validate Money (custom client protection)
-        if (tradeInfo.OwnerMoneyPutup > owner.Money)
+        using var inventory = new InventoryMutation(ItemTaskType.Trade);
+        var checkpointCalled = false;
+        try
         {
-            CancelTrade(owner.ObjId, 0, tradeId); // Reason?
-            Logger.Error($"{owner.Name} ({owner.Id}) is putting up more money for trade than have {tradeInfo.OwnerMoneyPutup} > {owner.Money}, possible exploit or modified client!");
+            IReadOnlyList<(Item Item, int Count, ItemContainer Destination)> moves =
+                [.. trade.OwnerOffers.Select(offer => (offer.Item, offer.Amount, trade.Target.Inventory.Bag)),
+                 .. trade.TargetOffers.Select(offer => (offer.Item, offer.Amount, trade.Owner.Inventory.Bag))];
+            if (!inventory.TryExchange(moves) ||
+                !MoveMoney(trade.Owner, trade.Target, trade.OwnerMoney, trade.TargetMoney, inventory))
+                return false;
+
+            var ownerTasks = inventory.GetTasks(trade.Owner);
+            var targetTasks = inventory.GetTasks(trade.Target);
+            if (ownerTasks.Count > MaxSettlementTasks || targetTasks.Count > MaxSettlementTasks)
+                return false;
+
+            checkpointCalled = true;
+            if (!saveManager.TryCommitEconomy([trade.Owner, trade.Target]))
+                return false;
+            inventory.Complete(false);
+            trade.Owner.SendPacket(new SCTradeMadePacket(ItemTaskType.Trade, [.. ownerTasks], []));
+            trade.Target.SendPacket(new SCTradeMadePacket(ItemTaskType.Trade, [.. targetTasks], []));
+            Logger.Info("Trade {0} committed between {1} and {2}.", trade.Id, trade.Owner.Id, trade.Target.Id);
+            return true;
+        }
+        catch (Exception exception) when (!checkpointCalled)
+        {
+            Logger.Error(exception, "Could not prepare trade {0}.", trade.Id);
+            return false;
+        }
+        catch
+        {
+            // Commit may have completed, or an observer may have thrown after it.
+            // The retired trade must never restore or transfer these assets again.
+            inventory.PreservePreparedState();
+            throw;
+        }
+    }
+
+    private static bool MoveMoney(Character owner, Character target, int ownerAmount, int targetAmount,
+        InventoryMutation inventory)
+    {
+        return (ownerAmount == 0 || inventory.TryChangeMoney(owner, -ownerAmount)) &&
+               (targetAmount == 0 || inventory.TryChangeMoney(target, -targetAmount)) &&
+               (targetAmount == 0 || inventory.TryChangeMoney(owner, targetAmount)) &&
+               (ownerAmount == 0 || inventory.TryChangeMoney(target, ownerAmount));
+    }
+
+    private bool TryGetTrade(Character character, out TradeState trade)
+    {
+        trade = null;
+        if (character == null || !_participants.TryGetValue(character.ObjId, out trade) ||
+            !IsParticipant(trade, character))
+            return false;
+        if (Eligible(trade.Owner, trade.Target))
+            return true;
+        Cancel(trade, character, 0);
+        return false;
+    }
+
+    private bool Eligible(Character owner, Character target)
+    {
+        return Current(owner) && Current(target) && !ReferenceEquals(owner, target) && owner.Id != target.Id &&
+               ReferenceEquals(owner.ParentWorld, target.ParentWorld) &&
+               owner.Transform.WorldId == target.Transform.WorldId &&
+               owner.Transform.InstanceId == target.Transform.InstanceId &&
+               owner.GetRelationStateTo(target) == RelationState.Friendly &&
+               target.GetRelationStateTo(owner) == RelationState.Friendly &&
+               MathUtil.GetDistance(owner.Transform.World.Position, target.Transform.World.Position, true) <= InteractionRange;
+    }
+
+    private bool Current(Character character)
+    {
+        return character != null && character.Id != 0 && character.ObjId != 0 &&
+               character.IsOnline && !character.IsDead && !character.IsInDuel && !character.IsInBattle &&
+               character.Craft?.IsCrafting != true && character.SkillTask == null && !Skill.IsExecuting(character) &&
+               character.ParentWorld != null && character.Inventory?.Bag != null &&
+               ReferenceEquals(character.Connection?.ActiveChar, character) &&
+               ReferenceEquals(worldManager.GetCharacterByObjId(character.ObjId), character);
+    }
+
+    private bool ValidateOffers(TradeState trade)
+    {
+        return trade.OwnerMoney >= 0 && trade.TargetMoney >= 0 &&
+               trade.Owner.Money >= trade.OwnerMoney && trade.Target.Money >= trade.TargetMoney &&
+               TradeReservation.GetReservedMoney(trade.Owner) >= trade.OwnerMoney &&
+               TradeReservation.GetReservedMoney(trade.Target) >= trade.TargetMoney &&
+               trade.OwnerOffers.All(offer => ValidOffer(trade.Owner, offer)) &&
+               trade.TargetOffers.All(offer => ValidOffer(trade.Target, offer));
+    }
+
+    private bool ValidOffer(Character character, Offer offer)
+    {
+        return ValidItem(character, offer.Item, offer.Slot) && offer.Amount > 0 && offer.Item.Count >= offer.Amount &&
+               TradeReservation.GetReservedCount(offer.Item) >= offer.Amount &&
+               offer.Snapshot.SequenceEqual(Snapshot(offer.Item, offer.Amount));
+    }
+
+    private bool ValidItem(Character character, Item item, byte slot)
+    {
+        return item != null && item.Id != 0 && item.Count > 0 && item.Template != null &&
+               item.Template is not BodyPartTemplate && item is not BodyPart &&
+               !item.HasFlag(ItemFlag.SoulBound) && item.CanDestroy() &&
+               item.OwnerId == character.Id && item.SlotType == SlotType.Inventory && item.Slot == slot &&
+               ReferenceEquals(item._holdingContainer, character.Inventory.Bag) &&
+               character.Inventory.Bag.Items.Count(entry => entry.Id == item.Id) == 1 &&
+               ReferenceEquals(character.Inventory.Bag.GetItemBySlot(slot), item) &&
+               ReferenceEquals(itemManager.GetItemByItemId(item.Id), item);
+    }
+
+    private void Retire(TradeState trade)
+    {
+        if (!_trades.Remove(trade.Id))
             return;
-        }
-        if (tradeInfo.TargetMoneyPutup > target.Money)
-        {
-            CancelTrade(target.ObjId, 0, tradeId); // Reason?
-            Logger.Error($"{target.Name} ({target.Id}) is putting up more money for trade than have {tradeInfo.TargetMoneyPutup} > {target.Money}, possible exploit or modified client!");
-            return;
-        }
+        _participants.Remove(trade.Owner.ObjId);
+        _participants.Remove(trade.Target.ObjId);
+        trade.Reservation.Dispose();
+        tradeIdManager.ReleaseId(trade.Id);
+    }
 
-        var hasErrors = 0;
-        var tasksOwner = new List<ItemTask>();
-        var tasksTarget = new List<ItemTask>();
+    private void Cancel(TradeState trade, Character cause, int reason)
+    {
+        Retire(trade);
+        SendCanceled(trade, cause, reason);
+    }
 
-        // Handle Money from Owner
-        if (tradeInfo.OwnerMoneyPutup > 0)
-        {
-            owner.Money -= tradeInfo.OwnerMoneyPutup;
-            tasksOwner.Add(new MoneyChange(-tradeInfo.OwnerMoneyPutup));
-            target.Money += tradeInfo.OwnerMoneyPutup;
-            tasksTarget.Add(new MoneyChange(tradeInfo.OwnerMoneyPutup));
-        }
+    private static void SendCanceled(TradeState trade, Character cause, int reason)
+    {
+        var byOwner = ReferenceEquals(cause, trade.Owner);
+        SendCancellation(trade.Owner, new SCTradeCanceledPacket(reason, byOwner));
+        SendCancellation(trade.Target, new SCTradeCanceledPacket(reason, !byOwner));
+    }
 
-        // Handle Money from Target
-        if (tradeInfo.TargetMoneyPutup > 0)
+    private static void SendCancellation(Character character, GamePacket packet)
+    {
+        try
         {
-            owner.Money += tradeInfo.TargetMoneyPutup;
-            tasksOwner.Add(new MoneyChange(tradeInfo.TargetMoneyPutup));
-            target.Money -= tradeInfo.TargetMoneyPutup;
-            tasksTarget.Add(new MoneyChange(-tradeInfo.TargetMoneyPutup));
+            character.SendPacket(packet);
         }
+        catch (Exception exception)
+        {
+            // A disconnected participant must not prevent logout cleanup or the
+            // other participant's cancellation notification.
+            Logger.Warn(exception, "Could not notify character {0} of trade cancellation.", character.Id);
+        }
+    }
 
-        // Handle Items from Owner
-        if (tradeInfo.OwnerItems.Count > 0)
-        {
-            foreach (var item in tradeInfo.OwnerItems)
-            {
-                if (target.Inventory.Bag.AddOrMoveExistingItem(ItemTaskType.Invalid, item))
-                {
-                    tasksOwner.Add(new ItemRemove(item));
-                    tasksTarget.Add(new ItemAdd(item));
-                }
-                else
-                {
-                    hasErrors++;
-                }
-            }
-        }
-        // Handle Items from Target
-        if (tradeInfo.TargetItems.Count > 0)
-        {
-            foreach (var item in tradeInfo.TargetItems)
-            {
-                if (owner.Inventory.Bag.AddOrMoveExistingItem(ItemTaskType.Invalid, item))
-                {
-                    tasksTarget.Add(new ItemRemove(item));
-                    tasksOwner.Add(new ItemAdd(item));
-                }
-                else
-                {
-                    hasErrors++;
-                }
-            }
-        }
+    private void RemoveInvitation(Invitation invitation)
+    {
+        _invitations.Remove(invitation.Owner.ObjId);
+        _invitations.Remove(invitation.Target.ObjId);
+    }
 
-        owner.UpdateGoldAchievement();
-        target.UpdateGoldAchievement();
-
-        // Trade complete, remove ID and send item task packets
-        _trades.Remove(tradeId);
-        owner.SendPacket(new SCTradeMadePacket(ItemTaskType.Trade, tasksOwner, []));
-        target.SendPacket(new SCTradeMadePacket(ItemTaskType.Trade, tasksTarget, []));
-        Logger.Info($"Trade Id:{tradeId} finished. Owner {owner.Name} ({owner.Id}) Items/Money: {tradeInfo.OwnerItems.Count}/{tradeInfo.OwnerMoneyPutup} <=> Target {target.Name} ({target.Id}) Items/Money: {tradeInfo.TargetItems.Count}/{tradeInfo.TargetMoneyPutup}");
-        if (hasErrors > 0)
+    private static void ResetAgreement(TradeState trade)
+    {
+        var changed = trade.OwnerLocked || trade.TargetLocked || trade.OwnerConfirmed || trade.TargetConfirmed;
+        trade.OwnerLocked = trade.TargetLocked = trade.OwnerConfirmed = trade.TargetConfirmed = false;
+        if (changed)
         {
-            Logger.Error($"{hasErrors}item(s) could not be trade for tradeId: {tradeId} between {owner.Name} ({owner.Id}) and {target.Name} ({target.Id}), possible exploit or modified client!");
+            SendLocks(trade);
+            SendConfirmations(trade);
         }
+    }
+
+    private static void SendLocks(TradeState trade)
+    {
+        trade.Owner.SendPacket(new SCTradeLockUpdatePacket(trade.OwnerLocked, trade.TargetLocked));
+        trade.Target.SendPacket(new SCTradeLockUpdatePacket(trade.TargetLocked, trade.OwnerLocked));
+    }
+
+    private static void SendConfirmations(TradeState trade)
+    {
+        trade.Owner.SendPacket(new SCTradeOkUpdatePacket(trade.OwnerConfirmed, trade.TargetConfirmed));
+        trade.Target.SendPacket(new SCTradeOkUpdatePacket(trade.TargetConfirmed, trade.OwnerConfirmed));
+    }
+
+    private static bool IsParticipant(TradeState trade, Character character) =>
+        ReferenceEquals(trade.Owner, character) || ReferenceEquals(trade.Target, character);
+
+    private static Character Other(TradeState trade, Character character) =>
+        ReferenceEquals(trade.Owner, character) ? trade.Target : trade.Owner;
+
+    private static List<Offer> Offers(TradeState trade, Character character) =>
+        ReferenceEquals(trade.Owner, character) ? trade.OwnerOffers : trade.TargetOffers;
+
+    private static byte[] Snapshot(Item item, int amount) => item.Write(new PacketStream(), amount).GetBytes();
+
+    private sealed record Invitation(Character Owner, Character Target);
+    private sealed record Offer(Item Item, int Amount, byte Slot, byte[] Snapshot);
+
+    private sealed class TradeState(uint id, Character owner, Character target)
+    {
+        public uint Id { get; } = id;
+        public Character Owner { get; } = owner;
+        public Character Target { get; } = target;
+        public List<Offer> OwnerOffers { get; } = [];
+        public List<Offer> TargetOffers { get; } = [];
+        public TradeReservation Reservation { get; set; }
+        public int OwnerMoney { get; set; }
+        public int TargetMoney { get; set; }
+        public bool OwnerLocked { get; set; }
+        public bool TargetLocked { get; set; }
+        public bool OwnerConfirmed { get; set; }
+        public bool TargetConfirmed { get; set; }
     }
 }

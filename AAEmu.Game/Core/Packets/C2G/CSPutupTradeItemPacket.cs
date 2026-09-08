@@ -14,6 +14,7 @@ public class CSPutupTradeItemPacket() : GamePacket(CSOffsets.CSPutupTradeItemPac
         var amount = stream.ReadInt32();
 
         //Logger.Warn("PutupTradeItem, SlotType: {0}, Slot: {1}, Amount: {2}", slotType, slot, amount);
-        TradeManager.Instance.AddItem(Connection.ActiveChar, slotType, slot, amount);
+        if (Connection?.ActiveChar is { } character)
+            TradeManager.Instance.AddItem(character, slotType, slot, amount);
     }
 }

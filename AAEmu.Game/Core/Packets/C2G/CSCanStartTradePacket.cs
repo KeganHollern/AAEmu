@@ -10,11 +10,11 @@ public class CSCanStartTradePacket() : GamePacket(CSOffsets.CSCanStartTradePacke
     public override void Read(PacketStream stream)
     {
         var objId = stream.ReadBc();
+        if (Connection?.ActiveChar is not { } owner)
+            return;
 
         var target = WorldManager.Instance.GetCharacterByObjId(objId);
         if (target == null) return;
-        var owner = Connection.ActiveChar;
-
         TradeManager.Instance.CanStartTrade(owner, target);
     }
 }
