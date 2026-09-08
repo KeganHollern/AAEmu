@@ -372,7 +372,8 @@ public sealed class EconomyPersistenceTests
                 Mock.Of<ITaskManager>(), world.Object, new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>()),
                 Mock.Of<ILocalizationManager>()) { _allPlayerMails = [] };
             Auction = new AuctionManager(items, Mock.Of<INameManager>(), Mock.Of<IAuctionIdManager>(),
-                Mock.Of<ILocalizationManager>(), Mock.Of<ITaskManager>());
+                Mock.Of<ILocalizationManager>(), Mock.Of<ITaskManager>(), Mail,
+                new Lazy<ISaveManager>(() => Save));
             Save = new SaveManager(Mock.Of<ITaskManager>(), Mock.Of<IHousingManager>(), Mail, items, Auction,
                 Mock.Of<ICrimeManager>(), world.Object, Mock.Of<IZoneManager>());
         }

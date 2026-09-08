@@ -20,10 +20,11 @@ using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.StaticValues;
-using AAEmu.Game.Models.Tasks;
 
 using Moq;
 using Xunit;
+
+using ShutdownTask = AAEmu.Game.Models.Tasks.ShutdownTask;
 
 namespace AAEmu.IntegrationTests.Core.Manager;
 

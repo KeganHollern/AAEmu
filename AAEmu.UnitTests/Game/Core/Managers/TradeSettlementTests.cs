@@ -21,8 +21,9 @@ using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.StaticValues;
-using AAEmu.Game.Models.Tasks;
 using AAEmu.UnitTests.Utils.Mocks;
+
+using ShutdownTask = AAEmu.Game.Models.Tasks.ShutdownTask;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
@@ -177,7 +178,7 @@ public sealed class TradeSettlementTests
         _trade.OkTrade(_target);
         await Assert.That(PacketCount(_owner, SCOffsets.SCTradeStartedPacket)).IsEqualTo(1);
         await Assert.That(PacketCount(_owner, SCOffsets.SCTradeCanceledPacket)).IsEqualTo(1);
-        await Assert.That(TradeReservation.GetReservedMoney(_owner)).IsEqualTo(0L);
+        await Assert.That(TradeReservation.GetReservedMoney(_owner)).IsEqualTo(0);
         await Assert.That(_owner.Money).IsEqualTo(100L);
         await Assert.That(_save.Calls).IsEqualTo(0);
     }
@@ -329,7 +330,7 @@ public sealed class TradeSettlementTests
         await Assert.That(_target.Inventory.Bag.Items.Single()).IsSameReferenceAs(second);
         await Assert.That(_owner.Money).IsEqualTo(100L);
         await Assert.That(_target.Money).IsEqualTo(100L);
-        await Assert.That(TradeReservation.GetReservedMoney(_target)).IsEqualTo(0L);
+        await Assert.That(TradeReservation.GetReservedMoney(_target)).IsEqualTo(0);
         await Assert.That(TradeReservation.GetReservedCount(first)).IsEqualTo(0);
         await Assert.That(_save.Calls).IsEqualTo(0);
         await Assert.That(PacketCount(_owner, SCOffsets.SCTradeMadePacket)).IsEqualTo(0);
@@ -373,7 +374,7 @@ public sealed class TradeSettlementTests
         ConfirmBoth();
         await Assert.That(_owner.Money).IsEqualTo(100L);
         await Assert.That(_target.Money).IsEqualTo(100L);
-        await Assert.That(TradeReservation.GetReservedMoney(_owner)).IsEqualTo(0L);
+        await Assert.That(TradeReservation.GetReservedMoney(_owner)).IsEqualTo(0);
         await Assert.That(_save.Calls).IsEqualTo(0);
     }
 
@@ -383,7 +384,7 @@ public sealed class TradeSettlementTests
         Begin();
         _trade.AddMoney(_owner, 50);
         _trade.AddMoney(_owner, 0);
-        await Assert.That(TradeReservation.GetReservedMoney(_owner)).IsEqualTo(0L);
+        await Assert.That(TradeReservation.GetReservedMoney(_owner)).IsEqualTo(0);
         _trade.AddMoney(_target, 20);
         ConfirmBoth();
         await Assert.That(_owner.Money).IsEqualTo(120L);
@@ -453,7 +454,7 @@ public sealed class TradeSettlementTests
         await Assert.That(_target.Inventory.Bag.Items).IsEmpty();
         await Assert.That(_target.Money).IsEqualTo(100L);
         await Assert.That(TradeReservation.GetReservedCount(item)).IsEqualTo(0);
-        await Assert.That(TradeReservation.GetReservedMoney(_owner)).IsEqualTo(0L);
+        await Assert.That(TradeReservation.GetReservedMoney(_owner)).IsEqualTo(0);
         await Assert.That(PacketCount(_owner, SCOffsets.SCTradeCanceledPacket)).IsEqualTo(1);
     }
 
@@ -522,7 +523,7 @@ public sealed class TradeSettlementTests
         await Assert.That(_owner.Money).IsEqualTo(125L);
         await Assert.That(_target.Money).IsEqualTo(75L);
         await Assert.That(TradeReservation.GetReservedCount(item)).IsEqualTo(0);
-        await Assert.That(TradeReservation.GetReservedMoney(_target)).IsEqualTo(0L);
+        await Assert.That(TradeReservation.GetReservedMoney(_target)).IsEqualTo(0);
         await Assert.That(_tradeIds.Released.Count).IsEqualTo(1);
     }
 
@@ -560,7 +561,7 @@ public sealed class TradeSettlementTests
             TradeReservation.Invalidate(item);
         ConfirmBoth();
         await Assert.That(TradeReservation.GetReservedCount(item)).IsEqualTo(0);
-        await Assert.That(TradeReservation.GetReservedMoney(_target)).IsEqualTo(0L);
+        await Assert.That(TradeReservation.GetReservedMoney(_target)).IsEqualTo(0);
         await Assert.That(_save.Calls).IsEqualTo(0);
         await Assert.That(PacketCount(_owner, SCOffsets.SCTradeCanceledPacket)).IsEqualTo(1);
         await Assert.That(item.Count).IsEqualTo(5);
@@ -575,7 +576,7 @@ public sealed class TradeSettlementTests
         _trade.AddMoney(_target, 50);
         _trade.CancelTrade(_owner, 0);
         await Assert.That(TradeReservation.GetReservedCount(item)).IsEqualTo(0);
-        await Assert.That(TradeReservation.GetReservedMoney(_target)).IsEqualTo(0L);
+        await Assert.That(TradeReservation.GetReservedMoney(_target)).IsEqualTo(0);
         var stale = _owner;
         _worldManager.TryRemoveCharacter(stale.ObjId);
         _owner = CreateCharacter(1, initializeInventory: false);
@@ -600,7 +601,7 @@ public sealed class TradeSettlementTests
         _trade.CancelTrade(_owner, 0);
         _sessions[_owner.ObjId].OnPacket = null;
         await Assert.That(TradeReservation.GetReservedCount(item)).IsEqualTo(0);
-        await Assert.That(TradeReservation.GetReservedMoney(_target)).IsEqualTo(0L);
+        await Assert.That(TradeReservation.GetReservedMoney(_target)).IsEqualTo(0);
         await Assert.That(PacketCount(_target, SCOffsets.SCTradeCanceledPacket)).IsEqualTo(1);
         Begin();
         _trade.AddMoney(_owner, 20);
