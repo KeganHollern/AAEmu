@@ -62,6 +62,13 @@ public class EquipItem : Item
         DyeItemId = ((EquipItemTemplate)Template).DefaultDyeItemId;
     }
 
+    internal override Item CopyForSplit(ulong id, int count)
+    {
+        var copy = (EquipItem)base.CopyForSplit(id, count);
+        copy.GemIds = GemIds?.ToArray();
+        return copy;
+    }
+
     public override void Read(PacketStream stream)
     {
         TemplateId = stream.ReadUInt32();
