@@ -395,55 +395,56 @@ public class AuctionManager(IItemManager itemManager, INameManager nameManager, 
 
     public (int, int) Save(MySqlConnection connection, MySqlTransaction transaction)
     {
+        return Save(connection, transaction, null);
+    }
+
+    public (int, int) Save(PersistenceSaveContext context)
+    {
+        return Save(context.Connection, context.Transaction, context);
+    }
+
+    private (int, int) Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
+    {
         var deletedCount = 0;
         var updatedCount = 0;
 
         if (!DeletedAuctionItemIds.IsEmpty)
         {
+            var deletedIds = DeletedAuctionItemIds.ToArray();
             using (var command = connection.CreateCommand())
             {
                 command.Connection = connection;
                 command.Transaction = transaction;
-                command.CommandText = "DELETE FROM auction_house WHERE `id` IN(" + string.Join(",", DeletedAuctionItemIds) + ")";
+                command.CommandText = "DELETE FROM auction_house WHERE `id` IN(" + string.Join(",", deletedIds) + ")";
                 command.Prepare();
                 deletedCount = command.ExecuteNonQuery();
             }
-            DeletedAuctionItemIds.Clear();
+            void AcknowledgeDeletedLots()
+            {
+                var pending = deletedIds.GroupBy(id => id).ToDictionary(group => group.Key, group => group.Count());
+                var retained = new List<long>();
+                while (DeletedAuctionItemIds.TryTake(out var id))
+                {
+                    if (pending.TryGetValue(id, out var count) && count > 0)
+                        pending[id] = count - 1;
+                    else
+                        retained.Add(id);
+                }
+                foreach (var id in retained)
+                    DeletedAuctionItemIds.Add(id);
+            }
+            if (context == null)
+                AcknowledgeDeletedLots();
+            else
+                context.AfterCommit(AcknowledgeDeletedLots);
         }
 
         var dirtyItems = AuctionLots.Values.Where(c => c.IsDirty);
         foreach (var lot in dirtyItems)
         {
-            if (lot.Item == null)
-                continue;
-
-            if (lot.Item.SlotType == SlotType.None)
-            {
-                if (lot.Item.OwnerId <= 0)
-                    continue;
-
-                if (lot.Item._holdingContainer != null)
-                {
-                    lot.Item.SlotType = itemManager.GetContainerSlotTypeByContainerId(lot.Item._holdingContainer.ContainerId);
-                }
-
-                if (lot.Item.SlotType != SlotType.None)
-                {
-                    Logger.Warn($"Slot type for {lot.Item.Id} was None, changing to {lot.Item.SlotType}");
-                }
-                else
-                {
-                    continue;
-                }
-            }
-            if (!Enum.IsDefined(typeof(SlotType), lot.Item.SlotType))
-            {
-                Logger.Warn($"Found SlotType.{lot.Item.SlotType} in itemslist, skipping ID:{lot.Item.Id} - Template:{lot.Item.TemplateId}");
-                continue;
-            }
-
-            var details = new Commons.Network.PacketStream();
-            lot.Item.WriteDetails(details);
+            if (lot.Item == null || lot.Item.Count <= 0 ||
+                lot.Item.SlotType == SlotType.None || !Enum.IsDefined(lot.Item.SlotType))
+                throw new InvalidOperationException($"Auction lot {lot.Id} has no persistent item.");
 
             using var command = connection.CreateCommand();
             command.Connection = connection;
@@ -452,7 +453,10 @@ public class AuctionManager(IItemManager itemManager, INameManager nameManager, 
             AddParametersToCommand(command, lot);
             command.Prepare();
             updatedCount += command.ExecuteNonQuery();
-            lot.IsDirty = false;
+            if (context == null)
+                lot.IsDirty = false;
+            else
+                context.AfterCommit(() => lot.IsDirty = false);
         }
 
         return (updatedCount, deletedCount);
