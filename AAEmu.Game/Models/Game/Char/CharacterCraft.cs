@@ -11,6 +11,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Tasks.Skills;
 
 namespace AAEmu.Game.Models.Game.Char;
@@ -27,9 +28,42 @@ public class CharacterCraft(Character owner)
     private uint DoodadId { get; set; }
     private int ConsumeLaborPower { get; set; }
     private Character Owner => owner;
-    public bool IsCrafting { get; set; }
+    private bool _isCrafting;
+    private bool _endingCraft;
+    public bool IsCrafting
+    {
+        get { lock (SaveManager.PersistenceSyncRoot) return _isCrafting; }
+        set { lock (SaveManager.PersistenceSyncRoot) _isCrafting = value; }
+    }
 
     public void Craft(Craft craft, int count, uint doodadId)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (IsCrafting)
+            {
+                Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore);
+                return;
+            }
+            if (TradeReservation.HasReservations(Owner))
+            {
+                Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.NotEnoughRequiredItem, 0, false);
+                return;
+            }
+            IsCrafting = true;
+        }
+        try
+        {
+            CraftCore(craft, count, doodadId);
+        }
+        catch
+        {
+            CancelCraft();
+            throw;
+        }
+    }
+
+    private void CraftCore(Craft craft, int count, uint doodadId)
     {
         if (craft == null || count is <= 0 or > MaxRequestedCraftCount)
         {
@@ -66,7 +100,7 @@ public class CharacterCraft(Character owner)
         }
 
         // Check if we have enough materials
-        var hasMaterials = craft.CraftMaterials.Count == 0 || craft.CraftMaterials.All(craftMaterial => Owner.Inventory.GetItemsCount(craftMaterial.ItemId) >= craftMaterial.Amount);
+        var hasMaterials = HasAvailableMaterials(craft);
         if (!hasMaterials)
         {
             // TODO not verified
@@ -126,8 +160,6 @@ public class CharacterCraft(Character owner)
             return;
         }
 
-        IsCrafting = true;
-
         var caster = SkillCaster.GetByType(SkillCasterType.Unit);
         caster.ObjId = Owner.ObjId;
 
@@ -177,13 +209,42 @@ public class CharacterCraft(Character owner)
         }
         */
         skill.CastTimeMultiplier = speedMultiplier;
-        skill.Use(Owner, caster, target, null, false, out _);
+        if (skill.Use(Owner, caster, target, null, false, out _) != SkillResult.Success)
+            CancelCraft();
     }
 
     public void EndCraft()
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (_endingCraft)
+                return;
+            _endingCraft = true;
+            try
+            {
+                if (TradeReservation.HasReservations(Owner))
+                {
+                    Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.NotEnoughRequiredItem, 0, false);
+                    CancelCraft();
+                    return;
+                }
+                EndCraftCore();
+            }
+            catch
+            {
+                CancelCraft();
+                throw;
+            }
+            finally
+            {
+                _endingCraft = false;
+            }
+        }
+    }
+
+    private void EndCraftCore()
+    {
         Count--;
-        IsCrafting = false;
 
         if (CurrentCraft == null)
         {
@@ -209,8 +270,7 @@ public class CharacterCraft(Character owner)
         }
 
         // Materials can change while the cast is running. Recheck immediately before granting products.
-        var stillHasMaterials = CurrentCraft.CraftMaterials.Count == 0 || CurrentCraft.CraftMaterials.All(material =>
-            material.Amount > 0 && Owner.Inventory.GetItemsCount(material.ItemId) >= material.Amount);
+        var stillHasMaterials = HasAvailableMaterials(CurrentCraft);
         if (!stillHasMaterials)
         {
             Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.NotEnoughRequiredItem, 0, false);
@@ -474,6 +534,7 @@ public class CharacterCraft(Character owner)
 
     private void ScheduleCraft()
     {
+        IsCrafting = false;
         var newCraft = new CraftTask(Owner, CurrentCraft.Id, DoodadId, Count);
         var skillTemplate = SkillManager.Instance.GetSkillTemplate(CurrentCraft.SkillId);
         var timeToGlobalCooldown = Owner.GlobalCooldown - DateTime.UtcNow;
@@ -485,10 +546,13 @@ public class CharacterCraft(Character owner)
 
     private void CancelCraft()
     {
-        IsCrafting = false;
-        CurrentCraft = null;
-        Count = 0;
-        DoodadId = 0;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            IsCrafting = false;
+            CurrentCraft = null;
+            Count = 0;
+            DoodadId = 0;
+        }
 
         // Also cancel the related skill ? I don't think this really does anything for crafts, but can't hurt I guess
         if (Owner != null)
@@ -499,6 +563,39 @@ public class CharacterCraft(Character owner)
         }
 
         // Might want to send a packet here, I think there is a packet when crafting fails. Not sure yet.
+    }
+
+    private bool HasAvailableMaterials(Craft craft)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            var bag = Owner.Inventory?.Bag;
+            if (bag == null || craft.CraftMaterials.Any(material => material.Amount <= 0))
+                return false;
+            foreach (var group in craft.CraftMaterials.GroupBy(material => material.ItemId))
+            {
+                var required = group.Sum(material => (long)material.Amount);
+                var available = bag.Items.Where(item => item.TemplateId == group.Key &&
+                        item._holdingContainer == bag && item.OwnerId == Owner.Id && item.SlotType == SlotType.Inventory)
+                    .Sum(item => Math.Max(0L, (long)item.Count - TradeReservation.GetReservedCount(item)));
+                if (available < required)
+                    return false;
+            }
+            return true;
+        }
+    }
+
+    internal void CancelFromSkill(uint skillId)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (CurrentCraft?.SkillId != skillId)
+                return;
+            IsCrafting = false;
+            CurrentCraft = null;
+            Count = 0;
+            DoodadId = 0;
+        }
     }
 
     /// <summary>
