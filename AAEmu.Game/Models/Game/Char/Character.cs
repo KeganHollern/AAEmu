@@ -1560,6 +1560,12 @@ public partial class Character : Unit, ICharacter
                 return false;
             }
 
+            if (money < Money && money < TradeReservation.GetReservedMoney(this))
+            {
+                SendErrorMessage(ErrorMessageType.NotEnoughMoney);
+                return false;
+            }
+
             // Install both balances before achievements or packet callbacks can observe the transfer.
             Money = money;
             Money2 = bankMoney;
