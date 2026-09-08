@@ -231,6 +231,16 @@ public sealed class InventoryMutation : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Retains prepared state without publishing when a commit outcome is uncertain.
+    /// It is also safe after Complete, including when a notification threw.
+    /// </summary>
+    public void PreservePreparedState()
+    {
+        RequireLock();
+        _finished = true;
+    }
+
     public void Dispose()
     {
         RequireLock();
