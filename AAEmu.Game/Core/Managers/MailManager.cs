@@ -38,54 +38,112 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public BaseMail GetMailById(long id)
     {
-        if (_allPlayerMails.TryGetValue(id, out var theMail))
-            return theMail;
-        else
-            return null;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (_allPlayerMails.TryGetValue(id, out var theMail))
+                return theMail;
+            else
+                return null;
+        }
     }
 
     public uint GetNewMailId()
     {
-        lock (_deletedMailIds)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            var Id = mailIdManager.GetNextId();
-            if (_deletedMailIds.Contains(Id))
-                _deletedMailIds.Remove(Id);
-            return Id;
+            lock (_deletedMailIds)
+            {
+                var Id = mailIdManager.GetNextId();
+                if (_deletedMailIds.Contains(Id))
+                    _deletedMailIds.Remove(Id);
+                return Id;
+            }
         }
     }
 
     internal void ReleaseReservedMailId(uint mailId)
     {
-        mailIdManager.ReleaseId(mailId);
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            mailIdManager.ReleaseId(mailId);
+        }
+    }
+
+    public MailMutation BeginMutation() => new(this);
+
+    internal uint ReserveMutationMailId() => mailIdManager.GetNextId();
+
+    internal bool ValidateMutationMail(BaseMail mail)
+    {
+        if (mail?.Header == null || mail.Body == null || mail.Header.ReceiverId == 0 ||
+            mail.Body.Attachments == null || mail.Body.Attachments.Count > MailBody.MaxMailAttachments ||
+            !string.Equals(nameManager.GetCharacterName(mail.Header.ReceiverId), mail.ReceiverName,
+                StringComparison.OrdinalIgnoreCase) ||
+            nameManager.GetCharacterId(mail.ReceiverName) != mail.Header.ReceiverId)
+            return false;
+
+        var attachmentIds = new HashSet<ulong>();
+        foreach (var item in mail.Body.Attachments)
+        {
+            var container = item?._holdingContainer;
+            if (item == null || item.Id == 0 || item.Count <= 0 || !attachmentIds.Add(item.Id) ||
+                item.SlotType != SlotType.Mail || item.OwnerId != mail.Header.ReceiverId ||
+                container == null || container.ContainerType != SlotType.Mail ||
+                container.OwnerId != mail.Header.ReceiverId || !container.Items.Contains(item) ||
+                container.Items.Count(candidate => candidate.Id == item.Id) != 1 ||
+                !ReferenceEquals(itemManager.GetItemByItemId(item.Id), item))
+                return false;
+        }
+        return !_allPlayerMails.Values.Any(existing =>
+            existing.Body.Attachments.Any(item => attachmentIds.Contains(item.Id)));
+    }
+
+    internal bool QueueMutationDeletion(long id)
+    {
+        lock (_deletedMailIds)
+        {
+            if (_deletedMailIds.Contains(id))
+                return false;
+            _deletedMailIds.Add(id);
+            return true;
+        }
+    }
+
+    internal void RestoreMutationDeletion(long id)
+    {
+        lock (_deletedMailIds)
+            _deletedMailIds.Remove(id);
     }
 
     public bool Send(BaseMail mail)
     {
-        // Verify Receiver
-        var targetName = nameManager.GetCharacterName(mail.Header.ReceiverId);
-        var targetId = nameManager.GetCharacterId(mail.Header.ReceiverName);
-        if (!string.Equals(targetName, mail.Header.ReceiverName, StringComparison.InvariantCultureIgnoreCase))
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            Logger.Debug("Send() - Failed to verify receiver name {0} != {1}", targetName, mail.Header.ReceiverName);
-            return false; // Name mismatch
-        }
-        if (targetId != mail.Header.ReceiverId)
-        {
-            Logger.Debug("Send() - Failed to verify receiver id {0} != {1}", targetId, mail.Header.ReceiverId);
-            return false; // Id mismatch
-        }
+            // Verify Receiver
+            var targetName = nameManager.GetCharacterName(mail.Header.ReceiverId);
+            var targetId = nameManager.GetCharacterId(mail.Header.ReceiverName);
+            if (!string.Equals(targetName, mail.Header.ReceiverName, StringComparison.InvariantCultureIgnoreCase))
+            {
+                Logger.Debug("Send() - Failed to verify receiver name {0} != {1}", targetName, mail.Header.ReceiverName);
+                return false; // Name mismatch
+            }
+            if (targetId != mail.Header.ReceiverId)
+            {
+                Logger.Debug("Send() - Failed to verify receiver id {0} != {1}", targetId, mail.Header.ReceiverId);
+                return false; // Id mismatch
+            }
 
-        // Assign a Id if we didn't have one yet
-        if (mail.Id <= 0)
-        {
-            Logger.Trace("Send() - Assign new mail Id");
-            mail.Id = GetNewMailId();
+            // Assign a Id if we didn't have one yet
+            if (mail.Id <= 0)
+            {
+                Logger.Trace("Send() - Assign new mail Id");
+                mail.Id = GetNewMailId();
+            }
+            if (!_allPlayerMails.TryAdd(mail.Id, mail))
+                return false;
+            NotifyNewMailByNameIfOnline(mail, targetName);
+            return true;
         }
-        if (!_allPlayerMails.TryAdd(mail.Id, mail))
-            return false;
-        NotifyNewMailByNameIfOnline(mail, targetName);
-        return true;
     }
 
     [Obsolete("SendMail() is deprecated. Use Send() of a BaseMail descendant instead.")]
@@ -102,14 +160,17 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     private bool DeleteMail(long id, bool releaseId)
     {
-        lock (_deletedMailIds)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (!_deletedMailIds.Contains(id))
-                _deletedMailIds.Add(id);
-            if (releaseId)
-                mailIdManager.ReleaseId((uint)id);
+            lock (_deletedMailIds)
+            {
+                if (!_deletedMailIds.Contains(id))
+                    _deletedMailIds.Add(id);
+                if (releaseId)
+                    mailIdManager.ReleaseId((uint)id);
+            }
+            return _allPlayerMails.TryRemove(id, out _);
         }
-        return _allPlayerMails.TryRemove(id, out _);
     }
 
     private bool DeleteTaxMail(long id)
@@ -121,22 +182,25 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public bool DeleteMail(BaseMail mail, bool trashItems = false)
     {
-        if (trashItems)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            for (var i = mail.Body.Attachments.Count - 1; i >= 0; i--)
+            if (trashItems)
             {
-                try
+                for (var i = mail.Body.Attachments.Count - 1; i >= 0; i--)
                 {
-                    var item = mail.Body.Attachments[i];
-                    item._holdingContainer.RemoveItem(ItemTaskType.Invalid, item, true);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Error($"Failed to remove mail attachment [{i}] from {mail.Id}: {ex}");
+                    try
+                    {
+                        var item = mail.Body.Attachments[i];
+                        item._holdingContainer.RemoveItem(ItemTaskType.Invalid, item, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error($"Failed to remove mail attachment [{i}] from {mail.Id}: {ex}");
+                    }
                 }
             }
+            return DeleteMail(mail.Id);
         }
-        return DeleteMail(mail.Id);
     }
 
     #region Database
@@ -317,112 +381,133 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     internal bool TryAddPlayerMail(BaseMail mail)
     {
-        return _allPlayerMails.TryAdd(mail.Id, mail);
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return _allPlayerMails.TryAdd(mail.Id, mail);
+        }
     }
 
-    
+
     public Dictionary<long, BaseMail> GetCurrentMailList(uint characterId)
     {
-        // Try to grab the actual online Character object to send live updates
-        var character = worldManager.GetCharacterById(characterId);
-        var tempMails = _allPlayerMails.Where(
-            x => x.Value.Body.RecvDate <= DateTime.UtcNow &&
-                 (x.Value.Header.ReceiverId == characterId || 
-                  x.Value.Header.SenderId == characterId)
-                 ).
-            ToDictionary(x => x.Key, x => x.Value);
-        character?.Mails.UnreadMailCount.ResetReceived();
-        foreach (var mail in tempMails)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            //if ((mail.Value.Header.Status != MailStatus.Read) && (mail.Value.Header.SenderId != character.Id))
-            if (mail.Value.Header.Status != MailStatus.Read)
+            // Try to grab the actual online Character object to send live updates
+            var character = worldManager.GetCharacterById(characterId);
+            var tempMails = _allPlayerMails.Where(
+                x => x.Value.Body.RecvDate <= DateTime.UtcNow &&
+                     (x.Value.Header.ReceiverId == characterId ||
+                      x.Value.Header.SenderId == characterId)
+                     ).
+                ToDictionary(x => x.Key, x => x.Value);
+            character?.Mails.UnreadMailCount.ResetReceived();
+            foreach (var mail in tempMails)
             {
-                character?.Mails.UnreadMailCount.UpdateReceived(mail.Value.MailType, 1);
-                var addBody = mail.Value.MailType == MailType.Charged;
+                //if ((mail.Value.Header.Status != MailStatus.Read) && (mail.Value.Header.SenderId != character.Id))
+                if (mail.Value.Header.Status != MailStatus.Read)
+                {
+                    character?.Mails.UnreadMailCount.UpdateReceived(mail.Value.MailType, 1);
+                    var addBody = mail.Value.MailType == MailType.Charged;
 
-                character?.SendPacket(new SCGotMailPacket(mail.Value.Header, character.Mails.UnreadMailCount, false, addBody ? mail.Value.Body : null));
-                mail.Value.IsDelivered = true;
+                    character?.SendPacket(new SCGotMailPacket(mail.Value.Header, character.Mails.UnreadMailCount, false, addBody ? mail.Value.Body : null));
+                    mail.Value.IsDelivered = true;
+                }
             }
+            return tempMails;
         }
-        return tempMails;
     }
 
     public bool NotifyNewMailByNameIfOnline(BaseMail m, string receiverName)
     {
-        Logger.Trace($"NotifyNewMailByNameIfOnline() - {receiverName}");
-        // If unread and ready to deliver
-        if (m.Header.Status != MailStatus.Read && m.Body.RecvDate <= DateTime.UtcNow && m.IsDelivered == false)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            var player = worldManager.GetCharacter(receiverName);
-            if (player != null)
+            Logger.Trace($"NotifyNewMailByNameIfOnline() - {receiverName}");
+            // If unread and ready to deliver
+            if (m.Header.Status != MailStatus.Read && m.Body.RecvDate <= DateTime.UtcNow && m.IsDelivered == false)
             {
-                // TODO: Mia mail stuff
-                var addBody = m.MailType == MailType.Charged;
-                player.Mails.UnreadMailCount.UpdateReceived(m.MailType, 1);
+                var player = worldManager.GetCharacter(receiverName);
+                if (player != null)
+                {
+                    // TODO: Mia mail stuff
+                    var addBody = m.MailType == MailType.Charged;
+                    player.Mails.UnreadMailCount.UpdateReceived(m.MailType, 1);
 
-                player.SendPacket(new SCGotMailPacket(m.Header, player.Mails.UnreadMailCount, false, addBody ? m.Body : null));
-                m.IsDelivered = true;
-                return true;
+                    player.SendPacket(new SCGotMailPacket(m.Header, player.Mails.UnreadMailCount, false, addBody ? m.Body : null));
+                    m.IsDelivered = true;
+                    return true;
+                }
             }
+            return false;
         }
-        return false;
     }
 
     public bool NotifyDeleteMailByNameIfOnline(BaseMail m, string receiverName)
     {
-        Logger.Trace($"NotifyDeleteMailByNameIfOnline() - {receiverName}");
-        var player = worldManager.GetCharacter(receiverName);
-        if (player != null)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (m.Header.Status != MailStatus.Read)
-                player.Mails.UnreadMailCount.UpdateReceived(m.MailType, -1);
-            player.SendPacket(new SCMailDeletedPacket(false, m.Id, true, player.Mails.UnreadMailCount));
-            return true;
+            Logger.Trace($"NotifyDeleteMailByNameIfOnline() - {receiverName}");
+            var player = worldManager.GetCharacter(receiverName);
+            if (player != null)
+            {
+                if (m.Header.Status != MailStatus.Read)
+                    player.Mails.UnreadMailCount.UpdateReceived(m.MailType, -1);
+                player.SendPacket(new SCMailDeletedPacket(false, m.Id, true, player.Mails.UnreadMailCount));
+                return true;
+            }
+            return false;
         }
-        return false;
     }
 
     public bool NotifyMailReceiverOpenedIfSenderOnline(BaseMail mail)
     {
-        if (mail.Header.SenderId == 0)
-            return false;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (mail.Header.SenderId == 0)
+                return false;
 
-        var sender = worldManager.GetCharacterById(mail.Header.SenderId);
-        if (sender == null)
-            return false;
+            var sender = worldManager.GetCharacterById(mail.Header.SenderId);
+            if (sender == null)
+                return false;
 
-        // The client applies this receipt on its next normal Sent-list refresh.
-        // SCMailListEnd is not a redraw signal because it ends every active mail-list transfer.
-        sender.SendPacket(new SCMailReceiverOpenedPacket(mail.Id, mail.OpenDate));
-        return true;
+            // The client applies this receipt on its next normal Sent-list refresh.
+            // SCMailListEnd is not a redraw signal because it ends every active mail-list transfer.
+            sender.SendPacket(new SCMailReceiverOpenedPacket(mail.Id, mail.OpenDate));
+            return true;
+        }
     }
 
     public bool NotifyMailRemovedIfSenderOnline(BaseMail mail)
     {
-        if (mail.Header.SenderId == 0)
-            return false;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (mail.Header.SenderId == 0)
+                return false;
 
-        var sender = worldManager.GetCharacterById(mail.Header.SenderId);
-        if (sender == null)
-            return false;
+            var sender = worldManager.GetCharacterById(mail.Header.SenderId);
+            if (sender == null)
+                return false;
 
-        sender.SendPacket(new SCMailRemovedPacket(true, mail.Id));
-        return true;
+            sender.SendPacket(new SCMailRemovedPacket(true, mail.Id));
+            return true;
+        }
     }
 
     public void CheckAllMailTimings()
     {
-        // Deliver yet "undelivered" mails
-        Logger.Trace("CheckAllMailTimings");
-        var undeliveredMails = _allPlayerMails.Where(x => x.Value.Body.RecvDate <= DateTime.UtcNow && x.Value.IsDelivered == false).ToDictionary(x => x.Key, x => x.Value);
-        var delivered = 0;
-        foreach (var mail in undeliveredMails)
-            if (NotifyNewMailByNameIfOnline(mail.Value, mail.Value.Header.ReceiverName))
-                delivered++;
-        if (delivered > 0)
-            Logger.Debug($"{delivered}/{undeliveredMails.Count} mail(s) delivered");
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            // Deliver yet "undelivered" mails
+            Logger.Trace("CheckAllMailTimings");
+            var undeliveredMails = _allPlayerMails.Where(x => x.Value.Body.RecvDate <= DateTime.UtcNow && x.Value.IsDelivered == false).ToDictionary(x => x.Key, x => x.Value);
+            var delivered = 0;
+            foreach (var mail in undeliveredMails)
+                if (NotifyNewMailByNameIfOnline(mail.Value, mail.Value.Header.ReceiverName))
+                    delivered++;
+            if (delivered > 0)
+                Logger.Debug($"{delivered}/{undeliveredMails.Count} mail(s) delivered");
 
-        // TODO: Return expired mails back to owner if undelivered/unread
+            // TODO: Return expired mails back to owner if undelivered/unread
+        }
     }
 
     public bool PayChargeMoney(Character character, long mailId, bool autoUseAAPoint)
@@ -634,44 +719,50 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public void DeleteHouseMails(uint houseId)
     {
-        var deleteList = new List<long>();
-        // Check which mails to remove
-        foreach (var m in _allPlayerMails)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (MailForTax.IsTaxMail(m.Value))
+            var deleteList = new List<long>();
+            // Check which mails to remove
+            foreach (var m in _allPlayerMails)
             {
-                ExtractExtraForHouse(m.Value.Header.Extra, out _, out var hId);
-                if (houseId == hId)
+                if (MailForTax.IsTaxMail(m.Value))
                 {
-                    deleteList.Add(m.Value.Id);
+                    ExtractExtraForHouse(m.Value.Header.Extra, out _, out var hId);
+                    if (houseId == hId)
+                    {
+                        deleteList.Add(m.Value.Id);
+                    }
                 }
             }
-        }
-        // Actually remove them by Id
-        foreach (var d in deleteList)
-        {
-            var mail = GetMailById(d);
-            NotifyDeleteMailByNameIfOnline(mail, mail.ReceiverName);
-            DeleteTaxMail(mail.Id);
+            // Actually remove them by Id
+            foreach (var d in deleteList)
+            {
+                var mail = GetMailById(d);
+                NotifyDeleteMailByNameIfOnline(mail, mail.ReceiverName);
+                DeleteTaxMail(mail.Id);
+            }
         }
     }
 
     public List<BaseMail> GetMyHouseMails(uint houseId)
     {
-        var resultList = new List<BaseMail>();
-        // Check which mails to remove
-        foreach (var m in _allPlayerMails)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (MailForTax.IsTaxMail(m.Value))
+            var resultList = new List<BaseMail>();
+            // Check which mails to remove
+            foreach (var m in _allPlayerMails)
             {
-                ExtractExtraForHouse(m.Value.Header.Extra, out _, out var hId);
-                if (houseId == hId)
+                if (MailForTax.IsTaxMail(m.Value))
                 {
-                    resultList.Add(m.Value);
+                    ExtractExtraForHouse(m.Value.Header.Extra, out _, out var hId);
+                    if (houseId == hId)
+                    {
+                        resultList.Add(m.Value);
+                    }
                 }
             }
+            return resultList;
         }
-        return resultList;
     }
 
     public bool TryCreateQuestRewardMails(ICharacter character, Quest quest,
