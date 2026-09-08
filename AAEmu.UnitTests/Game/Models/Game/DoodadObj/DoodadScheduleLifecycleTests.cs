@@ -4,11 +4,15 @@ using System.Reflection;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
+using AAEmu.Game.Models.Game.DoodadObj.Templates;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Schedules;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
@@ -319,6 +323,78 @@ public sealed class DoodadScheduleLifecycleTests
             await Assert.That(spawner.Created.Count).IsEqualTo(2);
         }
         await Assert.That(QueuedTasks()).IsEmpty();
+    }
+
+    [Test]
+    public async Task PhaseCallback_DuringUse_CannotInvertTheDespawnLockOrder()
+    {
+        var skillField = typeof(Singleton<SkillManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var doodadField = typeof(Singleton<DoodadManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousSkills = skillField.GetValue(null);
+        var previousDoodads = doodadField.GetValue(null);
+        using var insideUse = new ManualResetEventSlim();
+        using var phaseStarted = new ManualResetEventSlim();
+        using var insidePhase = new ManualResetEventSlim();
+        var phaseEnteredDuringUse = false;
+        try
+        {
+            SetSchedules();
+            var spawner = CreateSpawner();
+            var doodad = (RecordingDoodad)spawner.Spawn(0);
+            var phaseTask = new DoodadFuncFinalTask(null, doodad, 0, true, 1);
+            doodad.FuncTask = phaseTask;
+            var skills = new SkillManager(Mock.Of<IAnimationManager>().Object, Mock.Of<IPlotManager>().Object);
+            typeof(SkillManager).GetField("_skills", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(skills, new Dictionary<uint, SkillTemplate>());
+            skillField.SetValue(null, skills);
+            var manager = new DoodadManager(Mock.Of<IObjectIdManager>().Object, Mock.Of<IDoodadIdManager>().Object,
+                Mock.Of<IItemManager>().Object, new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>().Object),
+                Mock.Of<ISusManager>().Object);
+            var function = new DoodadFunc { FuncId = 1, FuncType = "DoodadFuncLootPack" };
+            typeof(DoodadManager).GetField("_funcsByGroups", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(manager, new Dictionary<uint, List<DoodadFunc>> { [0] = [function] });
+            typeof(DoodadManager).GetField("_funcTemplates", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(manager, new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
+                {
+                    [function.FuncType] = new() { [1] = new InteractionTemplate(() =>
+                    {
+                        insideUse.Set();
+                        if (!phaseStarted.Wait(TimeSpan.FromSeconds(5)))
+                            throw new TimeoutException("The phase callback did not start.");
+                        phaseEnteredDuringUse = insidePhase.Wait(TimeSpan.FromMilliseconds(100));
+                        // Avoid stranding test threads if the old inverse lock order returns.
+                        if (!phaseEnteredDuringUse)
+                            spawner.Despawn(doodad);
+                    }) }
+                });
+            doodadField.SetValue(null, manager);
+            var use = Task.Run(() => doodad.Use(new Character(new UnitCustomModelParams())));
+            var phase = Task.Run(() =>
+            {
+                if (!insideUse.Wait(TimeSpan.FromSeconds(5)))
+                    throw new TimeoutException("The interaction did not start.");
+                phaseStarted.Set();
+                spawner.ExecutePhaseTask(doodad, phaseTask, () =>
+                {
+                    insidePhase.Set();
+                    doodad.DoChangePhase(null, 0);
+                });
+            });
+            await Task.WhenAll(use, phase).WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(phaseEnteredDuringUse).IsFalse();
+            await Assert.That(doodad.DeleteCalls).IsEqualTo(1);
+            await Assert.That(spawner.Last).IsNull();
+        }
+        finally
+        {
+            skillField.SetValue(null, previousSkills);
+            doodadField.SetValue(null, previousDoodads);
+        }
+    }
+
+    private sealed class InteractionTemplate(Action action) : DoodadFuncTemplate
+    {
+        public override void Use(BaseUnit caster, Doodad owner, uint skillId, int nextPhase = 0) => action();
     }
 
     private void SetSchedules(params GameSchedules[] schedules)

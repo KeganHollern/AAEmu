@@ -1,4 +1,4 @@
-using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
@@ -127,32 +127,35 @@ public class Doodad : BaseUnit
         get => _funcGroupId;
         set
         {
-            if (value != _funcGroupId)
+            lock (SaveManager.PersistenceSyncRoot)
             {
-                _funcGroupId = value;
-                PhaseTime = DateTime.UtcNow; // Save PhaseTime at start of new phase (group)
-                if (IsPersistent)
+                if (value != _funcGroupId)
                 {
-                    Save();
-                }
-
-                CurrentFuncs = DoodadManager.Instance.GetFuncsForGroup(_funcGroupId);
-                CurrentPhaseFuncs = DoodadManager.Instance.GetPhaseFunc(_funcGroupId);
-
-                // Register new ToD triggers (if any)
-                CurrentToDTriggers.Clear();
-                foreach (var currentPhaseFunc in CurrentPhaseFuncs)
-                {
-                    if (currentPhaseFunc.FuncType != "DoodadFuncTod")
-                        continue;
-                    var todPhaseFunc = DoodadManager.Instance.GetPhaseFuncTemplate(currentPhaseFunc.FuncId, currentPhaseFunc.FuncType);
-                    if (todPhaseFunc is not DoodadFuncTod doodadFuncTod)
+                    _funcGroupId = value;
+                    PhaseTime = DateTime.UtcNow; // Save PhaseTime at start of new phase (group)
+                    if (IsPersistent)
                     {
-                        Logger.Error($"DoodadFuncTod is not a DoodadFuncTod");
-                        continue;
+                        Save();
                     }
 
-                    CurrentToDTriggers.TryAdd(doodadFuncTod.TodAsHours, doodadFuncTod.NextPhase);
+                    CurrentFuncs = DoodadManager.Instance.GetFuncsForGroup(_funcGroupId);
+                    CurrentPhaseFuncs = DoodadManager.Instance.GetPhaseFunc(_funcGroupId);
+
+                    // Register new ToD triggers (if any)
+                    CurrentToDTriggers.Clear();
+                    foreach (var currentPhaseFunc in CurrentPhaseFuncs)
+                    {
+                        if (currentPhaseFunc.FuncType != "DoodadFuncTod")
+                            continue;
+                        var todPhaseFunc = DoodadManager.Instance.GetPhaseFuncTemplate(currentPhaseFunc.FuncId, currentPhaseFunc.FuncType);
+                        if (todPhaseFunc is not DoodadFuncTod doodadFuncTod)
+                        {
+                            Logger.Error($"DoodadFuncTod is not a DoodadFuncTod");
+                            continue;
+                        }
+
+                        CurrentToDTriggers.TryAdd(doodadFuncTod.TodAsHours, doodadFuncTod.NextPhase);
+                    }
                 }
             }
         }
@@ -232,12 +235,15 @@ public class Doodad : BaseUnit
         get => _data;
         set
         {
-            if (value != _data)
+            lock (SaveManager.PersistenceSyncRoot)
             {
-                _data = value;
-                if (IsPersistent)
+                if (value != _data)
                 {
-                    Save();
+                    _data = value;
+                    if (IsPersistent)
+                    {
+                        Save();
+                    }
                 }
             }
         }
@@ -401,6 +407,14 @@ public class Doodad : BaseUnit
     /// <param name="funcGroupId"></param>
     public void Use(BaseUnit caster, uint startedSkillId = 0, int funcGroupId = 0)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            UseLocked(caster, startedSkillId, funcGroupId);
+        }
+    }
+
+    private void UseLocked(BaseUnit caster, uint startedSkillId, int funcGroupId)
+    {
         var skillId = startedSkillId;
         var startedSkillTemplate = SkillManager.Instance.GetSkillTemplate(startedSkillId);
         if (caster == null)
@@ -417,7 +431,7 @@ public class Doodad : BaseUnit
         // race between threads, etc.). Without it, Doodad.Delete()'s expired-item cleanup
         // (ItemId > 0 branch) would silently destroy any item that had been placed in the slot
         // during that window.
-        if (Despawn > DateTime.MinValue)
+        if (_deleted || Despawn > DateTime.MinValue)
         {
             if (caster is Character interactingCharacter)
             {
@@ -529,6 +543,16 @@ public class Doodad : BaseUnit
     /// <param name="func"></param>
     /// <returns>If TRUE, then we stop further execution of functions and wait for interaction</returns>
     public bool DoFunc(BaseUnit caster, uint skillId, DoodadFunc func)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (_deleted || Despawn > DateTime.MinValue)
+                return true;
+            return DoFuncLocked(caster, skillId, func);
+        }
+    }
+
+    private bool DoFuncLocked(BaseUnit caster, uint skillId, DoodadFunc func)
     {
         // if there is no function, complete the cycle
         if (func == null)
@@ -701,6 +725,16 @@ public class Doodad : BaseUnit
     }
 
     private bool DoChangePhaseCore(BaseUnit caster, int nextPhase, bool suppressTodPhaseOverride)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (_deleted || Despawn > DateTime.MinValue)
+                return true;
+            return DoChangePhaseLocked(caster, nextPhase, suppressTodPhaseOverride);
+        }
+    }
+
+    private bool DoChangePhaseLocked(BaseUnit caster, int nextPhase, bool suppressTodPhaseOverride)
     {
         // здесь не надо удалять doodad
         //if (nextPhase == -1)
@@ -1014,6 +1048,14 @@ public class Doodad : BaseUnit
     /// </summary>
     public override void Delete()
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            DeleteLocked();
+        }
+    }
+
+    private void DeleteLocked()
+    {
         if (_deleted)
             return;
 
@@ -1066,6 +1108,14 @@ public class Doodad : BaseUnit
     /// Save this Doodad to database if it's marked as persistent
     /// </summary>
     public void Save()
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            SaveLocked();
+        }
+    }
+
+    private void SaveLocked()
     {
         if (!IsPersistent)
         {

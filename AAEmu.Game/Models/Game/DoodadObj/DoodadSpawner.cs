@@ -34,7 +34,10 @@ public class DoodadSpawner : Spawner<Doodad>
     /// List of Doodads spawned by this spawner
     /// </summary>
     internal List<Doodad> _spawned;
-    private readonly object _spawnLock = new();
+    // Phase callbacks can persist items and despawn from inside a player interaction.
+    // Use the same reentrant gate so a timer never owns a spawner lock while waiting
+    // for an interaction that is itself waiting to despawn from that spawner.
+    private readonly object _spawnLock = SaveManager.PersistenceSyncRoot;
     private DoodadSpawnerDoSpawnTask _spawnTask;
     private DoodadSpawnerDoDespawnTask _despawnTask;
     private uint _previousObjectId;

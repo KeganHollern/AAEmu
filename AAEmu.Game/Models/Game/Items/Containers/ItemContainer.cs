@@ -65,6 +65,13 @@ public class ItemContainer
 
     public uint MateId { get; set; }
 
+    internal void SetOwnerId(uint ownerId)
+    {
+        _ownerId = ownerId;
+        _owner = null;
+        IsDirty = true;
+    }
+
     public SlotType ContainerType
     {
         get => _containerType;

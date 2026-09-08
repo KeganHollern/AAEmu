@@ -284,50 +284,62 @@ public sealed class House : Unit
     {
         lock (TaxPaymentSyncRoot)
         {
-            if (!IsDirty)
+            if (!IsDirty || AccountId == 0 || OwnerId == 0)
                 return false;
-            if (AccountId <= 0 || OwnerId <= 0)
-                return false; // recently destroyed/expired house
-            using (var command = connection.CreateCommand())
-            {
-                command.Connection = connection;
-                command.Transaction = transaction;
-
-                command.CommandText =
-                    "REPLACE INTO `housings` " +
-                    "(`id`,`account_id`,`owner`,`co_owner`,`template_id`,`name`,`x`,`y`,`z`,`yaw`,`pitch`,`roll`,`current_step`,`current_action`,`permission`,`place_date`," +
-                    "`protected_until`,`faction_id`,`sell_to`,`sell_price`, `allow_recover`) " +
-                    "VALUES(@id,@account_id,@owner,@co_owner,@template_id,@name,@x,@y,@z,@yaw,@pitch,@roll,@current_step,@current_action,@permission,@placedate," +
-                    "@protecteduntil,@factionid,@sellto,@sellprice,@allowrecover)";
-
-                command.Parameters.AddWithValue("@id", Id);
-                command.Parameters.AddWithValue("@account_id", AccountId);
-                command.Parameters.AddWithValue("@owner", OwnerId);
-                command.Parameters.AddWithValue("@co_owner", CoOwnerId);
-                command.Parameters.AddWithValue("@template_id", TemplateId);
-                command.Parameters.AddWithValue("@name", Name);
-                command.Parameters.AddWithValue("@x", Transform.World.Position.X);
-                command.Parameters.AddWithValue("@y", Transform.World.Position.Y);
-                command.Parameters.AddWithValue("@z", Transform.World.Position.Z);
-                command.Parameters.AddWithValue("@roll", Transform.World.Rotation.X);
-                command.Parameters.AddWithValue("@pitch", Transform.World.Rotation.Y);
-                command.Parameters.AddWithValue("@yaw", Transform.World.Rotation.Z);
-                command.Parameters.AddWithValue("@current_step", CurrentStep);
-                command.Parameters.AddWithValue("@current_action", NumAction);
-                command.Parameters.AddWithValue("@permission", (byte)Permission);
-                command.Parameters.AddWithValue("@placedate", PlaceDate);
-                command.Parameters.AddWithValue("@protecteduntil", ProtectionEndDate);
-                command.Parameters.AddWithValue("@factionid", Faction.Id);
-                command.Parameters.AddWithValue("@sellto", SellToPlayerId);
-                command.Parameters.AddWithValue("@sellprice", SellPrice);
-                command.Parameters.AddWithValue("@allowrecover", AllowRecover);
-                command.Prepare();
-                command.ExecuteNonQuery();
-            }
-
+            WriteSaveRow(connection, transaction, CaptureSaveValues());
             IsDirty = false;
             return true;
         }
+    }
+
+    public bool Save(PersistenceSaveContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        lock (TaxPaymentSyncRoot)
+        {
+            if (!IsDirty || AccountId == 0 || OwnerId == 0)
+                return false;
+            var values = CaptureSaveValues();
+            WriteSaveRow(context.Connection, context.Transaction, values);
+            context.AfterCommit(() =>
+            {
+                // A later change must remain dirty even if this row has committed.
+                if (values.SequenceEqual(CaptureSaveValues()))
+                    IsDirty = false;
+            });
+            return true;
+        }
+    }
+
+    private object[] CaptureSaveValues()
+    {
+        var position = Transform.World.Position;
+        var rotation = Transform.World.Rotation;
+        return [Id, AccountId, OwnerId, CoOwnerId, TemplateId, Name,
+            position.X, position.Y, position.Z, rotation.Z, rotation.Y, rotation.X,
+            CurrentStep, NumAction, (byte)Permission, PlaceDate, ProtectionEndDate,
+            Faction.Id, SellToPlayerId, SellPrice, AllowRecover];
+    }
+
+    private static void WriteSaveRow(MySqlConnection connection, MySqlTransaction transaction, object[] values)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            "REPLACE INTO `housings` " +
+            "(`id`,`account_id`,`owner`,`co_owner`,`template_id`,`name`,`x`,`y`,`z`,`yaw`,`pitch`,`roll`," +
+            "`current_step`,`current_action`,`permission`,`place_date`,`protected_until`,`faction_id`," +
+            "`sell_to`,`sell_price`,`allow_recover`) " +
+            "VALUES(@id,@account_id,@owner,@co_owner,@template_id,@name,@x,@y,@z,@yaw,@pitch,@roll," +
+            "@current_step,@current_action,@permission,@placedate,@protecteduntil,@factionid,@sellto,@sellprice,@allowrecover)";
+        string[] names = ["id", "account_id", "owner", "co_owner", "template_id", "name", "x", "y", "z",
+            "yaw", "pitch", "roll", "current_step", "current_action", "permission", "placedate", "protecteduntil",
+            "factionid", "sellto", "sellprice", "allowrecover"];
+        for (var i = 0; i < names.Length; i++)
+            command.Parameters.AddWithValue("@" + names[i], values[i]);
+        command.Prepare();
+        if (command.ExecuteNonQuery() <= 0)
+            throw new InvalidOperationException("The house row was not persisted.");
     }
 
     public PacketStream Write(PacketStream stream)

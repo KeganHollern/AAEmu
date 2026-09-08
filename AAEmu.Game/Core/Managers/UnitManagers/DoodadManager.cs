@@ -3067,6 +3067,14 @@ public class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager do
 
     public bool OpenCofferDoodad(Character character, uint objId)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return OpenCofferDoodadLocked(character, objId);
+        }
+    }
+
+    private bool OpenCofferDoodadLocked(Character character, uint objId)
+    {
         var doodad = character.ParentWorld.GetDoodad(objId);
         if (doodad is not DoodadCoffer coffer)
         {
@@ -3080,7 +3088,8 @@ public class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager do
             return false;
         }
 
-        // TODO: Check permissions
+        if (coffer.Despawn > DateTime.MinValue || !coffer.AllowedToInteract(character))
+            return false;
 
         coffer.OpenedBy = character;
 
@@ -3095,6 +3104,14 @@ public class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager do
     }
 
     public bool CloseCofferDoodad(Character character, uint objId)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return CloseCofferDoodadLocked(character, objId);
+        }
+    }
+
+    private bool CloseCofferDoodadLocked(Character character, uint objId)
     {
         var doodad = character.ParentWorld.GetDoodad(objId);
         if (doodad is not DoodadCoffer coffer)
@@ -3115,6 +3132,14 @@ public class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager do
 
     public void CloseCoffersOpenedBy(Character character)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            CloseCoffersOpenedByLocked(character);
+        }
+    }
+
+    private void CloseCoffersOpenedByLocked(Character character)
+    {
         if (character?.ParentWorld == null)
         {
             return;
@@ -3130,6 +3155,14 @@ public class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager do
     }
 
     public static bool ChangeDoodadData(Character player, Doodad doodad, int data)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return ChangeDoodadDataLocked(player, doodad, data);
+        }
+    }
+
+    private static bool ChangeDoodadDataLocked(Character player, Doodad doodad, int data)
     {
         // TODO: Can non-coffer doodads that use this packet only be changed by their owner ?
         if (doodad.OwnerId != player.Id)

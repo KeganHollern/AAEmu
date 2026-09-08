@@ -47,7 +47,8 @@ public class HousingManager(
     INameManager nameManager,
     IZoneManager zoneManager,
     IDoodadManager doodadManager,
-    IUccManager uccManager) : Singleton<HousingManager>, IHousingManager
+    IUccManager uccManager,
+    Lazy<ISaveManager> saveManager = null) : Singleton<HousingManager>, IHousingManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -715,6 +716,16 @@ public class HousingManager(
     /// <param name="house"></param>
     public void RemoveDeadHouse(House house)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            RemoveDeadHouseLocked(house);
+        }
+    }
+
+    private void RemoveDeadHouseLocked(House house)
+    {
+        if (!IsActiveSaleHouse(house))
+            return;
         // Remove house from housing tables
         _removedHousings.Add(house.Id);
         _houses.Remove(house.Id);
@@ -948,6 +959,14 @@ public class HousingManager(
     /// <param name="characterId"></param>
     /// <param name="factionId"></param>
     public void UpdateOwnedHousingFaction(uint characterId, FactionsEnum factionId)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            UpdateOwnedHousingFactionLocked(characterId, factionId);
+        }
+    }
+
+    private void UpdateOwnedHousingFactionLocked(uint characterId, FactionsEnum factionId)
     {
         // TODO: Does this also need to be done when temporary changing factions? (like arena)
         var myHouses = new Dictionary<uint, House>();
@@ -1350,19 +1369,36 @@ public class HousingManager(
             }
 
             var certAmount = CalculateSaleCertifcates(house, price);
-            if (seller.Inventory.Bag.ConsumeItem(ItemTaskType.BuyHouse, Item.AppraisalCertificate, certAmount, null) != certAmount)
+            var failure = ErrorMessageType.InvalidHouseInfo;
+            var settled = ExecuteSaleSettlement(house, seller, (inventory, _, _) =>
             {
-                seller.SendErrorMessage(ErrorMessageType.HouseCannotSellAsNotEnoughSeal);
-                return false;
-            }
-
-            house.SellPrice = price;
-            house.SellToPlayerId = buyerId;
-
-            house.BroadcastPacket(new SCHouseSetForSalePacket(house.TlId, price, house.SellToPlayerId, buyerName, house.Name), false);
-            SetForSaleMarkers(house, true);
-
-            return true;
+                var remaining = certAmount;
+                foreach (var item in seller.Inventory.Bag.Items.Where(i => i.TemplateId == Item.AppraisalCertificate).ToArray())
+                {
+                    var available = Math.Max(0, item.Count - TradeReservation.GetReservedCount(item));
+                    var count = Math.Min(remaining, available);
+                    if (count > 0 && !inventory.TryConsume(seller.Inventory.Bag, item, count))
+                        return false;
+                    remaining -= count;
+                    if (remaining == 0)
+                        break;
+                }
+                if (remaining > 0)
+                {
+                    failure = ErrorMessageType.HouseCannotSellAsNotEnoughSeal;
+                    return false;
+                }
+                house.SellPrice = price;
+                house.SellToPlayerId = buyerId;
+                return true;
+            }, () =>
+            {
+                house.BroadcastPacket(new SCHouseSetForSalePacket(house.TlId, price, buyerId, buyerName, house.Name), false);
+                SetForSaleMarkers(house, true);
+            });
+            if (!settled)
+                seller.SendErrorMessage(failure);
+            return settled;
         }
     }
 
@@ -1387,48 +1423,29 @@ public class HousingManager(
                 return false;
             }
             var certAmount = CalculateSaleCertifcates(house, house.SellPrice);
-            var owner = seller;
-
-            house.SellPrice = 0;
-            house.SellToPlayerId = 0;
-            if (certAmount > 0)
+            var settled = ExecuteSaleSettlement(house, seller, (inventory, mail, _) =>
             {
-                if (owner.Inventory.MailAttachments.AcquireDefaultItemEx(ItemTaskType.Invalid,
-                    Item.AppraisalCertificate, certAmount, -1, out var addedItems, out _, 0))
-                {
-                    // Mail container is set up to never update existing items, so we can discard that result
-                    var mail = new BaseMail
-                    {
-                        MailType = MailType.HousingSale,
-                        Header =
-                        {
-                            ReceiverId = house.OwnerId,
-                            SenderName = ".houseSellCancel"
-                        },
-                        ReceiverName = nameManager.GetCharacterName(house.OwnerId),
-                        Title = "title(" + zoneManager.GetZoneByKey(house.Transform.ZoneId)?.GroupId.ToString() + ",'" + house.Name + "')",
-                        Body =
-                        {
-                            Text = "body('" + house.Name + "', " + Item.AppraisalCertificate.ToString() + ", " + certAmount.ToString() + ")"
-                        }
-                    };
-                    mail.Body.Attachments.AddRange(addedItems);
-                    mail.Body.SendDate = DateTime.UtcNow;
-                    mail.Body.RecvDate = DateTime.UtcNow.AddMilliseconds(1);
-                    mail.Send();
-                }
-                else
-                {
-                    // Failed to create Appraisal certificate ?
-                    Logger.Warn("CancelForSale - Failed to create Appraisal Certificates for mail");
+                if (!inventory.TryGrant(seller.Inventory.MailAttachments, Item.AppraisalCertificate, certAmount, out var refund))
                     return false;
+                foreach (var attachments in refund.Chunk(MailBody.MaxMailAttachments))
+                {
+                    var refundMail = CreateSaleMail(house, seller.Id, ".houseSellCancel",
+                        "body('" + house.Name + "', " + Item.AppraisalCertificate + ", " + certAmount + ")");
+                    refundMail.Body.Attachments.AddRange(attachments);
+                    if (!mail.TryAdd(refundMail))
+                        return false;
                 }
-            }
-
-            house.BroadcastPacket(new SCHouseResetForSalePacket(house.TlId, house.Name), false);
-            SetForSaleMarkers(house, false);
-
-            return true;
+                house.SellPrice = 0;
+                house.SellToPlayerId = 0;
+                return true;
+            }, () =>
+            {
+                house.BroadcastPacket(new SCHouseResetForSalePacket(house.TlId, house.Name), false);
+                SetForSaleMarkers(house, false);
+            });
+            if (!settled)
+                seller.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return settled;
         }
     }
 
@@ -1439,28 +1456,6 @@ public class HousingManager(
         return house is { Id: > 0, TlId: > 0 } &&
                ReferenceEquals(GetHouseById(house.Id), house) &&
                ReferenceEquals(GetHouseByTlId(house.TlId), house);
-    }
-
-    /// <summary>
-    /// Updates all furniture on the house to a new owner and broadcasts packets for it
-    /// </summary>
-    /// <param name="house"></param>
-    /// <param name="characterId"></param>
-    /// <param name="newFaction"></param>
-    /// <returns>The number of items that have their owner information updated</returns>
-    private static uint UpdateFurnitureOwner(House house, uint characterId, FactionsEnum newFaction)
-    {
-        uint res = 0;
-        var furnitureList = house.ParentWorld.GetDoodadByHouseDbId(house.Id);
-        foreach (var furniture in furnitureList)
-        {
-            furniture.OwnerId = characterId;
-            furniture.BroadcastPacket(new SCDoodadOriginatorPacket(furniture.ObjId, characterId, newFaction), true);
-            if (furniture.IsPersistent)
-                furniture.Save();
-            res++;
-        }
-        return res;
     }
 
     /// <summary>
@@ -1488,89 +1483,132 @@ public class HousingManager(
                 return false;
             }
 
-            if (!character.SubtractMoney(SlotType.Inventory, plan.Price, ItemTaskType.BuyHouse))
-            {
-                // Not enough money
-                character.SendErrorMessage(ErrorMessageType.HouseCannotBuyAsNotEnoughMoney);
-                return false;
-            }
-
             var previousOwner = plan.PreviousState.OwnerId;
             var previousOwnerName = nameManager.GetCharacterName(previousOwner);
-
-            // Mail confirmation mail to new owner
-            var newOwnerMail = new BaseMail
+            var settled = ExecuteSaleSettlement(house, character, (inventory, mail, furniture) =>
             {
-                MailType = MailType.HousingSale,
-                Header =
+                if (!inventory.TryChangeMoney(character, -plan.Price))
+                    return false;
+                var boughtMail = CreateSaleMail(house, character.Id, ".houseBought",
+                    "body('" + previousOwnerName + "', '" + house.Name + "', " + plan.Price + ")");
+                var profitMail = CreateSaleMail(house, previousOwner, ".houseSold",
+                    "body('" + character.Name + "', '" + house.Name + "', " + plan.Price + ")");
+                profitMail.Title = "title('" + character.Name + "','" + house.Name + "')";
+                profitMail.Body.CopperCoins = plan.Price;
+                if (!mail.TryAdd(boughtMail) || !mail.TryAdd(profitMail) || !furniture.TryPrepare(character, inventory))
+                    return false;
+                foreach (var (owner, returned) in furniture.ReturnedItems)
                 {
-                    ReceiverId = character.Id,
-                    SenderName = ".houseBought"
-                },
-                ReceiverName = character.Name,
-                Title = "title(" + zoneManager.GetZoneByKey(house.Transform.ZoneId)?.GroupId.ToString() + ",'" + house.Name + "')",
-                Body =
-                {
-                    Text = "body('" + previousOwnerName + "', '" + house.Name + "', " + house.SellPrice.ToString() + ")",
-                    SendDate = DateTime.UtcNow,
-                    RecvDate = DateTime.UtcNow.AddMilliseconds(1)
+                    foreach (var attachments in returned.Chunk(MailBody.MaxMailAttachments))
+                    {
+                        var returnedMail = CreateSaleMail(house, owner, ".houseDemolish", "body");
+                        returnedMail.MailType = MailType.Demolish;
+                        returnedMail.Title = "title";
+                        returnedMail.Header.Extra = house.Id;
+                        returnedMail.Body.Attachments.AddRange(attachments);
+                        if (!mail.TryAdd(returnedMail))
+                            return false;
+                    }
                 }
-            };
-            newOwnerMail.Send();
-
-            // Send sales money to previous owner
-            var profitMail = new BaseMail
-            {
-                MailType = MailType.HousingSale,
-                Header =
+                plan.PurchasedState.Apply(house);
+                foreach (var oldBill in mailManager.GetMyHouseMails(house.Id).Where(MailForTax.IsTaxMail).ToArray())
+                    if (!mail.TryRemove(oldBill))
+                        return false;
+                if (house.TaxDueDate <= DateTime.UtcNow)
                 {
-                    ReceiverId = previousOwner,
-                    SenderName = ".houseSold"
-                },
-                ReceiverName = previousOwnerName,
-                Title = "title('" + character.Name + "','" + house.Name + "')",
-                Body =
-                {
-                    Text = "body('" + character.Name + "', '" + house.Name + "', " + house.SellPrice.ToString() + ")",
-                    CopperCoins = (int)house.SellPrice, // add the money
-                    SendDate = DateTime.UtcNow,
-                    RecvDate = DateTime.UtcNow.AddMilliseconds(1)
+                    var zone = zoneManager.GetZoneByKey(house.Transform.ZoneId);
+                    if (zone == null || !CalculateBuildingTaxInfo(house.AccountId, house.Template, false,
+                        out var totalTax, out var heavyCount, out var normalCount, out var hostileRate, out _))
+                        return false;
+                    var bill = new MailForTax(house);
+                    MailForTax.ApplyTaxInfo(bill, house, character.Name, zone.GroupId,
+                        totalTax, heavyCount, normalCount, hostileRate, DateTime.UtcNow);
+                    if (!mail.TryAdd(bill))
+                        return false;
                 }
-            };
-            profitMail.Send();
-
-            ReturnHouseItemsToOwner(house, false, false, character);
-
-            lock (house.TaxPaymentSyncRoot)
+                return true;
+            }, () =>
             {
-                // Set new owner info and reconcile any old-owner tax offer as one serialized change.
-                house.SellPrice = 0;
-                house.SellToPlayerId = 0;
-                house.AccountId = character.AccountId;
-                house.OwnerId = character.Id;
-                house.CoOwnerId = character.Id; // not entirely sure if this actually needs to change
-                house.Permission = house.Template.AlwaysPublic ? HousingPermission.Public : HousingPermission.Private;
-                UpdateHouseFaction(house, character.Faction.Id);
-                UpdateTaxInfo(house); // send tax due mails etc. if needed ...
-            }
+                house.BroadcastPacket(new SCUnitFactionChangedPacket(house.ObjId, house.Name,
+                    plan.PreviousState.Faction?.Id ?? 0, house.Faction.Id, false), true);
+                house.BroadcastPacket(new SCHouseSoldPacket(house.TlId, previousOwner, character.Id,
+                    character.AccountId, character.Name, house.Name), false);
+                SetForSaleMarkers(house, false);
+                character.SendPacket(new SCMyHousePacket(house));
+                var oldOwner = worldManager.GetCharacterById(previousOwner);
+                if (oldOwner is { IsOnline: true })
+                    oldOwner.SendPacket(new SCMyHouseRemovedPacket(house.TlId));
+            }, true);
+            if (!settled)
+                character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return settled;
+        }
+    }
 
-            // TODO: broadcast changes
-            house.BroadcastPacket(
-                new SCHouseSoldPacket(house.TlId, previousOwner, character.Id, character.AccountId, character.Name,
-                    house.Name), false);
+    private BaseMail CreateSaleMail(House house, uint receiver, string sender, string body)
+    {
+        return new BaseMail
+        {
+            MailType = MailType.HousingSale,
+            Header = { ReceiverId = receiver, SenderName = sender },
+            ReceiverName = nameManager.GetCharacterName(receiver),
+            Title = "title(" + zoneManager.GetZoneByKey(house.Transform.ZoneId)?.GroupId + ",'" + house.Name + "')",
+            Body = { Text = body, SendDate = DateTime.UtcNow, RecvDate = DateTime.UtcNow.AddMilliseconds(1) }
+        };
+    }
 
-            SetForSaleMarkers(house, false);
-
-            character.SendPacket(new SCMyHousePacket(house));
-            var oldOwner = worldManager.GetCharacterById(previousOwner);
-            if (oldOwner is { IsOnline: true })
-                oldOwner.SendPacket(new SCMyHouseRemovedPacket(house.TlId));
-
-            UpdateFurnitureOwner(house, character.Id, character.Faction.Id);
-
+    private bool ExecuteSaleSettlement(House house, Character actor,
+        Func<InventoryMutation, MailMutation, HousingFurnitureSettlement, bool> prepare,
+        Action publish, bool includeFurniture = false)
+    {
+        var before = HousingSaleState.Capture(house);
+        using var inventory = new InventoryMutation(ItemTaskType.BuyHouse);
+        using var mail = mailManager.BeginMutation();
+        using var furniture = includeFurniture ? new HousingFurnitureSettlement(house, itemManager) : null;
+        var preserve = false;
+        try
+        {
+            if (!prepare(inventory, mail, furniture))
+                return false;
             house.IsDirty = true;
-
+            try
+            {
+                if (!(saveManager?.Value ?? SaveManager.Instance).TryCommitEconomy([actor], context =>
+                {
+                    if (!house.Save(context))
+                        throw new InvalidOperationException("The staged house could not be persisted.");
+                    furniture?.Save(context);
+                }))
+                    return false;
+            }
+            catch
+            {
+                // The commit outcome can be uncertain. Never restore or announce this state.
+                preserve = true;
+                throw;
+            }
+            preserve = true;
+            inventory.Complete();
+            mail.Complete();
+            furniture?.Complete();
+            publish();
             return true;
+        }
+        finally
+        {
+            if (preserve)
+            {
+                inventory.PreservePreparedState();
+                mail.PreservePreparedState();
+                furniture?.PreservePreparedState();
+            }
+            else
+            {
+                inventory.Dispose();
+                mail.Dispose();
+                furniture?.Dispose();
+                before.Apply(house);
+            }
         }
     }
 
@@ -1618,6 +1656,14 @@ public class HousingManager(
     /// <returns></returns>
     public bool DecorateHouse(Character player, ushort houseTlId, uint designId, Vector3 pos, Quaternion quat, uint parentObjId, ulong itemId)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return DecorateHouseLocked(player, houseTlId, designId, pos, quat, parentObjId, itemId);
+        }
+    }
+
+    private bool DecorateHouseLocked(Character player, ushort houseTlId, uint designId, Vector3 pos, Quaternion quat, uint parentObjId, ulong itemId)
+    {
         // Check Player
         if (player == null)
             return false;
@@ -1632,10 +1678,16 @@ public class HousingManager(
 
         // Check House
         var house = GetHouseByTlId(houseTlId);
-        if (house == null || house.TlId != houseTlId)
+        if (!IsActiveSaleHouse(house))
         {
             // Invalid House
             player.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+
+        if (!house.AllowedToInteract(player))
+        {
+            player.SendErrorMessage(ErrorMessageType.InteractionPermissionDeny);
             return false;
         }
 
@@ -1708,8 +1760,16 @@ public class HousingManager(
     /// <param name="houseTl"></param>
     public void HousingToggleAllowRecover(Character character, ushort houseTl)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            HousingToggleAllowRecoverLocked(character, houseTl);
+        }
+    }
+
+    private void HousingToggleAllowRecoverLocked(Character character, ushort houseTl)
+    {
         var house = GetHouseByTlId(houseTl);
-        if (house == null)
+        if (!IsActiveSaleHouse(house) || character == null)
             return;
         if (character.Id != house.OwnerId)
             return;
