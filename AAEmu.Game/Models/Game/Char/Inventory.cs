@@ -346,6 +346,10 @@ public class Inventory
         if (itemInTargetSlot == null)
             itemInTargetSlot = targetContainer.GetItemBySlot(toSlot);
 
+        if (TradeReservation.GetReservedCount(fromItem) != 0 ||
+            TradeReservation.GetReservedCount(itemInTargetSlot) != 0)
+            return false;
+
         // Check if containers can accept the items
         if (targetContainer is not null && !targetContainer.CanAccept(fromItem, toSlot))
         {
@@ -881,6 +885,12 @@ public class Inventory
     /// <param name="slotType"></param>
     public void ExpandSlot(SlotType slotType)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+            ExpandSlotLocked(slotType);
+    }
+
+    private void ExpandSlotLocked(SlotType slotType)
+    {
         var isBank = slotType == SlotType.Bank;
         var step = ((isBank ? Owner.NumBankSlots : Owner.NumInventorySlots) - 50) / 10;
         var expands = CharacterManager.Instance.GetExpands(step);
@@ -890,28 +900,31 @@ public class Inventory
         if (index == -1)
             return;
         var expand = expands[index];
-        if (expand.Price != 0 && Owner.Money < expand.Price)
+        if (expand.Price < 0 || expand.ItemCount < 0)
+            return;
+        using var mutation = new InventoryMutation(isBank ? ItemTaskType.ExpandBank : ItemTaskType.ExpandBag);
+        if (!mutation.TryChangeMoney((Character)Owner, -expand.Price))
         {
             Logger.Warn("No Money for expand!");
             return;
         }
 
-        if (expand.ItemId != 0 && expand.ItemCount != 0 && !CheckItems(SlotType.Inventory, expand.ItemId, expand.ItemCount))
-        {
-            Logger.Warn("Item or Count not fount.");
-            return;
-        }
-
-        var tasks = new List<ItemTask>();
-        if (expand.Price != 0)
-        {
-            Owner.Money -= expand.Price;
-            tasks.Add(new MoneyChange(-expand.Price));
-        }
-
         if (expand.ItemId != 0 && expand.ItemCount != 0)
         {
-            Bag.ConsumeItem(isBank ? ItemTaskType.ExpandBank : ItemTaskType.ExpandBag, expand.ItemId, expand.ItemCount, null);
+            var remaining = expand.ItemCount;
+            foreach (var item in Bag.Items.Where(item => item.TemplateId == expand.ItemId).ToArray())
+            {
+                var count = Math.Min(remaining, item.Count - TradeReservation.GetReservedCount(item));
+                if (count <= 0)
+                    continue;
+                if (!mutation.TryConsume(Bag, item, count))
+                    return;
+                remaining -= count;
+                if (remaining == 0)
+                    break;
+            }
+            if (remaining != 0)
+                return;
         }
 
         if (isBank)
@@ -925,6 +938,7 @@ public class Inventory
             Bag.ContainerSize = Owner.NumInventorySlots;
         }
 
+        mutation.Complete();
         Owner.SendPacket(
             new SCInvenExpandedPacket(
                 isBank ? SlotType.Bank : SlotType.Inventory,
