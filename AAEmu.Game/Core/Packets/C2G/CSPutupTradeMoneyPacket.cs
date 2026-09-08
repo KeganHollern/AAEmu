@@ -11,6 +11,7 @@ public class CSPutupTradeMoneyPacket() : GamePacket(CSOffsets.CSPutupTradeMoneyP
         var moneyAmount = stream.ReadInt32();
 
         //Logger.Warn("PutupTradeMoney, MoneyAmount: {0}", moneyAmount);
-        TradeManager.Instance.AddMoney(Connection.ActiveChar, moneyAmount);
+        if (Connection?.ActiveChar is { } character)
+            TradeManager.Instance.AddMoney(character, moneyAmount);
     }
 }

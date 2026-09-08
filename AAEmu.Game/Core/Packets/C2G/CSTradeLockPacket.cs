@@ -9,6 +9,7 @@ public class CSTradeLockPacket() : GamePacket(CSOffsets.CSTradeLockPacket, 1)
     public override void Read(PacketStream stream)
     {
         var _lock = stream.ReadBoolean();
-        TradeManager.Instance.LockTrade(Connection.ActiveChar, _lock);
+        if (Connection?.ActiveChar is { } character)
+            TradeManager.Instance.LockTrade(character, _lock);
     }
 }

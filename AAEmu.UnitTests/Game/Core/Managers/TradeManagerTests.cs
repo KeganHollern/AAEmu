@@ -11,10 +11,14 @@ public class TradeManagerTests
     {
         var mockTradeId = Mock.Of<ITradeIdManager>();
         var mockWorld = Mock.Of<IWorldManager>();
-        var manager = new TradeManager(mockTradeId.Object, mockWorld.Object);
+        var mockItems = Mock.Of<IItemManager>();
+        var mockSave = Mock.Of<ISaveManager>();
+        var manager = new TradeManager(mockTradeId.Object, mockWorld.Object, mockItems.Object, mockSave.Object);
 
         await Assert.That(manager).IsNotNull();
         Mock.VerifyNoOtherCalls(mockTradeId);
         Mock.VerifyNoOtherCalls(mockWorld);
+        Mock.VerifyNoOtherCalls(mockItems);
+        Mock.VerifyNoOtherCalls(mockSave);
     }
 }

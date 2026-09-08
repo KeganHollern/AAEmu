@@ -89,6 +89,7 @@ public class GameConnection
 
         if (ActiveChar != null)
         {
+            TradeManager.Instance.CancelTrade(ActiveChar, 0);
             // Hard DC / crash path: LeaveWorldTask never runs here, so nothing else
             // would set IsOnline = false and team-mates would keep seeing the player
             // as online with a frozen HP bar. Toggling the setter fires
@@ -202,6 +203,8 @@ public class GameConnection
         // TODO: this needs a rewrite
         if (activeChar == null)
             return;
+
+        TradeManager.Instance.CancelTrade(activeChar, 0);
 
         // Remove Radars
         RadarManager.Instance.UnRegister(activeChar);
