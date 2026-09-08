@@ -21,5 +21,6 @@ public interface IMailManager : ILoadable
     void DeleteHouseMails(uint houseId);
     List<BaseMail> GetMyHouseMails(uint houseId);
     (int, int) Save(MySqlConnection connection, MySqlTransaction transaction);
+    (int, int) Save(PersistenceSaveContext context);
     IDictionary<long, BaseMail> AllPlayerMails { get; }
 }

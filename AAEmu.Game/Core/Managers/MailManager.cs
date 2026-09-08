@@ -233,6 +233,16 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public (int, int) Save(MySqlConnection connection, MySqlTransaction transaction)
     {
+        return Save(connection, transaction, null);
+    }
+
+    public (int, int) Save(PersistenceSaveContext context)
+    {
+        return Save(context.Connection, context.Transaction, context);
+    }
+
+    private (int, int) Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
+    {
         var deletedCount = 0;
         var updatedCount = 0;
         // Logger.Info("Saving mail data ...");
@@ -242,15 +252,25 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             deletedCount = _deletedMailIds.Count;
             if (_deletedMailIds.Count > 0)
             {
+                var deletedIds = _deletedMailIds.ToArray();
                 using (var command = connection.CreateCommand())
                 {
                     command.Connection = connection;
                     command.Transaction = transaction;
-                    command.CommandText = "DELETE FROM mails WHERE `id` IN(" + string.Join(",", _deletedMailIds) + ")";
+                    command.CommandText = "DELETE FROM mails WHERE `id` IN(" + string.Join(",", deletedIds) + ")";
                     command.Prepare();
                     command.ExecuteNonQuery();
                 }
-                _deletedMailIds.Clear();
+                void AcknowledgeDeletedMails()
+                {
+                    lock (_deletedMailIds)
+                        foreach (var id in deletedIds)
+                            _deletedMailIds.Remove(id);
+                }
+                if (context == null)
+                    AcknowledgeDeletedMails();
+                else
+                    context.AfterCommit(AcknowledgeDeletedMails);
             }
         }
 
@@ -306,7 +326,10 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
                 command.Prepare();
                 command.ExecuteNonQuery();
                 updatedCount++;
-                mtbs.Value.IsDirty = false;
+                if (context == null)
+                    mtbs.Value.IsDirty = false;
+                else
+                    context.AfterCommit(() => mtbs.Value.IsDirty = false);
             }
         }
 

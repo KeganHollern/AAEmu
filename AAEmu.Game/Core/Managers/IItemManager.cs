@@ -58,4 +58,5 @@ public interface IItemManager : ILoadable
     ItemSet GetItemSet(uint itemSetId);
     SlotType GetContainerSlotTypeByContainerId(ulong dbId);
     (int, int, int) Save(MySql.Data.MySqlClient.MySqlConnection connection, MySql.Data.MySqlClient.MySqlTransaction transaction);
+    (int, int, int) Save(PersistenceSaveContext context);
 }

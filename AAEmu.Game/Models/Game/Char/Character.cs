@@ -2797,47 +2797,29 @@ public partial class Character : Unit, ICharacter
 
     public bool SaveDirectlyToDatabase()
     {
-        // Try to save New Character
-        bool saved;
-        using (var sqlConnection = MySQL.CreateConnection())
-        {
-            using (var transaction = sqlConnection.BeginTransaction())
-            {
-                try
-                {
-                    saved = Save(sqlConnection, transaction);
-                    if (saved)
-                        transaction.Commit();
-                    else
-                        transaction.Rollback();
-                }
-                catch (Exception e)
-                {
-                    saved = false;
-                    Logger.Error(e, $"Character save failed for {Id} - {Name}");
-                    try
-                    {
-                        transaction.Rollback();
-                    }
-                    catch (Exception eRollback)
-                    {
-                        // Really failed here
-                        Logger.Fatal(eRollback, $"Character save rollback failed for {Id} - {Name}");
-                    }
-                }
-            }
-        }
-        return saved;
+        // Departing characters may already be absent from WorldManager. Include
+        // this object explicitly so its wallet and pending item/mail state share a commit.
+        return SaveManager.Instance.TryCommitEconomy([this]);
     }
 
     public bool Save(MySqlConnection connection, MySqlTransaction transaction)
+    {
+        return Save(connection, transaction, null);
+    }
+
+    public bool Save(PersistenceSaveContext context)
+    {
+        return Save(context.Connection, context.Transaction, context);
+    }
+
+    private bool Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
     {
         bool result;
         try
         {
             var unitModelParams = ModelParams.Write(new PacketStream()).GetBytes();
 
-            Updated = DateTime.UtcNow; // обновим время записи информации
+            var updated = DateTime.UtcNow;
 
             using (var command = connection.CreateCommand())
             {
@@ -2942,7 +2924,7 @@ public partial class Character : Unit, ICharacter
                 command.Parameters.AddWithValue("@expanded_expert", ExpandedExpert);
                 command.Parameters.AddWithValue("@slots", GetActionSlotsAsBlob());
                 command.Parameters.AddWithValue("@created_at", Created);
-                command.Parameters.AddWithValue("@updated_at", Updated);
+                command.Parameters.AddWithValue("@updated_at", updated);
                 command.Parameters.AddWithValue("@return_district", ReturnDistrictId);
                 command.Parameters.AddWithValue("@online_time", OnlineTime.TotalSeconds);
 
@@ -2986,12 +2968,26 @@ public partial class Character : Unit, ICharacter
             Buffs?.SaveActiveBuffs(connection, transaction, Id);
             // Save still-active skill cooldowns so relogging cannot reset them
             Cooldowns.Save(connection, transaction, Id);
-            Portals?.Save(connection, transaction);
-            Friends?.Save(connection, transaction);
-            Blocked?.Save(connection, transaction);
-            Skills?.Save(connection, transaction);
-            Quests?.Save(connection, transaction);
-            Mates?.Save(connection, transaction);
+            if (context == null)
+            {
+                Portals?.Save(connection, transaction);
+                Friends?.Save(connection, transaction);
+                Blocked?.Save(connection, transaction);
+                Skills?.Save(connection, transaction);
+                Quests?.Save(connection, transaction);
+                Mates?.Save(connection, transaction);
+                Updated = updated;
+            }
+            else
+            {
+                Portals?.Save(context);
+                Friends?.Save(context);
+                Blocked?.Save(context);
+                Skills?.Save(context);
+                Quests?.Save(context);
+                Mates?.Save(context);
+                context.AfterCommit(() => Updated = updated);
+            }
             
             result = true;
         }
