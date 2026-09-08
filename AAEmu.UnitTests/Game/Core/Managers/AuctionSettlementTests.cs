@@ -189,6 +189,74 @@ public sealed class AuctionSettlementTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReservedPostAsset_RestoresFeeAndItemWithoutPublishingAndCanRetryAfterRelease(bool money)
+    {
+        var item = Item();
+        item.IsDirty = false;
+        var slot = item.Slot;
+        using var reservation = new TradeReservation();
+        var reserved = money ? reservation.TryReserve(_seller, 9990) : reservation.TryReserve(item, 1);
+        await Assert.That(reserved).IsTrue();
+        Post(item);
+        await Assert.That(_commits).IsEqualTo(0);
+        await Assert.That(_seller.Money).IsEqualTo(10000L);
+        await Assert.That(_seller.Inventory.Bag.Items.Single()).IsSameReferenceAs(item);
+        await Assert.That(item.Slot).IsEqualTo(slot);
+        await Assert.That(item.Count).IsEqualTo(3);
+        await Assert.That(item.IsDirty).IsFalse();
+        await Assert.That(_auctions.AuctionLots).IsEmpty();
+        await Assert.That(Packets(_seller, SCOffsets.SCAuctionPostedPacket)).IsEqualTo(0);
+        await Assert.That(TradeReservation.GetReservedMoney(_seller)).IsEqualTo(money ? 9990 : 0);
+        await Assert.That(TradeReservation.GetReservedCount(item)).IsEqualTo(money ? 0 : 1);
+        reservation.Dispose();
+        Post(item);
+        await Assert.That(_commits).IsEqualTo(1);
+        await Assert.That(_seller.Money).IsEqualTo(9980L);
+        await Assert.That(_auctions.AuctionLots.Values.Single().Item).IsSameReferenceAs(item);
+    }
+
+    [Test]
+    [Arguments("bid")]
+    [Arguments("buyout")]
+    [Arguments("raise")]
+    public async Task ReservedBidFunds_CannotChangeListingOrDisplaceBidder(string operation)
+    {
+        var lot = Listed();
+        if (operation == "raise") Bid(_buyer, lot, 500);
+        else Bid(_other, lot, 100);
+        var previousMoney = _buyer.Money;
+        var previousBidder = lot.BidderId;
+        var previousBid = lot.BidMoney;
+        var previousCommits = _commits;
+        using var reservation = new TradeReservation();
+        await Assert.That(reservation.TryReserve(_buyer, (int)previousMoney - 100)).IsTrue();
+        Bid(_buyer, lot, operation == "buyout" ? 2000 : operation == "raise" ? 800 : 500);
+        await Assert.That(_commits).IsEqualTo(previousCommits);
+        await Assert.That(_buyer.Money).IsEqualTo(previousMoney);
+        await Assert.That(lot.BidderId).IsEqualTo(previousBidder);
+        await Assert.That(lot.BidMoney).IsEqualTo(previousBid);
+        await Assert.That(_auctions.AuctionLots.Values.Single()).IsSameReferenceAs(lot);
+        await Assert.That(lot.Item.SlotType).IsEqualTo(SlotType.Auction);
+        await Assert.That(_mails._allPlayerMails).IsEmpty();
+        await Assert.That(TradeReservation.GetReservedMoney(_buyer)).IsEqualTo((int)previousMoney - 100);
+    }
+
+    [Test]
+    public async Task Bid_CanSpendOnlyUnreservedWalletBalance()
+    {
+        var lot = Listed();
+        using var reservation = new TradeReservation();
+        await Assert.That(reservation.TryReserve(_buyer, 9500)).IsTrue();
+        Bid(_buyer, lot, 500);
+        await Assert.That(_buyer.Money).IsEqualTo(9500L);
+        await Assert.That(lot.BidderId).IsEqualTo(_buyer.Id);
+        await Assert.That(lot.BidMoney).IsEqualTo(500);
+        await Assert.That(TradeReservation.GetReservedMoney(_buyer)).IsEqualTo(9500);
+    }
+
+    [Test]
     public async Task Bids_UseAuthoritativeLotAndRefundOnlyDisplacedBidder()
     {
         var lot = Listed();
