@@ -3,6 +3,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Achievement.Enums;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
@@ -1001,9 +1002,17 @@ public class Inventory
 
     public bool SwapCofferItems(ulong fromItemId, ulong toItemId, SlotType fromSlotType, byte fromSlot, SlotType toSlotType, byte toSlot, ulong dbId)
     {
-        // TODO: Verify if you have access to the coffer
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return SwapCofferItemsLocked(fromItemId, toItemId, fromSlotType, fromSlot, toSlotType, toSlot, dbId);
+        }
+    }
 
+    private bool SwapCofferItemsLocked(ulong fromItemId, ulong toItemId, SlotType fromSlotType, byte fromSlot, SlotType toSlotType, byte toSlot, ulong dbId)
+    {
         var relatedCoffer = ItemManager.Instance.GetItemContainerByDbId(dbId);
+        if (!CanUseCoffer(relatedCoffer))
+            return false;
 
         ItemContainer sourceContainer = null;
         ItemContainer targetContainer = null;
@@ -1030,9 +1039,17 @@ public class Inventory
 
     public bool SplitCofferItems(int count, ulong fromItemId, ulong toItemId, SlotType fromSlotType, byte fromSlot, SlotType toSlotType, byte toSlot, ulong dbId)
     {
-        // TODO: Verify if you have access to the coffer
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return SplitCofferItemsLocked(count, fromItemId, toItemId, fromSlotType, fromSlot, toSlotType, toSlot, dbId);
+        }
+    }
 
+    private bool SplitCofferItemsLocked(int count, ulong fromItemId, ulong toItemId, SlotType fromSlotType, byte fromSlot, SlotType toSlotType, byte toSlot, ulong dbId)
+    {
         var relatedCoffer = ItemManager.Instance.GetItemContainerByDbId(dbId);
+        if (!CanUseCoffer(relatedCoffer))
+            return false;
 
         ItemContainer sourceContainer = null;
         ItemContainer targetContainer = null;
@@ -1056,4 +1073,14 @@ public class Inventory
         return SplitOrMoveItemEx(ItemTaskType.SplitCofferItems, sourceContainer, targetContainer, fromItemId, fromSlotType, fromSlot,
             toItemId, toSlotType, toSlot, count);
     }
+
+    private bool CanUseCoffer(ItemContainer container)
+    {
+        if (container is not CofferContainer || Owner is not Character character || character.ParentWorld == null)
+            return false;
+        return character.ParentWorld.GetAllDoodads().OfType<DoodadCoffer>().Any(coffer =>
+            ReferenceEquals(coffer.ItemContainer, container) && ReferenceEquals(coffer.OpenedBy, character) &&
+            coffer.Despawn == DateTime.MinValue && coffer.AllowedToInteract(character));
+    }
+
 }
