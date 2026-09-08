@@ -80,63 +80,10 @@ public class CharacterMails
 
     public MailResult SendMailToPlayer(MailType mailType, string receiverName, string title, string text, byte attachments, int money0, int money1, int money2, long extra, List<(SlotType, byte)> itemSlots)
     {
-
-        if (string.IsNullOrWhiteSpace(receiverName) || NameManager.Instance.GetCharacterId(receiverName) == 0)
-        {
-            return MailResult.UnableToFindRecipient;
-        }
-
-        var mail = new MailPlayerToPlayer(Self, receiverName) {
-            MailType = mailType,
-            Title = title,
-            Header = {
-                Attachments = attachments,
-                Extra = extra
-                },
-            Body =
-            {
-                Text = text,
-                SendDate = DateTime.UtcNow,
-                RecvDate = DateTime.UtcNow
-            }
-        };
-
-        mail.AttachMoney(money0, money1, money2);
-
-        // First verify source items, and add them to the attachments of body
-        if (!mail.PrepareAttachmentItems(itemSlots))
-        {
-            // Self.SendErrorMessage(ErrorMessageType.MailInvalidItem);
-            return MailResult.InvalidSlot;
-        }
-
-        // With attachments in place, we can calculate the send fee
-        var mailFee = mail.GetMailFee();
-        if (mailFee + money0 > Self.Money)
-        {
-            // Self.SendErrorMessage(ErrorMessageType.MailNotEnoughMoney);
-            return MailResult.InsufficientCoins;
-        }
-
-        if (!mail.FinalizeAttachments())
-            return MailResult.InvalidSlot; // Should never fail at this point
-
-        // Add delay if not a normal snail mail
-        if (mailType == MailType.Normal)
-            mail.Body.RecvDate = DateTime.UtcNow + MailManager.NormalMailDelay;
-
-        // Send it
-        if (mail.Send())
-        {
-            Self.SendPacket(new SCMailSentPacket(mail.Header, itemSlots.ToArray()));
-            // Take the fee
-            Self.SubtractMoney(SlotType.Inventory, mailFee + money0);
-            return MailResult.Success;
-        }
-        else
-        {
-            return MailResult.MailErrorOccurred;
-        }
+        // Header attachment count and Extra are derived from validated server state.
+        return PlayerMailSendExecutor.Execute(Self, mailType, receiverName, title, text,
+            money0, money1, money2, itemSlots, MailManager.Instance, ItemManager.Instance,
+            NameManager.Instance, () => SaveManager.Instance.TryCommitEconomy([Self]));
     }
 
     public bool GetAttached(long mailId, bool takeMoney, bool takeItems, bool takeAllSelected, ulong specifiedItemId = 0)

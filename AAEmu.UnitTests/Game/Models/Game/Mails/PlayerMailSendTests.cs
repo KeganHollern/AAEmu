@@ -85,6 +85,37 @@ public sealed class PlayerMailSendTests
         SwapSingleton(_previousQuests);
     }
 
+    [Test]
+    public async Task OfferedAttachment_RejectsWithoutChargingOrSavingAndSendsAfterReservationRelease()
+    {
+        var item = AddItem(1, 0);
+        using var reservation = new TradeReservation();
+        reservation.TryReserve(item, 1);
+        var result = Send(slots: [(SlotType.Inventory, 0)]);
+        await Assert.That(result).IsEqualTo(MailResult.InvalidSlot);
+        await Assert.That(_sender.Money).IsEqualTo(1000L);
+        await Assert.That(_sender.Inventory.Bag.Items.Single()).IsSameReferenceAs(item);
+        await Assert.That(_mails._allPlayerMails).IsEmpty();
+        await Assert.That(_commitCalls).IsEqualTo(0);
+        reservation.Dispose();
+        await Assert.That(Send(slots: [(SlotType.Inventory, 0)])).IsEqualTo(MailResult.Success);
+        await Assert.That(_commitCalls).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task OfferedGold_RejectsWithoutMovingAttachmentOrSaving()
+    {
+        var item = AddItem(1, 0);
+        using var reservation = new TradeReservation();
+        reservation.TryReserve(_sender, 999);
+        var result = Send(slots: [(SlotType.Inventory, 0)]);
+        await Assert.That(result).IsEqualTo(MailResult.InsufficientCoins);
+        await Assert.That(_sender.Money).IsEqualTo(1000L);
+        await Assert.That(_sender.Inventory.Bag.Items.Single()).IsSameReferenceAs(item);
+        await Assert.That(_mails._allPlayerMails).IsEmpty();
+        await Assert.That(_commitCalls).IsEqualTo(0);
+    }
+
     public static IEnumerable<MailType> NonPlayerTypes() =>
         Enum.GetValues<MailType>().Where(type => type is not (MailType.Normal or MailType.Express))
             .Append((MailType)255);
