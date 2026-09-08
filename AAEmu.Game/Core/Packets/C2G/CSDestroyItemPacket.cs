@@ -44,6 +44,9 @@ public class CSDestroyItemPacket() : GamePacket(CSOffsets.CSDestroyItemPacket, 1
             count = item.Count;
         }
 
+        if (count > item.Count - TradeReservation.GetReservedCount(item))
+            return;
+
         if (item.Count > count)
         {
             item.Count -= count;
