@@ -231,7 +231,10 @@ public sealed class PlayerMailSendPersistenceTests
             Assert.Equal(copper, mail.Body.CopperCoins);
             Assert.Equal(attachments, mail.Body.Attachments);
             Assert.Equal(attachments.Length + 1, mail.Header.Attachments);
-            Assert.Equal(type == MailType.Express, mail.IsDelivered);
+            // Both recipients are offline in this fixture; delivery notification has not run.
+            Assert.False(mail.IsDelivered);
+            Assert.Equal(type == MailType.Normal ? MailManager.NormalMailDelay : TimeSpan.Zero,
+                mail.Body.RecvDate - mail.Body.SendDate);
             Assert.Empty(Sender.Inventory.Bag.Items);
             Assert.Equal(copper, Scalar($"SELECT money_amount_1 FROM mails WHERE id={mail.Id}"));
             foreach (var item in attachments)

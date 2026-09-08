@@ -1,6 +1,6 @@
 # Trade quantities and prepared inventory exchange
 
-Issue: <https://github.com/KeganHollern/AAEmu/issues/306>
+Issue: <https://github.com/KeganHollern/aaemu-cluster/issues/306>
 
 `TradeReservation` holds exact item quantities and offered copper while the
 trade manager owns the offer. Item removal, moving, splitting, ordinary item
