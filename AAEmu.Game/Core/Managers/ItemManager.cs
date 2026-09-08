@@ -2010,6 +2010,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
             if (doExpire)
             {
+                TradeReservation.Invalidate(item);
                 res++;
                 var sync = ExpireItemPacket(item);
                 if (sync != null)

@@ -4,7 +4,10 @@ using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
@@ -395,6 +398,403 @@ public sealed class InventoryMutationTests
         }
         await Assert.That(item.Detail).IsSameReferenceAs(detail);
         await Assert.That(item.Detail).IsEquivalentTo(new byte[] { 1, 2, 3, 4 });
+    }
+
+    [Test]
+    public async Task FullBags_ExchangeOriginalItemsAndRemoveBothOutgoingSlotsBeforeAdding()
+    {
+        var other = AddOwner(8);
+        var left = AddItem(1, 100, 3);
+        var right = AddItem(2, 200, 2, other);
+        _bag.ContainerSize = other.Inventory.Bag.ContainerSize = 1;
+        ItemAction[] leftActions;
+        ItemAction[] rightActions;
+        bool result;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.Trade);
+            result = mutation.TryExchange([(left, 3, other.Inventory.Bag), (right, 2, _bag)]);
+            leftActions = mutation.GetTasks(_owner).Select(TaskAction).ToArray();
+            rightActions = mutation.GetTasks(other).Select(TaskAction).ToArray();
+            result &= mutation.Complete(false);
+        }
+        await Assert.That(result).IsTrue();
+        await Assert.That(leftActions).IsEquivalentTo(new[] { ItemAction.Seize, ItemAction.Create });
+        await Assert.That(rightActions).IsEquivalentTo(new[] { ItemAction.Seize, ItemAction.Create });
+        await Assert.That(leftActions[0]).IsEqualTo(ItemAction.Seize);
+        await Assert.That(rightActions[0]).IsEqualTo(ItemAction.Seize);
+        await Assert.That(_bag.Items.Single()).IsSameReferenceAs(right);
+        await Assert.That(other.Inventory.Bag.Items.Single()).IsSameReferenceAs(left);
+        await Assert.That(right.OwnerId).IsEqualTo((ulong)_owner.Id);
+        await Assert.That(left.OwnerId).IsEqualTo((ulong)other.Id);
+        await Assert.That(left.Slot).IsEqualTo(0);
+        await Assert.That(right.Slot).IsEqualTo(0);
+        await Assert.That(_allItems.Count).IsEqualTo(2);
+        await Assert.That(_deleted).IsEmpty();
+    }
+
+    [Test]
+    public async Task PartialExchange_PreservesOriginalAndCreatesOnlyOfferedQuantityWithIndependentDetails()
+    {
+        var other = AddOwner(8);
+        var item = AddItem(1, 100, 7);
+        item.Detail = [7, 8];
+        item.ExpirationTime = DateTime.UtcNow.AddDays(1);
+        item.ExpirationOnlineMinutesLeft = 12;
+        Item split;
+        bool result;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.Invalid);
+            result = mutation.TryExchange([(item, 3, other.Inventory.Bag)]) && mutation.Complete(false);
+            split = other.Inventory.Bag.Items.Single();
+        }
+        await Assert.That(result).IsTrue();
+        await Assert.That(_bag.Items.Single()).IsSameReferenceAs(item);
+        await Assert.That(item.Count).IsEqualTo(4);
+        await Assert.That(split.Count).IsEqualTo(3);
+        await Assert.That(split.Id).IsEqualTo(1_000UL);
+        await Assert.That(split.OwnerId).IsEqualTo((ulong)other.Id);
+        await Assert.That(split.GetType()).IsEqualTo(item.GetType());
+        await Assert.That(split.Detail).IsEquivalentTo(item.Detail);
+        split.Detail[0] = 1;
+        await Assert.That(item.Detail[0]).IsEqualTo((byte)7);
+        await Assert.That(split.ExpirationTime).IsEqualTo(item.ExpirationTime);
+        await Assert.That(split.ExpirationOnlineMinutesLeft).IsEqualTo(12.0);
+        await Assert.That(_allItems[1_000]).IsSameReferenceAs(split);
+    }
+
+    [Test]
+    public async Task LaterExchangeCapacityFailure_RestoresSplitFullItemSlotsWalletsAndDirtyFlags()
+    {
+        var other = AddOwner(8);
+        var partial = AddItem(1, 100, 7);
+        var full = AddItem(2, 200, 1);
+        var existing = AddItem(3, 300, 1, other);
+        other.Inventory.Bag.ContainerSize = 2;
+        partial.IsDirty = full.IsDirty = _bag.IsDirty = other.Inventory.Bag.IsDirty = false;
+        var events = 0;
+        _owner.Events.OnItemGather += (_, _) => events++;
+        other.Events.OnItemGather += (_, _) => events++;
+        bool result;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.Invalid);
+            mutation.TryChangeMoney(_owner, -30);
+            mutation.TryChangeMoney(other, 30);
+            result = mutation.TryExchange([(partial, 3, other.Inventory.Bag), (full, 1, other.Inventory.Bag)]);
+        }
+        await Assert.That(result).IsFalse();
+        await Assert.That(_bag.Items.SequenceEqual([partial, full])).IsTrue();
+        await Assert.That(other.Inventory.Bag.Items.Single()).IsSameReferenceAs(existing);
+        await Assert.That(partial.Count).IsEqualTo(7);
+        await Assert.That(full._holdingContainer).IsSameReferenceAs(_bag);
+        await Assert.That(full.Slot).IsEqualTo(1);
+        await Assert.That(partial.IsDirty).IsFalse();
+        await Assert.That(full.IsDirty).IsFalse();
+        await Assert.That(_bag.IsDirty).IsFalse();
+        await Assert.That(other.Inventory.Bag.IsDirty).IsFalse();
+        await Assert.That(_owner.Money).IsEqualTo(100L);
+        await Assert.That(other.Money).IsEqualTo(100L);
+        await Assert.That(_allItems.Keys).IsEquivalentTo(new ulong[] { 1, 2, 3 });
+        await Assert.That(_deleted).IsEquivalentTo(new ulong[] { 1_000 });
+        await Assert.That(events).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task SplitIdCollision_LeavesExistingIdRegisteredAndRestoresSource()
+    {
+        var other = AddOwner(8);
+        var source = AddItem(1, 100, 4);
+        var collision = AddItem(1_000, 200, 1);
+        bool result;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.Invalid);
+            result = mutation.TryExchange([(source, 2, other.Inventory.Bag)]);
+        }
+        await Assert.That(result).IsFalse();
+        await Assert.That(source.Count).IsEqualTo(4);
+        await Assert.That(_allItems[1_000]).IsSameReferenceAs(collision);
+        await Assert.That(other.Inventory.Bag.Items).IsEmpty();
+        await Assert.That(_deleted).IsEmpty();
+    }
+
+    [Test]
+    public async Task SplitCopies_PreserveEquipmentGemsAndFishFieldsAndSerializeOfferedCount()
+    {
+        var equipment = new EquipItem(1, new EquipItemTemplate { Id = 100, MaxCount = 10 }, 5)
+        {
+            GemIds = [1, 2, 3, 4, 5, 6, 7], Detail = [9], Durability = 31,
+            RuneId = 52, TemperPhysical = 80, TemperMagical = 81
+        };
+        var copy = (EquipItem)equipment.CopyForSplit(2, 2);
+        copy.GemIds[0] = 99;
+        copy.Detail[0] = 0;
+        await Assert.That(equipment.GemIds[0]).IsEqualTo(1U);
+        await Assert.That(equipment.Detail[0]).IsEqualTo((byte)9);
+        await Assert.That(copy.Durability).IsEqualTo((byte)31);
+        await Assert.That(copy.RuneId).IsEqualTo(52U);
+        await Assert.That(copy.TemperPhysical).IsEqualTo((ushort)80);
+        await Assert.That(copy.TemperMagical).IsEqualTo((ushort)81);
+        var fish = new BigFish(3, Template(200), 5) { Weight = 77.5f, Length = 25.25f };
+        var fishCopy = (BigFish)fish.CopyForSplit(4, 2);
+        await Assert.That(fishCopy.Weight).IsEqualTo(77.5f);
+        await Assert.That(fishCopy.Length).IsEqualTo(25.25f);
+        var wire = new PacketStream(fish.Write(new PacketStream(), 2).GetBytes());
+        wire.ReadUInt32();
+        wire.ReadUInt64();
+        wire.ReadByte();
+        wire.ReadByte();
+        await Assert.That(wire.ReadInt32()).IsEqualTo(2);
+        await Assert.That(fish.Count).IsEqualTo(5);
+        await Assert.That(fish.Weight).IsEqualTo(77.5f);
+    }
+
+    [Test]
+    public async Task ReservedQuantity_OrdinaryConsumptionOnlyUsesUnreservedUnitsThenReleaseRestoresAccess()
+    {
+        var item = AddItem(1, 100, 10);
+        using var reservation = new TradeReservation();
+        await Assert.That(reservation.TryReserve(item, 7)).IsTrue();
+        await Assert.That(_bag.ConsumeItem(ItemTaskType.Invalid, 100, 9, item)).IsEqualTo(3);
+        await Assert.That(item.Count).IsEqualTo(7);
+        await Assert.That(_bag.TryConsumeItems(ItemTaskType.Invalid, new Dictionary<uint, int> { [100] = 1 })).IsFalse();
+        await Assert.That(_bag.ConsumeItem(ItemTaskType.Invalid, 100, 1, null)).IsEqualTo(0);
+        reservation.Release(item);
+        await Assert.That(_bag.TryConsumeItems(ItemTaskType.Invalid, new Dictionary<uint, int> { [100] = 7 })).IsTrue();
+        await Assert.That(_bag.Items).IsEmpty();
+    }
+
+    [Test]
+    public async Task FullyReservedForeignPreferredItem_DoesNotConsumeAnUnrelatedLocalStack()
+    {
+        var local = AddItem(1, 100, 5);
+        var foreign = AddItem(2, 100, 5, AddOwner(8));
+        using var reservation = new TradeReservation();
+        reservation.TryReserve(foreign, 5);
+        await Assert.That(_bag.ConsumeItem(ItemTaskType.Invalid, 100, 2, foreign)).IsEqualTo(0);
+        await Assert.That(local.Count).IsEqualTo(5);
+        await Assert.That(foreign.Count).IsEqualTo(5);
+    }
+
+    [Test]
+    public async Task ReservedQuantity_BlocksContainerRemovalMovementSplitAndStagedExchange()
+    {
+        var item = AddItem(1, 100, 10);
+        var other = AddOwner(8);
+        using var reservation = new TradeReservation();
+        reservation.TryReserve(item, 7);
+        await Assert.That(_bag.RemoveItem(ItemTaskType.Invalid, item, true)).IsFalse();
+        await Assert.That(_owner.Inventory.Warehouse.AddOrMoveExistingItem(ItemTaskType.Invalid, item)).IsFalse();
+        await Assert.That(_owner.Inventory.SplitOrMoveItemEx(ItemTaskType.Invalid, _bag, _bag,
+            item.Id, SlotType.Inventory, 0, 0, SlotType.Inventory, 1, 1)).IsFalse();
+        bool moved;
+        bool exchanged;
+        bool consumed;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using (var mutation = new InventoryMutation(ItemTaskType.Invalid))
+                moved = mutation.TryMove(item, other.Inventory.Bag);
+            using (var mutation = new InventoryMutation(ItemTaskType.Invalid))
+                exchanged = mutation.TryExchange([(item, 1, other.Inventory.Bag)]);
+            using (var mutation = new InventoryMutation(ItemTaskType.Invalid))
+                consumed = mutation.TryConsume(_bag, item, 4);
+        }
+        await Assert.That(moved).IsFalse();
+        await Assert.That(exchanged).IsFalse();
+        await Assert.That(consumed).IsFalse();
+        await Assert.That(_bag.Items.Single()).IsSameReferenceAs(item);
+        await Assert.That(item.Count).IsEqualTo(10);
+        await Assert.That(_allItems[1]).IsSameReferenceAs(item);
+        await Assert.That(_deleted).IsEmpty();
+    }
+
+    [Test]
+    public async Task ReservedMoney_BlocksSpendingAndBankDepositButAllowsUnreservedFundsAndBankWithdrawal()
+    {
+        _owner.Money2 = 50;
+        using var reservation = new TradeReservation();
+        await Assert.That(reservation.TryReserve(_owner, 70)).IsTrue();
+        await Assert.That(_owner.SubtractMoney(SlotType.Inventory, 31)).IsFalse();
+        await Assert.That(_owner.ChangeMoney(SlotType.Inventory, SlotType.Bank, 31)).IsFalse();
+        await Assert.That(_owner.ChangeMoney(SlotType.Inventory, -31)).IsFalse();
+        bool staged;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.Invalid);
+            staged = mutation.TryChangeMoney(_owner, -31);
+        }
+        await Assert.That(staged).IsFalse();
+        await Assert.That(_owner.Money).IsEqualTo(100L);
+        await Assert.That(_owner.Money2).IsEqualTo(50L);
+        await Assert.That(_owner.SubtractMoney(SlotType.Inventory, 30)).IsTrue();
+        await Assert.That(_owner.ChangeMoney(SlotType.Bank, SlotType.Inventory, 10)).IsTrue();
+        await Assert.That(_owner.Money).IsEqualTo(80L);
+        await Assert.That(_owner.Money2).IsEqualTo(40L);
+        reservation.Dispose();
+        await Assert.That(_owner.SubtractMoney(SlotType.Inventory, 80)).IsTrue();
+    }
+
+    [Test]
+    public async Task Reservations_AreExclusiveAndReplacementOrDisposalDoesNotAffectAnotherTrade()
+    {
+        var item = AddItem(1, 100, 4);
+        var other = AddOwner(8);
+        using var first = new TradeReservation();
+        using var second = new TradeReservation();
+        await Assert.That(first.TryReserve(item, 2)).IsTrue();
+        await Assert.That(second.TryReserve(item, 1)).IsFalse();
+        await Assert.That(first.TryReserve(_owner, 70)).IsTrue();
+        await Assert.That(second.TryReserve(_owner, 10)).IsFalse();
+        await Assert.That(first.TryReserve(_owner, 101)).IsFalse();
+        await Assert.That(TradeReservation.GetReservedMoney(_owner)).IsEqualTo(70);
+        await Assert.That(first.TryReserve(_owner, 40)).IsTrue();
+        await Assert.That(second.TryReserve(other, 50)).IsTrue();
+        second.Release(item);
+        await Assert.That(TradeReservation.GetReservedCount(item)).IsEqualTo(2);
+        await Assert.That(TradeReservation.HasReservations(_owner)).IsTrue();
+        first.Dispose();
+        first.Dispose();
+        await Assert.That(TradeReservation.HasReservations(_owner)).IsFalse();
+        await Assert.That(TradeReservation.GetReservedMoney(other)).IsEqualTo(50);
+        await Assert.That(second.TryReserve(item, 3)).IsTrue();
+    }
+
+    [Test]
+    public async Task OfferedItemExpiry_InvalidatesWholeTradeBeforeRemovingExpiredItem()
+    {
+        var expiring = AddItem(1, 100, 1);
+        var retained = AddItem(2, 200, 1);
+        expiring.ExpirationOnlineMinutesLeft = 1;
+        var invalidations = 0;
+        var clearedBeforeNotification = false;
+        using var reservation = new TradeReservation(() =>
+        {
+            invalidations++;
+            clearedBeforeNotification = TradeReservation.GetReservedCount(retained) == 0 &&
+                TradeReservation.GetReservedMoney(_owner) == 0 && _bag.Items.Contains(expiring);
+        });
+        reservation.TryReserve(expiring, 1);
+        reservation.TryReserve(retained, 1);
+        reservation.TryReserve(_owner, 80);
+        var timer = typeof(ItemManager).GetMethod("UpdateItemContainerTimers", BindingFlags.Static | BindingFlags.NonPublic)!;
+        timer.Invoke(null, [TimeSpan.FromMinutes(2), _bag, _owner]);
+        await Assert.That(invalidations).IsEqualTo(1);
+        await Assert.That(clearedBeforeNotification).IsTrue();
+        await Assert.That(_bag.Items.Single()).IsSameReferenceAs(retained);
+        await Assert.That(_deleted).IsEquivalentTo(new ulong[] { 1 });
+        await Assert.That(TradeReservation.HasReservations(_owner)).IsFalse();
+    }
+
+    [Test]
+    public async Task OfferedItemExpiry_StillRemovesExpiredItemWhenCancellationNotificationThrows()
+    {
+        var item = AddItem(1, 100, 1);
+        item.ExpirationOnlineMinutesLeft = 1;
+        using var reservation = new TradeReservation(() => throw new IOException("Notification failed"));
+        reservation.TryReserve(item, 1);
+        reservation.TryReserve(_owner, 80);
+        var timer = typeof(ItemManager).GetMethod("UpdateItemContainerTimers", BindingFlags.Static | BindingFlags.NonPublic)!;
+        timer.Invoke(null, [TimeSpan.FromMinutes(2), _bag, _owner]);
+        await Assert.That(_bag.Items).IsEmpty();
+        await Assert.That(_deleted).IsEquivalentTo(new ulong[] { 1 });
+        await Assert.That(TradeReservation.HasReservations(_owner)).IsFalse();
+    }
+
+    [Test]
+    public async Task DestroyPacket_CannotDestroyReservedUnitsButCanDestroyTheUnreservedRemainder()
+    {
+        var item = AddItem(1, 100, 5);
+        using var reservation = new TradeReservation();
+        reservation.TryReserve(item, 3);
+        var packet = new CSDestroyItemPacket { Connection = new GameConnection(null) { ActiveChar = _owner } };
+        packet.Read(new PacketStream().Write(item.Id).Write((byte)SlotType.Inventory).Write((byte)0).Write(4));
+        await Assert.That(item.Count).IsEqualTo(5);
+        packet.Read(new PacketStream().Write(item.Id).Write((byte)SlotType.Inventory).Write((byte)0).Write(2));
+        await Assert.That(item.Count).IsEqualTo(3);
+        await Assert.That(_bag.Items.Single()).IsSameReferenceAs(item);
+        await Assert.That(_deleted).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Expansion_DoesNotDebitOrIncreaseCapacityWhenItsMaterialsOrGoldAreReserved(bool bank)
+    {
+        var manager = new CharacterManager(null, null, null, null, null, null, null, null, null, null, null);
+        var managerField = typeof(Singleton<CharacterManager>)
+            .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previous = managerField.GetValue(null);
+        managerField.SetValue(null, manager);
+        try
+        {
+            SetField(manager, "_expands", new Dictionary<int, List<Expand>>
+            {
+                [0] = [new Expand { IsBank = bank, Price = 25, ItemId = 100, ItemCount = 2 }]
+            });
+            _owner.NumInventorySlots = 50;
+            _owner.NumBankSlots = 50;
+            _bag.ContainerSize = _owner.Inventory.Warehouse.ContainerSize = 50;
+            var item = AddItem(1, 100, 4);
+            using var reservation = new TradeReservation();
+            reservation.TryReserve(item, 3);
+            var type = bank ? SlotType.Bank : SlotType.Inventory;
+            _owner.Inventory.ExpandSlot(type);
+            await Assert.That(_owner.Money).IsEqualTo(100L);
+            await Assert.That(item.Count).IsEqualTo(4);
+            await Assert.That(_bag.ContainerSize).IsEqualTo(50);
+            await Assert.That(_owner.Inventory.Warehouse.ContainerSize).IsEqualTo(50);
+            reservation.Release(item);
+            reservation.TryReserve(_owner, 80);
+            _owner.Inventory.ExpandSlot(type);
+            await Assert.That(_owner.Money).IsEqualTo(100L);
+            await Assert.That(item.Count).IsEqualTo(4);
+            reservation.Dispose();
+            _owner.Inventory.ExpandSlot(type);
+            await Assert.That(_owner.Money).IsEqualTo(75L);
+            await Assert.That(item.Count).IsEqualTo(2);
+            await Assert.That(bank ? _owner.Inventory.Warehouse.ContainerSize : _bag.ContainerSize).IsEqualTo(60);
+        }
+        finally
+        {
+            managerField.SetValue(null, previous);
+        }
+    }
+
+    private static ItemAction TaskAction(ItemTask task) =>
+        (ItemAction)new PacketStream(task.Write(new PacketStream()).GetBytes()).ReadByte();
+
+    private CharacterMock AddOwner(uint id)
+    {
+        var owner = new CharacterMock { Id = id, Money = 100, NumInventorySlots = 10, NumBankSlots = 10 };
+        var containers = (Dictionary<ulong, ItemContainer>)typeof(ItemManager)
+            .GetField("_allPersistentContainers", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(ItemManager.Instance)!;
+        var nextId = containers.Keys.Max() + 1;
+        foreach (var slotType in Enum.GetValues<SlotType>())
+        {
+            if (slotType == SlotType.EquipmentMate)
+                continue;
+            var container = new ItemContainer(owner.Id, slotType, false, owner)
+                { ContainerId = nextId++, Owner = owner };
+            containers.Add(container.ContainerId, container);
+        }
+        owner.Inventory = new Inventory(owner);
+        return owner;
+    }
+
+    private ItemMock AddItem(uint id, uint templateId, int count, CharacterMock owner)
+    {
+        var bag = owner.Inventory.Bag;
+        var item = new ItemMock(id, Template(templateId), count)
+        {
+            OwnerId = owner.Id, SlotType = SlotType.Inventory, Slot = bag.Items.Count,
+            _holdingContainer = bag
+        };
+        bag.Items.Add(item);
+        bag.UpdateFreeSlotCount();
+        _allItems.Add(id, item);
+        return item;
     }
 
     private ItemTemplate Template(uint id)

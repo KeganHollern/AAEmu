@@ -13,6 +13,7 @@ using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Expeditions;
 using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Team;
 using AAEmu.Game.Models.StaticValues;
@@ -248,15 +249,9 @@ public class ExpeditionManager(IExpeditionIdManager expeditionIdManager, ITeamMa
             return;
         }
 
-        owner.Money -= AppConfiguration.Instance.Expedition.Create.Cost;
-        owner.SendPacket(
-            new SCItemTaskSuccessPacket(
-                ItemTaskType.ExpeditionCreation,
-                [
-                    new MoneyChange(-AppConfiguration.Instance.Expedition.Create.Cost)
-                ],
-                [])
-        );
+        if (!owner.SubtractMoney(SlotType.Inventory, AppConfiguration.Instance.Expedition.Create.Cost,
+                ItemTaskType.ExpeditionCreation))
+            return;
         // -----------------
 
         var expedition = Create(name, owner);

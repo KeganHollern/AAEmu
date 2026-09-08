@@ -184,6 +184,17 @@ public class Item : PacketMarshaler, IComparable<Item>
         _isDirty = true;
     }
 
+    internal virtual Item CopyForSplit(ulong id, int count)
+    {
+        var copy = (Item)MemberwiseClone();
+        copy.Id = id;
+        copy.Count = count;
+        copy.Detail = Detail?.ToArray();
+        copy._holdingContainer = null;
+        copy.Slot = -1;
+        return copy;
+    }
+
     public Item(ulong id, ItemTemplate template, int count)
     {
         WorldId = AppConfiguration.Instance.Id;
@@ -229,6 +240,11 @@ public class Item : PacketMarshaler, IComparable<Item>
         WorldId = stream.ReadByte();
         UnsecureTime = stream.ReadDateTime();
         UnpackTime = stream.ReadDateTime();
+    }
+
+    public PacketStream Write(PacketStream stream, int count)
+    {
+        return count == Count ? Write(stream) : CopyForSplit(Id, count).Write(stream);
     }
 
     public override PacketStream Write(PacketStream stream)
