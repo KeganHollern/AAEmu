@@ -13,7 +13,10 @@ public class AuctionManagerTests
         var mockAuctionId = Mock.Of<IAuctionIdManager>();
         var mockLocale = Mock.Of<ILocalizationManager>();
         var mockTask = Mock.Of<ITaskManager>();
-        var manager = new AuctionManager(mockItem.Object, mockName.Object, mockAuctionId.Object, mockLocale.Object, mockTask.Object);
+        var mockMail = Mock.Of<IMailManager>();
+        var mockSave = Mock.Of<ISaveManager>();
+        var manager = new AuctionManager(mockItem.Object, mockName.Object, mockAuctionId.Object, mockLocale.Object,
+            mockTask.Object, mockMail.Object, new Lazy<ISaveManager>(() => mockSave.Object));
 
         await Assert.That(manager).IsNotNull();
         Mock.VerifyNoOtherCalls(mockItem);
@@ -21,5 +24,7 @@ public class AuctionManagerTests
         Mock.VerifyNoOtherCalls(mockAuctionId);
         Mock.VerifyNoOtherCalls(mockLocale);
         Mock.VerifyNoOtherCalls(mockTask);
+        Mock.VerifyNoOtherCalls(mockMail);
+        Mock.VerifyNoOtherCalls(mockSave);
     }
 }
