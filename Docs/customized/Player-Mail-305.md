@@ -20,8 +20,14 @@ The obsolete `MailPlayerToPlayer` implementation has been removed. The existing
 wire input layout and Normal-mail delay are retained. The attachment claim issue
 and its held pull request remain separate work.
 
-Validation: all 71 executor tests passed, including two reservation cases. The
-last two tests were compiled against the previously built helper assembly while
-the entry-point preflight reports the pending shared-save API. Nine real-MySQL
-failure/reload cases are authored. Compilation and integrated validation await
-the shared persistence checkpoint dependency; no release has been completed.
+Validation: executor cases cover reservations, self-mail payment and missing
+recipients; their fixture supplies the real inventory and mail managers. Legacy
+send cases moved from the mailbox-only fixture. These unit cases are compiled
+against the previously built helper assembly while the entry-point preflight
+reports the pending shared-save API. Nine real-MySQL failure/reload cases exercise
+`CharacterMails.SendMailToPlayer` and its actual save dependency, including forged
+header metadata. Compilation and integrated validation await the shared
+persistence checkpoint dependency; no release has been completed.
+
+The final focused runs passed 76 executor cases and 24 remaining mailbox cases.
+The integrated MySQL cases remain unexecuted.

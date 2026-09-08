@@ -337,6 +337,30 @@ public sealed class PlayerMailSendTests
     }
 
     [Test]
+    public async Task MoneySentToSelf_PaysExpressFeeAndEnclosesTheExactAmount()
+    {
+        await Assert.That(Send(copper: 500, receiver: "Sender")).IsEqualTo(MailResult.Success);
+        await Assert.That(_sender.Money).IsEqualTo(400L);
+        var mail = _mails._allPlayerMails.Values.Single();
+        await Assert.That(mail.Header.ReceiverId).IsEqualTo(_sender.Id);
+        await Assert.That(mail.Body.CopperCoins).IsEqualTo(500);
+        await Assert.That(_commitCalls).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments((string)null)]
+    [Arguments("")]
+    [Arguments("   ")]
+    [Arguments("Unknown")]
+    public async Task MissingRecipient_RejectsBeforeDebitingOrSaving(string receiver)
+    {
+        await Assert.That(Send(copper: 500, receiver: receiver)).IsEqualTo(MailResult.UnableToFindRecipient);
+        await Assert.That(_sender.Money).IsEqualTo(1000L);
+        await Assert.That(_mails._allPlayerMails).IsEmpty();
+        await Assert.That(_commitCalls).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task RecipientFullBagAndLargeMailbox_UsesUnlimitedMailContainer()
     {
         _receiver.Inventory.Bag.ContainerSize = 0;
@@ -352,8 +376,8 @@ public sealed class PlayerMailSendTests
     }
 
     private MailResult Send(MailType type = MailType.Express, int copper = 0, int billing = 0,
-        int other = 0, IReadOnlyList<(SlotType Type, byte Slot)> slots = null) =>
-        PlayerMailSendExecutor.Execute(_sender, type, "Receiver", "Title", "Text", copper,
+        int other = 0, IReadOnlyList<(SlotType Type, byte Slot)> slots = null, string receiver = "Receiver") =>
+        PlayerMailSendExecutor.Execute(_sender, type, receiver, "Title", "Text", copper,
             billing, other, slots ?? [], _mails, _items, _names, () => { _commitCalls++; return _commit(); });
 
     private Item AddItem(ulong id, int slot)
