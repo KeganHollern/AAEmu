@@ -10,6 +10,7 @@ using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World.Zones;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects;
 
@@ -82,6 +83,9 @@ public class DamageEffect : EffectTemplate
             Logger.Warn($"No caster defined for DamageEffect {Id}, with targetObjId {target.ObjId} ({target})");
             return;
         }
+
+        if (PeaceProtection.PreventsAttack(caster, target))
+            return;
 
         if (Bonuses != null)
         {
@@ -410,10 +414,7 @@ public class DamageEffect : EffectTemplate
         {
             //trgCharacter.IsInBattle |= trg.Hp > 0;
             //trgCharacter.LastCombatActivity = DateTime.UtcNow;
-            if (attacker is Character attackerCharacter)
-            {
-                trgCharacter.SetHostileActivity(attackerCharacter);
-            }
+            trgCharacter.SetHostileActivity(caster);
             trgCharacter.Procs?.RollProcsForKind(ProcChanceKind.TakeDamageAny);
         }
 

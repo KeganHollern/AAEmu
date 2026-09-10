@@ -25,6 +25,7 @@ using AAEmu.Game.Models.Game.Static;
 using AAEmu.Game.Models.Game.Units.Route;
 using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Models.Tasks.Skills;
 using AAEmu.Game.Utils;
@@ -333,6 +334,9 @@ public class Unit : BaseUnit, IUnit
     /// <param name="killReason"></param>
     public virtual void ReduceCurrentHp(BaseUnit attacker, int value, KillReason killReason = KillReason.Damage)
     {
+        if (killReason != KillReason.Gm && value > 0 && PeaceProtection.PreventsAttack(attacker, this))
+            return;
+
         if (Hp <= 0)
             return;
 
