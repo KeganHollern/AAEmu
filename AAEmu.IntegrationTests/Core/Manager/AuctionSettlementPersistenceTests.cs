@@ -22,7 +22,7 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 
 [Collection("GameMySql")]
 [Trait("Category", "GameMySql")]
-public sealed class AuctionSettlementPersistenceTests
+public sealed partial class AuctionSettlementPersistenceTests
 {
     private static int _nextId = 980000;
 
@@ -168,8 +168,11 @@ public sealed class AuctionSettlementPersistenceTests
             .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
         private static readonly FieldInfo s_quests = typeof(Singleton<QuestManager>)
             .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        private static readonly FieldInfo s_mail = typeof(Singleton<MailManager>)
+            .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
         private readonly object _previousItems = s_items.GetValue(null);
         private readonly object _previousQuests = s_quests.GetValue(null);
+        private readonly object _previousMail = s_mail.GetValue(null);
         public uint Id { get; }
         public ItemManager Items { get; }
         public MailManager Mail { get; }
@@ -235,6 +238,7 @@ public sealed class AuctionSettlementPersistenceTests
             mailIds.Setup(manager => manager.GetNextId()).Returns(() => mailId++);
             Mail = new MailManager(mailIds.Object, names, Items, Mock.Of<ITaskManager>(), world.Object,
                 new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>()), locale.Object) { _allPlayerMails = [] };
+            s_mail.SetValue(null, Mail);
             var auctionIds = new Mock<IAuctionIdManager>();
             uint lotId = Id + 10;
             auctionIds.Setup(manager => manager.GetNextId()).Returns(() => lotId++);
@@ -263,7 +267,12 @@ public sealed class AuctionSettlementPersistenceTests
             new AuctionLot { Id = lotId }, new AuctionBid { LotId = lotId, Money = amount });
         public BaseMail[] OwnMails() => Mail._allPlayerMails.Values.Where(mail =>
             mail.Header.ReceiverId >= Id + 1 && mail.Header.ReceiverId <= Id + 3).ToArray();
-        public void Dispose() { s_items.SetValue(null, _previousItems); s_quests.SetValue(null, _previousQuests); }
+        public void Dispose()
+        {
+            s_items.SetValue(null, _previousItems);
+            s_quests.SetValue(null, _previousQuests);
+            s_mail.SetValue(null, _previousMail);
+        }
         private static ItemTemplate Template(uint id) => new() { Id = id, MaxCount = 100, BindType = ItemBindType.Normal, FixedGrade = -1, Gradable = true };
         private static TestCharacter Character(uint id) => new()
         {

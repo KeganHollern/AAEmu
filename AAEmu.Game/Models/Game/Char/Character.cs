@@ -70,10 +70,13 @@ public partial class Character : Unit, ICharacter
         get => _laborPower;
         set
         {
-            if (_laborPower == value)
-                return;
-            _laborPower = value;
-            AccountManager.Instance.UpdateLabor(AccountId, value);
+            lock (AccountManager.Instance.GetAccountSyncRoot(AccountId))
+            {
+                if (_laborPower == value)
+                    return;
+                _laborPower = value;
+                AccountManager.Instance.UpdateLabor(AccountId, value);
+            }
         }
     }
 
@@ -280,6 +283,28 @@ public partial class Character : Unit, ICharacter
     {
         _laborPower = labor;
         _laborPowerModified = newTime;
+    }
+
+    internal void ApplyCommittedAuctionSaleState(
+        long money,
+        short labor,
+        int experience,
+        byte level,
+        int consumedLabor,
+        DateTime updatedAt)
+    {
+        Money = money;
+        _laborPower = labor;
+        Experience = experience;
+        Level = level;
+        ConsumedLaborPower = consumedLabor;
+        Updated = updatedAt;
+    }
+
+    public void ApplyMoneyDelta(long amount)
+    {
+        lock (StorePurchaseSyncRoot)
+            Money += amount;
     }
 
     public bool InParty
@@ -1441,6 +1466,12 @@ public partial class Character : Unit, ICharacter
 
     public void AddExp(int expDelta, bool shouldAddAbilityExp)
     {
+        lock (StorePurchaseSyncRoot)
+            AddExpLocked(expDelta, shouldAddAbilityExp);
+    }
+
+    private void AddExpLocked(int expDelta, bool shouldAddAbilityExp)
+    {
         if (expDelta == 0)
             return;
 
@@ -1616,6 +1647,12 @@ public partial class Character : Unit, ICharacter
 
     public void ChangeLabor(short change, int actabilityId)
     {
+        lock (StorePurchaseSyncRoot)
+            ChangeLaborLocked(change, actabilityId);
+    }
+
+    private void ChangeLaborLocked(short change, int actabilityId)
+    {
         var laborBefore = LaborPower;
         var actabilityChange = 0;
         byte actabilityStep = 0;
@@ -1650,6 +1687,12 @@ public partial class Character : Unit, ICharacter
     }
 
     public bool SpendLaborWithoutExperience(short amount)
+    {
+        lock (StorePurchaseSyncRoot)
+            return SpendLaborWithoutExperienceLocked(amount);
+    }
+
+    private bool SpendLaborWithoutExperienceLocked(short amount)
     {
         if (amount <= 0 || LaborPower < amount)
             return false;
