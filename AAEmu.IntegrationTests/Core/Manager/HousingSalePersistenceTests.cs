@@ -27,6 +27,7 @@ using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
 using Moq;
+using MySql.Data.MySqlClient;
 using Xunit;
 
 namespace AAEmu.IntegrationTests.Core.Manager;
@@ -49,10 +50,10 @@ public sealed class HousingSalePersistenceTests
         if (failure != "none")
         {
             var trigger = $"housing_purchase_fail_{graph.House.Id}";
-            var condition = failure == "house"
-                ? $"BEFORE INSERT ON housings FOR EACH ROW BEGIN IF NEW.id={graph.House.Id}"
-                : $"BEFORE DELETE ON item_containers FOR EACH ROW BEGIN IF OLD.container_id={graph.ReturnedContainerId}";
-            Execute($"CREATE TRIGGER {trigger} {condition} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected housing purchase failure'; END IF; END");
+            if (failure == "house")
+                Execute($"CREATE TRIGGER {trigger} BEFORE INSERT ON housings FOR EACH ROW BEGIN IF NEW.id={graph.House.Id} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected housing purchase failure'; END IF; END");
+            else
+                FailReturnedCofferDeletion(trigger, graph.ReturnedContainerId, graph.Returned.DbId);
             try
             {
                 Assert.False(graph.Housing.BuyHouse(graph.House.TlId, PurchaseGraph.Price, graph.Buyer));
@@ -121,6 +122,9 @@ public sealed class HousingSalePersistenceTests
         Assert.Equal(HousingPermission.Private, restored.House.Permission);
         Assert.Equal(0u, restored.House.SellPrice);
         Assert.Equal(0u, restored.House.SellToPlayerId);
+        Assert.Equal(-1, restored.House.CurrentStep);
+        Assert.Equal(0, restored.House.NumAction);
+        Assert.Equal(1, restored.House.AllAction);
         Assert.Equal(protectedUntil, restored.House.ProtectionEndDate);
         Assert.Equal(9750, Scalar($"SELECT money FROM characters WHERE id={graph.Buyer.Id}"));
         graph.AssertSaleMails(restored.Mails, restored.Items);
@@ -195,7 +199,7 @@ public sealed class HousingSalePersistenceTests
         using var graph = new FurnitureGraph((uint)Interlocked.Increment(ref _nextId));
         var trigger = $"housing_fail_{graph.House.Id}";
         if (failDeletion)
-            Execute($"CREATE TRIGGER {trigger} BEFORE DELETE ON item_containers FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected coffer deletion failure'");
+            FailReturnedCofferDeletion(trigger, graph.CofferContainerId, graph.Coffer.DbId);
         try
         {
             lock (SaveManager.PersistenceSyncRoot)
@@ -216,7 +220,9 @@ public sealed class HousingSalePersistenceTests
                 Assert.True(graph.House.Save(context));
                 if (failDeletion)
                 {
-                    Assert.ThrowsAny<Exception>(() => furniture.Save(context));
+                    var error = Assert.Throws<MySqlException>(() => furniture.Save(context));
+                    Assert.Equal(1644, error.Number);
+                    Assert.Contains("Injected coffer deletion failure", error.Message);
                     transaction.Rollback();
                     inventory.Dispose();
                     furniture.Dispose();
@@ -576,7 +582,11 @@ public sealed class HousingSalePersistenceTests
         }
 
         private static HousingTemplate HouseTemplate(uint id) => new()
-            { Id = id, IsSellable = true, HousingBindingDoodad = [], Taxation = new Taxation { Tax = 5000 } };
+        {
+            Id = id, IsSellable = true, HousingBindingDoodad = [], Taxation = new Taxation { Tax = 5000 },
+            // The shared schema includes Lodestones saved at construction step zero.
+            BuildSteps = { [0] = new HousingBuildStep { HousingId = id, Step = 0, NumActions = 1 } }
+        };
 
         private T Replace<T>(T instance) where T : class
         {
@@ -688,6 +698,17 @@ public sealed class HousingSalePersistenceTests
         TemplateId = id, AttachPoint = attach, IsPersistent = true,
         PlantTime = house.PlaceDate, GrowthTime = house.PlaceDate, PhaseTime = house.PlaceDate
     };
+
+    private static void FailReturnedCofferDeletion(string trigger, ulong containerId, uint doodadId)
+    {
+        // REPLACE also fires DELETE triggers. Wait until the earlier item writes
+        // and furniture-row deletion have occurred in this same transaction.
+        Execute($"CREATE TRIGGER {trigger} BEFORE DELETE ON item_containers FOR EACH ROW BEGIN " +
+            $"IF OLD.container_id={containerId} " +
+            "AND NOT EXISTS (SELECT 1 FROM items WHERE container_id=OLD.container_id) " +
+            $"AND NOT EXISTS (SELECT 1 FROM doodads WHERE id={doodadId}) " +
+            "THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected coffer deletion failure'; END IF; END");
+    }
 
     private static long Scalar(string sql)
     {
