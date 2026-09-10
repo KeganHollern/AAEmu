@@ -22,4 +22,5 @@ public interface IAuctionManager : ILoadable
     void SearchAuctionLots(Character player, AuctionSearch search);
     void PostLotOnAuction(Character player, uint npcId, uint npcId2, ulong itemId, int startPrice, int buyoutPrice, AuctionDuration duration);
     (int, int) Save(MySqlConnection connection, MySqlTransaction transaction);
+    (int, int) Save(PersistenceSaveContext context);
 }

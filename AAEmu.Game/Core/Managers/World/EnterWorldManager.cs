@@ -196,6 +196,7 @@ public class EnterWorldManager(
     {
         if (activeChar != null)
         {
+            TradeManager.Instance.CancelTrade(activeChar, 0);
             activeChar.DisabledSetPosition = true;
             activeChar.IsOnline = false;
             activeChar.LeaveTime = DateTime.UtcNow;

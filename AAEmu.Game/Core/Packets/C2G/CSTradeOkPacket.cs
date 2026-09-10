@@ -9,6 +9,7 @@ public class CSTradeOkPacket() : GamePacket(CSOffsets.CSTradeOkPacket, 1)
     public override void Read(PacketStream stream)
     {
         //Logger.Warn("TradeOk");
-        TradeManager.Instance.OkTrade(Connection.ActiveChar);
+        if (Connection?.ActiveChar is { } character)
+            TradeManager.Instance.OkTrade(character);
     }
 }

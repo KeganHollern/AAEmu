@@ -65,6 +65,13 @@ public class ItemContainer
 
     public uint MateId { get; set; }
 
+    internal void SetOwnerId(uint ownerId)
+    {
+        _ownerId = ownerId;
+        _owner = null;
+        IsDirty = true;
+    }
+
     public SlotType ContainerType
     {
         get => _containerType;
@@ -326,7 +333,7 @@ public class ItemContainer
         int preferredSlot,
         bool notifyInventory)
     {
-        if (item == null)
+        if (item == null || TradeReservation.GetReservedCount(item) != 0)
         {
             return false;
         }
@@ -482,7 +489,8 @@ public class ItemContainer
 
     private bool RemoveItemLocked(ItemTaskType task, Item item, bool releaseIdAsWell)
     {
-        if (item == null || item._holdingContainer != this || !Items.Contains(item) || !item.CanDestroy())
+        if (item == null || item._holdingContainer != this || !Items.Contains(item) || !item.CanDestroy() ||
+            TradeReservation.GetReservedCount(item) != 0)
         {
             return false;
         }
@@ -549,11 +557,15 @@ public class ItemContainer
             return 0; // Preferred item template did not match the requested template
         }
 
+        if (preferredItem != null && !foundItems.Contains(preferredItem))
+            return 0;
+
         var totalConsumed = 0;
         var itemTasks = new List<ItemTask>();
 
         // Try to consume preferred item first
-        if (amountToConsume > 0 && preferredItem != null)
+        if (amountToConsume > 0 && preferredItem != null &&
+            preferredItem.Count > TradeReservation.GetReservedCount(preferredItem))
         {
             // Remove this entry from our list
             if (!foundItems.Remove(preferredItem))
@@ -562,7 +574,7 @@ public class ItemContainer
                 return 0;
             }
 
-            var toRemove = Math.Min(preferredItem.Count, amountToConsume);
+            var toRemove = Math.Min(preferredItem.Count - TradeReservation.GetReservedCount(preferredItem), amountToConsume);
             preferredItem.Count -= toRemove;
             amountToConsume -= toRemove;
 
@@ -585,7 +597,9 @@ public class ItemContainer
         {
             foreach (var i in foundItems.OrderBy(x => x.Slot))
             {
-                var toRemove = Math.Min(i.Count, amountToConsume);
+                var toRemove = Math.Min(i.Count - TradeReservation.GetReservedCount(i), amountToConsume);
+                if (toRemove <= 0)
+                    continue;
                 i.Count -= toRemove;
                 amountToConsume -= toRemove;
 
@@ -638,7 +652,9 @@ public class ItemContainer
                     if (item._holdingContainer != this || item.Count <= 0)
                         return false;
 
-                    var count = Math.Min(item.Count, remaining);
+                    var count = Math.Min(item.Count - TradeReservation.GetReservedCount(item), remaining);
+                    if (count <= 0)
+                        continue;
                     if (count == item.Count && !item.CanDestroy())
                         return false;
 

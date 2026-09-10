@@ -52,7 +52,8 @@ public sealed class InventoryMutation : IDisposable
         {
             return Fail();
         }
-        if (balance < 0)
+        if (balance < 0 || (delta < 0 && location == SlotType.Inventory &&
+            balance < TradeReservation.GetReservedMoney(character)))
             return Fail();
 
         _wallets.TryAdd(character, (character.Money, character.Money2));
@@ -72,7 +73,8 @@ public sealed class InventoryMutation : IDisposable
     public bool TryConsume(ItemContainer source, Item item, int count)
     {
         RequireActive();
-        if (_failed || _moved.Contains(item) || !IsHeldBy(item, source) || count <= 0 || count > item.Count ||
+        if (_failed || _moved.Contains(item) || !IsHeldBy(item, source) || count <= 0 ||
+            count > item.Count - TradeReservation.GetReservedCount(item) ||
             (count == item.Count && !item.CanDestroy()))
             return Fail();
 
@@ -111,9 +113,63 @@ public sealed class InventoryMutation : IDisposable
     {
         RequireActive();
         var source = item?._holdingContainer;
-        if (_failed || destination == null || !IsHeldBy(item, source) || source == destination)
+        if (_failed || destination == null || !IsHeldBy(item, source) || source == destination ||
+            TradeReservation.GetReservedCount(item) != 0)
             return Fail();
         return Move(item, source, destination, preferredSlot, false);
+    }
+
+    /// <summary>Prepares all outgoing quantities before placing incoming items, including a full-bag exchange.</summary>
+    public bool TryExchange(IReadOnlyList<(Item Item, int Count, ItemContainer Destination)> transfers)
+    {
+        RequireActive();
+        if (_failed || transfers == null)
+            return Fail();
+        var ids = new HashSet<ulong>();
+        foreach (var (item, count, destination) in transfers)
+        {
+            if (!IsHeldBy(item, item?._holdingContainer) || destination == null ||
+                item._holdingContainer == destination || count <= 0 || count > item.Count ||
+                item.Template == null || item.Count > item.Template.MaxCount ||
+                !ids.Add(item.Id) || _moved.Contains(item) || TradeReservation.GetReservedCount(item) != 0)
+                return Fail();
+        }
+
+        var moving = new List<(Item Item, ItemContainer Source, ItemContainer Destination, bool Created)>();
+        foreach (var (item, count, destination) in transfers)
+        {
+            var source = item._holdingContainer;
+            Capture(source);
+            Capture(item);
+            if (count == item.Count)
+            {
+                if (source.ContainerType != SlotType.Mail)
+                    AddTask(source.Owner, new ItemRemoveSlot(item.Id, item.SlotType, (byte)item.Slot));
+                source.Items.Remove(item);
+                source.UpdateFreeSlotCount();
+                moving.Add((item, source, destination, false));
+            }
+            else
+            {
+                var id = ItemManager.Instance.ReserveItemId();
+                if (id == 0)
+                    return Fail();
+                var split = item.CopyForSplit(id, count);
+                if (!ItemManager.Instance.AddItem(split))
+                    return Fail();
+                _created.Add(split);
+                item.Count -= count;
+                _moved.Add(item);
+                AddTask(source.Owner, new ItemCountUpdate(item, -count));
+                var owner = source.Owner;
+                _notifications.Add(() => owner?.Inventory.OnConsumedItem(item, count));
+                moving.Add((split, null, destination, true));
+            }
+        }
+        foreach (var (item, source, destination, created) in moving)
+            if (!Move(item, source, destination, -1, created, source != null))
+                return false;
+        return true;
     }
 
     /// <summary>
@@ -208,7 +264,13 @@ public sealed class InventoryMutation : IDisposable
         return true;
     }
 
-    public bool Complete()
+    public IReadOnlyList<ItemTask> GetTasks(ICharacter character)
+    {
+        RequireLock();
+        return _tasks.TryGetValue(character, out var tasks) ? tasks.AsReadOnly() : [];
+    }
+
+    public bool Complete(bool publishItemTasks = true)
     {
         RequireActive();
         if (_failed)
@@ -220,7 +282,7 @@ public sealed class InventoryMutation : IDisposable
             ItemManager.Instance.ReleaseId(item.Id);
         foreach (var (owner, tasks) in _tasks)
         {
-            if (_taskType != ItemTaskType.Invalid && tasks.Count > 0)
+            if (publishItemTasks && _taskType != ItemTaskType.Invalid && tasks.Count > 0)
                 foreach (var batch in tasks.Chunk(30))
                     owner.SendPacket(new SCItemTaskSuccessPacket(_taskType, [.. batch], []));
         }
@@ -229,6 +291,16 @@ public sealed class InventoryMutation : IDisposable
         foreach (var notification in _notifications)
             notification();
         return true;
+    }
+
+    /// <summary>
+    /// Retains prepared state without publishing when a commit outcome is uncertain.
+    /// It is also safe after Complete, including when a notification threw.
+    /// </summary>
+    public void PreservePreparedState()
+    {
+        RequireLock();
+        _finished = true;
     }
 
     public void Dispose()
@@ -253,7 +325,8 @@ public sealed class InventoryMutation : IDisposable
         }
     }
 
-    private bool Move(Item item, ItemContainer source, ItemContainer destination, int preferredSlot, bool created)
+    private bool Move(Item item, ItemContainer source, ItemContainer destination, int preferredSlot, bool created,
+        bool sourceDetached = false)
     {
         // Container callbacks describe one transition. Do not queue intermediate
         // transitions whose item slot could change again before publication.
@@ -274,7 +347,7 @@ public sealed class InventoryMutation : IDisposable
             Capture(source);
             source.Items.Remove(item);
             source.UpdateFreeSlotCount();
-            if (source.ContainerType != SlotType.Mail)
+            if (!sourceDetached && source.ContainerType != SlotType.Mail)
                 AddTask(sourceOwner, new ItemRemoveSlot(item.Id, oldSlotType, oldSlot));
         }
         item._holdingContainer = destination;

@@ -238,6 +238,7 @@ public static class Program
 
                 services.AddSingleton<SaveManager>();
                 services.AddSingleton<ISaveManager>(sp => sp.GetRequiredService<SaveManager>());
+                services.AddSingleton(sp => new Lazy<ISaveManager>(sp.GetRequiredService<ISaveManager>));
 
                 services.AddSingleton<ShipyardManager>();
                 services.AddSingleton<IShipyardManager>(sp => sp.GetRequiredService<ShipyardManager>());

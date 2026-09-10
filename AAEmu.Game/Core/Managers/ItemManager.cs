@@ -1409,6 +1409,16 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
     public (int, int, int) Save(MySqlConnection connection, MySqlTransaction transaction)
     {
+        return Save(connection, transaction, null);
+    }
+
+    public (int, int, int) Save(PersistenceSaveContext context)
+    {
+        return Save(context.Connection, context.Transaction, context);
+    }
+
+    private (int, int, int) Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
+    {
         var deleteCount = 0;
         var updateCount = 0;
         var containerUpdateCount = 0;
@@ -1423,9 +1433,11 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
             {
                 if (_removedItems.Count > 0)
                 {
+                    var removedItems = _removedItems.ToArray();
                     using (var deleteCommand = connection.CreateCommand())
                     {
-                        var removedItemList = string.Join(",", _removedItems);
+                        deleteCommand.Transaction = transaction;
+                        var removedItemList = string.Join(",", removedItems);
                         deleteCommand.CommandText = $"DELETE FROM items WHERE `id` IN({removedItemList})";
                         deleteCommand.Prepare();
                         deleteCount += deleteCommand.ExecuteNonQuery();
@@ -1433,7 +1445,16 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
                     if (deleteCount != _removedItems.Count)
                         Logger.Error($"Some items could not be deleted, only {deleteCount}/{_removedItems.Count} items removed !");
-                    _removedItems.Clear();
+                    void AcknowledgeDeletedItems()
+                    {
+                        lock (_removedItems)
+                            foreach (var id in removedItems)
+                                _removedItems.Remove(id);
+                    }
+                    if (context == null)
+                        AcknowledgeDeletedItems();
+                    else
+                        context.AfterCommit(AcknowledgeDeletedItems);
                 }
             }
             // Update items
@@ -1453,7 +1474,11 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                         continue; // Skip the BuyBack container
 
                     if (c.ContainerId <= 0)
+                    {
+                        if (context != null && c.IsDirty)
+                            throw new InvalidOperationException("A persistent item container has no database ID.");
                         continue;
+                    }
 
                     if (c.IsDirty == false)
                         continue;
@@ -1471,17 +1496,14 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                     command.Parameters.AddWithValue("@container_size", c.ContainerSize);
                     command.Parameters.AddWithValue("@owner_id", c.OwnerId);
                     command.Parameters.AddWithValue("@mate_id", c.MateId);
-                    try
-                    {
-                        var res = command.ExecuteNonQuery();
-                        containerUpdateCount += res;
-                        if (res > 0)
-                            c.IsDirty = false;
-                    }
-                    catch (Exception e)
-                    {
-                        Logger.Error(e);
-                    }
+                    var res = command.ExecuteNonQuery();
+                    if (res < 1)
+                        throw new InvalidOperationException($"Failed to save item container {c.ContainerId}.");
+                    containerUpdateCount += res;
+                    if (context == null)
+                        c.IsDirty = false;
+                    else
+                        context.AfterCommit(() => c.IsDirty = false);
                 }
             }
         }
@@ -1498,7 +1520,26 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                     if (item == null)
                         continue;
 
-                    if (item.SlotType == SlotType.None)
+                    if (!item.IsDirty)
+                        continue;
+
+                    // A prepared inventory mutation retains consumed objects until
+                    // commit, but their old database rows must disappear in this transaction.
+                    if (item.Count <= 0)
+                    {
+                        command.CommandText = "DELETE FROM items WHERE id = @id";
+                        command.Parameters.AddWithValue("@id", item.Id);
+                        deleteCount += command.ExecuteNonQuery();
+                        command.Parameters.Clear();
+                        if (context == null)
+                            item.IsDirty = false;
+                        else
+                            context.AfterCommit(() => item.IsDirty = false);
+                        continue;
+                    }
+
+                    var slotType = item.SlotType;
+                    if (slotType == SlotType.None)
                     {
                         // Only give an error if it has no owner, otherwise it's likely a BuyBack item
                         if (item.OwnerId <= 0)
@@ -1507,27 +1548,23 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                         // Try to re-attain the slot type by getting the owning container's type
                         if (item._holdingContainer != null)
                         {
-                            item.SlotType = GetContainerSlotTypeByContainerId(item._holdingContainer.ContainerId);
+                            slotType = GetContainerSlotTypeByContainerId(item._holdingContainer.ContainerId);
                         }
 
                         // If the slot type changed, give a warning, otherwise skip this save
-                        if (item.SlotType != SlotType.None)
+                        if (slotType != SlotType.None)
                         {
-                            Logger.Warn($"Slot type for {item.Id} was None, changing to {item.SlotType}");
+                            Logger.Warn($"Saving slot type {slotType} for item {item.Id} from its container");
                         }
                         else
                         {
+                            if (context != null && item._holdingContainer?.ContainerType != SlotType.None)
+                                throw new InvalidOperationException($"Item {item.Id} has no persistent slot type.");
                             continue;
                         }
                     }
-                    if (!Enum.IsDefined(typeof(SlotType), item.SlotType))
-                    {
-                        Logger.Warn($"Found SlotType.{item.SlotType} in itemslist, skipping ID:{itemId} - Template:{item.TemplateId}");
-                        continue;
-                    }
-
-                    if (!item.IsDirty)
-                        continue;
+                    if (!Enum.IsDefined(typeof(SlotType), slotType))
+                        throw new InvalidOperationException($"Invalid slot type {slotType} for item {itemId} ({item.TemplateId}).");
 
                     var details = new Commons.Network.PacketStream();
                     item.WriteDetails(details);
@@ -1546,7 +1583,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                     command.Parameters.AddWithValue("@type", item.GetType().ToString());
                     command.Parameters.AddWithValue("@template_id", item.TemplateId);
                     command.Parameters.AddWithValue("@container_id", item._holdingContainer?.ContainerId ?? 0);
-                    command.Parameters.AddWithValue("@slot_type", (int)item.SlotType);
+                    command.Parameters.AddWithValue("@slot_type", (int)slotType);
                     command.Parameters.AddWithValue("@slot", item.Slot);
                     command.Parameters.AddWithValue("@count", item.Count);
                     command.Parameters.AddWithValue("@details", details.GetBytes());
@@ -1564,22 +1601,13 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                     command.Parameters.AddWithValue("@charge_time", item.ChargeStartTime);
                     command.Parameters.AddWithValue("@charge_count", item.ChargeCount);
 
-                    try
-                    {
-                        if (command.ExecuteNonQuery() < 1)
-                        {
-                            Logger.Error($"Error updating items {item.Id} ({item.TemplateId}) !");
-                        }
-                        else
-                        {
-                            item.IsDirty = false;
-                            updateCount++;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Error(ex, "Error updating item {0} ({1})", item.Id, item.TemplateId);
-                    }
+                    if (command.ExecuteNonQuery() < 1)
+                        throw new InvalidOperationException($"Failed to save item {item.Id} ({item.TemplateId}).");
+                    updateCount++;
+                    if (context == null)
+                        item.IsDirty = false;
+                    else
+                        context.AfterCommit(() => item.IsDirty = false);
                     command.Parameters.Clear();
                 }
             }
@@ -1648,6 +1676,32 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
     public ItemContainer GetItemContainerByDbId(ulong dbId)
     {
         return _allPersistentContainers.GetValueOrDefault(dbId);
+    }
+
+    /// <summary>
+    /// Releases an empty container after its deletion committed in an economic
+    /// checkpoint. The caller owns the persistence gate through feature completion.
+    /// </summary>
+    internal void ForgetCommittedItemContainer(ItemContainer container)
+    {
+        if (!Monitor.IsEntered(SaveManager.PersistenceSyncRoot))
+            throw new InvalidOperationException("Container completion requires the persistence gate.");
+        ArgumentNullException.ThrowIfNull(container);
+        if (container.Items.Count != 0)
+            throw new InvalidOperationException("A nonempty container cannot be forgotten.");
+        if (container.ContainerId == 0)
+            return;
+
+        lock (_allPersistentContainers)
+        {
+            var id = checked((uint)container.ContainerId);
+            if (!_allPersistentContainers.TryGetValue(id, out var registered) || !ReferenceEquals(registered, container))
+                throw new InvalidOperationException("The committed container is not the registered object.");
+            _allPersistentContainers.Remove(id);
+            container.ContainerId = 0;
+            container.IsDirty = false;
+            containerIdManager.ReleaseId(id);
+        }
     }
 
     /// <summary>
@@ -2010,6 +2064,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
             if (doExpire)
             {
+                TradeReservation.Invalidate(item);
                 res++;
                 var sync = ExpireItemPacket(item);
                 if (sync != null)

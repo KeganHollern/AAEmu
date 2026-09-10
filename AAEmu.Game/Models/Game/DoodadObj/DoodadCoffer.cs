@@ -25,9 +25,12 @@ public class DoodadCoffer : Doodad
 
     public override void Delete()
     {
-        if (IsPersistent)
-            ItemContainer?.Delete();
-        base.Delete();
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (IsPersistent)
+                ItemContainer?.Delete();
+            base.Delete();
+        }
     }
 
     public override bool AllowedToInteract(Character character)

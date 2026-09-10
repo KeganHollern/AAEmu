@@ -169,33 +169,59 @@ public class CharacterPortals(Character owner)
 
     public void Save(MySqlConnection connection, MySqlTransaction transaction)
     {
+        Save(connection, transaction, null);
+    }
+
+    public void Save(PersistenceSaveContext context)
+    {
+        Save(context.Connection, context.Transaction, context);
+    }
+
+    private void Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
+    {
         if (_removedVisitedDistricts.Count > 0)
         {
+            var removedIds = _removedVisitedDistricts.ToArray();
             using (var command = connection.CreateCommand())
             {
                 command.Connection = connection;
                 command.Transaction = transaction;
 
-                command.CommandText = "DELETE FROM portal_visited_district WHERE owner = @owner AND subzone IN(" + string.Join(",", _removedVisitedDistricts) + ")";
+                command.CommandText = "DELETE FROM portal_visited_district WHERE owner = @owner AND subzone IN(" + string.Join(",", removedIds) + ")";
                 command.Parameters.AddWithValue("@owner", Owner.Id);
                 command.Prepare();
                 command.ExecuteNonQuery();
-                _removedVisitedDistricts.Clear();
+                if (context == null)
+                    _removedVisitedDistricts.Clear();
+                else
+                    context.AfterCommit(() =>
+                    {
+                        foreach (var id in removedIds)
+                            _removedVisitedDistricts.Remove(id);
+                    });
             }
         }
 
         if (_removedPrivatePortals.Count > 0)
         {
+            var removedIds = _removedPrivatePortals.ToArray();
             using (var command = connection.CreateCommand())
             {
                 command.Connection = connection;
                 command.Transaction = transaction;
 
-                command.CommandText = "DELETE FROM portal_book_coords WHERE owner = @owner AND id IN(" + string.Join(",", _removedPrivatePortals) + ")";
+                command.CommandText = "DELETE FROM portal_book_coords WHERE owner = @owner AND id IN(" + string.Join(",", removedIds) + ")";
                 command.Parameters.AddWithValue("@owner", Owner.Id);
                 command.Prepare();
                 command.ExecuteNonQuery();
-                _removedPrivatePortals.Clear();
+                if (context == null)
+                    _removedPrivatePortals.Clear();
+                else
+                    context.AfterCommit(() =>
+                    {
+                        foreach (var id in removedIds)
+                            _removedPrivatePortals.Remove(id);
+                    });
             }
         }
 

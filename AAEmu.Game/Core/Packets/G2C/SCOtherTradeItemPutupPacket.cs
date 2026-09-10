@@ -4,11 +4,11 @@ using AAEmu.Game.Models.Game.Items;
 
 namespace AAEmu.Game.Core.Packets.G2C;
 
-public class SCOtherTradeItemPutupPacket(Item item) : GamePacket(SCOffsets.SCOtherTradeItemPutupPacket, 1)
+public class SCOtherTradeItemPutupPacket(Item item, int? count = null) : GamePacket(SCOffsets.SCOtherTradeItemPutupPacket, 1)
 {
     public override PacketStream Write(PacketStream stream)
     {
-        stream.Write(item);
+        item.Write(stream, count ?? item.Count);
         return stream;
     }
 }

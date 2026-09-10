@@ -1,4 +1,5 @@
 ﻿using AAEmu.Commons.Utils.DB;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using MySql.Data.MySqlClient;
@@ -87,18 +88,36 @@ public class CharacterBlocked(Character owner)
 
     public void Save(MySqlConnection connection, MySqlTransaction transaction)
     {
+        Save(connection, transaction, null);
+    }
+
+    public void Save(PersistenceSaveContext context)
+    {
+        Save(context.Connection, context.Transaction, context);
+    }
+
+    private void Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
+    {
         if (_removedBlocked.Count > 0)
         {
+            var removedIds = _removedBlocked.ToArray();
             using (var command = connection.CreateCommand())
             {
                 command.Connection = connection;
                 command.Transaction = transaction;
 
-                command.CommandText = "DELETE FROM blocked WHERE owner = @owner AND blocked_id IN(" + string.Join(",", _removedBlocked) + ")";
+                command.CommandText = "DELETE FROM blocked WHERE owner = @owner AND blocked_id IN(" + string.Join(",", removedIds) + ")";
                 command.Parameters.AddWithValue("@owner", Owner.Id);
                 command.Prepare();
                 command.ExecuteNonQuery();
-                _removedBlocked.Clear();
+                if (context == null)
+                    _removedBlocked.Clear();
+                else
+                    context.AfterCommit(() =>
+                    {
+                        foreach (var id in removedIds)
+                            _removedBlocked.Remove(id);
+                    });
             }
         }
 

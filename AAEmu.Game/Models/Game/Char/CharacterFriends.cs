@@ -81,18 +81,36 @@ public class CharacterFriends(Character owner)
 
     public void Save(MySqlConnection connection, MySqlTransaction transaction)
     {
+        Save(connection, transaction, null);
+    }
+
+    public void Save(PersistenceSaveContext context)
+    {
+        Save(context.Connection, context.Transaction, context);
+    }
+
+    private void Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
+    {
         if (_removedFriends.Count > 0)
         {
+            var removedIds = _removedFriends.ToArray();
             using (var command = connection.CreateCommand())
             {
                 command.Connection = connection;
                 command.Transaction = transaction;
 
-                command.CommandText = "DELETE FROM friends WHERE owner = @owner AND friend_id IN(" + string.Join(",", _removedFriends) + ")";
+                command.CommandText = "DELETE FROM friends WHERE owner = @owner AND friend_id IN(" + string.Join(",", removedIds) + ")";
                 command.Parameters.AddWithValue("@owner", Owner.Id);
                 command.Prepare();
                 command.ExecuteNonQuery();
-                _removedFriends.Clear();
+                if (context == null)
+                    _removedFriends.Clear();
+                else
+                    context.AfterCommit(() =>
+                    {
+                        foreach (var id in removedIds)
+                            _removedFriends.Remove(id);
+                    });
             }
         }
 

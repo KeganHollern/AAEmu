@@ -38,6 +38,49 @@ namespace AAEmu.Game.Models.Game.Skills;
 
 public class Skill
 {
+    private static readonly Dictionary<Character, int> s_executingCharacters = [];
+
+    /// <summary>True while a character skill is entering, applying effects, or running a plot.</summary>
+    public static bool IsExecuting(Character character)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+            return character != null && s_executingCharacters.ContainsKey(character);
+    }
+
+    private static bool TryEnterExecution(Character character, out ExecutionLease execution)
+    {
+        execution = null;
+        if (character == null)
+            return true;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (TradeReservation.HasReservations(character))
+                return false;
+            s_executingCharacters[character] = s_executingCharacters.GetValueOrDefault(character) + 1;
+            execution = new ExecutionLease(character);
+            return true;
+        }
+    }
+
+    private sealed class ExecutionLease(Character character) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            lock (SaveManager.PersistenceSyncRoot)
+            {
+                if (_disposed)
+                    return;
+                _disposed = true;
+                if (s_executingCharacters[character] == 1)
+                    s_executingCharacters.Remove(character);
+                else
+                    s_executingCharacters[character]--;
+            }
+        }
+    }
+
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     public uint Id { get; set; }
@@ -89,6 +132,18 @@ public class Skill
     /// <param name="skillResultValueUInt">Additional skill error data</param>
     /// <returns></returns>
     public SkillResult Use(BaseUnit caster, SkillCaster casterCaster, SkillCastTarget targetCaster, SkillObject skillObject, bool bypassGcd, out uint skillResultValueUInt)
+    {
+        if (!TryEnterExecution(caster as Character, out var execution))
+        {
+            Cancelled = true;
+            skillResultValueUInt = 0;
+            return SkillResult.ItemLocked;
+        }
+        using (execution)
+            return UseCore(caster, casterCaster, targetCaster, skillObject, bypassGcd, out skillResultValueUInt);
+    }
+
+    private SkillResult UseCore(BaseUnit caster, SkillCaster casterCaster, SkillCastTarget targetCaster, SkillObject skillObject, bool bypassGcd, out uint skillResultValueUInt)
     {
         skillResultValueUInt = 0;
         // Check if the source is an actual Unit
@@ -210,7 +265,7 @@ public class Skill
         // If skill uses Plots, then start the plot
         if (Template.Plot != null)
         {
-            Task.Run(() => Template.Plot.RunAsync(caster, casterCaster, target, targetCaster, skillObject, this));
+            _ = SchedulePlot(caster, casterCaster, target, targetCaster, skillObject);
             if (Template.PlotOnly)
                 return SkillResult.Success;
         }
@@ -350,6 +405,32 @@ public class Skill
         }
 
         return SkillResult.Success;
+    }
+
+    private Task SchedulePlot(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject)
+    {
+        // Reserve execution before queueing: a trade must not enter in the Task.Run gap.
+        if (!TryEnterExecution(caster as Character, out var execution))
+        {
+            Cancelled = true;
+            return Task.CompletedTask;
+        }
+        try
+        {
+            return Task.Run(async () =>
+            {
+                using (execution)
+                {
+                    if (!Cancelled)
+                        await Template.Plot.RunAsync(caster, casterCaster, target, targetCaster, skillObject, this);
+                }
+            });
+        }
+        catch
+        {
+            execution?.Dispose();
+            throw;
+        }
     }
 
     private BaseUnit GetInitialTarget(BaseUnit caster, SkillCaster skillCaster, SkillCastTarget targetCaster)
@@ -923,6 +1004,22 @@ public class Skill
 
     public void ApplyEffects(BaseUnit caster, SkillCaster casterCaster, BaseUnit targetSelf, SkillCastTarget targetCaster, SkillObject skillObject)
     {
+        if (Cancelled)
+            return;
+        if (!TryEnterExecution(caster as Character, out var execution))
+        {
+            Cancelled = true;
+            (caster as Character)?.Craft?.CancelFromSkill(Template.Id);
+            return;
+        }
+        // SkillTask can already be null here, including during delayed/projectile effects.
+        // The execution lease excludes new trade offers through final material consumption.
+        using (execution)
+            ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
+    }
+
+    private void ApplyEffectsCore(BaseUnit caster, SkillCaster casterCaster, BaseUnit targetSelf, SkillCastTarget targetCaster, SkillObject skillObject)
+    {
         if (caster is not Unit unit)
             return;
         var player = caster as Character;
@@ -1457,6 +1554,7 @@ public class Skill
     {
         if (caster is not Unit unit) { return; }
         Cancelled = true;
+        (caster as Character)?.Craft?.CancelFromSkill(Template.Id);
         if (Template.ChannelingTime > 0)
         {
             EndChanneling(caster, channelDoodad, casterCaster);

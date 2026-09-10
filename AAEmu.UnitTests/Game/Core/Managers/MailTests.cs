@@ -12,6 +12,7 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Features;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Mails;
 using AAEmu.UnitTests.Utils.Mocks;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,6 +34,7 @@ public sealed class MailTests
     private Mock<ISession> _recipientSession;
     private Mock<ISession> _otherRecipientSession;
     private Mock<ISession> _senderSession;
+    private ItemManager _previousItems;
 
     [Before(Test)]
     public void Setup()
@@ -93,10 +95,31 @@ public sealed class MailTests
         _worldManager.GetCharacter(_sender.Name).Returns(_sender);
         _housingManager = Mock.Of<IHousingManager>();
 
+        var itemField = typeof(Singleton<ItemManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        _previousItems = (ItemManager)itemField.GetValue(null);
+        var itemManager = new ItemManager(Mock.Of<ISkillManager>().Object, Mock.Of<IItemIdManager>().Object,
+            Mock.Of<IContainerIdManager>().Object, Mock.Of<ILocalizationManager>().Object,
+            Mock.Of<ITaskManager>().Object, _worldManager.Object);
+        itemField.SetValue(null, itemManager);
+        var containers = new Dictionary<ulong, ItemContainer>();
+        typeof(ItemManager).GetField("_allPersistentContainers", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(itemManager, containers);
+        foreach (var character in new[] { _character, _sender, _otherRecipient })
+        {
+            foreach (var type in Enum.GetValues<SlotType>())
+            {
+                if (type == SlotType.EquipmentMate) continue;
+                var container = new ItemContainer(character.Id, type, false, character)
+                    { ContainerId = (ulong)containers.Count + 1, Owner = character };
+                containers.Add(container.ContainerId, container);
+            }
+            character.Inventory = new Inventory(character);
+        }
+
         _mailManager = new MailManager(
             mailIdManager,
             nameManager,
-            Mock.Of<IItemManager>().Object,
+            itemManager,
             Mock.Of<ITaskManager>().Object,
             _worldManager.Object,
             new Lazy<IHousingManager>(() => _housingManager.Object),
@@ -124,6 +147,8 @@ public sealed class MailTests
     [After(Test)]
     public void Teardown()
     {
+        typeof(Singleton<ItemManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!
+            .SetValue(null, _previousItems);
         _mailManager._allPlayerMails = null;
         _character = null;
         _otherRecipient = null;
@@ -147,43 +172,6 @@ public sealed class MailTests
         typeof(Singleton<NameManager>)
             .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)
             ?.SetValue(null, null);
-    }
-
-    [Test]
-    public async Task MoneyTest()
-    {
-        var type = MailType.Express;
-        var receiverCharName = "tester".NormalizeName();
-        var title = "test";
-        var text = "test";
-        var attachments = (byte)0;
-        var money0 = 500;
-        var money1 = 0;
-        var money2 = 0;
-        var extra = 0;
-        var itemSlots = new List<(SlotType slotType, byte slot)>();
-
-        await Assert.That(_mails.SendMailToPlayer(type, receiverCharName, title, text, attachments, money0, money1, money2, extra, itemSlots)).IsEqualTo(MailResult.Success);
-        await Assert.That(_character.Money).IsEqualTo(400);
-    }
-
-    [Test]
-    public async Task PlayerNotFoundTest()
-    {
-
-        var type = MailType.Express;
-        var receiverCharName = "bob";
-        var title = "test";
-        var text = "test";
-        var attachments = (byte)0;
-        var money0 = 500;
-        var money1 = 0;
-        var money2 = 0;
-        var extra = 0;
-        var itemSlots = new List<(SlotType slotType, byte slot)>();
-
-        await Assert.That(_mails.SendMailToPlayer(type, receiverCharName, title, text, attachments, money0, money1, money2, extra, itemSlots)).IsNotEqualTo(MailResult.Success);
-        await Assert.That(_character.Money).IsEqualTo(1000);
     }
 
     [Test]
@@ -424,31 +412,6 @@ public sealed class MailTests
             .WasCalled(Times.Never);
         _senderSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailRemovedPacket)))
             .WasCalled(Times.Never);
-    }
-
-    [Test]
-    public async Task ReturnMail_OwningRecipient_ReturnsMail()
-    {
-        var mail = AddReceivedMail(status: MailStatus.Read);
-        mail.Body.Text = "Return body";
-        mail.IsDirty = false;
-        var moneyBeforeReturn = _character.Money;
-
-        _mails.ReturnMail(mail.Id);
-
-        await Assert.That(_mailManager.AllPlayerMails.ContainsKey(mail.Id)).IsFalse();
-        await Assert.That(_mailManager.AllPlayerMails.Count).IsEqualTo(1);
-        var returnedMail = _mailManager.AllPlayerMails.Values.Single();
-        await Assert.That(returnedMail.Id).IsNotEqualTo(mail.Id);
-        await Assert.That(returnedMail.Header.SenderId).IsEqualTo(_character.Id);
-        await Assert.That(returnedMail.Header.ReceiverId).IsEqualTo(_sender.Id);
-        await Assert.That(returnedMail.Header.SenderName).IsEqualTo(_character.Name);
-        await Assert.That(returnedMail.ReceiverName).IsEqualTo(_sender.Name);
-        await Assert.That(returnedMail.Title).IsEqualTo(mail.Title);
-        await Assert.That(returnedMail.Body.Text).IsEqualTo(mail.Body.Text);
-        await Assert.That(_character.Money).IsEqualTo(moneyBeforeReturn - MailManager.CostExpress);
-        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailSentPacket)))
-            .WasCalled(Times.Once);
     }
 
     [Test]

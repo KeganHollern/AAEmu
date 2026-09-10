@@ -622,6 +622,8 @@ public class CharacterManager(
             {
                 lock (house.TaxPaymentSyncRoot)
                 {
+                    if (house.OwnerId != character.Id)
+                        continue;
                     house.Permission = HousingPermission.Public;
                     // force expire the house
                     // This should technically kill the house, and return the minimum amount of furniture

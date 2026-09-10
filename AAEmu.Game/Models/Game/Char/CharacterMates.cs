@@ -209,17 +209,35 @@ public class CharacterMates(Character owner)
 
     public void Save(MySqlConnection connection, MySqlTransaction transaction)
     {
+        Save(connection, transaction, null);
+    }
+
+    public void Save(PersistenceSaveContext context)
+    {
+        Save(context.Connection, context.Transaction, context);
+    }
+
+    private void Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
+    {
         if (_removedMates.Count > 0)
         {
+            var removedIds = _removedMates.ToArray();
             using var command = connection.CreateCommand();
             command.Connection = connection;
             command.Transaction = transaction;
 
-            command.CommandText = $"DELETE FROM mates WHERE owner = @owner AND id IN({string.Join(",", _removedMates)})";
+            command.CommandText = $"DELETE FROM mates WHERE owner = @owner AND id IN({string.Join(",", removedIds)})";
             command.Parameters.AddWithValue("@owner", Owner.Id);
             command.Prepare();
             command.ExecuteNonQuery();
-            _removedMates.Clear();
+            if (context == null)
+                _removedMates.Clear();
+            else
+                context.AfterCommit(() =>
+                {
+                    foreach (var id in removedIds)
+                        _removedMates.Remove(id);
+                });
         }
 
         foreach (var (_, value) in _mates)
