@@ -23,10 +23,19 @@ public class IdManager
     private readonly int _freeIdSize;
     private readonly string[,] _objTables;
     private readonly bool _distinct;
+    private readonly string[,] _retainedObjTables;
+    private readonly HashSet<uint> _retainedIds = [];
     private readonly object _lock = new();
 
     // ReSharper disable once MemberCanBeProtected.Global
-    public IdManager(string name, uint firstId, uint lastId, string[,] objTables, uint[] exclude, bool distinct = false)
+    public IdManager(
+        string name,
+        uint firstId,
+        uint lastId,
+        string[,] objTables,
+        uint[] exclude,
+        bool distinct = false,
+        string[,] retainedObjTables = null)
     {
         _name = name;
         _firstId = firstId;
@@ -34,6 +43,7 @@ public class IdManager
         _objTables = objTables;
         _exclude = exclude;
         _distinct = distinct;
+        _retainedObjTables = retainedObjTables;
         _freeIdSize = (int)(_lastId - _firstId);
         PrimeFinder.Init();
     }
@@ -58,9 +68,12 @@ public class IdManager
             _freeIdCount = _freeIdSize;
 
             var allUsedObjects = Array.Empty<uint>();
+            var retainedObjectIds = Array.Empty<uint>();
             try
             {
-                allUsedObjects = ExtractUsedObjectIdTable();
+                allUsedObjects = ExtractUsedObjectIdTable(_objTables, _distinct);
+                if (_retainedObjTables?.Length >= 2)
+                    retainedObjectIds = ExtractUsedObjectIdTable(_retainedObjTables, true);
             }
             catch
             {
@@ -84,6 +97,9 @@ public class IdManager
                 Interlocked.Decrement(ref _freeIdCount);
             }
 
+            _retainedIds.Clear();
+            _retainedIds.UnionWith(retainedObjectIds);
+
             _nextFreeId = _freeIds.NextClear(0);
             Logger.Info($"{_name} successfully initialized");
         }
@@ -98,20 +114,23 @@ public class IdManager
         return true;
     }
 
-    private uint[] ExtractUsedObjectIdTable()
+    private uint[] ExtractUsedObjectIdTable(string[,] objTables, bool distinct)
     {
-        if (_objTables.Length < 2)
+        if (objTables.Length < 2)
             return [];
 
         using var connection = MySQL.CreateConnection();
         using var command = connection.CreateCommand();
-        var query = "SELECT " + (_distinct ? "DISTINCT " : "") + _objTables[0, 1] + ", 0 AS i FROM " +
-                    _objTables[0, 0];
-        for (var i = 1; i < _objTables.Length / 2; i++)
-            query += " UNION SELECT " + (_distinct ? "DISTINCT " : "") + _objTables[i, 1] + ", " + i +
-                     " FROM " + _objTables[i, 0];
+        var persistedIdsQuery = "SELECT " + (distinct ? "DISTINCT " : "") +
+                                objTables[0, 1] + " AS object_id FROM " +
+                                objTables[0, 0] + " WHERE " + objTables[0, 1] + " IS NOT NULL";
+        for (var i = 1; i < objTables.Length / 2; i++)
+            persistedIdsQuery += (distinct ? " UNION SELECT " : " UNION ALL SELECT ") +
+                                 objTables[i, 1] + " AS object_id FROM " + objTables[i, 0] +
+                                 " WHERE " + objTables[i, 1] + " IS NOT NULL";
+        var query = "SELECT object_id, 0 AS i FROM (" + persistedIdsQuery + ") AS persisted_ids";
 
-        command.CommandText = "SELECT COUNT(*), COUNT(DISTINCT " + _objTables[0, 1] + ") FROM ( " + query +
+        command.CommandText = "SELECT COUNT(*), COUNT(DISTINCT object_id) FROM ( " + query +
                               " ) AS all_ids";
         command.Prepare();
         int count;
@@ -119,7 +138,7 @@ public class IdManager
         {
             if (!reader.Read())
                 throw new GameException("IdManager: can't extract count ids");
-            if (reader.GetInt32(0) != reader.GetInt32(1) && !_distinct)
+            if (reader.GetInt32(0) != reader.GetInt32(1) && !distinct)
                 throw new GameException("IdManager: there are duplicates in object ids");
             count = reader.GetInt32(0);
         }
@@ -151,6 +170,9 @@ public class IdManager
     {
         lock (_lock)
         {
+            if (_retainedIds.Contains(usedObjectId))
+                return;
+
             var objectId = (int)(usedObjectId - _firstId);
             if (objectId > -1)
             {
@@ -161,6 +183,25 @@ public class IdManager
             }
             else
                 Logger.Error($"{_name}: release objectId {usedObjectId} failed");
+        }
+    }
+
+    public void RetainId(uint usedObjectId)
+    {
+        lock (_lock)
+        {
+            var objectId = (int)(usedObjectId - _firstId);
+            if (objectId < 0)
+                throw new ArgumentOutOfRangeException(nameof(usedObjectId));
+            if (objectId >= _freeIds.Count)
+                IncreaseBitSetCapacity(objectId + 1);
+            if (!_freeIds.Get(objectId))
+            {
+                _freeIds.Set(objectId);
+                Interlocked.Decrement(ref _freeIdCount);
+            }
+
+            _retainedIds.Add(usedObjectId);
         }
     }
 
