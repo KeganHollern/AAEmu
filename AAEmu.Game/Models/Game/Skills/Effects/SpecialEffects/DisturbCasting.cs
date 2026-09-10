@@ -1,5 +1,6 @@
 ﻿using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World.Zones;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 
@@ -14,6 +15,9 @@ public class DisturbCasting : SpecialEffectAction
         CastAction castObj,
         Skill skill, SkillObject skillObject, DateTime time, int chance, int delay, int value3, int value4)
     {
+        if (PeaceProtection.PreventsAttack(caster, target))
+            return;
+
         if (caster is Character) { Logger.Debug("Special effects: DisturbCasting chance {0}, delay {1}, value3 {2}, value4 {3}", chance, delay, value3, value4); }
 
         if (target is Unit unit)

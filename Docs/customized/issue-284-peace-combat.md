@@ -179,6 +179,11 @@ It has no saved protection flag or relation cache.
 Peace entry, Peace exit, and movement thus use the current state.
 `BaseUnit.CanAttack` and hostile initial skill targets use the same check.
 Non-friendly skill effects check it for each affected target.
+`BuffEffect` also checks Bad buffs before direct, plot, or tick application.
+This covers mixed friendly/non-friendly effects in self-centered skills, such as skill `12001` and buffs `2278` and `975`.
+`ManaBurnEffect` and `DisturbCasting` check before MP loss or cast cancellation.
+This also covers delayed skill `12002`, which uses both friendly flags for its interrupt effect.
+Good buffs, NPC effects, and self effects keep their current paths.
 `DamageEffect` checks before bonuses, buff removal, crime state, and damage.
 The HP methods check again for direct or delayed damage.
 GM kills, self damage, and NPC combat keep their current paths.
@@ -196,8 +201,8 @@ A target test checks the private initial hostile-target path.
 | Local check | Result |
 | --- | --- |
 | `dotnet build AAEmu.slnx` | Passed, 0 errors. |
-| `PeaceProtectionTests` | 27 passed, 0 failed. |
-| Full `AAEmu.UnitTests` | 2388 passed, 0 failed, 0 skipped. |
+| `PeaceProtectionTests` | 34 passed, 0 failed. |
+| Full `AAEmu.UnitTests` | 2395 passed, 0 failed, 0 skipped. |
 | `AAEmu.IntegrationTests` | The local fixtures could not start. |
 | `git diff --check` | Passed. |
 

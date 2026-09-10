@@ -13,6 +13,8 @@ using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Shipyard;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
+using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
+using AAEmu.Game.Models.Game.Skills.Plots.Tree;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -327,6 +329,81 @@ public sealed class PeaceProtectionTests
         await Assert.That(_target.Hp).IsEqualTo(100);
         await Assert.That(_target.IsInBattle).IsFalse();
         await Assert.That(_target.IsActivelyHostile(_attacker)).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public void BuffEffect_PeaceEntryAndExit_BlocksDirectAndTickDebuffs(bool tick)
+    {
+        var buffs = Mock.Of<IBuffs>();
+        _target.Buffs = buffs.Object;
+        var template = new BuffTemplate { Id = 975, Kind = BuffKind.Bad };
+        var effect = new BuffEffect { Buff = template, Chance = 100 };
+        var source = tick ? new EffectSource(template) : new EffectSource();
+
+        effect.Apply(_attacker, null, _target, null, null, source, null, DateTime.UtcNow);
+        buffs.AddBuff(Is<Buff>(buff => buff.Template == template), 0, 0).WasCalled(Times.Once);
+        _targetConflict.SetState(ZoneConflictType.Peace);
+        effect.Apply(_attacker, null, _target, null, null, source, null, DateTime.UtcNow);
+        buffs.AddBuff(Is<Buff>(buff => buff.Template == template), 0, 0).WasCalled(Times.Once);
+        _targetConflict.SetState(ZoneConflictType.War);
+        effect.Apply(_attacker, null, _target, null, null, source, null, DateTime.UtcNow);
+        buffs.AddBuff(Is<Buff>(buff => buff.Template == template), 0, 0).WasCalled(Times.Exactly(2));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public void BuffEffect_Peace_DoesNotBlockGoodBuffsOrSelfDebuffs(bool self)
+    {
+        var buffs = Mock.Of<IBuffs>();
+        _target.Buffs = buffs.Object;
+        _targetConflict.SetState(ZoneConflictType.Peace);
+        var template = new BuffTemplate { Kind = self ? BuffKind.Bad : BuffKind.Good };
+        var effect = new BuffEffect { Buff = template, Chance = 100 };
+        effect.Apply(self ? _target : _attacker, null, _target, null, null, new EffectSource(), null, DateTime.UtcNow);
+        buffs.AddBuff(Is<Buff>(buff => buff.Template == template), 0, 0).WasCalled(Times.Once);
+    }
+
+    [Test]
+    public async Task ManaBurnEffect_Peace_StopsBeforeManaDamage()
+    {
+        _target.Mp = 100;
+        _targetConflict.SetState(ZoneConflictType.Peace);
+        new ManaBurnEffect { BaseMin = 20, BaseMax = 20 }.Apply(_attacker, null, _target, null, null, new EffectSource(new BuffTemplate()), null, DateTime.UtcNow);
+        await Assert.That(_target.Mp).IsEqualTo(100);
+    }
+
+    [Test]
+    public void BuffEffect_Peace_DoesNotBlockNpcDebuffs()
+    {
+        var buffs = Mock.Of<IBuffs>();
+        _target.Buffs = buffs.Object;
+        _targetConflict.SetState(ZoneConflictType.Peace);
+        var npc = new Unit { ObjId = 3, Faction = new() { Id = FactionsEnum.Hostile } };
+        var template = new BuffTemplate { Kind = BuffKind.Bad };
+        new BuffEffect { Buff = template, Chance = 100 }.Apply(npc, null, _target, null, null, new EffectSource(), null, DateTime.UtcNow);
+        buffs.AddBuff(Is<Buff>(buff => buff.Template == template), 0, 0).WasCalled(Times.Once);
+    }
+
+    [Test]
+    public async Task DisturbCasting_Peace_DoesNotCancelProtectedCastButPermitsSelfCancellation()
+    {
+        _target.ActivePlotState = new PlotState(_target, null, _target, null, null, null);
+        _targetConflict.SetState(ZoneConflictType.Peace);
+        var effect = new DisturbCasting();
+        effect.Execute(_attacker, null, _target, null, null, null, null, DateTime.UtcNow, 100, 0, 0, 0);
+        await Assert.That(_target.ActivePlotState.CancellationRequested()).IsFalse();
+
+        _targetConflict.SetState(ZoneConflictType.War);
+        effect.Execute(_attacker, null, _target, null, null, null, null, DateTime.UtcNow, 100, 0, 0, 0);
+        await Assert.That(_target.ActivePlotState.CancellationRequested()).IsTrue();
+
+        _target.ActivePlotState = new PlotState(_target, null, _target, null, null, null);
+        _targetConflict.SetState(ZoneConflictType.Peace);
+        effect.Execute(_target, null, _target, null, null, null, null, DateTime.UtcNow, 100, 0, 0, 0);
+        await Assert.That(_target.ActivePlotState.CancellationRequested()).IsTrue();
     }
 
     [Test]
