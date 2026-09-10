@@ -11,6 +11,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
@@ -19,6 +20,12 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Effects;
+using AAEmu.Game.Models.Game.Skills.Effects.Enums;
+using AAEmu.Game.Models.Game.Skills.Static;
+using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.UnitTests.Utils.Mocks;
@@ -87,6 +94,45 @@ public sealed class TradeSettlementTests
         _trade.CancelTrade(_target, 0);
         foreach (var (field, previous) in _previousInstances)
             field.SetValue(null, previous);
+    }
+
+    [Test]
+    public async Task RunningSkillEffect_RejectsTradeUntilEffectExecutionFinishes()
+    {
+        var skills = new SkillManager(null, null);
+        SetField(skills, "_skillReagents", new Dictionary<uint, SkillReagent>());
+        SetField(skills, "_skillProducts", new Dictionary<uint, SkillProduct>());
+        SetInstance(skills);
+        var wasBusy = false;
+        var startedDuringEffect = false;
+        var skill = new Skill(new SkillTemplate { Id = 50, TargetType = SkillTargetType.Self });
+        skill.Template.Effects.Add(new SkillEffect
+        {
+            EndLevel = byte.MaxValue, Chance = 100, ApplicationMethod = SkillEffectApplicationMethod.Source,
+            Template = new TradeAdmissionEffect(() =>
+            {
+                wasBusy = Skill.IsExecuting(_owner) && !Monitor.IsEntered(SaveManager.PersistenceSyncRoot);
+                _trade.CanStartTrade(_owner, _target);
+                _trade.StartTrade(_owner, _target);
+                startedDuringEffect = PacketCount(_owner, SCOffsets.SCTradeStartedPacket) != 0;
+            })
+        });
+
+        skill.ApplyEffects(_owner, new SkillCasterUnit(_owner.ObjId), _owner, new SkillCastUnitTarget(_owner.ObjId), null);
+
+        await Assert.That(wasBusy).IsTrue();
+        await Assert.That(startedDuringEffect).IsFalse();
+        await Assert.That(Skill.IsExecuting(_owner)).IsFalse();
+        _trade.CanStartTrade(_owner, _target);
+        _trade.StartTrade(_owner, _target);
+        await Assert.That(PacketCount(_owner, SCOffsets.SCTradeStartedPacket)).IsEqualTo(1);
+    }
+
+    private sealed class TradeAdmissionEffect(Action action) : EffectTemplate
+    {
+        public override bool OnActionTime => false;
+        public override void Apply(BaseUnit caster, SkillCaster casterObj, BaseUnit target, SkillCastTarget targetObj,
+            CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time, CompressedGamePackets packetBuilder = null) => action();
     }
 
     [Test]
