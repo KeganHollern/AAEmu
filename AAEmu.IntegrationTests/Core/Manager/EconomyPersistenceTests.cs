@@ -263,37 +263,47 @@ public sealed class EconomyPersistenceTests
             _ => throw new ArgumentOutOfRangeException(nameof(table))
         };
         var id = graph.Id + 1;
-        var seed = table switch
+        string Seed(uint childId) => table switch
         {
-            "portal_visited_district" => $"INSERT INTO {table} (id, subzone, owner) VALUES ({id}, {id}, {character.Id})",
-            "portal_book_coords" => $"INSERT INTO {table} (id, name, owner) VALUES ({id}, 'Test', {character.Id})",
-            "friends" => $"INSERT INTO {table} (id, friend_id, owner) VALUES ({id}, {id}, {character.Id})",
-            "blocked" => $"INSERT INTO {table} (blocked_id, owner) VALUES ({id}, {character.Id})",
-            "skills" => $"INSERT INTO {table} (id, level, type, owner) VALUES ({id}, 1, 'Skill', {character.Id})",
-            "quests" => $"INSERT INTO {table} (id, template_id, data, status, owner) VALUES ({id}, {id}, X'00', 1, {character.Id})",
-            "mates" => $"INSERT INTO {table} (id, item_id, name, xp, level, mileage, hp, mp, owner) VALUES ({id}, {id}, 'Test', 0, 1, 0, 1, 1, {character.Id})",
+            "portal_visited_district" => $"INSERT INTO {table} (id, subzone, owner) VALUES ({childId}, {childId}, {character.Id})",
+            "portal_book_coords" => $"INSERT INTO {table} (id, name, owner) VALUES ({childId}, 'Test', {character.Id})",
+            "friends" => $"INSERT INTO {table} (id, friend_id, owner) VALUES ({childId}, {childId}, {character.Id})",
+            "blocked" => $"INSERT INTO {table} (blocked_id, owner) VALUES ({childId}, {character.Id})",
+            "skills" => $"INSERT INTO {table} (id, level, type, owner) VALUES ({childId}, 1, 'Skill', {character.Id})",
+            "quests" => $"INSERT INTO {table} (id, template_id, data, status, owner) VALUES ({childId}, {childId}, X'00', 1, {character.Id})",
+            "mates" => $"INSERT INTO {table} (id, item_id, name, xp, level, mileage, hp, mp, owner) VALUES ({childId}, {childId}, 'Test', 0, 1, 0, 1, 1, {character.Id})",
             _ => throw new ArgumentOutOfRangeException(nameof(table))
         };
-        Execute(seed);
+        Execute(Seed(id));
         var removed = Field<List<uint>>(child, field);
         removed.Add(id);
 
         Assert.False(graph.Save.TryCommitEconomy([character], _ => throw new InvalidOperationException("Rollback child deletion.")));
-        Assert.Equal(1, CountChild());
+        Assert.Equal(1, CountChild(id));
         Assert.Equal([id], removed);
 
         var laterId = id + 1;
-        Assert.True(graph.Save.TryCommitEconomy([character], _ => removed.Add(laterId)));
-        Assert.Equal(0, CountChild());
+        Execute(Seed(laterId));
+        Assert.True(graph.Save.TryCommitEconomy([character], _ =>
+        {
+            Assert.Equal([id], removed);
+            removed.Add(laterId);
+        }));
+        Assert.Equal(0, CountChild(id));
+        Assert.Equal(1, CountChild(laterId));
         Assert.Equal([laterId], removed);
 
-        long CountChild()
+        Assert.True(graph.Save.TryCommitEconomy([character]));
+        Assert.Equal(0, CountChild(laterId));
+        Assert.Empty(removed);
+
+        long CountChild(uint childId)
         {
             using var connection = MySQL.CreateConnection();
             using var command = connection.CreateCommand();
             command.CommandText = $"SELECT COUNT(*) FROM {table} WHERE owner = @owner AND {key} = @id";
             command.Parameters.AddWithValue("@owner", character.Id);
-            command.Parameters.AddWithValue("@id", id);
+            command.Parameters.AddWithValue("@id", childId);
             return Convert.ToInt64(command.ExecuteScalar());
         }
     }

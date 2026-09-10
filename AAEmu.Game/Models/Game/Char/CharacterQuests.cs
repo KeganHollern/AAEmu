@@ -773,21 +773,39 @@ public class CharacterQuests(Character owner)
     /// <param name="transaction"></param>
     public void Save(MySqlConnection connection, MySqlTransaction transaction)
     {
+        Save(connection, transaction, null);
+    }
+
+    public void Save(PersistenceSaveContext context)
+    {
+        Save(context.Connection, context.Transaction, context);
+    }
+
+    private void Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
+    {
         if (_removed.Count > 0)
         {
+            var removedIds = _removed.ToArray();
             using (var command = connection.CreateCommand())
             {
                 command.Connection = connection;
                 command.Transaction = transaction;
 
-                var ids = string.Join(",", _removed);
+                var ids = string.Join(",", removedIds);
                 command.CommandText = $"DELETE FROM quests WHERE owner = @owner AND template_id IN({ids})";
                 command.Parameters.AddWithValue("@owner", Owner.Id);
                 command.Prepare();
                 command.ExecuteNonQuery();
             }
 
-            _removed.Clear();
+            if (context == null)
+                _removed.Clear();
+            else
+                context.AfterCommit(() =>
+                {
+                    foreach (var id in removedIds)
+                        _removed.Remove(id);
+                });
         }
 
         using (var command = connection.CreateCommand())
