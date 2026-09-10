@@ -51,7 +51,13 @@ public sealed class AuctionMailClaimStoreTests : IAsyncLifetime
 
     public async ValueTask DisposeAsync()
     {
-        await ExecuteAsync("DROP TRIGGER IF EXISTS `fail_auction_achievement_save`;");
+        // These direct store tests intentionally omit the full container graph.
+        // Do not leave their synthetic items for a later production-reader test.
+        await ExecuteAsync("""
+            DROP TRIGGER IF EXISTS `fail_auction_achievement_save`;
+            DELETE FROM `items` WHERE `owner`=7;
+            DELETE FROM `mails` WHERE `receiver_id`=7;
+            """);
     }
 
     [Fact]

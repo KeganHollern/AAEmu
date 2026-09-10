@@ -103,6 +103,7 @@ public sealed partial class AuctionSettlementPersistenceTests
     [InlineData("acquire")]
     [InlineData("consume")]
     [InlineData("move")]
+    [InlineData("autosave")]
     public async Task PausedClaim_ExcludesRealInventoryChangesThroughCommitAndApply(string operation)
     {
         using var graph = new AuctionGraph();
@@ -129,6 +130,7 @@ public sealed partial class AuctionSettlementPersistenceTests
                     "acquire" => graph.Buyer.Inventory.Bag.AcquireDefaultItem(ItemTaskType.Invalid, 100, 2, 6),
                     "consume" => graph.Buyer.Inventory.Bag.TryConsumeItems(ItemTaskType.Invalid, new Dictionary<uint, int> { [100] = 2 }),
                     "move" => graph.Buyer.Inventory.Warehouse.AddOrMoveExistingItem(ItemTaskType.Invalid, stack),
+                    "autosave" => graph.Save.DoSave(),
                     _ => throw new ArgumentOutOfRangeException(nameof(operation))
                 };
             });
