@@ -128,7 +128,7 @@ public sealed partial class AuctionSettlementPersistenceTests
                 {
                     "acquire" => graph.Buyer.Inventory.Bag.AcquireDefaultItem(ItemTaskType.Invalid, 100, 2, 6),
                     "consume" => graph.Buyer.Inventory.Bag.TryConsumeItems(ItemTaskType.Invalid, new Dictionary<uint, int> { [100] = 2 }),
-                    "move" => graph.Buyer.Inventory.GetContainer(SlotType.Bank).AddOrMoveExistingItem(ItemTaskType.Invalid, stack),
+                    "move" => graph.Buyer.Inventory.Warehouse.AddOrMoveExistingItem(ItemTaskType.Invalid, stack),
                     _ => throw new ArgumentOutOfRangeException(nameof(operation))
                 };
             });
