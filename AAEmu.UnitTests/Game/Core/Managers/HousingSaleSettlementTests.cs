@@ -9,6 +9,8 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
@@ -45,10 +47,13 @@ public sealed class HousingSaleSettlementTests
     private NameManager _names;
     private uint _nextItem, _nextMail;
     private ulong _nextContainer;
+    private WorldConfig _previousWorldConfig;
 
     [Before(Test)]
     public void SetUp()
     {
+        _previousWorldConfig = AppConfiguration.Instance.World;
+        AppConfiguration.Instance.World = new WorldConfig { DaysForTaxPayment = 7 };
         _nextItem = 1000;
         _nextMail = 10000;
         _nextContainer = 1;
@@ -102,6 +107,7 @@ public sealed class HousingSaleSettlementTests
     [After(Test)]
     public void TearDown()
     {
+        AppConfiguration.Instance.World = _previousWorldConfig;
         foreach (var (type, instance) in _singletons)
             typeof(Singleton<>).MakeGenericType(type).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!.SetValue(null, instance);
         _singletons.Clear();
@@ -368,6 +374,12 @@ public sealed class HousingSaleSettlementTests
             .Body.Attachments.Single()).IsSameReferenceAs(content);
 
         var world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, 1);
+        var worldManager = new WorldManager(Mock.Of<ITickManager>().Object, Mock.Of<IWorldIdManager>().Object,
+            new Lazy<IZoneManager>(() => _zones.Object),
+            new Lazy<IIndunManager>(() => Mock.Of<IIndunManager>().Object),
+            new Lazy<IFamilyManager>(() => Mock.Of<IFamilyManager>().Object));
+        ReplaceSingleton(worldManager);
+        SetField(worldManager, "_worlds", new ConcurrentDictionary<uint, WorldInstance> { [1] = world });
         guest.ParentWorld = _buyer.ParentWorld = coffer.ParentWorld = world;
         ((ConcurrentDictionary<uint, Doodad>)typeof(WorldInstance)
             .GetField("_doodads", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(world)!)
