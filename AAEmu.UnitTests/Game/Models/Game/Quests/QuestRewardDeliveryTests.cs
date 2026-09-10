@@ -319,6 +319,59 @@ public sealed class QuestRewardDeliveryTests
         return owner;
     }
 
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    public async Task RestartMainQuest_SupplyItem_GrantsMissingCountOnce(int retainedCount)
+    {
+        var owner = CreateOwner(10);
+        var template = new QuestTemplate { Id = 101, DetailId = QuestDetail.Main, RestartOnFail = true };
+        var start = new QuestComponentTemplate(template) { Id = 1011, KindId = QuestComponentKind.Start };
+        var supply = new QuestComponentTemplate(template) { Id = 1012, KindId = QuestComponentKind.Supply };
+        var progress = new QuestComponentTemplate(template) { Id = 1013, KindId = QuestComponentKind.Progress };
+        supply.ActTemplates.Add(new QuestActSupplyItem(supply) { ActId = 1020, ItemId = 50001, Count = 1 });
+        template.Components.Add(start.Id, start);
+        template.Components.Add(supply.Id, supply);
+        template.Components.Add(progress.Id, progress);
+        var failed = new Quest(template, owner, _quests, Mock.Of<ITaskManager>().Object,
+            Mock.Of<ISkillManager>().Object, Mock.Of<IExpressTextManager>().Object, Mock.Of<IWorldManager>().Object)
+        {
+            Id = 123,
+            Status = QuestStatus.Failed,
+            Step = QuestComponentKind.Fail
+        };
+        failed.AppliedSideEffectActIds.Add(1020);
+        owner.Quests.ActiveQuests.Add(template.Id, failed);
+        if (retainedCount > 0)
+        {
+            failed.QuestRewardItemsPool.Add(new ItemCreationDefinition(50001, retainedCount));
+            await Assert.That(failed.DistributeRewards(false)).IsTrue();
+        }
+
+        var countDuringCommit = -1;
+        await Assert.That(owner.Quests.RestartMainQuest(template.Id, _ =>
+        {
+            countDuringCommit = owner.Inventory.GetItemsCount(50001);
+            return true;
+        })).IsTrue();
+        await Assert.That(countDuringCommit).IsEqualTo(retainedCount);
+        var restarted = owner.Quests.ActiveQuests[template.Id];
+        await Assert.That(restarted.RunCurrentStep()).IsTrue();
+        await Assert.That(restarted.Step).IsEqualTo(QuestComponentKind.Supply);
+        await Assert.That(restarted.RunCurrentStep()).IsTrue();
+        await Assert.That(owner.Inventory.GetItemsCount(50001)).IsEqualTo(1);
+        await Assert.That(restarted.AppliedSideEffectActIds.Contains(1020)).IsTrue();
+        await Assert.That(owner.Quests.RestartMainQuest(template.Id, _ => throw new InvalidOperationException("Replay reached persistence"))).IsFalse();
+        await Assert.That(failed.RunCurrentStep()).IsFalse();
+        await Assert.That(owner.Inventory.GetItemsCount(50001)).IsEqualTo(1);
+
+        var saved = restarted.WriteData();
+        restarted.ReadData(saved);
+        await Assert.That(restarted.AppliedSideEffectActIds.Contains(1020)).IsTrue();
+        await Assert.That(owner.Quests.IsQuestComplete(template.Id)).IsFalse();
+        await Assert.That(owner.Money).IsEqualTo(0);
+    }
+
     private Quest CreateQuest(CharacterMock owner, params ItemCreationDefinition[] rewards)
     {
         var template = new QuestTemplate { Id = 1000 };

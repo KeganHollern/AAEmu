@@ -2,6 +2,7 @@
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.AI.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Quests;
@@ -188,15 +189,19 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
     /// <param name="questId"></param>
     public void FailQuest(ICharacter owner, uint questId)
     {
-        if (!owner.Quests.ActiveQuests.TryGetValue(questId, out var quest))
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            Logger.Warn($"FailQuest triggered for a quest that isn't active, Quest:{questId}, Player:{owner.Name} ({owner.Id})");
-            return;
-        }
+            if (!owner.Quests.ActiveQuests.TryGetValue(questId, out var quest))
+            {
+                Logger.Warn($"FailQuest triggered for a quest that isn't active, Quest:{questId}, Player:{owner.Name} ({owner.Id})");
+                return;
+            }
 
-        quest.Step = QuestComponentKind.Fail;
-        //owner.Quests.Drop(questId, true);
-        Logger.Debug($"[Quest] {owner.Name}, quest {questId} failed.");
+            quest.Status = QuestStatus.Failed;
+            quest.Step = QuestComponentKind.Fail;
+            owner.SendPacket(new SCQuestContextUpdatedPacket(quest, quest.ComponentId));
+            Logger.Debug($"[Quest] {owner.Name}, quest {questId} failed.");
+        }
     }
 
     /// <summary>
@@ -2013,7 +2018,7 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
             quest.Time = DateTime.UtcNow.Add(delay);
 
         // Create new Task and add them to the dictionary for this player
-        var timeoutTask = new QuestTimeoutTask(owner, quest.TemplateId);
+        var timeoutTask = new QuestTimeoutTask(owner, quest);
         playerTimerTasks.Add(quest.TemplateId, timeoutTask);
 
         // Actually schedule the task
