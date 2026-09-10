@@ -671,8 +671,9 @@ public sealed class HousingSalePersistenceTests
     private static House House(uint id) => new()
     {
         Id = id, TlId = 7, AccountId = id + 1, OwnerId = id + 1, CoOwnerId = id + 1,
-        TemplateId = 1, Name = "Settlement test", CurrentStep = -1,
+        TemplateId = 1, Name = "Settlement test",
         Template = new HousingTemplate { HousingBindingDoodad = [] },
+        CurrentStep = -1,
         PlaceDate = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc),
         ProtectionEndDate = new DateTime(2026, 9, 21, 0, 0, 0, DateTimeKind.Utc),
         Faction = new SystemFaction { Id = FactionsEnum.NuiaAlliance }, SellPrice = 100, IsDirty = true
