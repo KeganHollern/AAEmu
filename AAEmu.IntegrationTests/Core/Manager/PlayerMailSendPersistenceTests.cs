@@ -1,10 +1,13 @@
-using System.Reflection;
+﻿using System.Reflection;
 
+using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
@@ -23,6 +26,46 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 public sealed class PlayerMailSendPersistenceTests
 {
     private static int _nextId = 1100000;
+
+    [Fact]
+    public void ReturnMail_OwningRecipient_ReturnsMailThroughRealCheckpoint()
+    {
+        using var graph = new SendGraph();
+        Assert.Equal(MailResult.Success, graph.Send(MailType.Express, 0));
+        var original = Assert.Single(graph.Mails._allPlayerMails.Values);
+        original.Header.Status = MailStatus.Read;
+        original.Body.Text = "Return body";
+        original.IsDirty = true;
+        Assert.True(graph.Save.TryCommitEconomy([graph.Sender, graph.Receiver]));
+        var moneyBeforeReturn = graph.Receiver.Money;
+        var session = new Mock<ISession>();
+        graph.Receiver.Connection = new GameConnection(session.Object);
+        graph.Receiver.Connection.ActiveChar = graph.Receiver;
+
+        graph.Receiver.Mails.ReturnMail(original.Id);
+
+        Assert.False(graph.Mails._allPlayerMails.ContainsKey(original.Id));
+        var returned = Assert.Single(graph.Mails._allPlayerMails.Values);
+        Assert.NotEqual(original.Id, returned.Id);
+        Assert.Equal(graph.Receiver.Id, returned.Header.SenderId);
+        Assert.Equal(graph.Sender.Id, returned.Header.ReceiverId);
+        Assert.Equal(graph.Receiver.Name, returned.Header.SenderName);
+        Assert.Equal(graph.Sender.Name, returned.ReceiverName);
+        Assert.Equal(original.Title, returned.Title);
+        Assert.Equal(original.Body.Text, returned.Body.Text);
+        Assert.Empty(returned.Body.Attachments);
+        Assert.Equal(moneyBeforeReturn - MailManager.CostExpress, graph.Receiver.Money);
+        Assert.Equal(graph.Receiver.Money, Scalar($"SELECT money FROM characters WHERE id={graph.Receiver.Id}"));
+        Assert.Equal(graph.Sender.Id, Scalar($"SELECT receiver_id FROM mails WHERE id={returned.Id}"));
+        var sentOpcode = SCOffsets.SCMailSentPacket;
+        session.Verify(value => value.SendPacket(It.Is<byte[]>(packet => packet.Length >= 8 &&
+            packet[6] == (byte)sentOpcode && packet[7] == (byte)(sentOpcode >> 8))), Times.Once);
+
+        // The existing return path deletes the original after sending its replacement.
+        Assert.True(graph.Save.TryCommitEconomy([graph.Receiver]));
+        Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM mails WHERE id={original.Id}"));
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM mails WHERE id={returned.Id}"));
+    }
 
     [Theory]
     [InlineData(MailType.Normal, 310)]
