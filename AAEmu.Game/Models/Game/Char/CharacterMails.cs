@@ -10,12 +10,19 @@ namespace AAEmu.Game.Models.Game.Char;
 
 public class CharacterMails
 {
+    private readonly IAuctionMailClaimManager _auctionMailClaimManager;
     private Character Self { get; set; }
     public CountUnreadMail UnreadMailCount { get; set; }
 
     public CharacterMails(Character self)
+        : this(self, AuctionMailClaimManager.Instance)
+    {
+    }
+
+    internal CharacterMails(Character self, IAuctionMailClaimManager auctionMailClaimManager)
     {
         Self = self;
+        _auctionMailClaimManager = auctionMailClaimManager;
 
         UnreadMailCount = new CountUnreadMail
         {
@@ -90,6 +97,11 @@ public class CharacterMails
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            var claim = _auctionMailClaimManager.TryClaim(Self, this, mailId, takeMoney,
+                takeItems, takeAllSelected, specifiedItemId);
+            if (claim != AuctionMailClaimResult.NotHandled)
+                return claim == AuctionMailClaimResult.Success;
+
             var res = false;
             if (MailManager.Instance._allPlayerMails.TryGetValue(mailId, out var thisMail) &&
                 thisMail.Header.ReceiverId == Self.Id)
