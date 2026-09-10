@@ -5,7 +5,9 @@ This branch assembles the accepted source for auction
 [305](https://github.com/KeganHollern/aaemu-cluster/issues/305), trade
 [306](https://github.com/KeganHollern/aaemu-cluster/issues/306), and housing
 [308](https://github.com/KeganHollern/aaemu-cluster/issues/308).
-It is an incomplete review checkpoint, not a merge or release candidate.
+The four operations share one persistence boundary: source items, containers,
+wallets, mail, and auction state commit before success notifications. Housing
+also enlists its property, tax offer, and furniture changes in that transaction.
 
 ## Integrated source
 
@@ -45,66 +47,75 @@ the executor's real-inventory fixture. Its nine pending MySQL cases now call
 `CharacterMails.SendMailToPlayer` with the actual save dependency and test that
 forged attachment counts and extra header metadata are ignored.
 
-## Remaining approval blockers
+## Completed integration
 
-The six character serializers `CharacterPortals`, `CharacterFriends`,
-`CharacterBlocked`, `CharacterSkills`, `CharacterQuests`, and `CharacterMates`
-still require the proposed `Save(PersistenceSaveContext)` overloads. They currently
-clear pending deletion queues before the surrounding transaction commits.
-Automatic approval review rejected the proposed acknowledgment changes, and the
-user has not yet answered the follow-up request. Those six files are unchanged
-from the base commit.
+The character serializers now delete and acknowledge the same captured IDs only
+when the enclosing transaction commits. Seven deletion queues across portals,
+friends, blocked characters, skills, quests, and mates survive known rollback;
+work queued after serialization remains pending for the next checkpoint.
 
-Trade also requires `Skill.IsExecuting(Character)` and the corresponding atomic
-skill execution guard. Automatic approval review rejected the proposed core skill
-and asynchronous plot changes. `Skill.cs` is unchanged from the base commit.
-The accepted craft guard is included, but its `CancelFromSkill` hook remains
-unwired until the skill change is approved and implemented.
+The skill guard covers admission, final effects, and the entire asynchronous plot
+lifetime. Trade reservations exclude those execution phases, and active execution
+excludes new offers. No persistence lock is held while combat runs or a plot awaits.
+`Cast` retains its existing behavior. Craft admission and final consumption use the
+same reservation boundary, including cancellation and repeated crafting.
 
-No rejected source changes, substitute implementations, or dependency stubs were
-applied. These blockers must be resolved before compilation and integrated tests
-can complete.
+Trade uses an exact three-dimensional distance check. The legacy general distance
+helper duplicated the Y coordinate and omitted height; only the trade call site
+changes. Full and partial item exchanges retain item details, use frozen packet
+counts, and restore both inventories and wallets on a known precommit failure.
 
-## Validation evidence and limits
+The housing integration tests call the real purchase operation and save manager,
+inject failures in the house row and late coffer-container deletion, retry the
+purchase, and reload house, mail, items, and coffers through production readers.
+Unit fixtures explicitly provide the world configuration and world registration
+used by housing tax and coffer interactions.
 
-The combined preflight command was:
+The existing successful letter-return test moved from a mock unit fixture to the
+real MySQL fixture because it now calls the durable player-send implementation.
+Its existing post-send deletion behavior is preserved. This change does not
+implement attachment-claim atomicity or expand the separate held claim work.
 
-```text
-dotnet build AAEmu.UnitTests/AAEmu.UnitTests.csproj --nologo
-```
+## Validation
 
-Project restoration succeeded. The Game dependency compilation reported exactly
-seven errors: six missing character `Save(PersistenceSaveContext)` overloads and
-the missing `Skill.IsExecuting` method. No other Game compiler errors were
-reported. Six analyzer warnings remain: two in `DoodadAreaTriggerRegistry`, two
-in `DuelManager`, one in `ItemManager`, and one redundant connection-null check
-in `HousingManager`. Unit-test project compilation was not reached.
+The complete solution restores and builds in Release, including the integration
+test project. Runtime Game script compilation passes with zero errors and warnings.
+All 50 Content Studio tests pass. The focused suites pass: 88 skill cases,
+53 trade settlement cases, 66 housing cases, 39 auction settlement cases,
+76 player-send cases, 11 mail mutation cases, 29 inventory mutation cases,
+and 23 remaining mailbox cases.
 
-Constructor and changed-call-site inspection found no remaining auction or trade
-constructor mismatch after the fixture correction. The removed
-`MailPlayerToPlayer` class has no remaining C# references, and trade cancellation
-callers use the new character-identity signature. Issue links point to the cluster
-repository. `git diff --check` passes.
+The final complete unit suite passes all 2,361 tests with no skips. The first
+complete run identified only the subsequently corrected housing and mailbox
+fixture failures. Hosted MySQL results are recorded in the pull request once
+available. The existing GitHub workflow runs
+all unit and Content Studio tests, runtime script compilation, and the
+`Category=GameMySql` integration suite. All database failure-injection tests use
+the disposable fixture; none run against live MySQL.
 
-Earlier focused runs provide limited provenance, not integrated release evidence:
+The tests cover SQL failure, retry, exact item identity and ownership, partial
+stacks, reservation use, wallet limits, concurrent offers and purchases,
+notification failures, uncertain commit handling, queued deletion acknowledgment,
+and reload behavior. A thrown commit does not prove rollback, so prepared asset
+state is preserved without sending success. Dirty bookkeeping is acknowledged
+only after a successful commit.
 
-| Scope | Prior evidence |
-| --- | --- |
-| Inventory exchange helpers | 29 focused tests passed before this combined build |
-| Player mail and mailbox fixtures | 76 executor cases and 24 remaining mailbox cases passed using the previously built helper assembly; these runs do not validate the new public wrapper |
-| Craft guard | Release build and 18 focused `CharacterCraft*Tests` passed |
-| Housing authorization layer | 51 housing tests and runtime script compilation passed before durable settlement was added |
-| Shared persistence, trade, auction, and durable housing | New feature and MySQL regression suites are authored; integrated compilation and execution remain pending |
+This range changes no SQL schema or compact snapshot. The inspected live economy
+and housing tables use InnoDB. No production database cleanup was required.
+Signed client content, launcher selection, and Kubernetes manifests are outside
+this source change. The deployment uses the ordinary paired image workflow and
+always-running Keel controller; later human gameplay checks do not gate publication.
 
-The MySQL suites use the existing disposable GameMySql fixture. They cover
-failure, retry, item identity and ownership, wallets, mail, auctions, housing,
-furniture, deletion queues, and reload behavior. Local Docker's API is older than
-the fixture's Testcontainers requirement; hosted fixture execution remains
-pending after compilation is unblocked.
+## Focused gameplay checks after deployment
 
-There are no compact updates, schema migrations, production database operations,
-image publications, or deployments in this integration checkpoint. The held mail
-attachment claim work remains separate. Human gameplay validation has not been
-performed. After approval, complete the missing implementations, compile both test
-projects, run the focused and hosted MySQL suites, and review the complete result
-before any merge or publication.
+- Auction: list an item with detailed attributes, cancel it as the seller, and
+  verify the returned item; test a bid, an outbid refund, and a buyout with two
+  characters. A different character must not cancel another seller's listing.
+- Mail: send normal and express letters with copper and detailed items, then
+  verify the fee, recipient, and contents after reconnecting.
+- Trade: exchange partial stacks and copper, cancel once, and move out of range
+  or to a different elevation before confirmation. Offered assets must remain
+  reserved, and a rejected trade must leave both players' assets intact.
+- Housing: list for a designated buyer, purchase once, and check seller proceeds,
+  buyer tax ownership, retained furniture, and returned guest/bound coffer contents
+  after reconnecting. Other characters must not list or cancel the property.
