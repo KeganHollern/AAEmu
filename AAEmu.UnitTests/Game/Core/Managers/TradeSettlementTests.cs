@@ -317,7 +317,9 @@ public sealed class TradeSettlementTests
         await Assert.That(_items[received.Id]).IsSameReferenceAs(received);
         await Assert.That(_owner.Inventory.Bag.Items.Single()).IsSameReferenceAs(item);
         await Assert.That(item.Count).IsEqualTo(3);
-        await Assert.That(_save.Participants).IsEquivalentTo(new Character[] { _owner, _target });
+        await Assert.That(_save.Participants.Length).IsEqualTo(2);
+        await Assert.That(_save.Participants.Any(participant => ReferenceEquals(participant, _owner))).IsTrue();
+        await Assert.That(_save.Participants.Any(participant => ReferenceEquals(participant, _target))).IsTrue();
         await Assert.That(PacketCount(_owner, SCOffsets.SCTradeMadePacket)).IsEqualTo(1);
         await Assert.That(PacketCount(_target, SCOffsets.SCTradeMadePacket)).IsEqualTo(1);
     }

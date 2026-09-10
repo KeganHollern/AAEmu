@@ -1,4 +1,6 @@
-﻿using AAEmu.Commons.Network;
+﻿using System.Numerics;
+
+using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
@@ -12,7 +14,6 @@ using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
-using AAEmu.Game.Utils;
 
 using NLog;
 
@@ -305,7 +306,7 @@ public class TradeManager(ITradeIdManager tradeIdManager, IWorldManager worldMan
                owner.Transform.InstanceId == target.Transform.InstanceId &&
                owner.GetRelationStateTo(target) == RelationState.Friendly &&
                target.GetRelationStateTo(owner) == RelationState.Friendly &&
-               MathUtil.GetDistance(owner.Transform.World.Position, target.Transform.World.Position, true) <= InteractionRange;
+               Vector3.Distance(owner.Transform.World.Position, target.Transform.World.Position) <= InteractionRange;
     }
 
     private bool Current(Character character)
