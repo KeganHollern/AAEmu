@@ -1,6 +1,8 @@
 ﻿using AAEmu.Commons.Network;
+using AAEmu.Commons.Network.Core;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
@@ -130,6 +132,24 @@ public sealed class CharacterQuestRestartTests
     }
 
     [Test]
+    public async Task RestartMainQuest_StartedPacketFails_StillActivatesCommittedAttempt()
+    {
+        var owner = CreateOwner();
+        var manager = Mock.Of<IQuestManager>();
+        CreateQuest(owner, manager.Object);
+        var session = Mock.Of<ISession>();
+        session.SendPacket(Any<byte[]>()).Throws(new IOException("Injected packet loss"));
+        owner.Connection = new GameConnection(session.Object) { ActiveChar = owner };
+
+        await Assert.That(() => owner.Quests.RestartMainQuest(101, _ => true)).Throws<IOException>();
+
+        var active = owner.Quests.ActiveQuests[101];
+        await Assert.That(active.Step).IsEqualTo(QuestComponentKind.Start);
+        manager.EnqueueEvaluation(active).WasCalled(Times.Once);
+        await Assert.That(owner.Quests.RestartMainQuest(101, _ => false)).IsFalse();
+    }
+
+    [Test]
     public async Task RestoreLoadedState_LegacyFailedStep_NormalizesFailedStatus()
     {
         var owner = CreateOwner();
@@ -174,13 +194,13 @@ public sealed class CharacterQuestRestartTests
         return owner;
     }
 
-    private static Quest CreateQuest(CharacterMock owner)
+    private static Quest CreateQuest(CharacterMock owner, IQuestManager questManager = null)
     {
         var template = new QuestTemplate { Id = 101, DetailId = QuestDetail.Main, RestartOnFail = true };
         var start = new QuestComponentTemplate(template) { Id = 1011, KindId = QuestComponentKind.Start };
         start.ActTemplates.Add(new QuestActConAcceptNpc(start) { ActId = 1012, NpcId = 42 });
         template.Components.Add(start.Id, start);
-        var quest = new Quest(template, owner, Mock.Of<IQuestManager>().Object, Mock.Of<ITaskManager>().Object,
+        var quest = new Quest(template, owner, questManager ?? Mock.Of<IQuestManager>().Object, Mock.Of<ITaskManager>().Object,
             Mock.Of<ISkillManager>().Object, Mock.Of<IExpressTextManager>().Object, Mock.Of<IWorldManager>().Object)
         {
             Id = 987,

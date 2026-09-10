@@ -30,7 +30,14 @@ public partial class Quest
     {
         InitializeQuestActs();
         RestoreLoadedState();
-        Owner.SendPacket(new SCQuestContextStartedPacket(this, ComponentId));
-        QuestInitialized();
+        try
+        {
+            Owner.SendPacket(new SCQuestContextStartedPacket(this, ComponentId));
+        }
+        finally
+        {
+            // The restart already committed, so a failed notification must not stop its evaluation.
+            QuestInitialized();
+        }
     }
 }

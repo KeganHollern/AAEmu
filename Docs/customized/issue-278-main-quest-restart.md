@@ -78,6 +78,7 @@ The server uses `SaveManager.PersistenceSyncRoot` to prevent overlap with saves,
 
 A Start timer gets its new deadline before the transaction.
 After the commit, the server restores that deadline and sends the Started response.
+If that packet fails, the server still enables evaluation for the committed attempt.
 Later steps use the normal quest evaluation path.
 Supply grants only the count absent from the player's current items.
 The restart itself does not grant or remove supplies, rewards, currency, or achievement progress.
@@ -99,7 +100,7 @@ Automated tests cover exact packet length, uint32 identity, invalid state, owner
 They also cover completion-bit preservation, reward reset, retained supplies, missing supplies, the timer deadline, and an old timeout.
 
 The full solution build passed with `0` errors.
-All `215` quest tests and all `2382` unit tests passed on `2026-09-10`.
+All `2383` unit tests passed on `2026-09-10`.
 The commands used `/home/kegan/archeage/.tools/dotnet/dotnet` with these arguments:
 
 ```text
@@ -107,6 +108,10 @@ build AAEmu.slnx --nologo -v quiet
 test --project AAEmu.UnitTests/AAEmu.UnitTests.csproj --no-build -- --treenode-filter '/*/*/*Quest*/*'
 test --project AAEmu.UnitTests/AAEmu.UnitTests.csproj --no-build
 ```
+
+`QuestRestartPersistenceTests` adds `2` GameMySql tests for the real restart transaction.
+They check row reload, unchanged completion bits, a failed SQL write, and retry.
+Fork CI runs these tests because this host has no local container runtime.
 
 Do this manual check with the deployed r208022 client.
 
