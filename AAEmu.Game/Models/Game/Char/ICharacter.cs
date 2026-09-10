@@ -13,6 +13,7 @@ public interface ICharacter : IUnit
     CharacterQuests Quests { get; set; }
     Inventory Inventory { get; set; }
     long Money { get; set; }
+    void ApplyMoneyDelta(long amount);
     long Money2 { get; set; }
     int HonorPoint { get; set; }
     int VocationPoint { get; set; }

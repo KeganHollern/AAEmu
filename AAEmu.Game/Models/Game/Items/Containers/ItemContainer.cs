@@ -319,11 +319,12 @@ public class ItemContainer
         ItemTaskType taskType,
         Item item,
         int preferredSlot = -1,
-        bool notifyInventory = true)
+        bool notifyInventory = true,
+        bool applyBindRules = true)
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
-            return AddOrMoveExistingItemLocked(taskType, item, preferredSlot, notifyInventory);
+            return AddOrMoveExistingItemLocked(taskType, item, preferredSlot, notifyInventory, applyBindRules);
         }
     }
 
@@ -331,7 +332,8 @@ public class ItemContainer
         ItemTaskType taskType,
         Item item,
         int preferredSlot,
-        bool notifyInventory)
+        bool notifyInventory,
+        bool applyBindRules)
     {
         if (item == null || TradeReservation.GetReservedCount(item) != 0)
         {
@@ -451,7 +453,8 @@ public class ItemContainer
             }
         }
 
-        ApplyBindRules(taskType);
+        if (applyBindRules)
+            ApplyBindRules(taskType);
 
         // Moved to the end of the method so that the item is already in the inventory.
         // Same-owner container moves are not acquisitions. Mail attachment claims are acquisitions even when
