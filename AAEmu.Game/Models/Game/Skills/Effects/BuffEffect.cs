@@ -4,6 +4,7 @@ using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World.Zones;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects;
 
@@ -20,6 +21,9 @@ public class BuffEffect : EffectTemplate
         CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time,
         CompressedGamePackets packetBuilder = null)
     {
+        if (Buff.Kind == BuffKind.Bad && PeaceProtection.PreventsAttack(caster, target))
+            return;
+
         if (target is Unit trg)
         {
             var hitType = SkillHitType.Invalid;

@@ -8,6 +8,7 @@ using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Utils;
 
@@ -63,6 +64,8 @@ public class BaseUnit : GameObject, IBaseUnit
     /// <returns></returns>
     public bool CanAttack(BaseUnit target)
     {
+        if (PeaceProtection.PreventsAttack(this, target))
+            return false;
         if (this.Faction == null || target.Faction == null)
             return true;
         if (this.ObjId == target.ObjId)
