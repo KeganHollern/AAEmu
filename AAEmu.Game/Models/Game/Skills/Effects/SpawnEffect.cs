@@ -50,6 +50,8 @@ public class SpawnEffect : EffectTemplate
         CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time,
         CompressedGamePackets packetBuilder = null)
     {
+        if (!ZoneSkillRestrictions.CanApply(caster, source?.Skill, casterObj))
+            return;
         Logger.Trace($"SpawnEffect: OwnerTypeId={OwnerTypeId}, SubType={SubType}, UseSummonerFaction={UseSummonerFaction}, LifeTime={LifeTime}");
 
         switch (OwnerTypeId)
@@ -104,6 +106,8 @@ public class SpawnEffect : EffectTemplate
                         // TODO: Implement OriDirId, PosDirId and MateStateId
                         using var transform = player.Transform.CloneDetached();
                         var spawnPosition = ResolveSlaveSpawnPosition(transform.World);
+                        if (!ZoneSkillRestrictions.CanApply(caster, source?.Skill, casterObj, spawnPosition.Position))
+                            return;
                         transform.Local.SetPosition(spawnPosition.Position, spawnPosition.Rotation);
 
                         var slave = player.ParentWorld.SlaveManager.Create(SubType, true, transform);
@@ -142,6 +146,9 @@ public class SpawnEffect : EffectTemplate
                         player.SendErrorMessage(ErrorMessageType.MateCannotSpawnNoSpace);
                         break;
                     }
+
+                    if (!ZoneSkillRestrictions.CanApply(caster, source?.Skill, casterObj, spawnPosition.Position))
+                        break;
 
                     var objId = ObjectIdManager.Instance.GetNextId();
                     var tlId = (ushort)TlIdManager.Instance.GetNextId();

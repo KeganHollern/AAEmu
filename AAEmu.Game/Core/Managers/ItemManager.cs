@@ -49,6 +49,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
     // Socketing
     private Dictionary<uint, uint> _socketChance;
+    public ItemSocketingRules SocketingRules { get; private set; } = new();
     private Dictionary<uint, List<BonusTemplate>> _itemUnitModifiers;
     private Dictionary<uint, ItemCapScale> _itemCapScales;
 
@@ -1076,6 +1077,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
             using (var command = connection.CreateCommand())
             {
+                SocketingRules = ItemSocketingRules.Load(connection);
                 command.CommandText = "SELECT * FROM item_socket_chances";
                 command.Prepare();
                 using (var sqliteReader = command.ExecuteReader())
@@ -1780,7 +1782,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                 }
             }
 
-            command.CommandText = "SELECT * FROM items ;";
+            command.CommandText = "SELECT i.* FROM items i WHERE NOT EXISTS (SELECT 1 FROM mail_archive_items a WHERE a.item_id=i.id)";
 
             using (var reader = command.ExecuteReader())
             {
@@ -1982,6 +1984,16 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
             _removedItems.Remove(itemId);
         lock (_allItems)
             _allItems.Remove(itemId);
+    }
+
+    public void DetachArchivedMailItem(Item item)
+    {
+        var container = item._holdingContainer;
+        container?.Items.Remove(item);
+        container?.UpdateFreeSlotCount();
+        item._holdingContainer = null;
+        // Keep the original SQL row and reserved ID. The archive also keeps an immutable row snapshot.
+        ForgetCommittedItem(item.Id);
     }
 
     [Obsolete("You can now use directly linked item containers, and no longer need to load them into the character object")]

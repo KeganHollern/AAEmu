@@ -42,6 +42,14 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
         if (!_shipyardsTemplate.TryGetValue(shipyardData.TemplateId, out var template))
             return null;
 
+        var design = ItemManager.Instance.GetTemplate(template.OriginItemId);
+        if (design != null && ZoneSkillRestrictions.GetBan(owner, design.UseSkillId, design.Id,
+                new System.Numerics.Vector3(shipyardData.X, shipyardData.Y, shipyardData.Z)) != null)
+        {
+            owner.SendErrorMessage(ErrorMessageType.ItemCannotUseHere);
+            return null;
+        }
+
         var pos = owner.Transform.CloneAsSpawnPosition();
         pos.X = shipyardData.X;
         pos.Y = shipyardData.Y;

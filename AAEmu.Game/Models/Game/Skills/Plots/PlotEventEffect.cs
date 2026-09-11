@@ -17,6 +17,13 @@ public class PlotEventEffect
 
     public void ApplyEffect(PlotState state, PlotTargetInfo targetInfo, PlotEventTemplate evt, ref byte flag, bool channeled = false, CompressedGamePackets gamePackets = null)
     {
+        // Plot source/target substitutions must not change the account's original skill source.
+        if (state.CancellationRequested() || state.ActiveSkill.Cancelled ||
+            !ZoneSkillRestrictions.CanApply(state.Caster, state.ActiveSkill, state.CasterCaster))
+        {
+            state.RequestCancellation();
+            return;
+        }
         var template = SkillManager.Instance.GetEffectTemplate(ActualId, ActualType);
 
         var buffEffect = template as BuffEffect;
@@ -84,6 +91,13 @@ public class PlotEventEffect
                 state.SkillObject,
                 DateTime.UtcNow,
                 gamePackets);
+
+            // An effect can reject its destination after the shared source check passed.
+            if (state.ActiveSkill.Cancelled || state.CancellationRequested())
+            {
+                state.RequestCancellation();
+                return;
+            }
         }
     }
 }

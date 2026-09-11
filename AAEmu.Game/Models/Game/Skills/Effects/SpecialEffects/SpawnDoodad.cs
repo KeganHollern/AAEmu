@@ -53,6 +53,9 @@ public class SpawnDoodad : SpecialEffectAction
             Logger.Debug($"Special effects: SpawnDoodad doodadId {doodadId}, delay {delay}, createTradePack {createTradePack}, value4 {value4}");
         }
 
+        if (!ZoneSkillRestrictions.CanApply(caster, skill, casterObj))
+            return;
+
         var rpy = target.Transform.World.ToRollPitchYawDegrees();
         var placementSource = (skill?.Template.TargetSelection ?? 0) switch
         {
@@ -69,6 +72,9 @@ public class SpawnDoodad : SpecialEffectAction
             Logger.Warn($"Special effects: SpawnDoodad cannot place doodadId {doodadId} at {placementSource.Transform.World.Position}");
             return;
         }
+
+        if (!ZoneSkillRestrictions.CanApply(caster, skill, casterObj, placementPosition))
+            return;
 
         var doodad = DoodadManager.Instance.Create(caster.ParentWorld, 0, (uint)doodadId, caster, true);
         if (doodad == null)

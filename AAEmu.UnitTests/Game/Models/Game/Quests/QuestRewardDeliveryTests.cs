@@ -406,6 +406,7 @@ public sealed class QuestRewardDeliveryTests
         public bool Initialize(bool forceReset = false) => true;
         public uint GetNextId() => FixedId > 0 ? FixedId : _next++;
         public uint[] GetNextId(int count) => Enumerable.Range(0, count).Select(_ => GetNextId()).ToArray();
+        public void RetainId(uint id) { }
         public void ReleaseId(uint id) => Released.Add(id);
         public void ReleaseId(IEnumerable<uint> ids) => Released.AddRange(ids);
     }

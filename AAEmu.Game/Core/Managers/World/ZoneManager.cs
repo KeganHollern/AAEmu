@@ -2,6 +2,7 @@
 
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
@@ -9,6 +10,7 @@ using AAEmu.Game.Models.Tasks.Zones;
 using AAEmu.Game.Utils.DB;
 
 using MySql.Data.MySqlClient;
+using Microsoft.Data.Sqlite;
 using NLog;
 
 namespace AAEmu.Game.Core.Managers.World;
@@ -21,7 +23,8 @@ public class ZoneManager(IWorldManager worldManager, ITaskManager taskManager) :
     private Dictionary<uint, Zone> _zones;
     private Dictionary<uint, ZoneGroup> _groups;
     private Dictionary<ushort, ZoneConflict> _conflicts;
-    private Dictionary<uint, ZoneGroupBannedTag> _groupBannedTags;
+    private Dictionary<uint, ZoneGroupBannedTag> _groupBannedTags = [];
+    private Dictionary<uint, ZoneGroupBannedTag[]> _bannedTagsByGroup = [];
     private Dictionary<uint, ZoneClimateElem> _climateElem;
     private bool _initialized;
 
@@ -40,6 +43,54 @@ public class ZoneManager(IWorldManager worldManager, ITaskManager taskManager) :
     public ZoneGroup GetZoneGroupById(uint zoneId)
     {
         return _groups.TryGetValue(zoneId, out var group) ? group : null;
+    }
+
+    public bool IsTagBanned(uint zoneGroupId, uint tagId)
+    {
+        return GetBannedTag(zoneGroupId, new HashSet<uint> { tagId }) != null;
+    }
+
+    internal ZoneGroupBannedTag GetBannedTag(uint zoneGroupId, IReadOnlySet<uint> tags, uint siegePeriodMask = 0)
+    {
+        // There is no authoritative dominion/siege lifecycle in this server yet.
+        // r208022 uses mask 0 without a dominion, not a permanent ban for every period row.
+        if (!_bannedTagsByGroup.TryGetValue(zoneGroupId, out var bans))
+            return null;
+        return bans.FirstOrDefault(ban => tags.Contains(ban.TagId) && ban.AppliesDuring(siegePeriodMask));
+    }
+
+    internal ZoneGroupBannedTag GetBannedAction(uint zoneGroupId, uint skillId, uint itemId)
+    {
+        if (!_bannedTagsByGroup.ContainsKey(zoneGroupId))
+            return null;
+        var tags = new HashSet<uint>(TagsGameData.Instance.GetTagsByTargetId(TagsGameData.TagType.Skills, skillId));
+        if (itemId != 0)
+            tags.UnionWith(TagsGameData.Instance.GetTagsByTargetId(TagsGameData.TagType.Items, itemId));
+        return GetBannedTag(zoneGroupId, tags);
+    }
+
+    internal bool HasBannedTags => _bannedTagsByGroup.Count != 0;
+
+    internal void LoadBannedTags(SqliteConnection connection)
+    {
+        var bans = new Dictionary<uint, ZoneGroupBannedTag>();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id, zone_group_id, tag_id, banned_periods_id FROM zone_group_banned_tags ORDER BY id";
+        using var reader = new SQLiteWrapperReader(command.ExecuteReader());
+        while (reader.Read())
+        {
+            var ban = new ZoneGroupBannedTag
+            {
+                Id = reader.GetUInt32("id"),
+                ZoneGroupId = reader.GetUInt32("zone_group_id"),
+                TagId = reader.GetUInt32("tag_id"),
+                BannedPeriodsId = reader.GetUInt32("banned_periods_id")
+            };
+            bans.Add(ban.Id, ban);
+        }
+        _groupBannedTags = bans;
+        _bannedTagsByGroup = bans.Values.GroupBy(ban => ban.ZoneGroupId)
+            .ToDictionary(group => group.Key, group => group.ToArray());
     }
 
     public List<uint> GetZoneKeysInZoneGroupById(uint zoneGroupId)
@@ -164,25 +215,7 @@ public class ZoneManager(IWorldManager worldManager, ITaskManager taskManager) :
                 }
             }
 
-            using (var command = connection.CreateCommand())
-            {
-                command.CommandText = "SELECT * FROM zone_group_banned_tags";
-                command.Prepare();
-                using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
-                {
-                    while (reader.Read())
-                    {
-                        var template = new ZoneGroupBannedTag
-                        {
-                            Id = reader.GetUInt32("id"),
-                            ZoneGroupId = reader.GetUInt32("zone_group_id"),
-                            TagId = reader.GetUInt32("tag_id")
-                        };
-                        // TODO 1.2 // template.BannedPeriodsId = reader.GetUInt32("banned_periods_id");
-                        _groupBannedTags.Add(template.Id, template);
-                    }
-                }
-            }
+            LoadBannedTags(connection);
 
             Logger.Info("Loaded {0} group banned tags", _groupBannedTags.Count);
             using (var command = connection.CreateCommand())

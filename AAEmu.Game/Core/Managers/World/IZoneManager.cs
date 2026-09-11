@@ -12,6 +12,7 @@ public interface IZoneManager : ILoadable, IInitializable
     Zone GetZoneById(uint zoneId);
     Zone GetZoneByKey(uint zoneKey);
     ZoneGroup GetZoneGroupById(uint zoneId);
+    bool IsTagBanned(uint zoneGroupId, uint tagId);
     List<uint> GetZoneKeysInZoneGroupById(uint zoneGroupId);
     uint GetTargetIdByZoneId(uint zoneId);
     Vector2 GetZoneOriginCell(uint zoneId);

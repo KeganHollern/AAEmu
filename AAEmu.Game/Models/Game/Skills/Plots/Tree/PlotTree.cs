@@ -39,7 +39,7 @@ public class PlotTree(uint plotId)
                 var item = queue.Dequeue();
                 var now = DateTime.UtcNow;
                 var node = item.node;
-                if (state.IsChanneling && state.ChannelingFinishRequested())
+                if (!state.CancellationRequested() && state.IsChanneling && state.ChannelingFinishRequested())
                 {
                     HandleChannelingFinish(node, state, queue, item);
                     lastEvent = 0;
@@ -177,6 +177,9 @@ public class PlotTree(uint plotId)
             // Execute the correct node fully before moving to children
             node.Execute(state, item.targetInfo);
 
+            if (state.CancellationRequested())
+                return;
+
             // Use a HashSet to track unique node IDs already in the queue
             var queuedNodeIds = new HashSet<uint>(queue.Select(q => q.node.Event.Id));
 
@@ -225,7 +228,7 @@ public class PlotTree(uint plotId)
     {
 
         var packets = new CompressedGamePackets();
-        while (executeQueue.Count > 0)
+        while (executeQueue.Count > 0 && !state.CancellationRequested())
         {
             var item = executeQueue.Dequeue();
             item.node.Execute(state, item.targetInfo, packets);

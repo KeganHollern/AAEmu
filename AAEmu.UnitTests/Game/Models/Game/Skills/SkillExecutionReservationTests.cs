@@ -1,4 +1,5 @@
 ﻿using System.Reflection;
+using System.Numerics;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
@@ -14,12 +15,15 @@ using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Effects.Enums;
+using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 using AAEmu.Game.Models.Game.Skills.Plots;
 using AAEmu.Game.Models.Game.Skills.Plots.Tree;
 using AAEmu.Game.Models.Game.Skills.Plots.Type;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Skills;
@@ -65,14 +69,23 @@ public sealed class SkillExecutionReservationTests
         {
             if (type == SlotType.EquipmentMate) continue;
             var container = new ItemContainer(7, type, false, _owner)
-                { Owner = _owner, ContainerId = (ulong)containers.Count + 1 };
+            { Owner = _owner, ContainerId = (ulong)containers.Count + 1 };
             containers.Add(container.ContainerId, container);
         }
         SetField(itemManager, "_allPersistentContainers", containers);
         _owner.Inventory = new Inventory(_owner);
         _owner.Craft = new CharacterCraft(_owner);
-        _material = new Item { Id = 1, TemplateId = 100, Template = templates[100], Count = 3,
-            OwnerId = 7, SlotType = SlotType.Inventory, Slot = 0, _holdingContainer = _owner.Inventory.Bag };
+        _material = new Item
+        {
+            Id = 1,
+            TemplateId = 100,
+            Template = templates[100],
+            Count = 3,
+            OwnerId = 7,
+            SlotType = SlotType.Inventory,
+            Slot = 0,
+            _holdingContainer = _owner.Inventory.Bag
+        };
         _items.Add(_material.Id, _material);
         _owner.Inventory.Bag.Items.Add(_material);
         _owner.Inventory.Bag.UpdateFreeSlotCount();
@@ -146,6 +159,90 @@ public sealed class SkillExecutionReservationTests
         await Assert.That(_owner.Inventory.Bag.Items.Single().TemplateId).IsEqualTo(200U);
         await Assert.That(_material.Count).IsEqualTo(0);
         await Assert.That(Skill.IsExecuting(_owner)).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Effects_DestinationResultControlsLaterEffectsProductsItemUseAndSourceCounts(bool denied)
+    {
+        ConfigureDestinationRule();
+        EconomicSkill(); // Synthetic product relation tests ordering, not a live compact exploit.
+        var skill = NewSkill();
+        var source = new SkillItem(70, _material.Id, _material.TemplateId);
+        var laterEffects = 0;
+        var itemUses = 0;
+        _owner.ConditionChance = true;
+        _owner.Events.OnItemUse += (_, _) => itemUses++;
+        skill.Template.Effects.Add(Effect(() => ApplyFishingDestination(skill, source, denied)));
+        skill.Template.Effects.Add(Effect(() => laterEffects++));
+
+        await Assert.That(ZoneSkillRestrictions.CanApply(_owner, skill, source)).IsTrue();
+        skill.ApplyEffects(_owner, source, _owner, new SkillCastUnitTarget(70), null);
+
+        await Assert.That(skill.Cancelled).IsEqualTo(denied);
+        await Assert.That(laterEffects).IsEqualTo(denied ? 0 : 1);
+        await Assert.That(itemUses).IsEqualTo(denied ? 0 : 1);
+        await Assert.That(_owner.Inventory.GetItemsCount(200)).IsEqualTo(denied ? 0 : 1);
+        await Assert.That(_material.Count).IsEqualTo(denied ? 3 : 0);
+        await Assert.That(Skill.IsExecuting(_owner)).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Plot_DestinationResultControlsSameNodeQueuedNodesItemUseAndSourceCounts(bool denied)
+    {
+        ConfigureDestinationRule();
+        var skill = NewSkill();
+        var source = new SkillItem(70, _material.Id, _material.TemplateId);
+        var sameNodeEffects = 0;
+        var childEffects = 0;
+        var itemUses = 0;
+        _owner.Events.OnItemUse += (_, _) => itemUses++;
+        var plot = Plot(() => ApplyFishingDestination(skill, source, denied));
+        _effects.Add(2, new ProbeEffect(() => sameNodeEffects++));
+        plot.Tree.RootNode.Event.Effects.AddLast(new PlotEventEffect
+        {
+            ActualId = 2,
+            ActualType = "Probe",
+            SourceId = PlotEffectSource.OriginalSource,
+            TargetId = PlotEffectTarget.OriginalSource
+        });
+        var child = Plot(() => childEffects++).Tree.RootNode;
+        child.Parent = plot.Tree.RootNode;
+        child.ParentNextEvent = new PlotNextEvent();
+        plot.Tree.RootNode.Children.Add(child); // Both nodes enter the final execution queue before its flush.
+        skill.Template.Plot = plot;
+
+        await Assert.That(ZoneSkillRestrictions.CanApply(_owner, skill, source)).IsTrue();
+        await plot.RunAsync(_owner, source, _owner, new SkillCastUnitTarget(70), null, skill);
+
+        await Assert.That(skill.Cancelled).IsEqualTo(denied);
+        await Assert.That(skill.ActivePlotState.CancellationRequested()).IsEqualTo(denied);
+        await Assert.That(sameNodeEffects).IsEqualTo(denied ? 0 : 1);
+        await Assert.That(childEffects).IsEqualTo(denied ? 0 : 1);
+        await Assert.That(itemUses).IsEqualTo(denied ? 0 : 1);
+        await Assert.That(_material.Count).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task PlotEffect_DestinationDenialStopsOtherTargetsWithoutAnAttachedActiveState()
+    {
+        ConfigureDestinationRule();
+        var skill = NewSkill();
+        var source = new SkillItem(70, _material.Id, _material.TemplateId);
+        var calls = 0;
+        var plot = Plot(() => { calls++; ApplyFishingDestination(skill, source, true); });
+        var state = new PlotState(_owner, source, _owner, new SkillCastUnitTarget(70), null, skill);
+        var targets = new PlotTargetInfo(_owner, _owner) { EffectedTargets = [_owner, _owner] };
+        byte flag = 0;
+
+        plot.Tree.RootNode.Event.Effects.First.Value.ApplyEffect(state, targets, plot.Tree.RootNode.Event, ref flag);
+
+        await Assert.That(calls).IsEqualTo(1);
+        await Assert.That(state.CancellationRequested()).IsTrue();
+        await Assert.That(skill.Cancelled).IsTrue();
     }
 
     [Test]
@@ -278,6 +375,48 @@ public sealed class SkillExecutionReservationTests
         _products.Add(1, new SkillProduct { Id = 1, SkillId = 50, ItemId = 200, Amount = 1 });
     }
 
+    private void ConfigureDestinationRule()
+    {
+        var zones = new ZoneManager(null, null);
+        SetField(zones, "_zones", new Dictionary<uint, Zone>
+        {
+            [1000] = new() { ZoneKey = 1000, GroupId = 45 },
+            [2000] = new() { ZoneKey = 2000, GroupId = 1 }
+        });
+        SetField(zones, "_groups", new Dictionary<uint, ZoneGroup>());
+        SetField(zones, "_bannedTagsByGroup", new Dictionary<uint, ZoneGroupBannedTag[]>
+        {
+            [45] = [new() { Id = 185, ZoneGroupId = 45, TagId = 1348 }]
+        });
+        SetInstance(zones);
+        var tags = new TagsGameData();
+        SetField(tags, "_tags", new Dictionary<TagsGameData.TagType, Dictionary<uint, HashSet<uint>>>
+        {
+            [TagsGameData.TagType.Skills] = new() { [1348] = [50] }
+        });
+        SetInstance(tags);
+        SetInstance(new WorldManager(null, null, null, null, null));
+        var template = new WorldTemplate
+        {
+            Id = 10,
+            CellX = 1,
+            CellY = 1,
+            ZoneKeyByRegions = new uint[WorldManager.SECTORS_PER_CELL, WorldManager.SECTORS_PER_CELL]
+        };
+        template.ZoneKeyByRegions[0, 0] = 1000;
+        template.ZoneKeyByRegions[2, 0] = 2000;
+        typeof(GameObject).GetField("_parentWorld", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(_owner, new WorldInstance(template, 0, true, 0));
+        _owner.Transform.Local.SetPosition(130, 10, 100);
+    }
+
+    private void ApplyFishingDestination(Skill skill, SkillItem source, bool denied)
+    {
+        var target = new BaseUnit();
+        target.Transform.Local.SetPosition(new Vector3(denied ? 10 : 130, 10, 100));
+        new FishingLoot().Execute(_owner, source, target, null, null, skill, null, DateTime.UtcNow, 0, 0, 0, 0);
+    }
+
     private static Skill NewSkill(uint id = 50) => new(new SkillTemplate { Id = id, TargetType = SkillTargetType.Self });
 
     private void Apply(Skill skill) => skill.ApplyEffects(_owner, new SkillCasterUnit(70), _owner, new SkillCastUnitTarget(70), null);
@@ -287,7 +426,9 @@ public sealed class SkillExecutionReservationTests
 
     private static SkillEffect Effect(Action action) => new()
     {
-        Template = new ProbeEffect(action), EndLevel = byte.MaxValue, Chance = 100,
+        Template = new ProbeEffect(action),
+        EndLevel = byte.MaxValue,
+        Chance = 100,
         ApplicationMethod = SkillEffectApplicationMethod.Source
     };
 
@@ -296,12 +437,21 @@ public sealed class SkillExecutionReservationTests
         var effectId = (uint)_effects.Count + 1;
         _effects.Add(effectId, new ProbeEffect(action));
         var evt = new PlotEventTemplate { Id = effectId, SourceUpdateMethodId = 1, TargetUpdateMethodId = 1 };
-        evt.Effects.AddLast(new PlotEventEffect { ActualId = effectId, ActualType = "Probe",
-            SourceId = PlotEffectSource.OriginalSource, TargetId = PlotEffectTarget.OriginalSource });
+        evt.Effects.AddLast(new PlotEventEffect
+        {
+            ActualId = effectId,
+            ActualType = "Probe",
+            SourceId = PlotEffectSource.OriginalSource,
+            TargetId = PlotEffectTarget.OriginalSource
+        });
         var tree = new PlotTree(effectId) { RootNode = new PlotNode { Event = evt } };
         if (delay > 0)
-            tree.RootNode.Children.Add(new PlotNode { Event = new PlotEventTemplate { Id = 100, SourceUpdateMethodId = 1, TargetUpdateMethodId = 1 },
-                Parent = tree.RootNode, ParentNextEvent = new PlotNextEvent { Delay = delay } });
+            tree.RootNode.Children.Add(new PlotNode
+            {
+                Event = new PlotEventTemplate { Id = 100, SourceUpdateMethodId = 1, TargetUpdateMethodId = 1 },
+                Parent = tree.RootNode,
+                ParentNextEvent = new PlotNextEvent { Delay = delay }
+            });
         return new Plot { Id = effectId, Tree = tree };
     }
 
@@ -331,6 +481,7 @@ public sealed class SkillExecutionReservationTests
 
     private sealed class ExecutionCharacter : CharacterMock
     {
+        public override void OnZoneChange(uint lastZoneKey, uint newZoneKey) { }
         public override float CastTimeMul => 1;
         public override float GlobalCooldownMul => 100;
         public override double ApplySkillModifiers(Skill skill, SkillAttribute attribute, double baseValue) => baseValue;

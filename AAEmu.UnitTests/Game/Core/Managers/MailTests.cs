@@ -417,14 +417,15 @@ public sealed class MailTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task ReturnMail_SendFails_PreservesOriginalMail(bool missingSender)
+    public async Task ReturnMail_InvalidSenderOrSaveFailure_PreservesOriginalMail(bool missingSender)
     {
+        _mailManager.ActiveMailSender = _ => !missingSender;
         var mail = AddReceivedMail();
         mail.Body.Text = "Keep this message";
         if (missingSender)
-            mail.Header.SenderName = "DeletedSender";
+            mail.Header.SenderId = uint.MaxValue;
         else
-            _character.Money = 0;
+            _mailManager.CommitLifecycle = _ => false;
         mail.IsDirty = false;
         var moneyBeforeReturn = _character.Money;
         var unreadBeforeReturn = _mails.UnreadMailCount.Received;

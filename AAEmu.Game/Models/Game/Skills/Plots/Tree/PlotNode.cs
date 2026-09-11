@@ -48,6 +48,8 @@ public class PlotNode
         byte flag = 2;
         foreach (var eff in Event.Effects)
         {
+            if (state.CancellationRequested())
+                return;
             try
             {
                 eff.ApplyEffect(state, targetInfo, Event, ref flag, IsChannelStart());
@@ -58,6 +60,9 @@ public class PlotNode
                 Logger.Error("[Plot Effects Error]: {0}\n{1}", e.Message, e.StackTrace);
             }
         }
+
+        if (state.CancellationRequested())
+            return;
 
         double castTime = Event.NextEvents
              .Where(nextEvent => nextEvent.Casting || nextEvent.Channeling)

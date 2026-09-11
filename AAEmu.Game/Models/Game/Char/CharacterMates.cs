@@ -74,6 +74,8 @@ public class CharacterMates(Character owner)
 
         var item = Owner.Inventory.GetItemById(skillData.ItemId);
         if (item == null) return;
+        if (!ZoneSkillRestrictions.CanUseItem(Owner, item))
+            return;
 
         var itemTemplate = (SummonMateTemplate)ItemManager.Instance.GetTemplate(item.TemplateId);
         var npcId = itemTemplate.NpcId;
@@ -90,6 +92,9 @@ public class CharacterMates(Character owner)
             Owner.SendErrorMessage(ErrorMessageType.MateCannotSpawnNoSpace);
             return;
         }
+
+        if (!ZoneSkillRestrictions.CanUseItem(Owner, item, spawnPosition.Position))
+            return;
 
         var tlId = (ushort)TlIdManager.Instance.GetNextId();
         var objId = ObjectIdManager.Instance.GetNextId();

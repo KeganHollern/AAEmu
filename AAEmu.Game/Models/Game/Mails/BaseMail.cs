@@ -1,6 +1,4 @@
 ﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Core.Managers.World;
-using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Items;
 
 namespace AAEmu.Game.Models.Game.Mails;
@@ -27,6 +25,7 @@ public class BaseMail
 
     // Local helpers
     public bool IsDelivered { get; set; }
+    internal bool HasUnresolvedAttachments { get; set; }
     public bool IsDirty { get => _isDirty; set => _isDirty = value; }
 
     public BaseMail()
@@ -53,37 +52,13 @@ public class BaseMail
     /// <returns></returns>
     public bool CanReturnMail()
     {
-        return IsDelivered == false && Header.SenderId != Header.ReceiverId && Header.SenderId > 0 && (MailType == MailType.Normal || MailType == MailType.Express);
+        return !Header.Returned && Header.SenderId != Header.ReceiverId && Header.SenderId > 0 &&
+            MailType is MailType.Normal or MailType.Express;
     }
 
     public bool ReturnToSender()
     {
-        lock (SaveManager.PersistenceSyncRoot)
-        {
-            if (!CanReturnMail())
-                return false;
-
-            var originalReceiver = WorldManager.Instance.GetCharacterById(Header.ReceiverId);
-            var originalSender = WorldManager.Instance.GetCharacterById(Header.SenderId);
-
-            if (originalReceiver != null && originalReceiver.IsOnline)
-                originalReceiver.SendPacket(new SCMailReturnedPacket(_id, _header));
-
-            var originalReceiverId = Header.ReceiverId;
-            var originalReceiverName = Header.ReceiverName;
-            Header.ReceiverId = Header.SenderId;
-            ReceiverName = Header.SenderName;
-            Header.SenderId = originalReceiverId;
-            Header.SenderName = originalReceiverName;
-
-            Send();
-
-            if (originalSender != null && originalSender.IsOnline)
-                MailManager.Instance.NotifyNewMailByNameIfOnline(this, originalSender.Name);
-
-            // TODO
-            return true;
-        }
+        return MailManager.Instance.ReturnMailToSender(this);
     }
 
     public byte GetTotalAttachmentCount()

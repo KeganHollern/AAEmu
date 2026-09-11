@@ -1,5 +1,7 @@
 ﻿using System.Reflection;
 
+using System.Numerics;
+
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.Creatures;
 using AAEmu.Game.Core.Managers.Id;
@@ -2988,6 +2990,13 @@ public class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager do
     /// </summary>
     public Doodad CreatePlayerDoodad(Character character, uint id, float x, float y, float z, float zRot, float scale, ulong itemId, FarmType farmType = FarmType.Invalid, uint itemTemplateId = 0, int customData = 0, bool ignoreHouses = false)
     {
+        if (itemId != 0)
+        {
+            var sourceItem = character.Inventory.Bag.GetItemByItemId(itemId);
+            if (sourceItem == null || !itemManager.GetItemIdsFromDoodad(id).Contains(sourceItem.TemplateId) ||
+                !ZoneSkillRestrictions.CanUseItem(character, sourceItem, new Vector3(x, y, z)))
+                return null;
+        }
         Logger.Warn($"{character.Name} is placing a doodad {id} at position {x} {y} {z}");
 
         // NOTE: If you would ever want to use player housing outside of main_world, you'll need to modify this

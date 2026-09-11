@@ -20,6 +20,7 @@ using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Effects.Enums;
+using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 using AAEmu.Game.Models.Game.Skills.Plots.Tree;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
 using AAEmu.Game.Models.Game.Skills.Static;
@@ -92,6 +93,8 @@ public class Skill
     public PlotState ActivePlotState { get; set; }
     public Dictionary<uint, SkillHitType> HitTypes { get; set; }
     public BaseUnit InitialTarget { get; set; }//Temp Hack Fix. Replace this with UnitsEffected
+    internal BaseUnit OriginalCaster { get; private set; }
+    internal uint SourceItemTemplateId { get; private set; }
     private bool _bypassGcd;
     private int _achievementUseRecorded;
     public bool Cancelled { get; set; } = false;
@@ -155,6 +158,15 @@ public class Skill
         }
 
         Cancelled = false;
+        OriginalCaster = caster;
+        var sourceItem = ZoneSkillRestrictions.GetSourceItem(caster, casterCaster);
+        SourceItemTemplateId = sourceItem?.TemplateId ?? 0;
+        if (casterCaster is SkillItem itemSource &&
+            !SkillItemSource.CanUse(sourceItem, caster.ObjId, itemSource, Template, targetCaster, skillObject))
+        {
+            Cancelled = true;
+            return SkillResult.InvalidSource;
+        }
         Interlocked.Exchange(ref _achievementUseRecorded, 0);
 
         // Cast character for future reference
@@ -173,6 +185,36 @@ public class Skill
             Cancelled = true;
             skillResultValueUInt = requirementResult.ResultUInt;
             return SkillResultHelper.SkillResultErrorKeyToId(requirementResult.ResultKey);
+        }
+
+        if (!ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
+            return SkillResult.InvalidTarget;
+
+        // Resolve once, before GCD, buff removal, plots, or costs. Do not use CurrentTarget
+        // for authored target requirements: the packet can name a different target.
+        var target = GetInitialTarget(caster, casterCaster, targetCaster);
+        InitialTarget = target;
+        if (target == null)
+        {
+            if (caster is Npc npc)
+                npc.Ai?.OnNoAggroTarget();
+            return SkillResult.NoTarget;
+        }
+
+        var failedRequirement = SkillRequirementsGameData.Instance.GetFailedRequirement(Template, caster, target);
+        if (failedRequirement != 0)
+        {
+            Cancelled = true;
+            skillResultValueUInt = failedRequirement;
+            return SkillResult.SkillReqFail;
+        }
+
+        var zoneBan = ZoneSkillRestrictions.GetSkillBan(caster, Template.Id, casterCaster);
+        if (zoneBan != null)
+        {
+            Cancelled = true;
+            skillResultValueUInt = zoneBan.Id;
+            return SkillResult.ZoneBanned;
         }
 
         if (Template.CooldownTime > 0 && cooldownOwner != null && !CanIgnoreCooldowns(cooldownOwner) && unit.Cooldowns.CheckCooldown(Template.Id))
@@ -229,19 +271,6 @@ public class Skill
 
         // Create a new skillObject if needed
         skillObject ??= new SkillObject();
-
-        // Grab current target
-        var target = GetInitialTarget(caster, casterCaster, targetCaster);
-        InitialTarget = target;
-        if (target == null)
-        {
-            if (caster is Npc npc)
-            {
-                npc.Ai?.OnNoAggroTarget();
-            }
-            Logger.Trace($"Skill: SkillResult.NoTarget! - Skill {Template.Id}, Caster {caster.Name} ({caster.ObjId})");
-            return SkillResult.NoTarget; // We should try to make sure this doesn't happen, but can happen with NPC skills
-        }
 
         // Unmount character if skill asks for it
         if (character is { IsRiding: true } && Template.Unmount)
@@ -703,7 +732,51 @@ public class Skill
 
     public void Cast(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject)
     {
+        // Socket casts can finish after the initial entry lease ends. Exclude trades
+        // through validation, mana use, and immediate effect/source consumption.
+        if (!ItemSocketing.IsSocketingSkill(this))
+        {
+            CastCore(caster, casterCaster, target, targetCaster, skillObject);
+            return;
+        }
+        if (Cancelled)
+            return;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            ExecutionLease execution = null;
+            try
+            {
+                if (!TryEnterExecution(caster as Character, out execution))
+                {
+                    Stop(caster);
+                    return;
+                }
+                CastCore(caster, casterCaster, target, targetCaster, skillObject);
+            }
+            finally
+            {
+                execution?.Dispose();
+            }
+        }
+    }
+
+    private void CastCore(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject)
+    {
         if (caster is not Unit unit) { return; }
+
+        if (!ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
+        {
+            Stop(caster);
+            return;
+        }
+
+        if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
+        {
+            Cancelled = true;
+            unit.SkillTask = null;
+            EndSkill(caster);
+            return;
+        }
 
         if (!_bypassGcd)
         {
@@ -863,6 +936,12 @@ public class Skill
     public void StartChanneling(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject)
     {
         if (caster is not Unit unit) { return; }
+        if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
+        {
+            Cancelled = true;
+            EndSkill(caster);
+            return;
+        }
         if (Template.ChannelingBuffId != 0)
         {
             var buff = SkillManager.Instance.GetBuffTemplate(Template.ChannelingBuffId);
@@ -892,6 +971,8 @@ public class Skill
     public void EndChanneling(BaseUnit caster, Doodad channelDoodad, SkillCaster casterCaster)
     {
         if (caster is not Unit unit) { return; }
+        if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
+            Cancelled = true;
         unit.SkillTask = null;
         if (Template.ChannelingBuffId != 0)
         {
@@ -1020,13 +1101,30 @@ public class Skill
         // SkillTask can already be null here, including during delayed/projectile effects.
         // The execution lease excludes new trade offers through final material consumption.
         using (execution)
-            ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
+        {
+            if (ItemSocketing.IsSocketingSkill(this))
+            {
+                // Keep the final socket check, roll, item mutation and source consumption
+                // together with respect to inventory movement and persistence snapshots.
+                lock (SaveManager.PersistenceSyncRoot)
+                    ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
+            }
+            else
+                ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
+        }
     }
 
     private void ApplyEffectsCore(BaseUnit caster, SkillCaster casterCaster, BaseUnit targetSelf, SkillCastTarget targetCaster, SkillObject skillObject)
     {
         if (caster is not Unit unit)
             return;
+        if (!ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
+            return;
+        if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
+        {
+            Cancelled = true;
+            return;
+        }
         var player = caster as Character;
         var possibleTargets = new List<BaseUnit>(); // TODO crutches
         // Get a list of all possible targets
@@ -1346,14 +1444,6 @@ public class Skill
                         return;
                     }
                 }
-
-                if (skillProducts.Count > 0)
-                {
-                    foreach (var product in skillProducts)
-                    {
-                        player.Inventory.Bag.AcquireDefaultItem(ItemTaskType.SkillEffectGainItem, product.ItemId, product.Amount);
-                    }
-                }
             }
         }
 
@@ -1370,6 +1460,8 @@ public class Skill
         // Apply the effects that need to happen
         foreach (var (target, effect) in effectsToApply)
         {
+            if (Cancelled)
+                break;
             // If this item uses Weight, handle the random selector
             // For example NPC /useskill 13834 has multiple bubble chat effects that need to be picked from
             // Probably used for some combat and loot skills as well
@@ -1422,6 +1514,11 @@ public class Skill
                     if (player is { SkillCancelled: true }) { Cancelled = true; }
                 }
 
+                // Destination checks run inside their effect, after the shared source check.
+                // Do not run later effects or grant completion rewards after that rejection.
+                if (Cancelled)
+                    break;
+
                 // Implement consumption of item sets
                 if (effect.ItemSetId > 0)
                 {
@@ -1442,9 +1539,15 @@ public class Skill
                 Logger.Error($"Template not found for Skill[{Template.Id}] Effect[{effect.EffectId}]");
         }
 
+        if (!Cancelled && player != null)
+        {
+            foreach (var product in skillProducts)
+                player.Inventory.Bag.AcquireDefaultItem(ItemTaskType.SkillEffectGainItem, product.ItemId, product.Amount);
+        }
+
         // TODO Call OnItemUse() moved to the ApplyEffects() method from the effects and add trigger ConditionChance;
         // If the probability of passing the effect is greater than the chance, then run the check on the use of the item for the quest
-        if (casterCaster is SkillItem skillItem && unit.ConditionChance)
+        if (!Cancelled && casterCaster is SkillItem skillItem && unit.ConditionChance)
         {
             if (player == null)
                 return;

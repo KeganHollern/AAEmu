@@ -113,6 +113,15 @@ public sealed class GameMySqlFixture : IAsyncLifetime
         await command.ExecuteNonQueryAsync();
         await command.ExecuteNonQueryAsync();
 
+        // Exercise the mail update from a pre-update schema before any test creates assets.
+        command.CommandText = "DROP TABLE `mail_archive_items`; DROP TABLE `mail_lifecycle`";
+        await command.ExecuteNonQueryAsync();
+        var mailUpdatePath = Path.Combine(AppContext.BaseDirectory, "SQL", "updates",
+            "2026-09-11_aaemu_game_mail_lifecycle.sql");
+        command.CommandText = await File.ReadAllTextAsync(mailUpdatePath);
+        await command.ExecuteNonQueryAsync();
+        await command.ExecuteNonQueryAsync();
+
         var builder = new MySqlConnectionStringBuilder(_connectionString);
         MySQL.SetConfiguration(new MySqlConnectionSettings
         {

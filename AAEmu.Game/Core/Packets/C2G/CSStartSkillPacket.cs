@@ -6,7 +6,6 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
-using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
@@ -104,6 +103,12 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
 
             // Use the main skill on the mate/slave
             var mountPrimaryResult = skill.Use(caster, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+            if (mountPrimaryResult is SkillResult.SkillReqFail or SkillResult.ZoneBanned)
+            {
+                // An authored rejection also prevents the linked rider action.
+                SendFailure(skillId, skillCaster, skillCastTarget, skill, skillObject, mountPrimaryResult, skillResultErrorValue);
+                return;
+            }
             if (mountPrimaryResult != SkillResult.Success)
             {
                 // skill.Stop(caster, null, skillCaster);
@@ -121,10 +126,19 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
                 return;
 
             // Use player's currently selected for the rider/operator skill
-            var riderTarget = Connection.ActiveChar.CurrentTarget as Unit;
+            var rider = Connection.ActiveChar;
+            var riderTarget = rider.CurrentTarget as Unit ?? rider;
 
-            // Execute the rider/operator skill as the player using either target or self
-            skillResult = Connection.ActiveChar.UseSkill(mountAttachedSkill, riderTarget ?? Connection.ActiveChar);
+            // Keep the actual rider action and authored failure detail for its response.
+            skillId = mountAttachedSkill;
+            skillCaster = new SkillCasterUnit(rider.ObjId);
+            skillCastTarget = new SkillCastUnitTarget(riderTarget.ObjId);
+            skillObject = new SkillObject();
+            skillResultErrorValue = 0;
+            var riderTemplate = SkillManager.Instance.GetSkillTemplate(skillId);
+            skill = new Skill(riderTemplate ?? new SkillTemplate { Id = skillId });
+            skillResult = riderTemplate == null ? SkillResult.InvalidSkill :
+                skill.Use(rider, skillCaster, skillCastTarget, skillObject, true, out skillResultErrorValue);
         }
         else if (Connection.ActiveChar.IsAutoAttack && skillId == Connection.ActiveChar.AutoAttackTask?.Skill?.Template?.Id)
         {
@@ -144,17 +158,15 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
                 Connection.ActiveChar.StartAutoSkill(skill);
             }
         }
-        else if (skillCaster is SkillItem si)
+        else if (skillCaster is SkillItem)
         {
-            // A skill triggered by an item
+            // Skill.Use validates the actual owned item, its authored skill, and the
+            // exact portal-book exceptions before any costs or effects.
             var player = Connection.ActiveChar;
-            // var item = player.Inventory.GetItemById(si.ItemId);
-            // добавил проверку на ItemBindType.BindOnPickup для записи портала с помощью камина в доме
-            if (si.SkillSourceItem == null || skillId != si.SkillSourceItem.Template.UseSkillId && si.SkillSourceItem.Template.BindType != ItemBindType.BindOnPickup)
-                return;
-            // si.ItemTemplateId = item.TemplateId;
-            skill = new Skill(SkillManager.Instance.GetSkillTemplate(skillId));
-            skillResult = skill.Use(player, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+            var template = SkillManager.Instance.GetSkillTemplate(skillId);
+            skill = new Skill(template ?? new SkillTemplate { Id = skillId });
+            skillResult = template == null ? SkillResult.InvalidSkill :
+                skill.Use(player, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
         }
         else if (Connection.ActiveChar.Skills.Skills.ContainsKey(skillId))
         {
@@ -190,17 +202,20 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         }
 
         if (skillResult != SkillResult.Success)
+            SendFailure(skillId, skillCaster, skillCastTarget, skill, skillObject, skillResult, skillResultErrorValue);
+    }
+
+    private void SendFailure(uint skillId, SkillCaster caster, SkillCastTarget target, Skill skill,
+        SkillObject skillObject, SkillResult result, uint detail)
+    {
+        // The confirmed failure body is a skill-started packet without a fired/stopped packet.
+        var packet = new SCSkillStartedPacket(skillId, 0, caster, target, skill, skillObject)
         {
-            // It actually sends a skill started packet, but not a skill fired or stopped
-            var scSkillStartedPacket = new SCSkillStartedPacket(skillId, 0, skillCaster, skillCastTarget, skill, skillObject)
-            {
-                RealCastTimeDiv10 = 0, BaseCastTimeDiv10 = 0
-            };
-            // ExtraData at the end of the packet is used to mark a use error
-            scSkillStartedPacket.SetSkillResult(skillResult);
-            scSkillStartedPacket.SetResultUInt(skillResultErrorValue);
-            Connection.ActiveChar.SendPacket(scSkillStartedPacket);
-        }
+            RealCastTimeDiv10 = 0, BaseCastTimeDiv10 = 0
+        };
+        packet.SetSkillResult(result);
+        packet.SetResultUInt(detail);
+        Connection.ActiveChar.SendPacket(packet);
     }
 
     internal static bool TryAuthorizeComboFollowup(SkillComboState state, uint skillId, bool isOwnUnitCast)

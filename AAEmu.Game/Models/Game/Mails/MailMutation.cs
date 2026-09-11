@@ -58,12 +58,14 @@ public sealed class MailMutation : IDisposable
         return true;
     }
 
-    public bool Complete()
+    public bool Complete(bool notify = true)
     {
         RequireActive();
         if (_failed)
             return false;
         _finished = true;
+        if (!notify)
+            return true;
         // Removed IDs stay reserved: a stale tax/payment request must never refer to
         // a newly issued mail in the same server lifetime.
         foreach (var (mail, _) in _removed)

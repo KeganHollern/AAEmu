@@ -153,8 +153,7 @@ public static class CSOffsets
     public const ushort CSTakeAttachmentSequentially = 0x09f;
     public const ushort CSPayChargeMoneyPacket = 0x0a0;
     public const ushort CSDeleteMailPacket = 0x0a1;
-    public const ushort CSReportSpamPacket = 0x0a3;
-    public const ushort CSReturnMailPacket = 0xfff; // TODO: this packet is not in the offsets 
+    public const ushort CSReturnMailPacket = 0x0a3;
     public const ushort CSRemoveMatePacket = 0x0a4;
     public const ushort CSChangeMateTargetPacket = 0x0a5;
     public const ushort CSChangeMateNamePacket = 0x0a6;
