@@ -2657,6 +2657,7 @@ public class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager do
                         template.MinTime = reader.GetInt32("min_time", 0);
                         template.MaxTime = reader.GetInt32("max_time", 0);
                         template.ModelKindId = reader.GetUInt32("model_kind_id");
+                        template.Model = reader.GetString("model", "");
                         template.UseCreatorFaction = reader.GetBoolean("use_creator_faction", true);
                         template.ForceTodTopPriority = reader.GetBoolean("force_tod_top_priority", true);
                         template.MilestoneId = reader.GetUInt32("milestone_id", 0);

@@ -13,8 +13,17 @@ using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
+[NotInParallel]
 public sealed class QuestEarlyCompletionTests
 {
+    private QuestInteractionTestModels _models;
+
+    [Before(Test)]
+    public void SetUp() => _models = new QuestInteractionTestModels();
+
+    [After(Test)]
+    public void TearDown() => _models.Dispose();
+
     private const uint QuestId = 303;
     private const uint OtherQuestId = 9_303;
     private const uint ReportNpcTemplateId = 8_141;
@@ -122,7 +131,7 @@ public sealed class QuestEarlyCompletionTests
         var manager = CreateManager();
         var world = CreateWorld();
         var owner = CreateOwner(world);
-        AddNpc(world, ObjectiveNpcObjectId, ObjectiveNpcTemplateId);
+        AddNpc(owner, ObjectiveNpcObjectId, ObjectiveNpcTemplateId);
         var quest = AddActiveQuest(owner, manager, QuestId, RequiredObjectiveCount / 2);
 
         var result = manager.TryCompleteQuestAsLetItDone(owner, QuestId, ObjectiveNpcObjectId, 2);
@@ -138,7 +147,7 @@ public sealed class QuestEarlyCompletionTests
         var manager = CreateManager();
         var world = CreateWorld();
         var owner = CreateOwner(world);
-        AddNpc(world, ReportNpcObjectId, ReportNpcTemplateId);
+        AddNpc(owner, ReportNpcObjectId, ReportNpcTemplateId);
         var quest = AddActiveQuest(owner, manager, QuestId, RequiredObjectiveCount);
 
         manager.DoReportEvents(owner, QuestId, ReportNpcObjectId, 0, 3);
@@ -206,7 +215,7 @@ public sealed class QuestEarlyCompletionTests
         var manager = CreateManager();
         var world = CreateWorld();
         var owner = CreateOwner(world);
-        AddNpc(world, ObjectiveNpcObjectId, ObjectiveNpcTemplateId);
+        AddNpc(owner, ObjectiveNpcObjectId, ObjectiveNpcTemplateId);
         var requestedQuest = AddActiveQuest(owner, manager, QuestId, RequiredObjectiveCount / 2);
         var otherQuest = AddActiveQuest(owner, manager, OtherQuestId, RequiredObjectiveCount);
 
@@ -224,7 +233,7 @@ public sealed class QuestEarlyCompletionTests
         var manager = CreateManager();
         var world = CreateWorld();
         var owner = CreateOwner(world);
-        AddNpc(world, ReportNpcObjectId, ReportNpcTemplateId);
+        AddNpc(owner, ReportNpcObjectId, ReportNpcTemplateId);
         var requestedQuest = AddActiveQuest(owner, manager, QuestId, RequiredObjectiveCount);
         var otherQuest = AddActiveQuest(owner, manager, OtherQuestId, RequiredObjectiveCount);
 
@@ -258,6 +267,8 @@ public sealed class QuestEarlyCompletionTests
         {
             Id = 7,
             ObjId = 70,
+            ModelId = 1,
+            Region = QuestInteractionTestModels.CreateRegion(world),
             Name = "Questor"
         };
         SetParentWorld(owner, world);
@@ -265,11 +276,15 @@ public sealed class QuestEarlyCompletionTests
         return owner;
     }
 
-    private static Npc AddNpc(WorldInstance world, uint objectId, uint templateId)
+    private static Npc AddNpc(Character owner, uint objectId, uint templateId)
     {
+        var world = owner.ParentWorld;
         var npc = new Npc
         {
             ObjId = objectId,
+            ModelId = 1,
+            Region = owner.Region,
+            IsVisible = true,
             TemplateId = templateId,
             Template = new NpcTemplate { Id = templateId, Name = $"NPC {templateId}", Scale = 1f }
         };
