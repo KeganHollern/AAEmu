@@ -25,6 +25,7 @@ using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Skills.Utils;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Physics;
 using AAEmu.Game.Models.Tasks.Skills;
@@ -493,6 +494,9 @@ public class Skill
 
                     if (target != null)
                     {
+                        if (PeaceProtection.PreventsAttack(caster, target))
+                            return null;
+
                         var relation = caster.GetRelationStateTo(target);
                         if (relation != RelationState.Hostile && relation != RelationState.Neutral)
                             if (!caster.CanAttack(target))
@@ -1179,6 +1183,9 @@ public class Skill
             // Loop targets for this effect
             foreach (var target in effectedTargets)
             {
+                if (!effect.Friendly && effect.NonFriendly && PeaceProtection.PreventsAttack(caster, target))
+                    continue;
+
                 var targetNpc = target as Npc;
                 var relationState = caster.GetRelationStateTo(target);
                 // Level range check

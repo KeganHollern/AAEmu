@@ -48,6 +48,14 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
         _duels.TryRemove(duel.Challenged.Id, out _);
     }
 
+    internal bool AreActiveOpponents(Character first, Character second)
+    {
+        return first != null && second != null && first != second && _duels.TryGetValue(first.Id, out var duel) &&
+               duel.DuelEndTimerTask != null &&
+               (duel.Challenger == first && duel.Challenged == second ||
+                duel.Challenged == first && duel.Challenger == second);
+    }
+
     public void DuelRequest(Character challenger, uint challengedId)
     {
         // приходит ID того, кого вызвали на дуэль

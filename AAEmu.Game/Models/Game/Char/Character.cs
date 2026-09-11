@@ -31,6 +31,7 @@ using AAEmu.Game.Models.Game.Team;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Game.World.Transform;
+using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Utils;
 
@@ -1446,7 +1447,7 @@ public partial class Character : Unit, ICharacter
         //Events.OnCombatStarted += OnEnterCombat;
     }
 
-    public void SetHostileActivity(Character attacker)
+    public void SetHostileActivity(BaseUnit attacker)
     {
         if (_hostilePlayers.ContainsKey(attacker.ObjId))
             _hostilePlayers[attacker.ObjId] = DateTime.UtcNow;
@@ -1454,7 +1455,7 @@ public partial class Character : Unit, ICharacter
             _hostilePlayers.TryAdd(attacker.ObjId, DateTime.UtcNow);
     }
 
-    public bool IsActivelyHostile(Character target)
+    public bool IsActivelyHostile(BaseUnit target)
     {
         if (_hostilePlayers.TryGetValue(target.ObjId, out var value))
         {
@@ -2228,6 +2229,9 @@ public partial class Character : Unit, ICharacter
 
     public override void ReduceCurrentHp(BaseUnit attacker, int value, KillReason killReason = KillReason.Damage)
     {
+        if (killReason != KillReason.Gm && value > 0 && PeaceProtection.PreventsAttack(attacker, this))
+            return;
+
         if (AppConfiguration.Instance.World.GodMode)
         {
             Logger.Debug($"{Name}'s damage disabled because of GodMode flag (normal damage: {value})");

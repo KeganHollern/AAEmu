@@ -3,6 +3,7 @@ using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World.Zones;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects;
 
@@ -21,6 +22,9 @@ public class ManaBurnEffect : EffectTemplate
         CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time,
         CompressedGamePackets packetBuilder = null)
     {
+        if (PeaceProtection.PreventsAttack(caster, target))
+            return;
+
         Logger.Trace("ManaBurnEffect");
         var min = 0.0f;
         var max = 0.0f;
