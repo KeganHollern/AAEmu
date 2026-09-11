@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using System.Reflection;
+using System.Collections.Concurrent;
 
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
@@ -9,6 +10,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
+using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Items;
@@ -23,6 +25,7 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Skills.Plots;
 using AAEmu.Game.Models.Game.Skills.Plots.Tree;
+using AAEmu.Game.Models.Game.Skills.Plots.Type;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -372,7 +375,11 @@ public sealed class ZoneSkillRestrictionsTests
             .SetValue(mate, _caster.ParentWorld);
         _caster.ParentWorld.AddObject(mate);
         var template = new SkillTemplate { Id = 12373, TargetType = SkillTargetType.Self, ManaCost = 50 };
-        SetField(SkillManager.Instance, "_skills", new Dictionary<uint, SkillTemplate> { [12373] = template });
+        SetField(SkillManager.Instance, "_skills", new Dictionary<uint, SkillTemplate>
+        {
+            [12373] = template,
+            [500] = new() { Id = 500, TargetType = SkillTargetType.Self, ManaCost = 25 }
+        });
         SetField(SkillManager.Instance, "_comboFollowupSkills", new HashSet<uint>());
         var mates = new MateGameData();
         SetField(mates, "_mountSkills", new Dictionary<uint, MountSkills> { [1] = new() { Id = 1, SkillId = 12373 } });
@@ -401,10 +408,92 @@ public sealed class ZoneSkillRestrictionsTests
 
         new CSStartSkillPacket { Connection = connection }.Read(body);
 
-        await Assert.That(character.RiderSkills).IsEqualTo(0);
+        await Assert.That(character.Mp).IsEqualTo(100);
         await Assert.That(mate.Mp).IsEqualTo(100);
+        session.SendPacket(Any<byte[]>()).WasCalled(Times.Once);
         session.SendPacket(Is<byte[]>(packet => packet[^5] == (byte)expected &&
             BitConverter.ToUInt32(packet, packet.Length - 4) == expectedDetail)).WasCalled(Times.Once);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RiderOnlyRuleFailure_KeepsRiderSkillSourceTargetAndAuthoredDetail(bool buffRule)
+    {
+        var character = CreateItemCharacter(new Item { Id = 700, TemplateId = 150 });
+        character.AttachedPoint = AttachPointKind.Driver;
+        character.CurrentTarget = _caster;
+        var world = _caster.ParentWorld;
+        world.Regions = new Region[WorldManager.SECTORS_PER_CELL, WorldManager.SECTORS_PER_CELL];
+        SetField(WorldManager.Instance, "_worlds", new ConcurrentDictionary<uint, WorldInstance>
+        { [world.Id] = world });
+        character.Transform.InstanceId = world.Id;
+        _caster.Transform.InstanceId = world.Id;
+        world.AddObject(character);
+        var mate = new Mate { ObjId = 8, Mp = 100, Template = new NpcTemplate { Scale = 1 } };
+        mate.Transform.Local.SetPosition(10, 10, 100);
+        typeof(GameObject).GetField("_parentWorld", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(mate, world);
+        mate.Transform.InstanceId = world.Id;
+        world.AddObject(mate);
+        var primaryEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var primaryEvent = new PlotEventTemplate { Id = 1, SourceUpdateMethodId = 1, TargetUpdateMethodId = 1 };
+        primaryEvent.Effects.AddLast(new PlotEventEffect
+        {
+            ActualId = 1,
+            ActualType = "Probe",
+            SourceId = PlotEffectSource.OriginalSource,
+            TargetId = PlotEffectTarget.OriginalSource
+        });
+        var primary = new SkillTemplate
+        {
+            Id = 11328,
+            TargetType = SkillTargetType.Pos,
+            PlotOnly = true,
+            Plot = new Plot { Tree = new PlotTree(1) { RootNode = new PlotNode { Event = primaryEvent } } }
+        };
+        var riderSkillId = buffRule ? 11327u : 12373u;
+        var rider = new SkillTemplate { Id = riderSkillId, TargetType = SkillTargetType.Pos };
+        SetField(SkillManager.Instance, "_skills", new Dictionary<uint, SkillTemplate>
+        { [11328] = primary, [riderSkillId] = rider });
+        SetField(SkillManager.Instance, "_comboFollowupSkills", new HashSet<uint>());
+        SetField(SkillManager.Instance, "_effects", new Dictionary<string, Dictionary<uint, EffectTemplate>>
+        {
+            ["Probe"] = new() { [1] = new CompletePrimaryPlotEffect(primaryEnded) }
+        });
+        var mates = new MateGameData();
+        SetField(mates, "_mountSkills", new Dictionary<uint, MountSkills> { [12] = new() { Id = 12, SkillId = 11328 } });
+        SetField(mates, "_mountAttachedSkills", new Dictionary<uint, MountAttachedSkills>
+        {
+            [38] = new() { Id = 38, MountSkillId = 12, AttachPointId = AttachPointKind.Driver, SkillId = riderSkillId }
+        });
+        SetInstance(mates);
+        if (buffRule)
+        {
+            // Exact compact relation: mount 11328 -> rider 11327 -> requirement 1 (root tag 27).
+            using var data = SkillRequirementsGameDataTests.CreateConnection();
+            SkillRequirementsGameDataTests.Execute(data,
+                "INSERT INTO skill_reqs VALUES(1, 'f', NULL, 27, 't'); INSERT INTO skill_req_skills VALUES(1, 11327);");
+            SetInstance(SkillRequirementsGameDataTests.Load(data));
+            var buffs = Mock.Of<IBuffs>();
+            buffs.CheckBuffTag(27).Returns(true);
+            character.Buffs = buffs.Object;
+        }
+        var session = Mock.Of<ISession>();
+        var connection = new GameConnection(session.Object) { ActiveChar = character };
+        character.Connection = connection;
+        var body = new PacketStream().Write(11328u).Write(new SkillCasterMount(8))
+            .Write(new SkillCastUnitTarget(8)).Write((byte)0);
+        var expected = new SCSkillStartedPacket(riderSkillId, 0, new SkillCasterUnit(70),
+                new SkillCastUnitTarget(7), new Skill(rider), new SkillObject())
+            .SetSkillResult(buffRule ? SkillResult.SkillReqFail : SkillResult.ZoneBanned)
+            .SetResultUInt(buffRule ? 1u : 21u).Encode().GetBytes();
+
+        new CSStartSkillPacket { Connection = connection }.Read(body);
+        await primaryEnded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        session.SendPacket(Is<byte[]>(packet => packet.SequenceEqual(expected))).WasCalled(Times.Once);
+        await Assert.That(character.Mp).IsEqualTo(100);
     }
 
     [Test]
@@ -580,13 +669,17 @@ public sealed class ZoneSkillRestrictionsTests
 
     private sealed class ProbeCharacter() : Character(null)
     {
-        public int RiderSkills { get; private set; }
         public override void BroadcastPacket(GamePacket packet, bool self) { }
         public override void OnZoneChange(uint lastZoneKey, uint newZoneKey) { }
-        public override SkillResult UseSkill(uint skillId, IUnit target)
+    }
+
+    private sealed class CompletePrimaryPlotEffect(TaskCompletionSource completed) : EffectTemplate
+    {
+        public override bool OnActionTime => false;
+        public override void Apply(BaseUnit caster, SkillCaster casterObj, BaseUnit target, SkillCastTarget targetObj,
+            CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time, CompressedGamePackets packetBuilder = null)
         {
-            RiderSkills++;
-            return SkillResult.Success;
+            source.Skill.Callback = () => completed.TrySetResult();
         }
     }
 }

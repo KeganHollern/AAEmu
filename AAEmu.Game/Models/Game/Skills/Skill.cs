@@ -1444,14 +1444,6 @@ public class Skill
                         return;
                     }
                 }
-
-                if (skillProducts.Count > 0)
-                {
-                    foreach (var product in skillProducts)
-                    {
-                        player.Inventory.Bag.AcquireDefaultItem(ItemTaskType.SkillEffectGainItem, product.ItemId, product.Amount);
-                    }
-                }
             }
         }
 
@@ -1468,6 +1460,8 @@ public class Skill
         // Apply the effects that need to happen
         foreach (var (target, effect) in effectsToApply)
         {
+            if (Cancelled)
+                break;
             // If this item uses Weight, handle the random selector
             // For example NPC /useskill 13834 has multiple bubble chat effects that need to be picked from
             // Probably used for some combat and loot skills as well
@@ -1520,6 +1514,11 @@ public class Skill
                     if (player is { SkillCancelled: true }) { Cancelled = true; }
                 }
 
+                // Destination checks run inside their effect, after the shared source check.
+                // Do not run later effects or grant completion rewards after that rejection.
+                if (Cancelled)
+                    break;
+
                 // Implement consumption of item sets
                 if (effect.ItemSetId > 0)
                 {
@@ -1540,9 +1539,15 @@ public class Skill
                 Logger.Error($"Template not found for Skill[{Template.Id}] Effect[{effect.EffectId}]");
         }
 
+        if (!Cancelled && player != null)
+        {
+            foreach (var product in skillProducts)
+                player.Inventory.Bag.AcquireDefaultItem(ItemTaskType.SkillEffectGainItem, product.ItemId, product.Amount);
+        }
+
         // TODO Call OnItemUse() moved to the ApplyEffects() method from the effects and add trigger ConditionChance;
         // If the probability of passing the effect is greater than the chance, then run the check on the use of the item for the quest
-        if (casterCaster is SkillItem skillItem && unit.ConditionChance)
+        if (!Cancelled && casterCaster is SkillItem skillItem && unit.ConditionChance)
         {
             if (player == null)
                 return;

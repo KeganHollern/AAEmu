@@ -27,7 +27,7 @@ The local native files have these SHA-256 values:
 | `compact/server.sqlite3` | `636ca9ecfe777bc86542e4b828f930c7861d2b4639b1bcfff670c064fee9c1ac` |
 
 Both native files have PE timestamp `543cb835`, image base `38ff0000`, and image size `01cb0a00`.
-The timestamp represents 2014-10-14 00:44:21 UTC.
+The timestamp represents 2014-10-14 05:44:21 UTC.
 The process dump comes from the earlier local r208022 research.
 This task reused that exact dump and its Ghidra project in read-only mode.
 It did not start a client, change client content, or use a live server.
@@ -183,6 +183,25 @@ The change does not add a Player, Moderator, or Admin exemption.
 It does not change confirmed client packet bodies, the compact, or persistent SQL data.
 The unused `CSSpawnSlavePacket` remains a stub. This change does not add an unconfirmed packet action.
 
+## Destination rejection and rider failures
+
+A destination check can reject an effect after its source-zone check passes.
+That rejection cancels the skill and its active plot.
+The normal effect loop then stops before later effects, skill products, `ItemUse`, and source consumption.
+The plot path stops before later targets, later effects in the same node, and queued nodes.
+Both paths still run their normal cleanup.
+
+The regression uses the real `FishingLoot` destination check inside complete normal and plot paths.
+Its product relation is synthetic and tests completion order.
+It does not claim an observed product exploit in the current compact.
+The allowed case still grants the product, calls `ItemUse`, and consumes the source.
+
+A separate rider failure now sends the rider's skill, source, target, and authored detail.
+It does not reuse the primary mount context or discard the detail.
+The exact compact links mount skill 11328 to rider skill 11327 through `mount_attached_skills` row 38.
+Requirement 1 applies to rider skill 11327 while root tag 27 is active.
+Packet tests use a successful primary plot and compare the complete rider failure response.
+
 ## Validation
 
 The regression tests use small in-memory SQLite tables with the same rule columns.
@@ -192,8 +211,9 @@ They also cover current coordinates, destination coordinates, delayed item conte
 Portal tests cover the 2 confirmed alternate skills and reject other books, shapes, targets, and skill IDs.
 Full packet tests reject forged bound-item requests through both item and default-skill routes before costs.
 Mounted packet tests prove that both authored failures stop the linked rider action.
+Full-path tests also check destination-only rejection and rider-only failure.
 
-The full unit suite passed 2711 tests, with 0 failed and 0 skipped.
+The full unit suite passed 2718 tests, with 0 failed and 0 skipped.
 The build passed with 0 errors.
 The exact compact checks found the counts above and 0 orphan skill relations.
 
@@ -221,5 +241,6 @@ After deployment, Kegan or Mike must check these client actions:
 5. Try a restricted ship item in Mirage and repeat it in an allowed zone.
 6. Leave the restricted zone and repeat the permitted action.
 7. Save a portal and rename it with portal book 4045.
+8. Try fishing from an allowed zone into a restricted zone. Make sure no later reward or item-use action occurs.
 
 These client checks did not run during source development.

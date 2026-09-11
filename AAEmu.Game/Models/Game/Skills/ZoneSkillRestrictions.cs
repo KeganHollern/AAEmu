@@ -73,7 +73,10 @@ public static class ZoneSkillRestrictions
         if (GetBan(caster, skill?.Template?.Id ?? skill?.Id ?? 0, sourceItemId, destination) == null)
             return true;
         if (skill != null)
+        {
             skill.Cancelled = true;
+            skill.ActivePlotState?.RequestCancellation();
+        }
         (caster as Character)?.SendErrorMessage(ErrorMessageType.SkillCannotUseHere);
         return false;
     }

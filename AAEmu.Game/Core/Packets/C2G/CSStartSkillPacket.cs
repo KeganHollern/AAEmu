@@ -126,10 +126,19 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
                 return;
 
             // Use player's currently selected for the rider/operator skill
-            var riderTarget = Connection.ActiveChar.CurrentTarget as Unit;
+            var rider = Connection.ActiveChar;
+            var riderTarget = rider.CurrentTarget as Unit ?? rider;
 
-            // Execute the rider/operator skill as the player using either target or self
-            skillResult = Connection.ActiveChar.UseSkill(mountAttachedSkill, riderTarget ?? Connection.ActiveChar);
+            // Keep the actual rider action and authored failure detail for its response.
+            skillId = mountAttachedSkill;
+            skillCaster = new SkillCasterUnit(rider.ObjId);
+            skillCastTarget = new SkillCastUnitTarget(riderTarget.ObjId);
+            skillObject = new SkillObject();
+            skillResultErrorValue = 0;
+            var riderTemplate = SkillManager.Instance.GetSkillTemplate(skillId);
+            skill = new Skill(riderTemplate ?? new SkillTemplate { Id = skillId });
+            skillResult = riderTemplate == null ? SkillResult.InvalidSkill :
+                skill.Use(rider, skillCaster, skillCastTarget, skillObject, true, out skillResultErrorValue);
         }
         else if (Connection.ActiveChar.IsAutoAttack && skillId == Connection.ActiveChar.AutoAttackTask?.Skill?.Template?.Id)
         {
