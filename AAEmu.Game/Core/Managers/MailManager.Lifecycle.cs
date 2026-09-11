@@ -10,6 +10,8 @@ public partial class MailManager
 {
     internal Func<Action<PersistenceSaveContext>, bool> CommitLifecycle { get; set; } =
         write => SaveManager.Instance.TryCommitEconomy([], write);
+    internal Func<Action<PersistenceSaveContext>, Action<PersistenceSaveContext>, bool> CommitAuctionArchive { get; set; } =
+        (validate, write) => SaveManager.Instance.TryCommitMailArchive(validate, write);
     internal Action<string, Exception> LifecycleCommitFailure { get; set; } = Environment.FailFast;
     internal Func<uint, bool?> ActiveMailSender { get; set; } = MailLifecycleStore.IsActiveSender;
 
@@ -47,15 +49,27 @@ public partial class MailManager
             !ReferenceEquals(source, current) || (!expired && (source.Body.RecvDate > now || IsExpired(source, now))))
             return false;
         var attachmentIds = new HashSet<ulong>();
+        var auctionAttachments = new List<Item>();
         foreach (var item in source.Body.Attachments)
+        {
             if (item == null || item.Id == 0 || item.Count <= 0 || !attachmentIds.Add(item.Id) ||
-                item.OwnerId != source.Header.ReceiverId || item.SlotType != SlotType.Mail ||
+                item.OwnerId != source.Header.ReceiverId ||
                 !ReferenceEquals(itemManager.GetItemByItemId(item.Id), item) ||
-                item._holdingContainer == null || item._holdingContainer.OwnerId != source.Header.ReceiverId ||
-                item._holdingContainer.ContainerType != SlotType.Mail ||
+                item._holdingContainer == null ||
                 item._holdingContainer.Items.Count(candidate => candidate.Id == item.Id) != 1 ||
                 !item._holdingContainer.Items.Contains(item))
                 return false;
+            if (item.SlotType == SlotType.Mail && item._holdingContainer.ContainerType == SlotType.Mail &&
+                item._holdingContainer.OwnerId == source.Header.ReceiverId)
+                continue;
+            if (!expired || !IsExpired(source, now) || source.MailType != MailType.AucBidWin ||
+                item.SlotType != SlotType.Auction || item._holdingContainer.ContainerType != SlotType.Auction ||
+                item.IsDirty || item._holdingContainer.IsDirty || item._holdingContainer.ContainerId == 0 ||
+                !ReferenceEquals(itemManager.GetItemContainerByDbId(item._holdingContainer.ContainerId), item._holdingContainer) ||
+                item._holdingContainer.Items.Count(candidate => candidate.Slot == item.Slot) != 1)
+                return false;
+            auctionAttachments.Add(item);
+        }
         if (_allPlayerMails.Values.Any(mail => !ReferenceEquals(mail, source) &&
                 mail.Body.Attachments.Any(item => attachmentIds.Contains(item.Id))))
             return false;
@@ -108,8 +122,15 @@ public partial class MailManager
         bool committed;
         try
         {
-            committed = CommitLifecycle(context => MailLifecycleStore.Write(context, source, snapshot,
-                outcome, now, returned?.Id ?? 0, actor?.Id ?? 0));
+            if (auctionAttachments.Count > 0)
+            {
+                var archive = new LegacyAuctionMailArchive(source, auctionAttachments, now);
+                committed = CommitAuctionArchive(archive.ValidateSource,
+                    context => MailLifecycleStore.Write(context, source, snapshot, outcome, now, 0, actor?.Id ?? 0, archive));
+            }
+            else
+                committed = CommitLifecycle(context => MailLifecycleStore.Write(context, source, snapshot,
+                    outcome, now, returned?.Id ?? 0, actor?.Id ?? 0));
         }
         catch (Exception exception)
         {
