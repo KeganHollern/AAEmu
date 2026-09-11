@@ -476,21 +476,39 @@ public class HousingManager(
     public void Build(GameConnection connection, uint designId, float posX, float posY, float posZ, float zRot,
         ulong itemId, int moneyAmount, int ht, bool autoUseAaPoint)
     {
-        // TODO validate house by range...
-        // TODO remove itemId
-        // TODO minus moneyAmount
+        // Serialize account-wide eligibility with house creation, sales and removal.
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            BuildLocked(connection, designId, posX, posY, posZ, zRot, itemId);
+        }
+    }
+
+    private void BuildLocked(GameConnection connection, uint designId, float posX, float posY, float posZ,
+        float zRot, ulong itemId)
+    {
+        if (connection?.ActiveChar == null)
+            return;
 
         var sourceDesignItem = connection.ActiveChar.Inventory.GetItemById(itemId);
-        if (sourceDesignItem == null || sourceDesignItem.OwnerId != connection.ActiveChar.Id)
+        if (sourceDesignItem == null || sourceDesignItem.OwnerId != connection.ActiveChar.Id ||
+            sourceDesignItem.SlotType != SlotType.Inventory || sourceDesignItem.Count < 1 ||
+            !HousingGameData.Instance.IsDesignItem(designId, sourceDesignItem.TemplateId))
         {
             // Invalid itemId supplied or the id is not owned by the user
             connection.ActiveChar.SendErrorMessage(ErrorMessageType.BagInvalidItem);
             return;
         }
 
-        // var zoneId = worldManager.GetZoneId(connection.ActiveChar.Transform.WorldId, posX, posY);
-
         var houseTemplate = HousingGameData.Instance.GetTemplate(designId);
+        var placementError = houseTemplate == null || !float.IsFinite(zRot)
+            ? ErrorMessageType.HouseCannotLoacateInvalidCategoryArea
+            : HousingPlacementRules.Check(HousingAreaGameData.Instance, connection.ActiveChar.ParentWorld?.Template,
+                new Vector3(posX, posY, posZ), houseTemplate.CategoryId, connection.ActiveChar.AccountId, _houses.Values);
+        if (placementError != ErrorMessageType.NoErrorMessage)
+        {
+            connection.ActiveChar.SendErrorMessage(placementError);
+            return;
+        }
         CalculateBuildingTaxInfo(connection.ActiveChar.AccountId, houseTemplate, true, out var totalTaxAmountDue, out _, out _, out _, out _);
 
         if (FeaturesManager.Fsets.Check(Models.Game.Features.Feature.taxItem))
