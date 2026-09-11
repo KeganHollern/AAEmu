@@ -3,10 +3,12 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Utils;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class Dist : ICommand
 {
     public string[] CommandNames { get; set; } = ["distance", "dist"];

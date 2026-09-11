@@ -3,10 +3,12 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Utils.Scripts.SubCommands.Time;
 using AAEmu.Game.Utils.Scripts.SubCommands;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.ManageServer)]
 public class TimeCmd : SubCommandBase, ICommand, ICommandV2
 {
     public string[] CommandNames { get; set; } = ["time"];
@@ -22,8 +24,7 @@ public class TimeCmd : SubCommandBase, ICommand, ICommandV2
 
     public void OnLoad()
     {
-        string[] name = ["time"];
-        CommandManager.Instance.Register(name, this);
+        CommandManager.Instance.Register(CommandNames, this);
     }
 
     public string GetCommandLineHelp()

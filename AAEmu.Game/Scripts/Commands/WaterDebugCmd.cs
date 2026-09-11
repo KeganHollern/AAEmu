@@ -8,11 +8,14 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Utils;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
 /// <summary>GM debug for water zones loaded from client cell <c>object.dat</c>.</summary>
+[CommandPermission(GamePermission.StaffCommands)]
+[CommandActionPermission(GamePermission.ManageServer, "reload", "reloadinfo")]
 public sealed class WaterDebugCmd : ICommand
 {
     private const float OceanTol = 0.25f;

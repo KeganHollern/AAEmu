@@ -36,7 +36,6 @@
     "MaxConcurencyThreadPool": 8,
     "HeightMapsEnable": true,
     "DebugInfo": true,
-    "DebugInfoLevel": 100,
 	"DefaultLanguage" : "en_us",
     "TrionWeb": {
         "Activate": true,

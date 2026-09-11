@@ -3,10 +3,12 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Utils.Scripts.SubCommands.FishFinder;
 using AAEmu.Game.Utils.Scripts.SubCommands;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class FishFinderCmd : SubCommandBase, ICommand, ICommandV2
 {
     public string[] CommandNames { get; set; } = ["fishfinder"];

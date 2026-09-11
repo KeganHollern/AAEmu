@@ -1,11 +1,13 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 using AAEmu.Game.Models;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.ManageServer)]
 public class SetTradePackMailDelay : ICommand
 {
     public string[] CommandNames { get; set; } = ["settradepackmaildelay"];

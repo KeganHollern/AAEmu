@@ -2,11 +2,13 @@
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Scripts.SubCommands.Gimmick;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 using AAEmu.Game.Utils.Scripts.SubCommands;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class GimmickCmd : SubCommandBase, ICommand
 {
     public string[] CommandNames { get; set; } = ["gimmick"];
@@ -22,7 +24,7 @@ public class GimmickCmd : SubCommandBase, ICommand
 
     public void OnLoad()
     {
-        CommandManager.Instance.Register(CommandNames[0], this);
+        CommandManager.Instance.Register(CommandNames, this);
     }
 
     public GimmickCmd(Dictionary<ICommandV2, string[]> subcommands) : base(subcommands)

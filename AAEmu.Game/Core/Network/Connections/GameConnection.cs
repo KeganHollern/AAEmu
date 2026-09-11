@@ -6,6 +6,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Housing;
@@ -19,9 +20,15 @@ public class GameConnection
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     private readonly ISession _session;
+    private readonly Lock _authenticationLock = new();
+    private Timer _authenticationTimer;
+    private int _closed;
+    private int _disconnected;
 
     public uint Id => _session.SessionId;
     public uint AccountId { get; set; }
+    public bool IsAuthenticated { get; private set; }
+    public bool IsClosed => Volatile.Read(ref _closed) != 0;
     public IPAddress Ip => _session.Ip;
     public PacketStream LastPacket { get; set; }
     public AccountPayment Payment { get; set; }
@@ -77,7 +84,41 @@ public class GameConnection
     /// </summary>
     public void OnConnect()
     {
-        //
+        StartAuthenticationTimeout(TimeSpan.FromSeconds(10));
+    }
+
+    internal void StartAuthenticationTimeout(TimeSpan timeout)
+    {
+        lock (_authenticationLock)
+        {
+            if (IsAuthenticated || IsClosed)
+                return;
+            _authenticationTimer?.Dispose();
+            _authenticationTimer = new Timer(_ => CloseIfUnauthenticated(), null, timeout, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    internal void CloseIfUnauthenticated()
+    {
+        lock (_authenticationLock)
+        {
+            if (!IsAuthenticated)
+                Shutdown();
+        }
+    }
+
+    internal bool TryAuthenticate(uint accountId)
+    {
+        lock (_authenticationLock)
+        {
+            if (accountId == 0 || IsAuthenticated || IsClosed)
+                return false;
+            AccountId = accountId;
+            IsAuthenticated = true;
+            _authenticationTimer?.Dispose();
+            _authenticationTimer = null;
+            return true;
+        }
     }
 
     /// <summary>
@@ -85,31 +126,41 @@ public class GameConnection
     /// </summary>
     public void OnDisconnect()
     {
-        AccountManager.Instance.Remove(AccountId);
+        _authenticationTimer?.Dispose();
+        if (Interlocked.Exchange(ref _disconnected, 1) != 0 || !IsAuthenticated || AccountId == 0)
+            return;
 
-        if (ActiveChar != null)
+        try
         {
-            TradeManager.Instance.CancelTrade(ActiveChar, 0);
-            // Hard DC / crash path: LeaveWorldTask never runs here, so nothing else
-            // would set IsOnline = false and team-mates would keep seeing the player
-            // as online with a frozen HP bar. Toggling the setter fires
-            // TeamManager.SetOffline + FriendMananger status broadcast for us.
-            if (ActiveChar.IsOnline)
-                ActiveChar.IsOnline = false;
-
-            foreach (var subscriber in ActiveChar.Subscribers)
-                subscriber.Dispose();
-
-            ActiveChar.Events?.OnDisconnect(this, new OnDisconnectArgs { Player = ActiveChar });
-            ActiveChar.RemoveAndDespawnActiveOwnedMatesSlaves();
-            DoodadManager.Instance.CloseCoffersOpenedBy(ActiveChar);
+            CleanupThenSave(() =>
+            {
+                AccountManager.Instance.Remove(AccountId);
+                if (ActiveChar != null)
+                {
+                    ChatManager.Instance.LeaveAllChannels(ActiveChar);
+                    AreaTriggerManager.Instance.EvictUnit(ActiveChar);
+                    TradeManager.Instance.CancelTrade(ActiveChar, 0);
+                    // The hard-disconnect path must also publish offline team/friend state.
+                    if (ActiveChar.IsOnline)
+                        ActiveChar.IsOnline = false;
+                    foreach (var subscriber in ActiveChar.Subscribers)
+                        subscriber.Dispose();
+                    ActiveChar.Events?.OnDisconnect(this, new OnDisconnectArgs { Player = ActiveChar });
+                    ActiveChar.RemoveAndDespawnActiveOwnedMatesSlaves();
+                    DoodadManager.Instance.CloseCoffersOpenedBy(ActiveChar);
+                }
+                foreach (var subscriber in Subscribers)
+                    subscriber.Dispose();
+            }, () =>
+            {
+                SaveAndRemoveFromWorld(ActiveChar);
+                AccountManager.Instance.UpdateLoginTime(AccountId, DateTime.UtcNow);
+            });
         }
-
-        foreach (var subscriber in Subscribers)
-            subscriber.Dispose();
-
-        SaveAndRemoveFromWorld(ActiveChar);
-        AccountManager.Instance.UpdateLoginTime(AccountId, DateTime.UtcNow);
+        finally
+        {
+            ActiveChar = null;
+        }
     }
 
     /// <summary>
@@ -117,7 +168,32 @@ public class GameConnection
     /// </summary>
     public void Shutdown()
     {
-        _session?.Close();
+        _authenticationTimer?.Dispose();
+        if (Interlocked.Exchange(ref _closed, 1) == 0)
+            _session?.Close();
+    }
+
+    public void Kick(string reason)
+    {
+        DisconnectWithSave(
+            () => SendPacket(new SCKickedPacket(KickedReason.KickByGm, reason)),
+            OnDisconnect, Shutdown);
+    }
+
+    internal static void DisconnectWithSave(Action notify, Action save, Action close)
+    {
+        try
+        {
+            try { notify(); }
+            finally { save(); }
+        }
+        finally { close(); }
+    }
+
+    internal static void CleanupThenSave(Action cleanup, Action save)
+    {
+        try { cleanup(); }
+        finally { save(); }
     }
 
     /// <summary>
@@ -154,6 +230,11 @@ public class GameConnection
     /// </summary>
     public void LoadAccount()
     {
+        if (!IsAuthenticated || AccountId == 0)
+        {
+            Shutdown();
+            return;
+        }
         // TODO: Load payment and account tier information
 
         // Load character info for this account
@@ -204,36 +285,41 @@ public class GameConnection
         if (activeChar == null)
             return;
 
-        TradeManager.Instance.CancelTrade(activeChar, 0);
+        CleanupThenSave(() =>
+        {
+            TradeManager.Instance.CancelTrade(activeChar, 0);
 
-        // Remove Radars
-        RadarManager.Instance.UnRegister(activeChar);
+            // Remove Radars
+            RadarManager.Instance.UnRegister(activeChar);
 
-        // Cancel all running buff effect tasks before removing the character.
-        // The buffs themselves are saved to DB inside SaveDirectlyToDatabase() → Character.Save().
-        activeChar.Buffs?.CancelAllEffectTasks();
+            // Cancel all running buff effect tasks before removing the character.
+            // The buffs themselves are saved to DB inside SaveDirectlyToDatabase() → Character.Save().
+            activeChar.Buffs?.CancelAllEffectTasks();
 
-        // Hide/Despawn the player
-        activeChar.Delete();
-        // Removed ReleaseId here to try and fix party/raid disconnect and reconnect issues. Replaced with saving the data
-        //ObjectIdManager.Instance.ReleaseId(ActiveChar.ObjId);
+            // Hide/Despawn the player
+            activeChar.Delete();
+            // Removed ReleaseId here to try and fix party/raid disconnect and reconnect issues. Replaced with saving the data
+            //ObjectIdManager.Instance.ReleaseId(ActiveChar.ObjId);
 
-        // Also drop the entry from WorldManager._characters. Without this, hard-DC
-        // / crash paths leak a ghost reference at that ObjId (LeaveWorldTask does
-        // the same TryRemoveCharacter explicitly on graceful logout — we have to
-        // mirror it here or the next reconnect will TryAddCharacter on a stale slot
-        // and end up with a divergent _characters[id] = OLD vs _baseUnits[id] = NEW,
-        // so any later operation on the ghost reference Deletes the live character.
-        //
-        // Guard with an identity check so the cleanup stays safe if ObjId recycling
-        // is ever re-enabled: only remove the slot if _characters still maps this
-        // ObjId to OUR character — never evict a freshly-spawned entity that
-        // happened to inherit the recycled ObjId.
-        if (WorldManager.Instance.GetCharacterByObjId(activeChar.ObjId) == activeChar)
-            WorldManager.Instance.TryRemoveCharacter(activeChar.ObjId);
+            // Also drop the entry from WorldManager._characters. Without this, hard-DC
+            // / crash paths leak a ghost reference at that ObjId (LeaveWorldTask does
+            // the same TryRemoveCharacter explicitly on graceful logout — we have to
+            // mirror it here or the next reconnect will TryAddCharacter on a stale slot
+            // and end up with a divergent _characters[id] = OLD vs _baseUnits[id] = NEW,
+            // so any later operation on the ghost reference Deletes the live character.
+            //
+            // Guard with an identity check so the cleanup stays safe if ObjId recycling
+            // is ever re-enabled: only remove the slot if _characters still maps this
+            // ObjId to OUR character — never evict a freshly-spawned entity that
+            // happened to inherit the recycled ObjId.
+            if (WorldManager.Instance.GetCharacterByObjId(activeChar.ObjId) == activeChar)
+                WorldManager.Instance.TryRemoveCharacter(activeChar.ObjId);
 
-        // Do a manual save here as it's no longer in _characters at this point
-        // TODO: might need a better option like saving this transaction for later to be used by the SaveManager
-        activeChar.SaveDirectlyToDatabase();
+        }, () =>
+        {
+            // A cleanup failure must not skip the departing character's save attempt.
+            if (!activeChar.SaveDirectlyToDatabase())
+                throw new IOException($"Could not save departing character {activeChar.Id}.");
+        });
     }
 }

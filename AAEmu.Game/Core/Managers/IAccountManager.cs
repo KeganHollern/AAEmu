@@ -10,6 +10,9 @@ public interface IAccountManager : IInitializable
     bool Contains(uint id);
     int Count();
     AccountDetails GetAccountDetails(uint accountId);
+    AccountRole GetAccountRole(uint accountId);
+    bool TryGetAccountRole(uint accountId, out AccountRole role);
+    AccountRoleChangeResult SetAccountRole(uint actorAccountId, uint targetAccountId, AccountRole role);
     bool AddCredits(uint accountId, int creditsAmount);
     bool RemoveCredits(uint accountId, int credits);
     bool AddLoyalty(uint accountId, int loyaltyAmount);

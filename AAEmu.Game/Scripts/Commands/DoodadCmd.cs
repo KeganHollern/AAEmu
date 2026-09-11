@@ -2,11 +2,13 @@
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Scripts.SubCommands.Doodads;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 using AAEmu.Game.Utils.Scripts.SubCommands;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class DoodadCmd : SubCommandBase, ICommand
 {
     public string[] CommandNames { get; set; } = ["doodad"];
@@ -29,7 +31,7 @@ public class DoodadCmd : SubCommandBase, ICommand
 
     public void OnLoad()
     {
-        CommandManager.Instance.Register("doodad", this);
+        CommandManager.Instance.Register(CommandNames, this);
     }
 
     public DoodadCmd(Dictionary<ICommandV2, string[]> subcommands) : base(subcommands)

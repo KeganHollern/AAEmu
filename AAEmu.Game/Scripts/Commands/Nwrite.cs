@@ -8,11 +8,13 @@ using AAEmu.Game.Models.Json;
 using AAEmu.Commons.IO;
 using AAEmu.Commons.Utils;
 using Newtonsoft.Json;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.EditWorld)]
 public class Nwrite : ICommand
 {
     public string[] CommandNames { get; set; } = ["nwrite", "nw"];

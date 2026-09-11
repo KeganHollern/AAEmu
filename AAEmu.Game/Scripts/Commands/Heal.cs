@@ -5,10 +5,12 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class Heal : ICommand
 {
     public string[] CommandNames { get; set; } = ["heal"];

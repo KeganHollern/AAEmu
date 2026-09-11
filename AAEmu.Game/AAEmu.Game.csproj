@@ -34,9 +34,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Configurations\AccessLevels.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
     <None Update="Configurations\Expedition.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

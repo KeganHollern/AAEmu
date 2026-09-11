@@ -3,10 +3,13 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
+using NLog;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class TickDoodad : ICommand
 {
     public string[] CommandNames { get; set; } = ["tickdoodad", "tick_doodad"];
@@ -41,23 +44,37 @@ public class TickDoodad : ICommand
             return;
         }
 
-        var tickedCount = 0;
-        // Use radius
         var myDoodads = WorldManager.GetAround<Doodad>(character, radius);
-        foreach (var doodad in myDoodads)
+        var complete = CommandAuditContext.DeferResult();
+        _ = TickAsync(myDoodads, unitId, messageOutput, complete);
+    }
+
+    private async Task TickAsync(IEnumerable<Doodad> doodads, uint unitId, IMessageOutput messageOutput,
+        Action<string, string> complete)
+    {
+        try
         {
-            if (doodad.TemplateId == unitId)
+            var executions = new List<Task>();
+            foreach (var doodad in doodads)
             {
-                if (doodad.FuncTask != null)
+                if (doodad.TemplateId == unitId && doodad.FuncTask is { } functionTask)
                 {
-                    doodad.FuncTask.Cancel();
-                    System.Threading.Tasks.Task.Run(doodad.FuncTask.ExecuteAsync);
-                    tickedCount++;
+                    CommandAuditContext.RecordTarget(0, objectId: doodad.ObjId);
+                    functionTask.Cancel();
+                    executions.Add(Task.Run(functionTask.ExecuteAsync));
                 }
             }
-        }
 
-        CommandManager.SendNormalText(this, messageOutput,
-            $"Phased {tickedCount} Doodad(s) with TemplateID {unitId} - @DOODAD_NAME({unitId})");
+            await Task.WhenAll(executions);
+            CommandManager.SendNormalText(this, messageOutput,
+                $"Phased {executions.Count} Doodad(s) with TemplateID {unitId} - @DOODAD_NAME({unitId})");
+            complete("completed", $"Completed {executions.Count} doodad phase tasks.");
+        }
+        catch (Exception exception)
+        {
+            complete("unconfirmed", $"Doodad phase task failed: {exception.GetType().Name}");
+            LogManager.GetCurrentClassLogger().Error(exception, "Doodad phase command failed");
+            messageOutput.SendMessage("Doodad phase command failed. Check the server log.");
+        }
     }
 }

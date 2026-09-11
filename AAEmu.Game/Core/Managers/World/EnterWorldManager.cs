@@ -29,7 +29,8 @@ public class EnterWorldManager(
     IQuestManager questManager,
     IChatManager chatManager,
     IFamilyManager familyManager,
-    IWorldManager worldManager) : Singleton<EnterWorldManager>, IEnterWorldManager
+    IWorldManager worldManager,
+    IModerationManager moderationManager = null) : Singleton<EnterWorldManager>, IEnterWorldManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -46,23 +47,40 @@ public class EnterWorldManager(
     /// <param name="connectionId"></param>
     public void AddAccount(uint accountId, uint connectionId)
     {
+        _ = AddAccountAsync(accountId, connectionId);
+    }
+
+    private async Task AddAccountAsync(uint accountId, uint connectionId)
+    {
         var connection = LoginNetwork.Instance.GetConnection();
         var gsId = AppConfiguration.Instance.Id;
+        if (connection == null)
+            return;
+        try
+        {
+            var moderation = moderationManager ?? ModerationManager.Instance;
+            if (accountId == 0 || accountManager.Contains(accountId) || !await moderation.RefreshAccountAsync(accountId))
+            {
+                RemovePendingAccount(connectionId);
+                connection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, 1));
+                return;
+            }
 
-        if (accountManager.Contains(accountId))
+            var admitted = moderation.TryAdmit(accountId, () => SetPendingAccount(connectionId, accountId));
+            connection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, admitted ? (byte)0 : (byte)1));
+        }
+        catch (Exception exception)
         {
             RemovePendingAccount(connectionId);
+            Logger.Error(exception, "Could not authorize pending account {AccountId}", accountId);
             connection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, 1));
-        }
-        else
-        {
-            SetPendingAccount(connectionId, accountId);
-            connection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, 0));
         }
     }
 
     internal void SetPendingAccount(uint connectionId, uint accountId)
     {
+        if (connectionId == 0 || accountId == 0)
+            return;
         lock (_accountsLock)
             _accounts[connectionId] = accountId;
     }
@@ -75,6 +93,8 @@ public class EnterWorldManager(
 
     internal PendingWorldAccountResult ConsumePendingAccount(uint token, uint accountId)
     {
+        if (accountId == 0 || token == 0)
+            return PendingWorldAccountResult.NotFound;
         lock (_accountsLock)
         {
             if (!_accounts.TryGetValue(token, out var expectedAccountId))
@@ -97,14 +117,28 @@ public class EnterWorldManager(
     /// <param name="token"></param>
     public void Login(GameConnection connection, uint accountId, uint token)
     {
+        if (accountId == 0 || connection.IsAuthenticated || connection.IsClosed)
+        {
+            connection.Shutdown();
+            return;
+        }
         switch (ConsumePendingAccount(token, accountId))
         {
             case PendingWorldAccountResult.Consumed:
-                connection.AccountId = accountId;
-                connection.State = GameState.Lobby;
-
-                accountManager.Add(connection);
-                streamManager.AddToken(connection.AccountId, connection.Id);
+                var moderation = moderationManager ?? ModerationManager.Instance;
+                var admitted = moderation.TryAdmit(accountId, () =>
+                {
+                    if (!connection.TryAuthenticate(accountId))
+                        return;
+                    connection.State = GameState.Lobby;
+                    accountManager.Add(connection);
+                    streamManager.AddToken(connection.AccountId, connection.Id);
+                });
+                if (!admitted || !connection.IsAuthenticated || connection.IsClosed)
+                {
+                    connection.Shutdown();
+                    return;
+                }
 
                 var port = AppConfiguration.Instance.StreamNetwork.Port;
                 var gm = connection.GetAttribute("gmFlag") != null;

@@ -23,8 +23,8 @@ public class DoodadRemovesSubCommand : SubCommandBase
 
     public override void Execute(ICharacter character, string triggerArgument, IDictionary<string, ParameterValue> parameters, IMessageOutput messageOutput)
     {
-        // Запускаем метод в отдельной задаче (нити)
-        Task.Run(() =>
+        var complete = CommandAuditContext.DeferResult();
+        _ = Task.Run(() =>
         {
             try
             {
@@ -35,9 +35,12 @@ public class DoodadRemovesSubCommand : SubCommandBase
             }
             catch (Exception ex)
             {
-                // Обработка исключения, например, запись в лог
-                Logger.Error($"Ошибка при выполнении метода: {ex.Message}");
+                complete("unconfirmed", $"Doodad area removal failed: {ex.GetType().Name}");
+                Logger.Error(ex, "Doodad area removal command failed");
+                return;
             }
+
+            complete("completed", "Doodad area removal finished.");
         });
     }
 

@@ -8,6 +8,7 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
@@ -480,7 +481,7 @@ public class PortalManager(ILocalizationManager localizationManager, IWorldManag
             }
 
             // Check if it's a closed zone (for non-admins)
-            if (character is { AccessLevel: < 100 })
+            if (!PermissionManager.Instance.CanUse(character, GamePermission.EnterClosedZones))
             {
                 var zone = zoneManager.GetZoneByKey(value.ZoneId);
                 if (zone is null or { Closed: true })

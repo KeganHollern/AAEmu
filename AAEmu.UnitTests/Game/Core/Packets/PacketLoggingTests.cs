@@ -4,6 +4,9 @@ using AAEmu.Commons.Network.Core;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Network.Stream;
+using AAEmu.Game.Core.Packets.C2G;
+using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Units;
 
 using NLog;
 using NLog.Config;
@@ -14,6 +17,35 @@ namespace AAEmu.UnitTests.Game.Core.Packets;
 [NotInParallel]
 public class PacketLoggingTests
 {
+    [Test]
+    public async Task ConsoleReport_RecordsCharacterAndEscapedTextAtInfoLevel()
+    {
+        var original = LogManager.Configuration;
+        using var target = new MemoryTarget
+        {
+            Layout = "${level}|${event-properties:item=EventName}|${event-properties:item=ActorAccountId}|" +
+                "${event-properties:item=ActorCharacterId}|${event-properties:item=ConsoleCommand}"
+        };
+        try
+        {
+            LogManager.Configuration = CreateConfiguration(LogLevel.Info, target);
+            var session = CreateSession(30, "192.0.2.5");
+            var connection = new GameConnection(session.Object)
+            {
+                ActiveChar = new Character(new UnitCustomModelParams()) { AccountId = 10, Id = 11 }
+            };
+            connection.TryAuthenticate(10);
+            var packet = new CSConsoleCmdUsedPacket { Connection = connection };
+            packet.Read(new PacketStream().Write("test\ncommand"));
+            await Assert.That(target.Logs.Count).IsEqualTo(1);
+            await Assert.That(target.Logs.Single()).IsEqualTo("Info|client.console.report|10|11|\"test\\ncommand\"");
+        }
+        finally
+        {
+            LogManager.Configuration = original;
+        }
+    }
+
     [Test]
     public async Task PacketBase_DefaultLogLevelIsTrace()
     {
@@ -113,6 +145,7 @@ public class PacketLoggingTests
 
             var handler = new GameProtocolHandler();
             var connection = new GameConnection(CreateSession(71, "10.0.0.1").Object);
+            connection.TryAuthenticate(101);
             var packet = CreateGamePacket(0x1234, [0xaa, 0xbb]);
 
             for (var i = 0; i < ConnectionEventLimiter.DefaultLimit + 2; i++)
@@ -123,6 +156,7 @@ public class PacketLoggingTests
                 .IsEqualTo("game.packet.rejected|game|4660|1|2|71|10.0.0.1");
 
             var freshConnection = new GameConnection(CreateSession(72, "10.0.0.2").Object);
+            freshConnection.TryAuthenticate(102);
             handler.OnReceive(freshConnection, packet, 0, packet.Length);
 
             await Assert.That(target.Logs.Count).IsEqualTo(ConnectionEventLimiter.DefaultLimit + 1);

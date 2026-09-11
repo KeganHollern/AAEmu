@@ -7,10 +7,13 @@ using AAEmu.Game.Models.Game.AI.v2.Params;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
+[CommandActionPermission(GamePermission.ManageServer, "load_path", "clear_path_cache", "clear_cache")]
 public class TestAI : ICommand
 {
     public string[] CommandNames { get; set; } = ["testai", "ai"];

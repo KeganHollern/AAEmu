@@ -1,10 +1,12 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.ManageServer)]
 public class GodMode : ICommand
 {
     public string[] CommandNames { get; set; } = ["godmode"];
@@ -21,7 +23,7 @@ public class GodMode : ICommand
 
     public string GetCommandHelpText()
     {
-        return "Makes himself immortal to other players";
+        return "Enables or disables the global World.GodMode setting for all players, not only the caller.";
     }
 
     public void Execute(Character character, string[] args, IMessageOutput messageOutput)

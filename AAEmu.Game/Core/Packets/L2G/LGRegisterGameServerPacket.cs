@@ -1,5 +1,6 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Login;
+using AAEmu.Game.Core.Managers;
 
 namespace AAEmu.Game.Core.Packets.L2G;
 
@@ -15,7 +16,9 @@ public class LGRegisterGameServerPacket() : LoginPacket(LGOffsets.LGRegisterGame
         }
         else
         {
+            Connection.IsRegistered = true;
             Logger.Info("Successfully registered on LoginServer");
+            _ = ModerationManager.Instance.RefreshLiveAccountsAsync();
         }
     }
 }

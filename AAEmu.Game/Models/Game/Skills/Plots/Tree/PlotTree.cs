@@ -252,7 +252,7 @@ public class PlotTree(uint plotId)
         {
             state.Caster?.Cooldowns.AddCooldown(state.ActiveSkill.Template.Id, (uint)state.ActiveSkill.Template.CooldownTime);
 
-            if (state.Caster?.GetOwnerCharacter() is { IgnoreSkillCooldowns: true } character)
+            if (state.Caster?.GetOwnerCharacter() is { } character && Skill.CanIgnoreCooldowns(character))
             {
                 character.ResetSkillCooldown(state.ActiveSkill.Template.Id, false);
                 state.Caster.Cooldowns.RemoveCooldown(state.ActiveSkill.Template.Id);

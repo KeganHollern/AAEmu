@@ -1,10 +1,13 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
+[CommandActionPermission(GamePermission.ManageServer, "on", "off", "reload")]
 public class InGameCashShop : ICommand
 {
     public string[] CommandNames { get; set; } = ["ingamecashshop", "ics"];

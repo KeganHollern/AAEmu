@@ -10,6 +10,7 @@ namespace AAEmu.Game.Models.Game.Char;
 
 public interface ICharacter : IUnit
 {
+    uint AccountId { get; set; }
     CharacterQuests Quests { get; set; }
     Inventory Inventory { get; set; }
     long Money { get; set; }

@@ -2,10 +2,12 @@
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class ClearCombat : ICommand
 {
     public string[] CommandNames { get; set; } = ["clearcombat", "clear_combat", "cc"];

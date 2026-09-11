@@ -10,6 +10,24 @@ SET NAMES utf8;
 SET time_zone = '+00:00';
 SET foreign_key_checks = 0;
 
+CREATE TABLE IF NOT EXISTS `command_audit` (
+    `request_id` char(36) NOT NULL,
+    `started_at` datetime(6) NOT NULL,
+    `completed_at` datetime(6) DEFAULT NULL,
+    `actor_account_id` int unsigned NOT NULL,
+    `actor_character_id` int unsigned NOT NULL,
+    `actor_role` varchar(16) NOT NULL,
+    `source` varchar(24) NOT NULL,
+    `remote_address` varchar(64) NOT NULL,
+    `command_name` varchar(128) NOT NULL,
+    `arguments` json NOT NULL,
+    `targets` json NOT NULL,
+    `result` varchar(32) NOT NULL,
+    `detail` varchar(1024) NOT NULL DEFAULT '',
+    PRIMARY KEY (`request_id`),
+    KEY `ix_command_audit_actor_time` (`actor_account_id`, `started_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS `abilities` (
   `id` tinyint unsigned NOT NULL,
   `exp` int NOT NULL,
@@ -20,7 +38,7 @@ CREATE TABLE IF NOT EXISTS `abilities` (
 
 CREATE TABLE IF NOT EXISTS `accounts` (
   `account_id` INT(11) NOT NULL,
-  `access_level` INT(11) NOT NULL DEFAULT '0',
+  `role` TINYINT UNSIGNED NOT NULL DEFAULT 0,
   `labor` INT(11) NOT NULL DEFAULT '0',
   `credits` INT(11) NOT NULL DEFAULT '0',
   `loyalty` INT(11) NOT NULL DEFAULT '0',
@@ -31,7 +49,9 @@ CREATE TABLE IF NOT EXISTS `accounts` (
   `last_loyalty_tick` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `divine_clock_time` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Time that has been passed already',
   `divine_clock_taken` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Number of clicks taken today',
-  PRIMARY KEY (`account_id`)
+  PRIMARY KEY (`account_id`),
+  CONSTRAINT `chk_accounts_role` CHECK (`role` BETWEEN 0 AND 2),
+  CONSTRAINT `chk_accounts_zero_role` CHECK (`account_id` <> 0 OR `role` = 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Account specific values not related to login';
 
 
@@ -163,7 +183,6 @@ CREATE TABLE IF NOT EXISTS `characters` (
   `id` int unsigned NOT NULL,
   `account_id` int unsigned NOT NULL,
   `name` varchar(128) NOT NULL,
-  `access_level` int unsigned NOT NULL DEFAULT '0',
   `race` tinyint NOT NULL,
   `gender` tinyint(1) NOT NULL,
   `unit_model_params` blob NOT NULL,

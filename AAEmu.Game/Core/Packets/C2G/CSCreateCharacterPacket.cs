@@ -13,6 +13,11 @@ public class CSCreateCharacterPacket() : GamePacket(CSOffsets.CSCreateCharacterP
 
     public override void Read(PacketStream stream)
     {
+        if (!Connection.IsAuthenticated || Connection.AccountId == 0)
+        {
+            Connection.Shutdown();
+            return;
+        }
         var name = stream.ReadString();
         var race = (Race)stream.ReadByte();
         var gender = (Gender)stream.ReadByte();

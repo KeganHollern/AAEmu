@@ -64,9 +64,8 @@ Example:
 - **Type**: `number`
 - **Description**: Maximum number of optional tax periods offered consecutively after the current bill is paid (default: 5). Set to `0` to disable tax prepayment mails.
 
-### `IgnoreFallDamageAccessLevel`
-- **Type**: `number`
-- **Description**: Minimum access level that ignores fall damage (dev/testing).
+Staff fall protection now uses the account role, not a numeric setting.
+See [Account permissions](customized/permissions-overhaul.md).
 
 ### `GodMode`
 - **Type**: `boolean`

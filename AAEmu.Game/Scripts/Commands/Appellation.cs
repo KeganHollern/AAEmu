@@ -2,10 +2,12 @@
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class Appellation : ICommand
 {
     public string[] CommandNames { get; set; } = ["title", "addtitle", "add_title", "appellation"];

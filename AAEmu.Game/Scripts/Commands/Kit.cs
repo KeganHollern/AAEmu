@@ -8,10 +8,12 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Chat;
 using Newtonsoft.Json;
 using NLog;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class AddKit : ICommand
 {
     public string[] CommandNames { get; set; } = ["kit", "addkit", "add_kit"];

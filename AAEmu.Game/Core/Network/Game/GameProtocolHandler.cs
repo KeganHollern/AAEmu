@@ -4,6 +4,7 @@ using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.C2G;
 
 using NLog;
 
@@ -57,17 +58,9 @@ public class GameProtocolHandler : BaseProtocolHandler
             var con = GameConnectionTable.Instance.GetConnection(session.SessionId);
             if (con != null)
             {
-                if (con.ActiveChar != null)
-                {
-                    // On crash, force people out of the chat channels so we don't get phantom or duplicates
-                    Managers.ChatManager.Instance.LeaveAllChannels(con.ActiveChar);
-                    // Force out of any area triggers so region-scoped buffs are
-                    // released immediately instead of waiting for a spatial diff
-                    Managers.World.AreaTriggerManager.Instance.EvictUnit(con.ActiveChar);
-                    // ObjectIdManager.Instance.ReleaseId(con.ActiveChar.BcId);
-                }
                 con.OnDisconnect();
-                StreamManager.Instance.RemoveToken(con.Id);
+                if (con.IsAuthenticated && con.AccountId > 0)
+                    StreamManager.Instance.RemoveToken(con.Id);
                 GameConnectionTable.Instance.RemoveConnection(session.SessionId);
             }
             else
@@ -171,6 +164,12 @@ public class GameProtocolHandler : BaseProtocolHandler
                     }
 
                     var type = stream2.ReadUInt16();
+                    if (!CanDispatch(connection, type, level))
+                    {
+                        Logger.Warn("Rejected unauthenticated game packet {PacketOpcode} on connection {ConnectionId}", type, connection.Id);
+                        connection.Shutdown();
+                        return;
+                    }
                     _packets[level].TryGetValue(type, out var classType);
                     if (classType == null)
                     {
@@ -208,6 +207,16 @@ public class GameProtocolHandler : BaseProtocolHandler
     public void RegisterPacket(uint type, byte level, Type classType)
     {
         _packets[level][type] = classType;
+    }
+
+    internal static bool CanDispatch(GameConnection connection, uint type, byte level)
+    {
+        if (connection.IsClosed)
+            return false;
+        var authenticated = connection.IsAuthenticated && connection.AccountId > 0;
+        return authenticated
+            ? type != CSOffsets.X2EnterWorldPacket || level != 1
+            : level == 1 && type == CSOffsets.X2EnterWorldPacket;
     }
 
     /// <summary>

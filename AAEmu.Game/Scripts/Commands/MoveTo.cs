@@ -3,17 +3,20 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Units.Route;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
+[CommandActionPermission(GamePermission.ManageServer, "save", "go", "back")]
 public class MoveTo : ICommand
 {
     public string[] CommandNames { get; set; } = ["moveto"];
 
     public void OnLoad()
     {
-        CommandManager.Instance.Register("moveto", this);
+        CommandManager.Instance.Register(CommandNames, this);
     }
 
     public string GetCommandLineHelp()

@@ -3,13 +3,15 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Utils.Scripts.SubCommands.Feature;
 using AAEmu.Game.Utils.Scripts.SubCommands;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class FeatureCmd : SubCommandBase, ICommand, ICommandV2
 {
-    public string[] CommandNames { get; set; } = ["feature"];
+    public string[] CommandNames { get; set; } = ["feature", "fset", "fs"];
 
     public FeatureCmd()
     {
@@ -23,8 +25,7 @@ public class FeatureCmd : SubCommandBase, ICommand, ICommandV2
 
     public void OnLoad()
     {
-        string[] name = ["feature", "fset", "fs"];
-        CommandManager.Instance.Register(name, this);
+        CommandManager.Instance.Register(CommandNames, this);
     }
 
     public string GetCommandLineHelp()

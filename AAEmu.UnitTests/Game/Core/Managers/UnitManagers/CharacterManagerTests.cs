@@ -2,7 +2,7 @@
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
-using AAEmu.Game.Models.Account;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Char.Templates;
 using AAEmu.Game.Models.Game.Items;
@@ -388,81 +388,27 @@ public class CharacterManagerTests
 
     #endregion
 
-    #region GetEffectiveAccessLevel Tests
-
     [Test]
-    public async Task GetEffectiveAccessLevel_CharacterAccessLevelHigher_ReturnsCharacterAccessLevel()
+    public void Create_UnauthenticatedConnection_DoesNotReadOrCreateAccount()
     {
-        // Arrange
-        var mockAccountManager = Mock.Of<IAccountManager>();
-        var manager = CreateCharacterManager(mockAccountManager: mockAccountManager);
+        var accountManager = Mock.Of<IAccountManager>();
+        var manager = CreateCharacterManager(mockAccountManager: accountManager);
 
-        var character = new Character(new UnitCustomModelParams())
-        {
-            AccountId = 1,
-            AccessLevel = 100
-        };
+        manager.Create(new GameConnection(null), null, default, default, [], null,
+            default, default, default, 1);
 
-        mockAccountManager
-            .GetAccountDetails(1)
-            .Returns(new AccountDetails { AccountId = 1, AccessLevel = 50 });
-
-        // Act
-        var result = manager.GetEffectiveAccessLevel(character);
-
-        // Assert
-        await Assert.That(result).IsEqualTo(100);
+        Mock.VerifyNoOtherCalls(accountManager);
     }
 
     [Test]
-    public async Task GetEffectiveAccessLevel_AccountAccessLevelHigher_ReturnsAccountAccessLevel()
+    public async Task Character_Authority_ComesOnlyFromAccountIdentity()
     {
-        // Arrange
-        var mockAccountManager = Mock.Of<IAccountManager>();
-        var manager = CreateCharacterManager(mockAccountManager: mockAccountManager);
+        var character = new Character(null) { AccountId = 42 };
 
-        var character = new Character(new UnitCustomModelParams())
-        {
-            AccountId = 1,
-            AccessLevel = 50
-        };
-
-        mockAccountManager
-            .GetAccountDetails(1)
-            .Returns(new AccountDetails { AccountId = 1, AccessLevel = 100 });
-
-        // Act
-        var result = manager.GetEffectiveAccessLevel(character);
-
-        // Assert
-        await Assert.That(result).IsEqualTo(100);
+        await Assert.That(((ICharacter)character).AccountId).IsEqualTo(42u);
+        await Assert.That(typeof(Character).GetProperty("AccessLevel")).IsNull();
+        await Assert.That(typeof(Character).GetProperty("Role")).IsNull();
     }
-
-    [Test]
-    public async Task GetEffectiveAccessLevel_EqualAccessLevels_ReturnsAccessLevel()
-    {
-        // Arrange
-        var mockAccountManager = Mock.Of<IAccountManager>();
-        var manager = CreateCharacterManager(mockAccountManager: mockAccountManager);
-
-        var character = new Character(new UnitCustomModelParams())
-        {
-            AccountId = 1,
-            AccessLevel = 50
-        };
-
-        mockAccountManager
-            .GetAccountDetails(1)
-            .Returns(new AccountDetails { AccountId = 1, AccessLevel = 50 });
-
-        // Act
-        var result = manager.GetEffectiveAccessLevel(character);
-
-        // Assert
-        await Assert.That(result).IsEqualTo(50);
-    }
-
-    #endregion
 
     #region PlayerRoll Tests
 
