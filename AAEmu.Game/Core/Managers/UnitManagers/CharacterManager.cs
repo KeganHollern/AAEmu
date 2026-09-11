@@ -641,7 +641,7 @@ public class CharacterManager(
         // The main reason we do this is so other people's items wouldn't get delete if fullWipe is enabled
         foreach (var (mailId, mail) in mailManager.AllPlayerMails)
         {
-            if (mail.CanReturnMail() && !mail.ReturnToSender())
+            if (mail.Header.ReceiverId == character.Id && mail.CanReturnMail() && !mail.ReturnToSender())
                 Logger.Warn(
                     "DeleteCharacterAssets - Unable to return mail to sender for mail: {0}, deleted char: {1}({2}), sender: {3}({4})",
                     mail.Id,

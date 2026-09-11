@@ -23,7 +23,7 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 
 [Collection("GameMySql")]
 [Trait("Category", "GameMySql")]
-public sealed class PlayerMailSendPersistenceTests
+public sealed partial class PlayerMailSendPersistenceTests
 {
     private static int _nextId = 1100000;
 
@@ -54,17 +54,13 @@ public sealed class PlayerMailSendPersistenceTests
         Assert.Equal(original.Title, returned.Title);
         Assert.Equal(original.Body.Text, returned.Body.Text);
         Assert.Empty(returned.Body.Attachments);
-        Assert.Equal(moneyBeforeReturn - MailManager.CostExpress, graph.Receiver.Money);
+        Assert.Equal(moneyBeforeReturn, graph.Receiver.Money);
         Assert.Equal(graph.Receiver.Money, Scalar($"SELECT money FROM characters WHERE id={graph.Receiver.Id}"));
         Assert.Equal(graph.Sender.Id, Scalar($"SELECT receiver_id FROM mails WHERE id={returned.Id}"));
-        var sentOpcode = SCOffsets.SCMailSentPacket;
-        session.Verify(value => value.SendPacket(It.Is<byte[]>(packet => packet.Length >= 8 &&
-            packet[6] == (byte)sentOpcode && packet[7] == (byte)(sentOpcode >> 8))), Times.Once);
-
-        // The existing return path deletes the original after sending its replacement.
-        Assert.True(graph.Save.TryCommitEconomy([graph.Receiver]));
         Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM mails WHERE id={original.Id}"));
         Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM mails WHERE id={returned.Id}"));
+        Assert.True(returned.Header.Returned);
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM mail_lifecycle WHERE mail_id={original.Id} AND outcome=1"));
     }
 
     [Theory]
@@ -181,6 +177,13 @@ public sealed class PlayerMailSendPersistenceTests
         public Character Receiver { get; }
         public uint NextMailId => _nextMailId + 1;
         public List<uint> ReleasedMailIds { get; } = [];
+
+        public void ConnectReceiver(Mock<ISession> session)
+        {
+            Receiver.Connection = new GameConnection(session.Object) { ActiveChar = Receiver };
+            Mock.Get(_world).Setup(world => world.GetCharacterById(Receiver.Id)).Returns(Receiver);
+            Mock.Get(_world).Setup(world => world.GetCharacter(Receiver.Name)).Returns(Receiver);
+        }
 
         public SendGraph()
         {
@@ -371,6 +374,41 @@ public sealed class PlayerMailSendPersistenceTests
 
         private ItemManager NewItemStore() => new(Mock.Of<ISkillManager>(), Mock.Of<IItemIdManager>(),
             Mock.Of<IContainerIdManager>(), Mock.Of<ILocalizationManager>(), _tasks, _world);
+
+        public (ItemManager Items, MailManager Mails) ReloadLifecycle()
+        {
+            var items = NewItemStore();
+            var templates = new Dictionary<uint, ItemTemplate>();
+            using (var connection = MySQL.CreateConnection())
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT DISTINCT template_id, type FROM items";
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    var id = reader.GetUInt32("template_id");
+                    var type = typeof(Item).Assembly.GetType(reader.GetString("type"));
+                    ItemTemplate template = type != null && typeof(EquipItem).IsAssignableFrom(type)
+                        ? new EquipItemTemplate() : new ItemTemplate();
+                    template.Id = id;
+                    template.MaxCount = int.MaxValue;
+                    template.FixedGrade = -1;
+                    template.Gradable = true;
+                    templates[id] = template;
+                }
+            }
+            foreach (var (id, template) in _templates) templates[id] = template;
+            SetField(items, "_templates", templates);
+            SwapSingleton(items);
+            try
+            {
+                items.LoadUserItems();
+                var mails = NewMailStore(items);
+                mails.Load();
+                return (items, mails);
+            }
+            finally { SwapSingleton(Items); }
+        }
 
         private MailManager NewMailStore(IItemManager items) => new(_mailIds.Object, _names, items,
             _tasks, _world, new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>()),

@@ -63,6 +63,7 @@ public class CharacterMails
         lock (SaveManager.PersistenceSyncRoot)
         {
             if (MailManager.Instance._allPlayerMails.TryGetValue(id, out var mail) &&
+                !MailManager.IsExpired(mail, DateTime.UtcNow) &&
                 (isSent ? mail.Header.SenderId == Self.Id : mail.Header.ReceiverId == Self.Id))
             {
                 if (mail.Header.Status == MailStatus.Unread && !isSent)
@@ -97,6 +98,9 @@ public class CharacterMails
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            var source = MailManager.Instance.GetMailById(mailId);
+            if (source != null && (source.HasUnresolvedAttachments || MailManager.IsExpired(source, DateTime.UtcNow)))
+                return false;
             var claim = _auctionMailClaimManager.TryClaim(Self, this, mailId, takeMoney,
                 takeItems, takeAllSelected, specifiedItemId);
             if (claim != AuctionMailClaimResult.NotHandled)
@@ -261,7 +265,7 @@ public class CharacterMails
             if (MailManager.Instance._allPlayerMails.TryGetValue(id, out var mail) &&
                 !isSent && mail.Header.ReceiverId == Self.Id)
             {
-                if (mail.Header.Attachments <= 0)
+                if (!mail.HasUnresolvedAttachments && mail.GetTotalAttachmentCount() == 0)
                 {
                     // ReSharper disable ConditionIsAlwaysTrueOrFalse
                     if (mail.Header.Status != MailStatus.Read)
@@ -283,27 +287,6 @@ public class CharacterMails
 
     public void ReturnMail(long id)
     {
-        lock (SaveManager.PersistenceSyncRoot)
-        {
-            if (MailManager.Instance._allPlayerMails.TryGetValue(id, out var thisMail) &&
-                thisMail.Header.ReceiverId == Self.Id)
-            {
-                var itemSlots = new List<(SlotType slotType, byte slot)>();
-                for (var i = 0; i < thisMail.Body.Attachments.Count; i++)
-                {
-                    var item = ItemManager.Instance.GetItemByItemId(thisMail.Body.Attachments[i].Id);
-                    itemSlots.Add(item.SlotType == SlotType.None
-                        ? ((SlotType slotType, byte slot))(0, 0)
-                        : (item.SlotType, (byte)item.Slot));
-                }
-
-                var result = SendMailToPlayer(thisMail.Header.Type, thisMail.Header.SenderName, thisMail.Header.Title, thisMail.Body.Text,
-                    thisMail.Header.Attachments, thisMail.Body.CopperCoins, thisMail.Body.BillingAmount, thisMail.Body.MoneyAmount2,
-                        thisMail.Header.Extra, itemSlots);
-
-                if (result == MailResult.Success)
-                    DeleteMail(id, false);
-            }
-        }
+        MailManager.Instance.ReturnMail(Self, id);
     }
 }

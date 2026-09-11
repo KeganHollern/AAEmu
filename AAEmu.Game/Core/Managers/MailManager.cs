@@ -19,7 +19,7 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public class MailManager(IMailIdManager mailIdManager, INameManager nameManager, IItemManager itemManager, ITaskManager taskManager, IWorldManager worldManager, Lazy<IHousingManager> housingManager, ILocalizationManager localizationManager) : Singleton<MailManager>, IMailManager
+public partial class MailManager(IMailIdManager mailIdManager, INameManager nameManager, IItemManager itemManager, ITaskManager taskManager, IWorldManager worldManager, Lazy<IHousingManager> housingManager, ILocalizationManager localizationManager) : Singleton<MailManager>, IMailManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -34,7 +34,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     public static int CostExpressAttachment { get; set; } = 80;
     public static int CostFreeAttachmentCount { get; set; } = 1;
     public static TimeSpan NormalMailDelay { get; set; } = TimeSpan.FromMinutes(30); // Default is 30 minutes
-    public static TimeSpan MailExpireDelay { get; set; } = TimeSpan.FromDays(14);    // Default is 30 days ?
+    public static TimeSpan MailExpireDelay { get; set; } = TimeSpan.FromDays(14);
 
     public BaseMail GetMailById(long id)
     {
@@ -266,6 +266,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
                                 }
                                 else
                                 {
+                                    tempMail.HasUnresolvedAttachments = true;
                                     Logger.Warn("Found orphaned itemId {0} in mailId {1}, not loaded!", itemId, tempMail.Id);
                                 }
                             }
@@ -345,6 +346,9 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
         foreach (var mtbs in _allPlayerMails)
         {
+            // Preserve the original SQL references until the missing item is repaired.
+            if (mtbs.Value.HasUnresolvedAttachments)
+                continue;
             if (!mtbs.Value.IsDirty)
                 continue;
             using (var command = connection.CreateCommand())
@@ -420,10 +424,12 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            var now = DateTime.UtcNow;
             // Try to grab the actual online Character object to send live updates
             var character = worldManager.GetCharacterById(characterId);
             var tempMails = _allPlayerMails.Where(
-                x => x.Value.Body.RecvDate <= DateTime.UtcNow &&
+                x => x.Value.Body.RecvDate <= now &&
+                     !IsExpired(x.Value, now) &&
                      (x.Value.Header.ReceiverId == characterId ||
                       x.Value.Header.SenderId == characterId)
                      ).
@@ -432,7 +438,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             foreach (var mail in tempMails)
             {
                 //if ((mail.Value.Header.Status != MailStatus.Read) && (mail.Value.Header.SenderId != character.Id))
-                if (mail.Value.Header.Status != MailStatus.Read)
+                if (mail.Value.Header.ReceiverId == characterId && mail.Value.Header.Status != MailStatus.Read)
                 {
                     character?.Mails.UnreadMailCount.UpdateReceived(mail.Value.MailType, 1);
                     var addBody = mail.Value.MailType == MailType.Charged;
@@ -522,11 +528,20 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public void CheckAllMailTimings()
     {
+        CheckAllMailTimings(DateTime.UtcNow);
+    }
+
+    internal void CheckAllMailTimings(DateTime now)
+    {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            foreach (var mail in _allPlayerMails.Values.ToArray())
+                if (IsExpired(mail, now))
+                    TransitionMail(mail, null, true, now);
+
             // Deliver yet "undelivered" mails
             Logger.Trace("CheckAllMailTimings");
-            var undeliveredMails = _allPlayerMails.Where(x => x.Value.Body.RecvDate <= DateTime.UtcNow && x.Value.IsDelivered == false).ToDictionary(x => x.Key, x => x.Value);
+            var undeliveredMails = _allPlayerMails.Where(x => x.Value.Body.RecvDate <= now && !IsExpired(x.Value, now) && x.Value.IsDelivered == false).ToDictionary(x => x.Key, x => x.Value);
             var delivered = 0;
             foreach (var mail in undeliveredMails)
                 if (NotifyNewMailByNameIfOnline(mail.Value, mail.Value.Header.ReceiverName))
@@ -534,7 +549,6 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             if (delivered > 0)
                 Logger.Debug($"{delivered}/{undeliveredMails.Count} mail(s) delivered");
 
-            // TODO: Return expired mails back to owner if undelivered/unread
         }
     }
 
