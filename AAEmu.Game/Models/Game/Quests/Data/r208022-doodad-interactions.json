@@ -1,0 +1,2487 @@
+{
+  "version": "r208022",
+  "clientSha256": "a1995455440cdeb6356682e801f322cd946f3de3ad6595fae818d7a139100ae0",
+  "compactSha256": "4f1ac86b2ae79fd35886d0cd7b1e5cccc3287a011a200667d97eb1c5bc4d79a4",
+  "models": [
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ncom/ncom_field_mboard_a01.cgf",
+      "templateIds": [
+        709,
+        2519,
+        4345,
+        4346,
+        4347,
+        4348,
+        4349,
+        4350,
+        4351,
+        4352,
+        6182,
+        6183,
+        6184,
+        6211,
+        6212,
+        6214,
+        6215,
+        6216,
+        6217,
+        6218,
+        7192,
+        7208,
+        7209,
+        7210,
+        7211,
+        7212,
+        7213,
+        7227,
+        7253,
+        7261,
+        7270,
+        7271,
+        7272,
+        7273,
+        7274,
+        7275,
+        7276,
+        7281,
+        7282,
+        7283,
+        7301,
+        7583,
+        7694,
+        8235
+      ],
+      "sourceSha256": "606b70299c0e489bff885e461f45133883e9092bb2dd5073457b3700728d49e8",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ncom/old/ruin_weapon.cgf",
+      "templateIds": [
+        4030
+      ],
+      "sourceSha256": "2683c6d69c55d80aa7dba499705059ec1f418620f1ea0e9096e33a6bd4d98aa2",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_alchemy_stone.cgf",
+      "templateIds": [
+        711,
+        2052
+      ],
+      "sourceSha256": "a545e52f0d1bf609385bfde518a21bf7a1bae49dfc3d8dede64032294085af10",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_art_statue02.cgf",
+      "templateIds": [
+        3016
+      ],
+      "sourceSha256": "779bc238104bb72f59edff92c4d51ed16ef593fa217cb16ca4e3cc65942961cd",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_backpack_b_a.cgf",
+      "templateIds": [
+        4361
+      ],
+      "sourceSha256": "6df3619e9fa4001643c9aa6a8cab283d4f16cac3ed4d46d7d7f1625b398a0bce",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_backpack_e_a.cgf",
+      "templateIds": [
+        1431
+      ],
+      "sourceSha256": "10f5719a6d4d27a4da9559a39152ed4348782d97323a6bf5c5563604ffe909c6",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_bookstore_book01.cgf",
+      "templateIds": [
+        7596,
+        7597,
+        7598,
+        7599,
+        7600,
+        7601
+      ],
+      "sourceSha256": "2b0b942e639549e2dde8810764d0b8bfc1974f433a8b4a9814f53a41fb2b15ff",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_common_case01.cgf",
+      "templateIds": [
+        692,
+        1137
+      ],
+      "sourceSha256": "9ed3593f1e3b50f5b8ffffae38c0b6cc85b725d8356a06006a5acb7d92d8a935",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_do_invisible.cgf",
+      "templateIds": [
+        4030,
+        5010
+      ],
+      "sourceSha256": "3c535e39c740ae743e3bf11fd855277be169b2713e09d9ec4bf6daac890938f3",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_do_invisible_02.cgf",
+      "templateIds": [
+        1521,
+        1747,
+        5968,
+        6263,
+        6264,
+        6265,
+        6266,
+        7694,
+        8235
+      ],
+      "sourceSha256": "f1d56b1c40af20ec5743c22ded35f1de3958c670f748f9f2ddbe48e01af81cd5",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_do_ladder01.cgf",
+      "templateIds": [
+        272
+      ],
+      "sourceSha256": "bbd8eec1725afdc35e387aaa59ee6bd0c54c95edd98c2caaafc4995c8ff70acf",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_leatherstore_crock_b.cgf",
+      "templateIds": [
+        6413
+      ],
+      "sourceSha256": "dde6bdadfe09f4ffc150ae6c1b8ed387d5c5630e097fca87b87fb7b416344de9",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_library_frame00.cgf",
+      "templateIds": [
+        7992,
+        7993,
+        7994
+      ],
+      "sourceSha256": "dddbe1569299f1d2eefb81141335be27c1b54a99781b645e07fab7ec465efcb1",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_mineprop_e.cgf",
+      "templateIds": [
+        4332
+      ],
+      "sourceSha256": "9419d50cd7a734ee787fa23bf423bbf4f36df43930d4a0d54c43d20ac596cc13",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_ruinprop01.cgf",
+      "templateIds": [
+        1627,
+        4069,
+        4135
+      ],
+      "sourceSha256": "9d980085044d01dd220e7ea3ba1adffafa155a5a6b89ac0b4f76d286e5a55f1b",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/ndeco_ruinprop01_empty.cgf",
+      "templateIds": [
+        4069
+      ],
+      "sourceSha256": "1ac2c55d158b25d1f91cd44f150cc9abd03f1b6204216595bd72d68fcbea9fae",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/nu_m_corpse1.cgf",
+      "templateIds": [
+        1730
+      ],
+      "sourceSha256": "587b93ac2b38e3c7afd5bbf39f1bc08f3aea0c5f3917651ef5adbb153c167dce",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/nu_m_corpse2.cgf",
+      "templateIds": [
+        1875,
+        4129
+      ],
+      "sourceSha256": "490354701bd33cc2c5c809c53e8b76e03ea4375e36e6fecb3a4e1d3a31dda536",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/old/bonfire_a.cgf",
+      "templateIds": [
+        6208
+      ],
+      "sourceSha256": "27c7c81cd00df3727c89108519015887311ffe34991afea488922444ea2ccc27",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/old/box_a.cgf",
+      "templateIds": [
+        3567
+      ],
+      "sourceSha256": "80b070832cc77a5300f737116aea458f10c9a223a3d453aa70771e87e6432561",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/old/case_a.cgf",
+      "templateIds": [
+        2854
+      ],
+      "sourceSha256": "28f22c46fba8cbf1545bfaee65eb2375607298b1234ebbe33faf0e4d7115d2b1",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/old/illuminator01.cgf",
+      "templateIds": [
+        6796
+      ],
+      "sourceSha256": "639fc9ddb336263df7dedf52633f331a53a01caa0b06d60300cba1079e176e02",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/old/learning_ob01_c.cgf",
+      "templateIds": [
+        3844
+      ],
+      "sourceSha256": "1cef6c89686282a8039ace7567e6fa74b1b55967a445c5ce415dec26aa266229",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_book01.cgf",
+      "templateIds": [
+        3088,
+        3472
+      ],
+      "sourceSha256": "e05e61dd75f5fcaf281b5c753ea801270f2745526ea39dc9acb3d80338a635ca",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_bottle.cgf",
+      "templateIds": [
+        1077,
+        3560,
+        4302
+      ],
+      "sourceSha256": "a5c2d241797d4f4f133feaee859153ba30843bad75c82e49cdd994f58e8004c0",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_case02.cgf",
+      "templateIds": [
+        685,
+        1419,
+        3883,
+        4334
+      ],
+      "sourceSha256": "30239b71d818b75038c714078b648daeb2d75feb9d49803b33df449fc23cf635",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_case04.cgf",
+      "templateIds": [
+        6812
+      ],
+      "sourceSha256": "40db93878653d75f07e47c1ca29bca26bb0c55d430c57486e824892d85a0fef2",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_el_f_deadbody.cgf",
+      "templateIds": [
+        836
+      ],
+      "sourceSha256": "db835321762c016834cde8452669a9fe131ef42e0f5e35d2526d4120eccc7a15",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_el_m_deadbody.cgf",
+      "templateIds": [
+        3762
+      ],
+      "sourceSha256": "3b438b83a02aa69741f31de381229a5dd1dfead2a5d03b866ad5e6db5bae85bd",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_nu_f_deadbody.cgf",
+      "templateIds": [
+        3962,
+        4168
+      ],
+      "sourceSha256": "582c4c349a2d433ad6eeeec27da9f540090d43165896113316bb48bfeb392b50",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_nu_m_deadbody.cgf",
+      "templateIds": [
+        1540
+      ],
+      "sourceSha256": "2974ea48e56cdc7bb9e0524cda1c34d011801c675238a069f9ad10a700a2a410",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_pebble_a.cgf",
+      "templateIds": [
+        4363
+      ],
+      "sourceSha256": "6e073c3fdf57b098a73d9589e1cd8cf8bb3bd09be36a6db814af73ebfd346abf",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_pot_b.cgf",
+      "templateIds": [
+        5536
+      ],
+      "sourceSha256": "97db193403241d1996136ca2b460f4b72a1975d3bd29c85856f7208561327c5e",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_sack_a.cgf",
+      "templateIds": [
+        4255
+      ],
+      "sourceSha256": "60019c90585de157dceb5b90ffb7f4e368f8485e0c29280a38a1a59c00469819",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_wanted_a.cgf",
+      "templateIds": [
+        703
+      ],
+      "sourceSha256": "6188b1aa240ae6da61b663eca3e70b9eb4f529cca6adcbef5dca2366b4371294",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/11_long/long_sandcastle_a.cgf",
+      "templateIds": [
+        2563
+      ],
+      "sourceSha256": "4800e4589b8515aad611bafe9e194c0e9bfd8654fc773fa447a807b3f042288d",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/01_nuia/11_long/long_sandcastle_b.cgf",
+      "templateIds": [
+        2563
+      ],
+      "sourceSha256": "ccb22128dd754a14b7785b62feae32212b74ab10f96a872267b644736e427fdc",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/02_harihara/001_hcom/hcom_body_a.cgf",
+      "templateIds": [
+        1712,
+        2364,
+        3346,
+        3469,
+        4301,
+        5429
+      ],
+      "sourceSha256": "1eab682cc6fd293c813ffa0f327496feccdffc22f599b37a0b0870d0d086677b",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/02_harihara/001_hcom/hcom_elephant_a.cgf",
+      "templateIds": [
+        2638
+      ],
+      "sourceSha256": "66901e291a99a80699fa5046548e2730e89dd96c7f89369d836854d2209a1a36",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/02_harihara/001_hdeco/quest/hdeco_quest_an_mausoleum_gate_close.cgf",
+      "templateIds": [
+        1521
+      ],
+      "sourceSha256": "53e2d2983d5a2b471e2e902fb98783a62e8094734993b00468b857d63719afd1",
+      "spheres": [
+        {
+          "center": [
+            -0.094283447265625,
+            0.010979704856872559,
+            3.1563427734375002
+          ],
+          "radius": 2.6463327026367187
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/02_harihara/001_hdeco/quest/hdeco_quest_case.cgf",
+      "templateIds": [
+        1419,
+        3028,
+        4421
+      ],
+      "sourceSha256": "1918c2299cef678fe8c712b361fe53d3ba13ed87f4025621fea06abefb150511",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/02_harihara/001_hdeco/quest/hdeco_quest_grave01.cgf",
+      "templateIds": [
+        1446,
+        1447,
+        3020
+      ],
+      "sourceSha256": "780c8f77cb894c67fb480d906880009342ce7681aced18c13399f53f51a152ce",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/02_harihara/07_yn/yn_dirt_stonetop01.cgf",
+      "templateIds": [
+        3522
+      ],
+      "sourceSha256": "c01462fdfa215d60ad0827babdafc99cdf7d21eb53210d05a2998610a74dfd30",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/02_harihara/07_yn/yn_mali_skull01.cgf",
+      "templateIds": [
+        4591
+      ],
+      "sourceSha256": "533705033a4a27a482673359b20cd0985c0cf41850a1846e2f0f4298f7cd50bb",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "cgf://game/objects/env/04_thirdforce/01_orc/box_orc_a01.cgf",
+      "templateIds": [
+        3371
+      ],
+      "sourceSha256": "1cc7a43e23f9fa94d86d6ea0ebc1f237ada05b69e98f6b9af3e7341d7aecc10e",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/contents.xml/quest_minimism.singing_altar",
+      "templateIds": [
+        4368
+      ],
+      "sourceSha256": "2c6d7ea2cd8fe7383df01c89f4a3a238602699bc5feb8ddbe218e2188a13178c",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/02_harihara/001_hdeco/quest/hdeco_quest_spice.cgf",
+          "sha256": "6898d676b3bcc333b26c4fec63a5db2f0b3b7f719e971fbb27d7798b73c355d2"
+        },
+        {
+          "path": "game/objects/env/02_harihara/001_hdeco/quest/hdeco_quest_stonecoffin_body.cgf",
+          "sha256": "205bf62fc87448efd928cbed31b57024011b99d1e8035e0eb2fe84ba24ba3344"
+        },
+        {
+          "path": "game/objects/env/02_harihara/001_hdeco/quest/hdeco_quest_stonecoffin_up.cgf",
+          "sha256": "ac74ef0d9d0b3bd3ed71bf7bc53e93aa978c82409c7b4395f48b74846f4d55e6"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction.xml/env.invisible",
+      "templateIds": [
+        7205
+      ],
+      "sourceSha256": "b7f4596819d0c1070ed4f09d041a3b767cab37b2e5be8381ecc26fe1ae3ff63d",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": []
+    },
+    {
+      "model": "prefab://prefabs/interaction.xml/tool.campfire_a",
+      "templateIds": [
+        6208
+      ],
+      "sourceSha256": "b7f4596819d0c1070ed4f09d041a3b767cab37b2e5be8381ecc26fe1ae3ff63d",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/bonfire_a.cgf",
+          "sha256": "27c7c81cd00df3727c89108519015887311ffe34991afea488922444ea2ccc27"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction.xml/tool.campfire_b",
+      "templateIds": [
+        6208
+      ],
+      "sourceSha256": "b7f4596819d0c1070ed4f09d041a3b767cab37b2e5be8381ecc26fe1ae3ff63d",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_camp_setpicking.cga",
+          "sha256": "8c58b37542caced5aa52a31f5df7438cc7004450c5acf9b3358659f70e5a546e"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/bonfire_a.cgf",
+          "sha256": "27c7c81cd00df3727c89108519015887311ffe34991afea488922444ea2ccc27"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction_b.xml/quest.ferre_machine1",
+      "templateIds": [
+        3000
+      ],
+      "sourceSha256": "3355c2d48e1b0d204ae80c76e1b2229073514fa2713d85856eabd08faf616d66",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "radius": 2.0
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.94824219
+          ],
+          "radius": 0.5973164261605469
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/characters/monster/detectmachine_worn/detectmachine_worn.chr",
+          "sha256": "ac6fa58ecdc3c23154d825cbb9727047c09450b3bf564fa73bfe9d8a0ae578a1"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/nova_invisible_box_a.cgf",
+          "sha256": "ae33fcb54e861ad513b93d21962ade19ec964087f2fc097780d1422d5d147eb0"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction_b.xml/quest.scroll",
+      "templateIds": [
+        3436
+      ],
+      "sourceSha256": "3355c2d48e1b0d204ae80c76e1b2229073514fa2713d85856eabd08faf616d66",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/scroll_common_c.cgf",
+          "sha256": "f0a24d4442a9511516439fb780d3342191128694acd5baf6a0f8ee13397270bd"
+        },
+        {
+          "path": "game/objects/env/02_harihara/001_hdeco/hdeco_table_a.cgf",
+          "sha256": "be5fa602e23eadcec6efb59c600cdac9f3993311823fa1f45c718b7ffa76169e"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction_b.xml/quest.wingtool",
+      "templateIds": [
+        1537
+      ],
+      "sourceSha256": "3355c2d48e1b0d204ae80c76e1b2229073514fa2713d85856eabd08faf616d66",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/rack_weapon_b1.cgf",
+          "sha256": "d74cf7debf50d30691f35eebd8a1e2a3a642db0685ceff550dd70a5242c81778"
+        },
+        {
+          "path": "game/objects/env/06_unit/06_glider/backpack.cgf",
+          "sha256": "f9981cb0b85d9c28a62c7bde74a9f96e57dcf6a32474928ab345baa84527ae00"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction_c.xml/misc.ck_a",
+      "templateIds": [
+        4617
+      ],
+      "sourceSha256": "0ec3249c055594d0b3e43cd35a19456045b9b546ca8c39bb7397b91251d17e2d",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/characters/animals/chicken/chicken.chr",
+          "sha256": "7a76345222823fcdafe9d0666b8d15a76aa0435ba0412e6c03763a8843e37d0c"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_birdbar_a.cgf",
+          "sha256": "b3e259680c24d81f35788c8d7bf04a526ff33ea02c6b79bdf346a00951c26763"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction_c.xml/quest.book_prop_e",
+      "templateIds": [
+        7139
+      ],
+      "sourceSha256": "0ec3249c055594d0b3e43cd35a19456045b9b546ca8c39bb7397b91251d17e2d",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_book_b.cgf",
+          "sha256": "3a018f08e5dfccdef89848eb4395cf0add767616ce4ba699d91e6c565667aeb3"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction_c.xml/tool.mon_egg_a",
+      "templateIds": [
+        3494
+      ],
+      "sourceSha256": "0ec3249c055594d0b3e43cd35a19456045b9b546ca8c39bb7397b91251d17e2d",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ncom/ncom_wyvernnest_a.cgf",
+          "sha256": "60518edf494df06b0d3bc9aae2afe61680ac1cbcb2011272192c044ef66ca8b7"
+        },
+        {
+          "path": "game/objects/env/02_harihara/001_hcom/hcom_griffinegg_a.cgf",
+          "sha256": "4fb3b51b26480cec24ff53811a41dd94d841cc5b56c2974cfe93abd27238759b"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction_d.xml/quest.epic_seal_jewel_1",
+      "templateIds": [
+        7110
+      ],
+      "sourceSha256": "6f9f7b0cfbc0ec698ef849b158b73e922355820766220e24cc0ef03b2a7af313",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "radius": 1.2
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_altar.cgf",
+          "sha256": "83cb7f5aa7433ffdc8f9822b1bb53eceb6b7c0301843ddefc81139cfe2b29a43"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction_d.xml/quest.epic_seal_jewel_2",
+      "templateIds": [
+        7110
+      ],
+      "sourceSha256": "6f9f7b0cfbc0ec698ef849b158b73e922355820766220e24cc0ef03b2a7af313",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "radius": 1.2
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_altar.cgf",
+          "sha256": "83cb7f5aa7433ffdc8f9822b1bb53eceb6b7c0301843ddefc81139cfe2b29a43"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction_d.xml/quest.epic_seal_jewel_3",
+      "templateIds": [
+        7110
+      ],
+      "sourceSha256": "6f9f7b0cfbc0ec698ef849b158b73e922355820766220e24cc0ef03b2a7af313",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "radius": 1.2
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_altar.cgf",
+          "sha256": "83cb7f5aa7433ffdc8f9822b1bb53eceb6b7c0301843ddefc81139cfe2b29a43"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/interaction_g.xml/racing.independence_day_flag",
+      "templateIds": [
+        7205
+      ],
+      "sourceSha256": "eee4de5ec9d62a13e705a7e8d3313e15aa73f8a0343aa6acaf975ad75fb4adee",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_housing/housing_furniture/hs_f_sharon.cgf",
+          "sha256": "e85db0a970ac703e79af55e9fb7288a65793f18528afe3b6fec477e970010e64"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_taegeukgi_long.chr",
+          "sha256": "45ae8d34a8bb8023ecef02965fa6c53f69b83ba9c5d45f38696c8ba7bfadc0bf"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/ndeco_quest.xml/ndeco_quest.ndeco_quest_blood",
+      "templateIds": [
+        7046
+      ],
+      "sourceSha256": "c4004906185b4e19a990362b6cbef412af0b578858d02508d0ec60b4202fd502",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_do_invisible.cgf",
+          "sha256": "3c535e39c740ae743e3bf11fd855277be169b2713e09d9ec4bf6daac890938f3"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_do_invisible.cgf",
+          "sha256": "3c535e39c740ae743e3bf11fd855277be169b2713e09d9ec4bf6daac890938f3"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/ndeco_quest.xml/ndeco_quest.ndeco_quest_soil",
+      "templateIds": [
+        1564
+      ],
+      "sourceSha256": "c4004906185b4e19a990362b6cbef412af0b578858d02508d0ec60b4202fd502",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_soil.cgf",
+          "sha256": "92addff8f1e9a15eb11aef5cd57c7bca930d36693ca0ad81692e560761bf1a4e"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/ndeco_quest.xml/ndeco_quest.ndeco_quest_woodbox",
+      "templateIds": [
+        938
+      ],
+      "sourceSha256": "c4004906185b4e19a990362b6cbef412af0b578858d02508d0ec60b4202fd502",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/housing/ndeco_housing_chair01.cgf",
+          "sha256": "092726b16b8d5ff499e5651e32e6fa721fecf2d0c94d9b329f234faad75931e3"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_common_hammer&compass01.cgf",
+          "sha256": "bcf0a7653ab1e1c391106a692a8ceb276cfb44cb4fde7052c9717b0786a1de4f"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_common_ruler01.cgf",
+          "sha256": "39f8f5cc7acda47630fe0effd72d73f13ce23a8ac91934292a49dd9cb36cba61"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_do_trowel01.cgf",
+          "sha256": "8526cc094ccc3096d27b5144dc53b1bc373c667adec34909ac37796153d6ea11"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/cup_a.cgf",
+          "sha256": "d396c4e84c0c029376788e11b66b02208a29cd9ca6f67b2f00d39642365a77de"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/scroll_common_a.cgf",
+          "sha256": "77ead617b796ebb8b5cac73a2560386cdfcb93245f83c8935a12eb6cf59fbeec"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/scroll_common_a.cgf",
+          "sha256": "77ead617b796ebb8b5cac73a2560386cdfcb93245f83c8935a12eb6cf59fbeec"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_woodbox.cgf",
+          "sha256": "bf8b8d6ac12723c4c44205f611f5624cd3fdf1a97e753da4fcd06452330087d8"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/ninelife.xml/quest.flora",
+      "templateIds": [
+        1086
+      ],
+      "sourceSha256": "0378c509e90916fb9c1d61b38731f1972c8c64c26e311f6fa7fc2becdf4ca4c9",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "radius": 2.0
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_do_invisible_03.cgf",
+          "sha256": "ca93188c7f0664d0201287a114880f0600405ef92107bd2979afbcd0de2c8b5b"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/ninelife.xml/quest.knightcorpse",
+      "templateIds": [
+        4129
+      ],
+      "sourceSha256": "0378c509e90916fb9c1d61b38731f1972c8c64c26e311f6fa7fc2becdf4ca4c9",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            2.0215759
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.0544739
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/nu_m_corpse2.cgf",
+          "sha256": "490354701bd33cc2c5c809c53e8b76e03ea4375e36e6fecb3a4e1d3a31dda536"
+        },
+        {
+          "path": "game/objects/item/shield/shield_16_2/shield_16_2.cgf",
+          "sha256": "0ba79f909b169addd586016bbf15ae98da863846f9ac575cb8599b940e1c4dac"
+        },
+        {
+          "path": "game/objects/item/sword_1h/sword_1h_01_1/sword_1h_01_1.cgf",
+          "sha256": "61e9de94a16a557ad311419b55010929364de38c42522a501c6b67bed8e6d2fa"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/ninelife.xml/quest.lostbag_fmq",
+      "templateIds": [
+        4255
+      ],
+      "sourceSha256": "0378c509e90916fb9c1d61b38731f1972c8c64c26e311f6fa7fc2becdf4ca4c9",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9552078
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.0699615
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_sack_a.cgf",
+          "sha256": "60019c90585de157dceb5b90ffb7f4e368f8485e0c29280a38a1a59c00469819"
+        },
+        {
+          "path": "game/objects/env/02_harihara/03_ti/spiderweb_07.cgf",
+          "sha256": "eda3375c787877a92b07a01b850cfceb8346cce1babc42d9653304c21d141716"
+        },
+        {
+          "path": "game/objects/env/02_harihara/03_ti/spiderweb_07.cgf",
+          "sha256": "eda3375c787877a92b07a01b850cfceb8346cce1babc42d9653304c21d141716"
+        },
+        {
+          "path": "game/objects/item/sword_1h/sword_1h_01_1/sword_1h_01_1.cgf",
+          "sha256": "61e9de94a16a557ad311419b55010929364de38c42522a501c6b67bed8e6d2fa"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/14east.winebox",
+      "templateIds": [
+        4069
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9265442
+          ],
+          "radius": 2.0
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.0301056
+          ],
+          "radius": 2.0
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_ruinprop01_empty.cgf",
+          "sha256": "1ac2c55d158b25d1f91cd44f150cc9abd03f1b6204216595bd72d68fcbea9fae"
+        },
+        {
+          "path": "game/objects/env/02_harihara/001_hdeco/hdeco_livingprop05.cgf",
+          "sha256": "571b3d27f25de084cf7c4c61b56f5aec42970805c325e31c39fe4e5acf8485a4"
+        },
+        {
+          "path": "game/objects/env/02_harihara/001_hdeco/hdeco_livingprop05.cgf",
+          "sha256": "571b3d27f25de084cf7c4c61b56f5aec42970805c325e31c39fe4e5acf8485a4"
+        },
+        {
+          "path": "game/objects/env/02_harihara/001_hdeco/hdeco_livingprop05.cgf",
+          "sha256": "571b3d27f25de084cf7c4c61b56f5aec42970805c325e31c39fe4e5acf8485a4"
+        },
+        {
+          "path": "game/objects/env/02_harihara/001_hdeco/hdeco_livingprop05.cgf",
+          "sha256": "571b3d27f25de084cf7c4c61b56f5aec42970805c325e31c39fe4e5acf8485a4"
+        },
+        {
+          "path": "game/objects/env/02_harihara/001_hdeco/hdeco_livingprop05.cgf",
+          "sha256": "571b3d27f25de084cf7c4c61b56f5aec42970805c325e31c39fe4e5acf8485a4"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/6yny.fire",
+      "templateIds": [
+        6796
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/illuminator01.cgf",
+          "sha256": "639fc9ddb336263df7dedf52633f331a53a01caa0b06d60300cba1079e176e02"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.4m",
+      "templateIds": [
+        1747
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "radius": 2.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9766693
+          ],
+          "radius": 2.5
+        }
+      ],
+      "dependencies": []
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.alchemy_stone",
+      "templateIds": [
+        711
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9742889
+          ],
+          "radius": 2.0
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.1930084
+          ],
+          "radius": 2.0
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_alchemy_stone.cgf",
+          "sha256": "a545e52f0d1bf609385bfde518a21bf7a1bae49dfc3d8dede64032294085af10"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.backpack_f_a",
+      "templateIds": [
+        5833
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.2188568
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            2.0291367
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_backpack_f_a.cgf",
+          "sha256": "715ea748bb199ac2a3c455eecd848472b6dc2f016e57c2d83c80f68d5b721349"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.body_a",
+      "templateIds": [
+        1712,
+        3346,
+        4301,
+        5429
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.1361084
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9720612
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/02_harihara/001_hcom/hcom_body_a.cgf",
+          "sha256": "1eab682cc6fd293c813ffa0f327496feccdffc22f599b37a0b0870d0d086677b"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.book01",
+      "templateIds": [
+        3088,
+        3472
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.0908356
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9669189
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_book01.cgf",
+          "sha256": "e05e61dd75f5fcaf281b5c753ea801270f2745526ea39dc9acb3d80338a635ca"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.bottle",
+      "templateIds": [
+        3560,
+        4302
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "radius": 2.0
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_bottle.cgf",
+          "sha256": "a5c2d241797d4f4f133feaee859153ba30843bad75c82e49cdd994f58e8004c0"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.box_a",
+      "templateIds": [
+        3567,
+        4135
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.8895493
+          ],
+          "radius": 2.0
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.00914
+          ],
+          "radius": 2.0
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/box_a.cgf",
+          "sha256": "80b070832cc77a5300f737116aea458f10c9a223a3d453aa70771e87e6432561"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.box_orc_a01",
+      "templateIds": [
+        3371
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "radius": 2.0
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/04_thirdforce/01_orc/box_orc_a01.cgf",
+          "sha256": "1cc7a43e23f9fa94d86d6ea0ebc1f237ada05b69e98f6b9af3e7341d7aecc10e"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.case01",
+      "templateIds": [
+        1137
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9754639
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.0765152
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_common_case01.cgf",
+          "sha256": "9ed3593f1e3b50f5b8ffffae38c0b6cc85b725d8356a06006a5acb7d92d8a935"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.egg",
+      "templateIds": [
+        3494
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9313736
+          ],
+          "radius": 2.0
+        },
+        {
+          "center": [
+            0.0020141602,
+            0.0,
+            1.1961823
+          ],
+          "radius": 2.0
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ncom/ncom_wyvernnest_a.cgf",
+          "sha256": "60518edf494df06b0d3bc9aae2afe61680ac1cbcb2011272192c044ef66ca8b7"
+        },
+        {
+          "path": "game/objects/env/02_harihara/001_hcom/hcom_griffinegg_a.cgf",
+          "sha256": "4fb3b51b26480cec24ff53811a41dd94d841cc5b56c2974cfe93abd27238759b"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.elephant_a",
+      "templateIds": [
+        2638
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            -0.52105713,
+            1.9727249
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0074157715,
+            0.56341553,
+            1.0195465
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0074157715,
+            -0.53564453,
+            1.0195541
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.58734131,
+            1.9738235
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/02_harihara/001_hcom/hcom_elephant_a.cgf",
+          "sha256": "66901e291a99a80699fa5046548e2730e89dd96c7f89369d836854d2209a1a36"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.fe_corpse1",
+      "templateIds": [
+        3572
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/fe_m_corpse1.cgf",
+          "sha256": "42d4e15ae0ce87482c678cc9c86c73cccf3bd9f8ae68f908ee3b29448d247bb8"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.grave01",
+      "templateIds": [
+        1447,
+        3020
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9407425
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.2347565
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/02_harihara/001_hdeco/quest/hdeco_quest_grave01.cgf",
+          "sha256": "780c8f77cb894c67fb480d906880009342ce7681aced18c13399f53f51a152ce"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.learning_ob01_c",
+      "templateIds": [
+        3844
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9115753
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.1201477
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/learning_ob01_c.cgf",
+          "sha256": "1cef6c89686282a8039ace7567e6fa74b1b55967a445c5ce415dec26aa266229"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.mboard_a01",
+      "templateIds": [
+        709,
+        4345,
+        4346,
+        4347,
+        4348,
+        4349,
+        4350,
+        4351,
+        4352,
+        7583
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            -0.63555908,
+            0.0,
+            1.8961563
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            -0.64596558,
+            0.0,
+            1.2128372
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.63452148,
+            0.0,
+            1.8918533
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.63452148,
+            0.0,
+            1.2306137
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ncom/ncom_field_mboard_a01.cgf",
+          "sha256": "606b70299c0e489bff885e461f45133883e9092bb2dd5073457b3700728d49e8"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.mineprop_e",
+      "templateIds": [
+        4332
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.71081543,
+            1.4063416
+          ],
+          "radius": 1.8
+        },
+        {
+          "center": [
+            0.0,
+            -0.26824951,
+            1.4063416
+          ],
+          "radius": 1.8
+        },
+        {
+          "center": [
+            1.2110596,
+            0.71075439,
+            1.4037399
+          ],
+          "radius": 1.8
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_mineprop_e.cgf",
+          "sha256": "9419d50cd7a734ee787fa23bf423bbf4f36df43930d4a0d54c43d20ac596cc13"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.nu_f_deadbody",
+      "templateIds": [
+        4168
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9208755
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_nu_f_deadbody.cgf",
+          "sha256": "582c4c349a2d433ad6eeeec27da9f540090d43165896113316bb48bfeb392b50"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.nu_m_corpse1",
+      "templateIds": [
+        1730
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9620285
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/nu_m_corpse1.cgf",
+          "sha256": "587b93ac2b38e3c7afd5bbf39f1bc08f3aea0c5f3917651ef5adbb153c167dce"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.nu_m_corpse2",
+      "templateIds": [
+        1875,
+        3469
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            2.0104294
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/nu_m_corpse2.cgf",
+          "sha256": "490354701bd33cc2c5c809c53e8b76e03ea4375e36e6fecb3a4e1d3a31dda536"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.nu_m_deadbody",
+      "templateIds": [
+        1540
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.0539932
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            2.0224609
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_nu_m_deadbody.cgf",
+          "sha256": "2974ea48e56cdc7bb9e0524cda1c34d011801c675238a069f9ad10a700a2a410"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.scroll",
+      "templateIds": [
+        3436
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            -0.51226807,
+            0.0,
+            2.1297531
+          ],
+          "radius": 2.0
+        },
+        {
+          "center": [
+            0.52563477,
+            0.0,
+            1.1836777
+          ],
+          "radius": 2.0
+        },
+        {
+          "center": [
+            0.50048828,
+            0.0,
+            2.1140976
+          ],
+          "radius": 2.0
+        },
+        {
+          "center": [
+            -0.50476074,
+            0.0,
+            1.1570587
+          ],
+          "radius": 2.0
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/scroll_common_c.cgf",
+          "sha256": "f0a24d4442a9511516439fb780d3342191128694acd5baf6a0f8ee13397270bd"
+        },
+        {
+          "path": "game/objects/env/02_harihara/001_hdeco/hdeco_table_a.cgf",
+          "sha256": "be5fa602e23eadcec6efb59c600cdac9f3993311823fa1f45c718b7ffa76169e"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.statue02",
+      "templateIds": [
+        3016
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            2.0
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_art_statue02.cgf",
+          "sha256": "779bc238104bb72f59edff92c4d51ed16ef593fa217cb16ca4e3cc65942961cd"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/aim.stonetop01",
+      "templateIds": [
+        3522
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.979126
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.96656036
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/02_harihara/07_yn/yn_dirt_stonetop01.cgf",
+          "sha256": "c01462fdfa215d60ad0827babdafc99cdf7d21eb53210d05a2998610a74dfd30"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/marker.huntsign_k",
+      "templateIds": [
+        5032,
+        5047,
+        5048,
+        5101,
+        5102,
+        5123,
+        5253,
+        5272,
+        5276,
+        5281,
+        5310,
+        5315,
+        5317,
+        5319,
+        5375,
+        5378,
+        5379,
+        5390,
+        5392,
+        5393,
+        5400,
+        5402,
+        5404,
+        5405,
+        5415,
+        5416,
+        5417,
+        5418,
+        5419,
+        5505,
+        5509,
+        5510,
+        5511,
+        5520,
+        5521,
+        5522,
+        5523,
+        5524,
+        5533,
+        5538,
+        5571,
+        5586,
+        5696,
+        5697,
+        5698,
+        5699,
+        5709,
+        5801,
+        5802,
+        5803,
+        5805,
+        5813,
+        5814,
+        5816,
+        5817,
+        5819,
+        5832,
+        5848,
+        5849,
+        5858,
+        5881,
+        5882,
+        5894,
+        5895,
+        5896,
+        5897,
+        5898,
+        7023,
+        7024,
+        7025,
+        7026,
+        7027,
+        7028,
+        7029,
+        7030,
+        7031,
+        8019,
+        8020,
+        8021,
+        8042,
+        8055
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.9638596
+          ],
+          "radius": 1.0
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "radius": 1.0
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ncom/ncom_huntsign02.cgf",
+          "sha256": "bd4ae7d630512c49bd887c93887122067e2743624c8a8d31f191bbb1d99bd578"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_signpaper02.cgf",
+          "sha256": "8032d7170146b6487afa6943f704330c1bf98d0a3e07ac88dfce41b9c4d161bf"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/ndeco_quest.aim_woodbox",
+      "templateIds": [
+        938
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "radius": 1.5
+        },
+        {
+          "center": [
+            0.0,
+            0.0,
+            2.0
+          ],
+          "radius": 1.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/housing/ndeco_housing_chair01.cgf",
+          "sha256": "092726b16b8d5ff499e5651e32e6fa721fecf2d0c94d9b329f234faad75931e3"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_common_hammer&compass01.cgf",
+          "sha256": "bcf0a7653ab1e1c391106a692a8ceb276cfb44cb4fde7052c9717b0786a1de4f"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_common_ruler01.cgf",
+          "sha256": "39f8f5cc7acda47630fe0effd72d73f13ce23a8ac91934292a49dd9cb36cba61"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_do_trowel01.cgf",
+          "sha256": "8526cc094ccc3096d27b5144dc53b1bc373c667adec34909ac37796153d6ea11"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/cup_a.cgf",
+          "sha256": "d396c4e84c0c029376788e11b66b02208a29cd9ca6f67b2f00d39642365a77de"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/scroll_common_a.cgf",
+          "sha256": "77ead617b796ebb8b5cac73a2560386cdfcb93245f83c8935a12eb6cf59fbeec"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/scroll_common_a.cgf",
+          "sha256": "77ead617b796ebb8b5cac73a2560386cdfcb93245f83c8935a12eb6cf59fbeec"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_woodbox.cgf",
+          "sha256": "bf8b8d6ac12723c4c44205f611f5624cd3fdf1a97e753da4fcd06452330087d8"
+        }
+      ]
+    },
+    {
+      "model": "prefab://prefabs/quest_h2co3.xml/quest.pot",
+      "templateIds": [
+        6413
+      ],
+      "sourceSha256": "9ca93b496165886d62d2674e8df723c3f9fdbb6a8a99a27083a341f48189273a",
+      "spheres": [
+        {
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.5
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/ndeco_leatherstore_crock_a.cgf",
+          "sha256": "45dfef9f8db1f52553a37a5ab26b3d47f87b027fde05b4fe0740adcde0e35a06"
+        }
+      ]
+    }
+  ],
+  "unsupportedModels": [
+    {
+      "model": "cgf://game/objects/env/architecture/siege/prop/postbox_common_a.cgf",
+      "templateIds": [
+        272
+      ],
+      "reason": "Missing asset: game/objects/env/architecture/siege/prop/postbox_common_a.cgf"
+    },
+    {
+      "model": "cgf://game/objects/env/nuia/gweonid/statue/godofprophecy_statue/returnpoint_statue.cgf",
+      "templateIds": [
+        272
+      ],
+      "reason": "Missing asset: game/objects/env/nuia/gweonid/statue/godofprophecy_statue/returnpoint_statue.cgf"
+    },
+    {
+      "model": "prefab://prefabs/quest_prop.xml/quest_prop.quest_case",
+      "templateIds": [
+        685,
+        4421
+      ],
+      "reason": "Nonidentity helper parent needs native review"
+    }
+  ]
+}

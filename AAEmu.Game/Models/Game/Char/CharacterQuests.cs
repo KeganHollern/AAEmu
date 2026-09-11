@@ -230,6 +230,8 @@ public class CharacterQuests(Character owner)
         var npc = Owner.ParentWorld?.GetNpc(npcObjId);
         if (npc == null)
             return RejectQuestAcceptor(questId, QuestAcceptorType.Npc, npcObjId, 0, "object_missing");
+        if (!QuestInteraction.CanInteractWithNpc(Owner, npc))
+            return RejectQuestAcceptor(questId, QuestAcceptorType.Npc, npcObjId, npc.TemplateId, "source_unavailable");
 
         var template = QuestManager.Instance.GetTemplate(questId);
         if (template == null)
@@ -253,6 +255,8 @@ public class CharacterQuests(Character owner)
         var doodad = Owner.ParentWorld?.GetDoodad(doodadObjId);
         if (doodad == null)
             return RejectQuestAcceptor(questId, QuestAcceptorType.Doodad, doodadObjId, 0, "object_missing");
+        if (!QuestInteraction.CanInteractWithDoodad(Owner, doodad))
+            return RejectQuestAcceptor(questId, QuestAcceptorType.Doodad, doodadObjId, doodad.TemplateId, "source_unavailable");
 
         var template = QuestManager.Instance.GetTemplate(questId);
         if (template == null)
@@ -262,6 +266,43 @@ public class CharacterQuests(Character owner)
             return RejectQuestAcceptor(questId, QuestAcceptorType.Doodad, doodadObjId, doodad.TemplateId, "template_mismatch");
 
         return AddQuest(questId, false, QuestAcceptorType.Doodad, doodad.TemplateId);
+    }
+
+    internal bool AddQuestFromClient(uint questId, uint npcObjectId, uint doodadObjectId)
+    {
+        if (npcObjectId != 0 && doodadObjectId != 0)
+            return false;
+
+        var source = npcObjectId != 0 ? QuestAcceptorType.Npc :
+            doodadObjectId != 0 ? QuestAcceptorType.Doodad : QuestAcceptorType.Unknown;
+        var template = QuestManager.Instance.GetTemplate(questId);
+        if (template == null || !AllowsClientStartSource(template, source))
+            return RejectQuestAcceptor(questId, source, npcObjectId | doodadObjectId, 0, "client_source_mismatch");
+
+        return source switch
+        {
+            QuestAcceptorType.Npc => AddQuestFromNpc(questId, npcObjectId),
+            QuestAcceptorType.Doodad => AddQuestFromDoodad(questId, doodadObjectId),
+            _ => AddQuest(questId)
+        };
+    }
+
+    internal static bool AllowsClientStartSource(QuestTemplate template, QuestAcceptorType source)
+    {
+        // Start conditions are alternatives within each component. Do not allow a
+        // missing/different source to allocate a live quest before those acts run.
+        // Other authored alternatives retain their normal server condition checks.
+        return template.GetComponents(QuestComponentKind.Start).All(component =>
+        {
+            var conditions = component.ActTemplates.Where(act => !act.HasSideEffects).ToArray();
+            return conditions.Length == 0 || conditions.Any(act => act switch
+            {
+                QuestActConAcceptNpc or QuestActConAcceptNpcEmotion or QuestActConAcceptNpcKill => source == QuestAcceptorType.Npc,
+                QuestActConAcceptDoodad => source == QuestAcceptorType.Doodad,
+                QuestActConAcceptSphere => false,
+                _ => true
+            });
+        });
     }
 
     internal static bool IsValidQuestAcceptor(QuestTemplate template, QuestAcceptorType acceptorType, uint acceptorId)
@@ -329,7 +370,7 @@ public class CharacterQuests(Character owner)
     /// <param name="questId"></param>
     /// <param name="sphereId"></param>
     /// <returns></returns>
-    public bool AddQuestFromSphere(uint questId, uint sphereId)
+    internal bool AddQuestFromSphere(uint questId, uint sphereId)
     {
         return AddQuest(questId, false, QuestAcceptorType.Sphere, sphereId);
     }

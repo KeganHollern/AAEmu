@@ -81,6 +81,8 @@
 
   <ItemGroup>
     <Folder Include="Models\ClientData" />
+    <EmbeddedResource Include="Models\Game\Quests\Data\r208022-doodad-interactions.json"
+                      LogicalName="AAEmu.Game.QuestDoodadInteractionShapes.json" />
   </ItemGroup>
 
   <ItemGroup>

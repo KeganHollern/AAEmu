@@ -2,6 +2,7 @@
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Units;
@@ -22,7 +23,8 @@ public partial class QuestManager
     /// <param name="selected">Selected reward (if any)</param>
     public void DoReportEvents(ICharacter owner, uint questContextId, uint npcObjId, uint doodadObjId, int selected)
     {
-        if (!owner.Quests.ActiveQuests.TryGetValue(questContextId, out var quest) ||
+        if ((npcObjId != 0 && doodadObjId != 0) ||
+            !owner.Quests.ActiveQuests.TryGetValue(questContextId, out var quest) ||
             quest.Step is not (QuestComponentKind.Progress or QuestComponentKind.Ready) ||
             !quest.IsValidSelectedRewardIndex(selected))
             return;
@@ -30,9 +32,9 @@ public partial class QuestManager
         if (npcObjId > 0)
         {
             // Turning in at a NPC?
-            var npc = ((Character)owner).ParentWorld.GetNpc(npcObjId);
+            var npc = ((Character)owner).ParentWorld?.GetNpc(npcObjId);
             // Is it a valid NPC?
-            if (npc == null)
+            if (!QuestInteraction.CanInteractWithNpc((Character)owner, npc))
                 return;
 
             //Connection.ActiveChar.Quests.OnReportToNpc(_npcObjId, _questContextId, _selected);
@@ -48,9 +50,9 @@ public partial class QuestManager
         else if (doodadObjId > 0)
         {
             // Turning in at a Doodad?
-            var doodad = ((Character)owner).ParentWorld.GetDoodad(doodadObjId);
+            var doodad = ((Character)owner).ParentWorld?.GetDoodad(doodadObjId);
             // Does the Doodad exist?
-            if (doodad == null)
+            if (!QuestInteraction.CanInteractWithDoodad((Character)owner, doodad))
                 return;
 
             //Connection.ActiveChar.Quests.OnReportToDoodad(_doodadObjId, _questContextId, _selected);
@@ -189,8 +191,8 @@ public partial class QuestManager
     /// <param name="questActId"></param>
     public void DoTalkMadeEvents(ICharacter sourcePlayer, ICharacter targetPlayer, uint npcObjId, uint questContextId, uint questComponentId, uint questActId)
     {
-        var npc = ((Character)sourcePlayer).ParentWorld.GetNpc(npcObjId);
-        if (npc == null)
+        var npc = ((Character)sourcePlayer).ParentWorld?.GetNpc(npcObjId);
+        if (!QuestInteraction.CanInteractWithNpc((Character)sourcePlayer, npc))
             return;
 
         // Trigger talk to NPC event
@@ -305,8 +307,9 @@ public partial class QuestManager
             Logger.Warn($"DoOnExpressFireEvents seems to have a invalid characterObjId referenced, Got:{characterObjId}, Expected:{owner.ObjId} ({owner.Name})");
             return;
         }
-        var npc = ((Character)owner).ParentWorld.GetNpc(npcObjId);
-        if (npc == null)
+        var npc = ((Character)owner).ParentWorld?.GetNpc(npcObjId);
+        // r208022 391872f0 always takes the emote target from the actor's selected target.
+        if (((Character)owner).CurrentTarget != npc || !QuestInteraction.IsVisibleSource((Character)owner, npc))
             return;
 
         owner.Events?.OnExpressFire(owner, new OnExpressFireArgs

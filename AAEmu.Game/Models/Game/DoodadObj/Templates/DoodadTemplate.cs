@@ -13,6 +13,7 @@ public class DoodadTemplate
     public int MinTime { get; set; }
     public int MaxTime { get; set; }
     public uint ModelKindId { get; set; }
+    public string Model { get; set; }
     public bool UseCreatorFaction { get; set; }
     public bool ForceTodTopPriority { get; set; }
     public uint MilestoneId { get; set; }

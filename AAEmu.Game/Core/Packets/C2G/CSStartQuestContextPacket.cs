@@ -17,13 +17,11 @@ public class CSStartQuestContextPacket() : GamePacket(CSOffsets.CSStartQuestCont
         _doodadObjId = stream.ReadBc();        // doodadObjId
         _sphereId = stream.ReadUInt32();       // selected
 
-        if (_npcObjId > 0)
-            Connection.ActiveChar.Quests.AddQuestFromNpc(_questContextId, _npcObjId);
-        else if (_doodadObjId > 0)
-            Connection.ActiveChar.Quests.AddQuestFromDoodad(_questContextId, _doodadObjId);
-        else if (_sphereId > 0)
-            Connection.ActiveChar.Quests.AddQuestFromSphere(_questContextId, _sphereId);
-        else
-            Connection.ActiveChar.Quests.AddQuest(_questContextId);
+        // Sphere starts come only from SphereQuestManager's authoritative entry event.
+        // Do not let another supplied source hide a spoofed sphere or ambiguous object pair.
+        if (_sphereId != 0 || (_npcObjId != 0 && _doodadObjId != 0))
+            return;
+
+        Connection.ActiveChar.Quests.AddQuestFromClient(_questContextId, _npcObjId, _doodadObjId);
     }
 }
