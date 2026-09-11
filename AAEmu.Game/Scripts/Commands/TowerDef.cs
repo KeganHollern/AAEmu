@@ -2,10 +2,13 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.TowerDefense;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
+[CommandActionPermission(GamePermission.ManageServer, "start", "next", "end")]
 public class TowerDef : ICommand
 {
     public string[] CommandNames { get; set; } = ["towerdef", "tower_def"];

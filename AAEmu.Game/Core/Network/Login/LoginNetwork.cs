@@ -21,6 +21,8 @@ public class LoginNetwork : Singleton<LoginNetwork>
         RegisterPacket(LGOffsets.LGPlayerEnterPacket, typeof(LGPlayerEnterPacket));
         RegisterPacket(LGOffsets.LGPlayerReconnectPacket, typeof(LGPlayerReconnectPacket));
         RegisterPacket(LGOffsets.LGRequestInfoPacket, typeof(LGRequestInfoPacket));
+        RegisterPacket(LGOffsets.LGModerationResultPacket, typeof(LGModerationResultPacket));
+        RegisterPacket(LGOffsets.LGModerationStatePacket, typeof(LGModerationStatePacket));
     }
 
     public void Start()

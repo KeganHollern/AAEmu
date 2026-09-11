@@ -15,11 +15,16 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
 {
     public override void Read(PacketStream stream)
     {
+        if (!Connection.IsAuthenticated || Connection.AccountId == 0)
+        {
+            Connection.Shutdown();
+            return;
+        }
         var characterId = stream.ReadUInt32();
         _ = stream.ReadBoolean(); // gm
         stream.ReadByte();
 
-        if (Connection.Characters.TryGetValue(characterId, out var character))
+        if (Connection.Characters.TryGetValue(characterId, out var character) && character.AccountId == Connection.AccountId)
         {
             // Force player into main_world when coming from character select
             character.Transform.InstanceId = WorldManager.DefaultInstanceId;

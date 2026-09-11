@@ -4,6 +4,7 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Utils;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
@@ -12,6 +13,8 @@ namespace AAEmu.Game.Scripts.Commands;
 /// Debug/GM helpers for BAI-derived ship static barriers (GeoDataMode).
 /// Uses only <see cref="WorldInstance"/> public barrier helpers so Roslyn script compilation (compiler-check) succeeds.
 /// </summary>
+[CommandPermission(GamePermission.StaffCommands)]
+[CommandActionPermission(GamePermission.ManageServer, "reset")]
 public sealed class ShipBarrierCmd : ICommand
 {
     public string[] CommandNames { get; set; } = ["shipbarrier", "sb"];

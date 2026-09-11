@@ -1,9 +1,11 @@
 ﻿using System.Drawing;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Models.Game.Char;
 
 namespace AAEmu.Game.Utils.Scripts.SubCommands.Feature;
 
+[CommandPermission(GamePermission.ManageServer)]
 public class FeatureSetSubCommand : SubCommandBase
 {
     public FeatureSetSubCommand()

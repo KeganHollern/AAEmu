@@ -3,6 +3,7 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Slaves;
@@ -125,10 +126,9 @@ public class RadarManager : Singleton<RadarManager>, IRadarManager
 
             foreach (var (_, entry) in Registrations)
             {
-                // TODO: Make a proper GM flag
-                var gmRangeCheck = CharacterManager.Instance.GetEffectiveAccessLevel(entry.Player) >= 100 ? 100000f : 0f;
                 if (entry.Player == null)
                     continue;
+                var gmRangeCheck = PermissionManager.Instance.CanUse(entry.Player, GamePermission.ExtendedRadar) ? 100000f : 0f;
 
                 // Check public Transportation
                 if (entry.ShowPublicTransportRange > 0)

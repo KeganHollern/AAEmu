@@ -6,7 +6,8 @@ using System.Numerics;
 using AAEmu.Game.Physics;
 using AAEmu.Game.Utils;
 
-using AAEmu.Game.Core.Managers.UnitManagers;
+using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -52,8 +53,6 @@ public static class ShipTuningDebug
     /// EN: Minimum effective access level to receive chat debug messages.
     /// RU: Минимальный effective access level для получения debug-сообщений в чат.
     /// </summary>
-    public static int MinAccessLevel => GetMinAccessLevel();
-    private static int GetMinAccessLevel() => 80;
 
     /// <summary>
     /// EN: Throttle detailed messages (ms) per ship.
@@ -687,7 +686,7 @@ public static class ShipTuningDebug
 
     private static bool CanReceive(Character c)
     {
-        return CharacterManager.Instance.GetEffectiveAccessLevel(c) >= MinAccessLevel;
+        return PermissionManager.Instance.CanUse(c, GamePermission.ViewDiagnostics);
     }
 
     private static Matrix4x4 GetTransformRotationMatrix(Vector3 rpy)
@@ -701,4 +700,3 @@ public static class ShipTuningDebug
 
     #endregion
 }
-

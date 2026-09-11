@@ -3,14 +3,16 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Scripts.SubCommands.Crimes;
 using AAEmu.Game.Scripts.SubCommands.Doodads;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 using AAEmu.Game.Utils.Scripts.SubCommands;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class CrimeCmd : SubCommandBase, ICommand
 {
-    public string[] CommandNames { get; set; } = ["doodad"];
+    public string[] CommandNames { get; set; } = ["crime"];
 
     public CrimeCmd()
     {
@@ -29,7 +31,7 @@ public class CrimeCmd : SubCommandBase, ICommand
 
     public void OnLoad()
     {
-        CommandManager.Instance.Register("crime", this);
+        CommandManager.Instance.Register(CommandNames, this);
     }
 
     public CrimeCmd(Dictionary<ICommandV2, string[]> subcommands) : base(subcommands)

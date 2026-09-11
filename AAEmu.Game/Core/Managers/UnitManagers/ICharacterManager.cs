@@ -18,7 +18,6 @@ public interface ICharacterManager : ILoadable
     uint GetActabilityIdByCategoryId(uint id);
     ExpertLimit GetExpertLimit(int step);
     ExpandExpertLimit GetExpandExpertLimit(int step);
-    int GetEffectiveAccessLevel(Character character);
     void Create(GameConnection connection, string name, Race race, Gender gender, uint[] bodyItems, UnitCustomModelParams customModel, AbilityType ability1, AbilityType ability2, AbilityType ability3, byte level);
     bool IsCharacterPendingDeletion(string name);
     void StartOnlineTracking();

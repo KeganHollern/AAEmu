@@ -36,6 +36,11 @@ public class WebApiSession(WebApiServer server) : HttpSession(server)
                 {
                     parameters.Add(matches);
                 }
+                else if (parameter.ParameterType == typeof(WebApiRequestContext))
+                {
+                    // Use the transport peer, never a caller-supplied address header.
+                    parameters.Add(new WebApiRequestContext((Socket?.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? ""));
+                }
             }
 
             var args = parameters.ToArray();

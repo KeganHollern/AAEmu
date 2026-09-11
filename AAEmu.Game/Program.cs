@@ -119,8 +119,11 @@ public static class Program
                 services.AddSingleton<IHostedService, DiscordBotService>();
 
                 // -- Singleton<T>-based managers (AAEmu.Game.Core.Managers) --
-                services.AddSingleton<AccessLevelManager>();
-                services.AddSingleton<IAccessLevelManager>(sp => sp.GetRequiredService<AccessLevelManager>());
+                services.AddSingleton<PermissionManager>();
+                services.AddSingleton<IPermissionManager>(sp => sp.GetRequiredService<PermissionManager>());
+                services.AddSingleton<ICommandAuditStore, CommandAuditStore>();
+                services.AddSingleton<ModerationManager>();
+                services.AddSingleton<IModerationManager>(sp => sp.GetRequiredService<ModerationManager>());
 
                 services.AddSingleton<AccountManager>();
                 services.AddSingleton<IAccountManager>(sp => sp.GetRequiredService<AccountManager>());

@@ -2,11 +2,13 @@
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Scripts.SubCommands.Slaves;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 using AAEmu.Game.Utils.Scripts.SubCommands;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class SlaveCmd : SubCommandBase, ICommand, ICommandV2
 {
     public string[] CommandNames { get; set; } = ["slave"];

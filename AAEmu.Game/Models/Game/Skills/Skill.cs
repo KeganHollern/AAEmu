@@ -8,6 +8,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
@@ -174,7 +175,7 @@ public class Skill
             return SkillResultHelper.SkillResultErrorKeyToId(requirementResult.ResultKey);
         }
 
-        if (Template.CooldownTime > 0 && cooldownOwner is { IgnoreSkillCooldowns: false } && unit.Cooldowns.CheckCooldown(Template.Id))
+        if (Template.CooldownTime > 0 && cooldownOwner != null && !CanIgnoreCooldowns(cooldownOwner) && unit.Cooldowns.CheckCooldown(Template.Id))
         {
             Logger.Trace($"Skill: CooldownTime [{Template.CooldownTime}]!");
             return SkillResult.CooldownTime;
@@ -319,7 +320,7 @@ public class Skill
             return SkillResult.TooFarRange;
         }
 
-        if (character is { AccessLevel: < 100 })
+        if (character != null && !PermissionManager.Instance.CanUse(character, GamePermission.UseRestrictedPortals))
         {
             Portal trp = null;
             // copy Return.cs
@@ -1545,7 +1546,7 @@ public class Skill
         SkillTlIdManager.ReleaseId(TlId);
         TlId = 0;
 
-        if (caster.GetOwnerCharacter() is { IgnoreSkillCooldowns: true } cooldownOwner)
+        if (caster.GetOwnerCharacter() is { } cooldownOwner && CanIgnoreCooldowns(cooldownOwner))
         {
             cooldownOwner.ResetSkillCooldown(Template.Id, false);
             unit.Cooldowns.RemoveCooldown(Template.Id);
@@ -1579,11 +1580,17 @@ public class Skill
         SkillTlIdManager.ReleaseId(TlId);
         TlId = 0;
 
-        if (caster.GetOwnerCharacter() is { IgnoreSkillCooldowns: true } character)
+        if (caster.GetOwnerCharacter() is { } character && CanIgnoreCooldowns(character))
         {
             character.ResetSkillCooldown(Template.Id, false);
             unit.Cooldowns.RemoveCooldown(Template.Id);
         }
+    }
+
+    internal static bool CanIgnoreCooldowns(Character character)
+    {
+        return character is { IgnoreSkillCooldowns: true } &&
+            PermissionManager.Instance.CanUse(character, GamePermission.IgnoreSkillCooldowns);
     }
 
     internal void RecordUseSkillAchievement(BaseUnit caster)

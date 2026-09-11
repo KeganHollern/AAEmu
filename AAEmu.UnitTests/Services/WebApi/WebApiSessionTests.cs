@@ -98,6 +98,21 @@ public class WebApiSessionTests
         }
     }
 
+    [Test]
+    public async Task RequestContext_DoesNotTrustForwardedAddressHeaders()
+    {
+        var mapper = new RouteMapper();
+        mapper.DiscoverRoutesFromType(typeof(MyRegexController));
+        using var server = new WebApiServer(IPAddress.Loopback, 10000, mapper);
+        using var session = new WebApiSessionFake(server);
+        var request = new HttpRequest("GET", "/context", "HTTP/1.1");
+        request.SetHeader("X-Forwarded-For", "192.0.2.99");
+        session.OnReceivedRequestTest(request);
+        await Assert.That(session.ResultResponse.Status).IsEqualTo(200);
+        // This synthetic session has no connected socket and therefore no peer address.
+        await Assert.That(session.ResultResponse.Body).IsEqualTo("");
+    }
+
     public class WebApiServerFake : WebApiServer
     {
         public WebApiServerFake(IPAddress address, int port) : base(address, port)
@@ -128,6 +143,9 @@ public class WebApiSessionTests
     }
     internal sealed class MyRegexController : BaseController
     {
+        [WebApiGet("/context")]
+        public HttpResponse GetContext(WebApiRequestContext context) => OkHtml(context.RemoteAddress);
+
         [WebApiGet("/world/(.+)")]
         public HttpResponse GetCharacter(HttpRequest request)
         {

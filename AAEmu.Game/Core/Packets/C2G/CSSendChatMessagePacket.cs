@@ -27,6 +27,12 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
                 return;
         }
 
+        if (!ModerationManager.Instance.CanChat(Connection.AccountId))
+        {
+            Connection.ActiveChar.SendMessage("Chat is not available for this account.");
+            return;
+        }
+
         var spamCheck = ChatSpamManager.Instance.CheckMessage(Connection.ActiveChar, type, message);
         if (!spamCheck.IsAllowed)
         {

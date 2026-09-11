@@ -444,14 +444,15 @@ public class CharacterManager(
         player.BroadcastPacket(new SCDiceValuePacket(player.Name, max, roll), true);
     }
 
-    public int GetEffectiveAccessLevel(Character character)
-    {
-        var accountDetails = accountManager.GetAccountDetails(character.AccountId);
-        return Math.Max(character.AccessLevel, accountDetails.AccessLevel);
-    }
-
     public void Create(GameConnection connection, string name, Race race, Gender gender, uint[] bodyItems, UnitCustomModelParams customModel, AbilityType ability1, AbilityType ability2, AbilityType ability3, byte level)
     {
+        if (connection.AccountId == 0)
+        {
+            Logger.Warn("Rejected unauthenticated character creation");
+            connection.Shutdown();
+            return;
+        }
+
         name = name.NormalizeName();
         var nameValidationCode = nameManager.ValidateCharacterName(name);
         if (nameValidationCode != CharacterCreateError.Ok)
@@ -469,13 +470,6 @@ public class CharacterManager(
 
         var accountDetails = accountManager.GetAccountDetails(connection.AccountId);
 
-        // Get default access level for all users 
-        var useAccessLevel = AppConfiguration.Instance.Account.AccessLevelDefault;
-
-        // If it's the first character created, use first character access level settings 
-        if (nameManager.NoNamesRegistered())
-            useAccessLevel = Math.Max(AppConfiguration.Instance.Account.AccessLevelFirstCharacter, useAccessLevel);
-
         var characterId = characterIdManager.GetNextId();
         nameManager.AddCharacter(characterId, name, connection.AccountId);
         var template = GetTemplate(race, gender);
@@ -490,7 +484,6 @@ public class CharacterManager(
         character.Level = level;
         character.Faction = factionManager.GetFaction(template.FactionId);
         character.FactionName = "";
-        character.AccessLevel = useAccessLevel;
         // character.LaborPower = (short)AppConfiguration.Instance.Labor.Default;
         // character.LaborPowerModified = DateTime.UtcNow;
         character.InitializeLaborCache(accountDetails.Labor, accountDetails.LastUpdated); // Initialize Labor cache, so we don't need to query the DB every time we need to read it

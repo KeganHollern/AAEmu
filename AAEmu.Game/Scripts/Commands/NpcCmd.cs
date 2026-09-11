@@ -2,11 +2,13 @@
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Scripts.SubCommands.Npcs;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 using AAEmu.Game.Utils.Scripts.SubCommands;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class NpcCmd : SubCommandBase, ICommand, ICommandV2
 {
     public string[] CommandNames { get; set; } = ["npc"];
@@ -27,7 +29,7 @@ public class NpcCmd : SubCommandBase, ICommand, ICommandV2
 
     public void OnLoad()
     {
-        CommandManager.Instance.Register("npc", this);
+        CommandManager.Instance.Register(CommandNames, this);
     }
 
     public string GetCommandLineHelp()

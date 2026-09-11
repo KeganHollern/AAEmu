@@ -8,4 +8,6 @@ public static class GLOffsets
     public const ushort GLPlayerReconnectPacket = 0x002;
     public const ushort GLRequestInfoPacket = 0x003;
     public const ushort GLGameServerLoadPacket = 0x004;
+    // Cluster-private Login/Game extension, not an r208022 client opcode.
+    public const ushort GLModerationRequestPacket = 0x005;
 }

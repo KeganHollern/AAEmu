@@ -15,7 +15,6 @@
         "GrowthRate": 1.0,
         "DaysForTaxPayment": 7,
         "MaxTaxPrepaymentPeriods": 5,
-        "IgnoreFallDamageAccessLevel": 100,
         "GodMode": false,
         "GeoDataMode": true,
         "PreLoadTerrain": false,

@@ -13,6 +13,7 @@ public class LoginConnection(ISession session)
     public IPAddress Ip => session.Ip;
 
     public bool Block { get; set; }
+    public bool IsRegistered { get; set; }
     public PacketStream LastPacket { get; set; }
     internal ConnectionEventLimiter UnknownPacketEvents { get; } = new();
 

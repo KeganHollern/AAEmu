@@ -33,7 +33,6 @@ public partial class AppConfiguration
     public ExpeditionConfig Expedition { get; set; }
     public WorldConfig World { get; set; }
     public DungeonsConfig Dungeons { get; set; } = new();
-    public Dictionary<string, int> AccessLevel { get; set; } = [];
     public AccountConfig Account { get; set; }
     public CurrencyValuesConfig Labor { get; set; }
     public CurrencyValuesConfig LaborOffline { get; set; }
@@ -49,7 +48,6 @@ public partial class AppConfiguration
     public TowerDefenseConfig TowerDefense { get; set; } = new();
     public string DefaultLanguage { get; set; } = "en_us";
     public bool DebugInfo { get; set; } = true;
-    public uint DebugInfoLevel { get; set; } = 100;
 
     public class NetworkConfig
     {

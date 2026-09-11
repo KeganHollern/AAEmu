@@ -22,6 +22,7 @@ using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Utils.DB;
+using AAEmu.Game.Utils.Scripts;
 
 using NLog;
 
@@ -991,7 +992,10 @@ public class WorldManager(
     {
         foreach (var player in _characters.Values)
             if (name.ToLower().Equals(player.Name.ToLower()))
+            {
+                CommandAuditContext.RecordTarget(player.AccountId, player.Id, player.ObjId);
                 return player;
+            }
         return null;
     }
 
@@ -1016,7 +1020,11 @@ public class WorldManager(
             }
         }
         if (character.CurrentTarget is Character targetCharacter)
+        {
+            CommandAuditContext.RecordTarget(targetCharacter.AccountId, targetCharacter.Id, targetCharacter.ObjId);
             return targetCharacter;
+        }
+        CommandAuditContext.RecordTarget(character.AccountId, character.Id, character.ObjId);
         return character;
     }
 
@@ -1027,7 +1035,10 @@ public class WorldManager(
     /// <returns></returns>
     public Character GetCharacterByObjId(uint id)
     {
-        return _characters.GetValueOrDefault(id);
+        var character = _characters.GetValueOrDefault(id);
+        if (character != null)
+            CommandAuditContext.RecordTarget(character.AccountId, character.Id, character.ObjId);
+        return character;
     }
 
     /// <summary>
@@ -1037,7 +1048,10 @@ public class WorldManager(
     /// <returns></returns>
     public Character GetCharacterById(uint id)
     {
-        return _characters.Values.FirstOrDefault(player => player.Id.Equals(id));
+        var character = _characters.Values.FirstOrDefault(player => player.Id.Equals(id));
+        if (character != null)
+            CommandAuditContext.RecordTarget(character.AccountId, character.Id, character.ObjId);
+        return character;
     }
 
     /// <summary>

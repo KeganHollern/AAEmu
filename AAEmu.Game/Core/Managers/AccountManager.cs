@@ -31,6 +31,13 @@ public class AccountManager(
 
     public void Add(GameConnection connection)
     {
+        if (connection.AccountId == 0)
+        {
+            Logger.Warn("Rejected unauthenticated account registration");
+            connection.Shutdown();
+            return;
+        }
+
         var loginTime = timeProvider.GetUtcNow().UtcDateTime;
         var rewardDate = DateOnly.FromDateTime(loginTime);
         if (!_accounts.TryAdd(connection.AccountId, connection))
@@ -85,6 +92,9 @@ public class AccountManager(
     private AccountDetails GetAccountDetailsInternal(uint accountId)
     {
         var res = new AccountDetails();
+        if (accountId == 0)
+            return res;
+
         try
         {
             using var connection = MySQL.CreateConnection();
@@ -96,7 +106,7 @@ public class AccountManager(
             if (reader.Read())
             {
                 res.AccountId = reader.GetInt32("account_id");
-                res.AccessLevel = reader.GetInt32("access_level");
+                res.Role = NormalizeRole(reader.GetInt32("role"));
                 res.Labor = reader.GetInt16("labor");
                 res.Credits = reader.GetInt32("credits");
                 res.Loyalty = reader.GetInt32("loyalty");
@@ -110,31 +120,28 @@ public class AccountManager(
 
             reader.Close();
 
-            // Account didn't exist, check if it's our first
-            command.CommandText = "SELECT COUNT(*) FROM accounts";
-            command.Prepare();
-            var accountCount = (int)(long)(command.ExecuteScalar() ?? 0L);
-            var newAccessLevel = accountCount <= 0
-                ? AppConfiguration.Instance.Account.AccessLevelFirstAccount
-                : 0;
-
-            command.CommandText = "INSERT INTO accounts (account_id, access_level, labor, credits, loyalty, last_login, last_labor_tick, last_credits_tick, last_loyalty_tick) VALUES (@acc_id, @access_level, @labor, @credits, @loyalty, @last_login, @last_labor_tick, @last_credits_tick, @last_loyalty_tick)";
-            command.Parameters.AddWithValue("@access_level", newAccessLevel);
+            // Every new account is a normal player. Privilege comes only from an explicit role change.
+            var now = timeProvider.GetUtcNow().UtcDateTime;
+            command.CommandText = "INSERT INTO accounts (account_id, role, labor, credits, loyalty, last_login, last_labor_tick, last_credits_tick, last_loyalty_tick) VALUES (@acc_id, 0, @labor, @credits, @loyalty, @last_login, @last_labor_tick, @last_credits_tick, @last_loyalty_tick)";
             command.Parameters.AddWithValue("@labor", AppConfiguration.Instance.Labor.Default);
             command.Parameters.AddWithValue("@credits", AppConfiguration.Instance.Credits.Default);
             command.Parameters.AddWithValue("@loyalty", AppConfiguration.Instance.Loyalty.Default);
-            command.Parameters.AddWithValue("@last_login", DateTime.UtcNow);
-            command.Parameters.AddWithValue("@last_labor_tick", DateTime.UtcNow);
-            command.Parameters.AddWithValue("@last_credits_tick", DateTime.UtcNow);
-            command.Parameters.AddWithValue("@last_loyalty_tick", DateTime.UtcNow);
+            command.Parameters.AddWithValue("@last_login", now);
+            command.Parameters.AddWithValue("@last_labor_tick", now);
+            command.Parameters.AddWithValue("@last_credits_tick", now);
+            command.Parameters.AddWithValue("@last_loyalty_tick", now);
             command.Prepare();
             command.ExecuteNonQuery();
-            res.AccountId = (int)command.LastInsertedId;
-            res.LastLogin = DateTime.UtcNow;
-            res.LastUpdated = DateTime.UtcNow;
-            res.LastLaborTick = DateTime.UtcNow;
-            res.LastCreditsTick = DateTime.UtcNow;
-            res.LastLoyaltyTick = DateTime.UtcNow;
+            res.AccountId = checked((int)accountId);
+            res.Role = AccountRole.NormalPlayer;
+            res.Labor = checked((short)AppConfiguration.Instance.Labor.Default);
+            res.Credits = AppConfiguration.Instance.Credits.Default;
+            res.Loyalty = AppConfiguration.Instance.Loyalty.Default;
+            res.LastLogin = now;
+            res.LastUpdated = now;
+            res.LastLaborTick = now;
+            res.LastCreditsTick = now;
+            res.LastLoyaltyTick = now;
             return res;
         }
         catch (Exception e)
@@ -147,6 +154,9 @@ public class AccountManager(
 
     public AccountDetails GetAccountDetails(uint accountId)
     {
+        if (accountId == 0)
+            return new AccountDetails();
+
         object accLock;
         lock (_locks)
         {
@@ -170,8 +180,130 @@ public class AccountManager(
         }
     }
 
+    internal static AccountRole NormalizeRole(int value)
+    {
+        return value is >= 0 and <= 2 ? (AccountRole)value : AccountRole.NormalPlayer;
+    }
+
+    /// <summary>
+    /// Reads current authority without creating an account or using a cached character value.
+    /// </summary>
+    public AccountRole GetAccountRole(uint accountId)
+    {
+        return TryGetAccountRole(accountId, out var role) ? role : AccountRole.NormalPlayer;
+    }
+
+    /// <summary>
+    /// A missing positive Game account has no staff role. The caller must separately validate a Login target.
+    /// Returns false for account zero, invalid stored roles, and database failures.
+    /// </summary>
+    public bool TryGetAccountRole(uint accountId, out AccountRole role)
+    {
+        role = AccountRole.NormalPlayer;
+        if (accountId == 0)
+            return false;
+
+        try
+        {
+            using var connection = MySQL.CreateConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT `role` FROM `accounts` WHERE `account_id` = @account_id";
+            command.Parameters.AddWithValue("@account_id", accountId);
+            var value = command.ExecuteScalar();
+            if (value == null)
+                return true;
+
+            var storedRole = Convert.ToInt32(value);
+            if (storedRole is < 0 or > 2)
+            {
+                Logger.Error("Account {AccountId} has invalid role {Role}", accountId, storedRole);
+                return false;
+            }
+
+            role = (AccountRole)storedRole;
+            return true;
+        }
+        catch (Exception e)
+        {
+            Logger.Error(e, "Failed to read role for account {AccountId}", accountId);
+            return false;
+        }
+    }
+
+    public AccountRoleChangeResult SetAccountRole(uint actorAccountId, uint targetAccountId, AccountRole role)
+        => SetAccountRole(actorAccountId, targetAccountId, role, transaction => transaction.Commit());
+
+    // The commit delegate lets tests inject a lost acknowledgement after a real database commit.
+    internal AccountRoleChangeResult SetAccountRole(uint actorAccountId, uint targetAccountId, AccountRole role,
+        Action<MySqlTransaction> commit)
+    {
+        if (actorAccountId == 0 || targetAccountId == 0 || !Enum.IsDefined(role))
+        {
+            return new(AccountRoleChangeStatus.Rejected,
+                "A positive actor account, a positive target account, and a valid role are required.");
+        }
+
+        var commitStarted = false;
+        try
+        {
+            using var connection = MySQL.CreateConnection();
+            using var transaction = connection.BeginTransaction();
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "SELECT `role` FROM `accounts` WHERE `account_id` = @account_id FOR UPDATE";
+            var actorRole = AccountRole.NormalPlayer;
+            var targetExists = false;
+
+            // Lock in one order across processes. Recheck the actor only after both rows are locked.
+            foreach (var accountId in new[] { actorAccountId, targetAccountId }.Distinct().Order())
+            {
+                command.Parameters.Clear();
+                command.Parameters.AddWithValue("@account_id", accountId);
+                var value = command.ExecuteScalar();
+                if (value == null)
+                    continue;
+
+                if (accountId == actorAccountId)
+                    actorRole = NormalizeRole(Convert.ToInt32(value));
+                if (accountId == targetAccountId)
+                    targetExists = true;
+            }
+
+            if (actorRole != AccountRole.Admin)
+            {
+                return new(AccountRoleChangeStatus.Rejected, "Only an Admin can change account roles.");
+            }
+
+            if (!targetExists)
+            {
+                return new(AccountRoleChangeStatus.Rejected, "The target account does not exist in Game.");
+            }
+
+            command.Parameters.Clear();
+            command.CommandText = "UPDATE `accounts` SET `role` = @role WHERE `account_id` = @account_id";
+            command.Parameters.AddWithValue("@role", (byte)role);
+            command.Parameters.AddWithValue("@account_id", targetAccountId);
+            command.ExecuteNonQuery();
+            commitStarted = true;
+            commit(transaction);
+            return new(AccountRoleChangeStatus.Completed, string.Empty);
+        }
+        catch (Exception e)
+        {
+            Logger.Error(e, "Failed to set account {TargetAccountId} role to {Role} by account {ActorAccountId}",
+                targetAccountId, role, actorAccountId);
+            return commitStarted
+                ? new(AccountRoleChangeStatus.Unconfirmed,
+                    "The account role commit was not confirmed. Check the current role before a retry.")
+                : new(AccountRoleChangeStatus.Rejected, "The account role change failed before commit.");
+        }
+    }
+
     public bool AddCredits(uint accountId, int creditsAmount)
     {
+        if (accountId == 0)
+            return false;
+
         object accLock;
         lock (_locks)
         {
@@ -205,6 +337,9 @@ public class AccountManager(
 
     public bool AddLoyalty(uint accountId, int loyaltyAmount)
     {
+        if (accountId == 0)
+            return false;
+
         object accLock;
         lock (_locks)
         {

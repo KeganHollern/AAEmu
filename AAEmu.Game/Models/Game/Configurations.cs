@@ -84,10 +84,6 @@ public class WorldConfig
     /// </summary>
     public uint MaxTaxPrepaymentPeriods { get; set; } = 5u;
 
-    /// <summary>
-    /// Set a minimum access-level that a character must have to ignore falling damage (for devs)
-    /// </summary>
-    public int IgnoreFallDamageAccessLevel { get; set; } = 100;
 
     /// <summary>
     /// When enabled, players take no damage at all
@@ -276,18 +272,6 @@ public class AccountConfig
     /// Delete character settings
     /// </summary>
     public List<AccountDeleteDelayTiming> DeleteTimings { get; set; } = [];
-    /// <summary>
-    /// Default access-level for new accounts
-    /// </summary>
-    public int AccessLevelDefault { get; set; } = 0;
-    /// <summary>
-    /// Access-Level that should be used for the first created account on the server regardless of other settings
-    /// </summary>
-    public int AccessLevelFirstAccount { get; set; } = 100;
-    /// <summary>
-    /// Access-Level that should be used for the first created character on the server regardless of other settings
-    /// </summary>
-    public int AccessLevelFirstCharacter { get; set; } = 100;
 }
 
 public class CurrencyValuesConfig

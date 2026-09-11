@@ -11,6 +11,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Managers.TowerDefense;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Crime;
@@ -226,7 +227,6 @@ public partial class Character : Unit, ICharacter
     public CharacterSkills Skills { get; set; }
     public CharacterCraft Craft { get; set; }
     public uint SubZoneId { get; set; } // понадобилось хранить для составления точек Memory Tome (Recall)
-    public int AccessLevel { get; set; }
     public WorldSpawnPosition LocalPingPosition { get; set; } // added as a GM command helper
     private ConcurrentDictionary<uint, DateTime> _hostilePlayers { get; set; }
     public bool IsRiding { get; set; }
@@ -1972,8 +1972,7 @@ public partial class Character : Unit, ICharacter
         if (newZone != null)
             SendMessage(ChatType.System, $"You have entered a closed zone ({newZone.ZoneKey} - {newZone.Name})!\nPlease leave immediately!", Color.Red);
 
-        var characterAccessLevel = CharacterManager.Instance.GetEffectiveAccessLevel(this);
-        if (characterAccessLevel < 100)
+        if (!PermissionManager.Instance.CanUse(this, GamePermission.EnterClosedZones))
         {
             // Do forbidden zone code handling
             if (_unreleasedZoneTransportedOut != null)
@@ -2013,9 +2012,9 @@ public partial class Character : Unit, ICharacter
 
     public override int DoFallDamage(ushort fallVel)
     {
-        if (CharacterManager.Instance.GetEffectiveAccessLevel(this) >= AppConfiguration.Instance.World.IgnoreFallDamageAccessLevel)
+        if (PermissionManager.Instance.CanUse(this, GamePermission.IgnoreFallDamage))
         {
-            Logger.Debug($"{Name} negated FallDamage because of IgnoreFallDamageAccessLevel settings");
+            Logger.Debug($"{Name} negated FallDamage because of the IgnoreFallDamage permission");
             return 0; // GM & Admin take 0 damage from falling
         }
         var fallDamage = base.DoFallDamage(fallVel);
@@ -2179,7 +2178,7 @@ public partial class Character : Unit, ICharacter
     /// <param name="message"></param>
     public void SendDebugMessage(string message)
     {
-        if (AppConfiguration.Instance.DebugInfo && CharacterManager.Instance.GetEffectiveAccessLevel(this) >= AppConfiguration.Instance.DebugInfoLevel)
+        if (AppConfiguration.Instance.DebugInfo && PermissionManager.Instance.CanUse(this, GamePermission.ViewDiagnostics))
             SendMessage(ChatType.System, message);
     }
     
@@ -2474,7 +2473,7 @@ public partial class Character : Unit, ICharacter
 
                     character = new Character(modelParams)
                     {
-                        AccountId = accountId, Id = reader.GetUInt32("id"), Name = reader.GetString("name"), AccessLevel = reader.GetInt32("access_level"),
+                        AccountId = accountId, Id = reader.GetUInt32("id"), Name = reader.GetString("name"),
                         Race = (Race)reader.GetByte("race"),
                         Gender = (Gender)reader.GetByte("gender"),
                         Level = reader.GetByte("level"),
@@ -2605,7 +2604,6 @@ public partial class Character : Unit, ICharacter
                     var accountDetails = AccountManager.Instance.GetAccountDetails(character.AccountId);
 
                     character.Name = reader.GetString("name");
-                    character.AccessLevel = reader.GetInt32("access_level");
                     character.Race = (Race)reader.GetByte("race");
                     character.Gender = (Gender)reader.GetByte("gender");
                     character.Level = reader.GetByte("level");
@@ -2882,7 +2880,7 @@ public partial class Character : Unit, ICharacter
                 // ----
                 command.CommandText =
                     "REPLACE INTO `characters` " +
-                    "(`id`,`account_id`,`name`,`access_level`,`race`,`gender`,`unit_model_params`,`level`,`experience`,`recoverable_exp`," +
+                    "(`id`,`account_id`,`name`,`race`,`gender`,`unit_model_params`,`level`,`experience`,`recoverable_exp`," +
                     "`hp`,`mp`,`consumed_lp`,`ability1`,`ability2`,`ability3`," +
                     "`world_id`,`zone_id`,`x`,`y`,`z`,`roll`,`pitch`,`yaw`," +
                     "`faction_id`,`faction_name`,`expedition_id`,`family`,`dead_count`,`dead_time`,`rez_wait_duration`,`rez_time`,`rez_penalty_duration`,`leave_time`," +
@@ -2893,7 +2891,7 @@ public partial class Character : Unit, ICharacter
                     "`arrest_count`, `accept_guilty_count`, `accept_trial_count`, `not_guilty_count`, `guilty_count`, `evidence_reported_count`, `bot_reported_count`," +
                     "`offline_guilty_time`,`offline_guilty_region`" +
                     ") VALUES (" +
-                    "@id,@account_id,@name,@access_level,@race,@gender,@unit_model_params,@level,@experience,@recoverable_exp," +
+                    "@id,@account_id,@name,@race,@gender,@unit_model_params,@level,@experience,@recoverable_exp," +
                     "@hp,@mp,@consumed_lp,@ability1,@ability2,@ability3," +
                     "@world_id,@zone_id,@x,@y,@z,@yaw,@pitch,@roll," +
                     "@faction_id,@faction_name,@expedition_id,@family,@dead_count,@dead_time,@rez_wait_duration,@rez_time,@rez_penalty_duration,@leave_time," +
@@ -2908,7 +2906,6 @@ public partial class Character : Unit, ICharacter
                 command.Parameters.AddWithValue("@id", Id);
                 command.Parameters.AddWithValue("@account_id", AccountId);
                 command.Parameters.AddWithValue("@name", Name);
-                command.Parameters.AddWithValue("@access_level", AccessLevel);
                 command.Parameters.AddWithValue("@race", (byte)Race);
                 command.Parameters.AddWithValue("@gender", (byte)Gender);
                 command.Parameters.AddWithValue("@unit_model_params", unitModelParams);

@@ -6,10 +6,12 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Tasks;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.ManageServer)]
 public class Scripts : ICommand
 {
     public string[] CommandNames { get; set; } = ["scripts"];
@@ -135,6 +137,7 @@ public class Scripts : ICommand
                 WorldManager.Instance.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Magenta, 15000,
                     "The server is shutting down right now!"));
                 CommandManager.SendNormalText(this, messageOutput, "Shutting down immediately!");
+                CommandAuditContext.CompleteBeforeExit("Forced shutdown accepted.");
                 Environment.Exit(-2); // Manual Forced Shutdown (-2)
                 break;
             default:

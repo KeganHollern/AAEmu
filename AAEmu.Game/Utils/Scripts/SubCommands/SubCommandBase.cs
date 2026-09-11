@@ -1,6 +1,7 @@
 ﻿using System.Drawing;
 using System.Text;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Models.Game.Chat;
 using NLog;
 
@@ -9,7 +10,7 @@ namespace AAEmu.Game.Utils.Scripts.SubCommands;
 public abstract class SubCommandBase : ICommandV2
 {
     protected Logger Logger { get; } = LogManager.GetCurrentClassLogger();
-    private readonly Dictionary<string, ICommandV2> _subCommands = [];
+    private readonly Dictionary<string, ICommandV2> _subCommands = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<SubCommandParameterBase> _parameters = [];
 
     protected void AddParameter(SubCommandParameterBase parameter)
@@ -33,10 +34,39 @@ public abstract class SubCommandBase : ICommandV2
         _parameters.Add(parameter);
     }
 
-    protected List<string> SupportedCommands => _subCommands.Keys.ToList();
+    protected List<string> SupportedCommands => CommandAuditContext.CurrentRole is { } role
+        ? GetVisibleChildren(role)
+        : _subCommands.Keys.ToList();
     protected string Title { get; set; }
     public string Description { get; protected set; }
     public string CallPrefix { get; protected set; }
+
+    public bool TryResolveChild(string name, out ICommandV2 command, out string canonicalName)
+    {
+        if (!_subCommands.TryGetValue(name, out command))
+        {
+            canonicalName = "";
+            return false;
+        }
+
+        var resolved = command;
+        canonicalName = _subCommands.First(pair => ReferenceEquals(pair.Value, resolved)).Key;
+        return true;
+    }
+
+    public List<string> GetVisibleChildren(AccountRole role)
+    {
+        return _subCommands.Where(pair => CommandPermissions.AllowsDeclared(role, pair.Value, allowInherited: true))
+            .Select(pair => pair.Key).ToList();
+    }
+
+    public string GetVisibleHelp(AccountRole role)
+    {
+        var children = GetVisibleChildren(role);
+        return children.Count > 0
+            ? $"{Description}\nSupported subcommands: <{string.Join("||", children)}>"
+            : $"{Description}\n{GetCallExample()}";
+    }
 
     public SubCommandBase()
     {
@@ -67,6 +97,13 @@ public abstract class SubCommandBase : ICommandV2
     {
         try
         {
+            if (CommandAuditContext.CurrentRole is { } role &&
+                !CommandPermissions.AllowsDeclared(role, this, allowInherited: true))
+            {
+                CommandAuditContext.Fail("Permission denied.");
+                SendColorMessage(messageOutput, Color.Red, "Permission denied.");
+                return;
+            }
             //Verifies if the next firstargument has a subcommand to implement it
             var firstArgument = args.FirstOrDefault();
             if (firstArgument is not null)
@@ -103,6 +140,7 @@ public abstract class SubCommandBase : ICommandV2
         }
         catch (Exception ex)
         {
+            CommandAuditContext.Fail($"Command exception: {ex.GetType().Name}");
             SendColorMessage(messageOutput, Color.Red, $"Unexpected error: {ex.Message}");
             Logger.Error(ex);
         }
@@ -267,6 +305,8 @@ public abstract class SubCommandBase : ICommandV2
     /// <param name="message">Message to send to the character</param>
     protected void SendColorMessage(IMessageOutput messageOutput, Color color, string message)
     {
+        if (color == Color.Red)
+            CommandAuditContext.Fail(message);
         messageOutput.SendMessage(ChatType.System, $"{Title} {message}", color);
     }
 

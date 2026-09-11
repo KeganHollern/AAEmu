@@ -2,11 +2,13 @@
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Scripts.SubCommands.Items;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 using AAEmu.Game.Utils.Scripts.SubCommands;
 
 namespace AAEmu.Game.Scripts.Commands;
 
+[CommandPermission(GamePermission.StaffCommands)]
 public class ItemCmd : SubCommandBase, ICommand, ICommandV2
 {
     public string[] CommandNames { get; set; } = ["item"];
@@ -24,7 +26,7 @@ public class ItemCmd : SubCommandBase, ICommand, ICommandV2
 
     public void OnLoad()
     {
-        CommandManager.Instance.Register("item", this);
+        CommandManager.Instance.Register(CommandNames, this);
     }
 
     public string GetCommandLineHelp()

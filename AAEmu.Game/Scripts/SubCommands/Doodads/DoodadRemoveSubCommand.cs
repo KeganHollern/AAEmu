@@ -5,11 +5,13 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 using AAEmu.Game.Utils.Scripts.SubCommands;
 
 namespace AAEmu.Game.Scripts.SubCommands.Doodads;
 
+[CommandPermission(GamePermission.EditWorld)]
 public class DoodadRemoveSubCommand : SubCommandBase
 {
     public DoodadRemoveSubCommand()
@@ -23,8 +25,8 @@ public class DoodadRemoveSubCommand : SubCommandBase
 
     public override void Execute(ICharacter character, string triggerArgument, IDictionary<string, ParameterValue> parameters, IMessageOutput messageOutput)
     {
-        // Запускаем метод в отдельной задаче (нити)
-        Task.Run(() =>
+        var complete = CommandAuditContext.DeferResult();
+        _ = Task.Run(() =>
         {
             try
             {
@@ -39,9 +41,12 @@ public class DoodadRemoveSubCommand : SubCommandBase
             }
             catch (Exception ex)
             {
-                // Обработка исключения, например, запись в лог
-                Logger.Error($"Ошибка при выполнении метода: {ex.Message}");
+                complete("unconfirmed", $"Doodad removal failed: {ex.GetType().Name}");
+                Logger.Error(ex, "Doodad removal command failed");
+                return;
             }
+
+            complete("completed", "Doodad removal finished.");
         });
     }
 

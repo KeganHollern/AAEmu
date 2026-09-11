@@ -3,7 +3,7 @@
 public struct AccountDetails
 {
     public int AccountId { get; set; }
-    public int AccessLevel { get; set; }
+    public AccountRole Role { get; set; }
     public short Labor { get; set; }
     public int Credits { get; set; }
     public int Loyalty { get; set; }

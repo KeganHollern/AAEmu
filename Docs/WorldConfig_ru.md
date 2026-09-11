@@ -64,9 +64,8 @@
 - **Тип**: `number`
 - **Описание**: максимальное количество последовательных писем для предварительной оплаты после оплаты текущего налога (по умолчанию 5). Значение `0` отключает письма для предоплаты налога.
 
-### `IgnoreFallDamageAccessLevel`
-- **Тип**: `number`
-- **Описание**: минимальный access-level, при котором игнорируется урон от падения.
+Staff fall protection now uses the account role, not a numeric setting.
+See [Account permissions](customized/permissions-overhaul.md).
 
 ### `GodMode`
 - **Тип**: `boolean`
@@ -128,4 +127,3 @@
   }
 }
 ```
-

@@ -10,6 +10,7 @@ using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Json;
 using AAEmu.Game.Utils;
 using AAEmu.Game.Utils.Converters;
+using AAEmu.Game.Models.Account;
 using AAEmu.Game.Utils.Scripts;
 using AAEmu.Game.Utils.Scripts.SubCommands;
 
@@ -17,6 +18,7 @@ using Newtonsoft.Json;
 
 namespace AAEmu.Game.Scripts.SubCommands.Doodads;
 
+[CommandPermission(GamePermission.EditWorld)]
 public class DoodadSaveSubCommand : SubCommandBase
 {
     private bool _isSavingInProgress;
@@ -32,8 +34,8 @@ public class DoodadSaveSubCommand : SubCommandBase
 
     public override void Execute(ICharacter character, string triggerArgument, IDictionary<string, ParameterValue> parameters, IMessageOutput messageOutput)
     {
-        // Запускаем метод в отдельной задаче (нити)
-        Task.Run(() =>
+        var complete = CommandAuditContext.DeferResult();
+        _ = Task.Run(() =>
         {
             try
             {
@@ -44,9 +46,12 @@ public class DoodadSaveSubCommand : SubCommandBase
             }
             catch (Exception ex)
             {
-                // Обработка исключения, например, запись в лог
-                Logger.Error($"Ошибка при выполнении метода: {ex.Message}");
+                complete("unconfirmed", $"Doodad save failed: {ex.GetType().Name}");
+                Logger.Error(ex, "Doodad save command failed");
+                return;
             }
+
+            complete("completed", "Doodad save finished.");
         });
     }
 
@@ -196,6 +201,7 @@ public class DoodadSaveSubCommand : SubCommandBase
         // Проверка на выполнение записи
         if (_isSavingInProgress)
         {
+            CommandAuditContext.Fail("Save operation is already in progress.");
             SendMessage(messageOutput, "Save operation is already in progress.");
             return;
         }
@@ -204,6 +210,7 @@ public class DoodadSaveSubCommand : SubCommandBase
         {
             if (_isSavingInProgress)
             {
+                CommandAuditContext.Fail("Save operation is already in progress.");
                 SendMessage(messageOutput, "Save operation is already in progress.");
                 return;
             }

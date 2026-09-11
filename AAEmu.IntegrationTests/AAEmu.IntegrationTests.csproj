@@ -28,6 +28,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="..\SQL\updates\2026-09-11_aaemu_game_command_audit.sql" Link="SQL\updates\2026-09-11_aaemu_game_command_audit.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\SQL\updates\2026-09-10_aaemu_game_account_roles.sql" Link="SQL\updates\2026-09-10_aaemu_game_account_roles.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\updates\2026-09-07_aaemu_game_zone_conflict_states.sql" Link="SQL\updates\2026-09-07_aaemu_game_zone_conflict_states.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\aaemu_game.sql" Link="SQL\aaemu_game.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\updates\2026-09-01_aaemu_game_auction_mail_claims.sql" Link="SQL\updates\2026-09-01_aaemu_game_auction_mail_claims.sql" CopyToOutputDirectory="PreserveNewest" />
