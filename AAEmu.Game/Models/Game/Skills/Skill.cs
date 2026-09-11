@@ -93,6 +93,8 @@ public class Skill
     public PlotState ActivePlotState { get; set; }
     public Dictionary<uint, SkillHitType> HitTypes { get; set; }
     public BaseUnit InitialTarget { get; set; }//Temp Hack Fix. Replace this with UnitsEffected
+    internal BaseUnit OriginalCaster { get; private set; }
+    internal uint SourceItemTemplateId { get; private set; }
     private bool _bypassGcd;
     private int _achievementUseRecorded;
     public bool Cancelled { get; set; } = false;
@@ -156,6 +158,15 @@ public class Skill
         }
 
         Cancelled = false;
+        OriginalCaster = caster;
+        var sourceItem = ZoneSkillRestrictions.GetSourceItem(caster, casterCaster);
+        SourceItemTemplateId = sourceItem?.TemplateId ?? 0;
+        if (casterCaster is SkillItem itemSource &&
+            !SkillItemSource.CanUse(sourceItem, caster.ObjId, itemSource, Template, targetCaster, skillObject))
+        {
+            Cancelled = true;
+            return SkillResult.InvalidSource;
+        }
         Interlocked.Exchange(ref _achievementUseRecorded, 0);
 
         // Cast character for future reference
@@ -178,6 +189,33 @@ public class Skill
 
         if (!ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
             return SkillResult.InvalidTarget;
+
+        // Resolve once, before GCD, buff removal, plots, or costs. Do not use CurrentTarget
+        // for authored target requirements: the packet can name a different target.
+        var target = GetInitialTarget(caster, casterCaster, targetCaster);
+        InitialTarget = target;
+        if (target == null)
+        {
+            if (caster is Npc npc)
+                npc.Ai?.OnNoAggroTarget();
+            return SkillResult.NoTarget;
+        }
+
+        var failedRequirement = SkillRequirementsGameData.Instance.GetFailedRequirement(Template, caster, target);
+        if (failedRequirement != 0)
+        {
+            Cancelled = true;
+            skillResultValueUInt = failedRequirement;
+            return SkillResult.SkillReqFail;
+        }
+
+        var zoneBan = ZoneSkillRestrictions.GetSkillBan(caster, Template.Id, casterCaster);
+        if (zoneBan != null)
+        {
+            Cancelled = true;
+            skillResultValueUInt = zoneBan.Id;
+            return SkillResult.ZoneBanned;
+        }
 
         if (Template.CooldownTime > 0 && cooldownOwner != null && !CanIgnoreCooldowns(cooldownOwner) && unit.Cooldowns.CheckCooldown(Template.Id))
         {
@@ -233,19 +271,6 @@ public class Skill
 
         // Create a new skillObject if needed
         skillObject ??= new SkillObject();
-
-        // Grab current target
-        var target = GetInitialTarget(caster, casterCaster, targetCaster);
-        InitialTarget = target;
-        if (target == null)
-        {
-            if (caster is Npc npc)
-            {
-                npc.Ai?.OnNoAggroTarget();
-            }
-            Logger.Trace($"Skill: SkillResult.NoTarget! - Skill {Template.Id}, Caster {caster.Name} ({caster.ObjId})");
-            return SkillResult.NoTarget; // We should try to make sure this doesn't happen, but can happen with NPC skills
-        }
 
         // Unmount character if skill asks for it
         if (character is { IsRiding: true } && Template.Unmount)
@@ -745,6 +770,14 @@ public class Skill
             return;
         }
 
+        if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
+        {
+            Cancelled = true;
+            unit.SkillTask = null;
+            EndSkill(caster);
+            return;
+        }
+
         if (!_bypassGcd)
         {
             var gcd = Template.CustomGcd;
@@ -903,6 +936,12 @@ public class Skill
     public void StartChanneling(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject)
     {
         if (caster is not Unit unit) { return; }
+        if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
+        {
+            Cancelled = true;
+            EndSkill(caster);
+            return;
+        }
         if (Template.ChannelingBuffId != 0)
         {
             var buff = SkillManager.Instance.GetBuffTemplate(Template.ChannelingBuffId);
@@ -932,6 +971,8 @@ public class Skill
     public void EndChanneling(BaseUnit caster, Doodad channelDoodad, SkillCaster casterCaster)
     {
         if (caster is not Unit unit) { return; }
+        if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
+            Cancelled = true;
         unit.SkillTask = null;
         if (Template.ChannelingBuffId != 0)
         {
@@ -1079,6 +1120,11 @@ public class Skill
             return;
         if (!ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
             return;
+        if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
+        {
+            Cancelled = true;
+            return;
+        }
         var player = caster as Character;
         var possibleTargets = new List<BaseUnit>(); // TODO crutches
         // Get a list of all possible targets

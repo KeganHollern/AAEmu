@@ -16,7 +16,7 @@ public class TagsGameData : Singleton<TagsGameData>, IGameDataLoader
         Npcs,
         Skills
     }
-    private Dictionary<TagType, Dictionary<uint, HashSet<uint>>> _tags;
+    private Dictionary<TagType, Dictionary<uint, HashSet<uint>>> _tags = [];
 
     //Use different type if we need to ICollection/HashSet/Etc
     public IReadOnlySet<uint> GetIdsByTagId(TagType type, uint tagId)

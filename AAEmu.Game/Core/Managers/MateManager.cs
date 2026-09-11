@@ -10,6 +10,7 @@ using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Skills.Buffs;
+using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 
@@ -256,6 +257,11 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// <param name="item"></param>
     public void AddActiveMateAndSpawn(Character owner, Mate mate, Item item)
     {
+        if (!ZoneSkillRestrictions.CanUseItem(owner, item, mate.Transform.World.Position))
+        {
+            DespawnReservedMate(owner, mate);
+            return;
+        }
         Mate existingMate;
         lock (_activeMatesLock)
         {

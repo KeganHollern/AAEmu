@@ -5,5 +5,7 @@ public class ZoneGroupBannedTag
     public uint Id { get; set; }
     public uint ZoneGroupId { get; set; }
     public uint TagId { get; set; }
-    // TODO 1.2 // public uint BannedPeriodsId { get; set; }
+    public uint BannedPeriodsId { get; set; }
+
+    public bool AppliesDuring(uint siegePeriodMask) => BannedPeriodsId == 0 || (BannedPeriodsId & siegePeriodMask) != 0;
 }

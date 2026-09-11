@@ -6,6 +6,7 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.CommonFarm.Static;
+using AAEmu.Game.Models.Game.Skills;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -33,6 +34,10 @@ public class CSCreateDoodadPacket() : GamePacket(CSOffsets.CSCreateDoodadPacket,
             Logger.Warn($"CreateDoodad, {Connection.ActiveChar.Name} provided an invalid ItemId: {itemId}");
             return;
         }
+
+        if (!ItemManager.Instance.GetItemIdsFromDoodad(id).Contains(item.TemplateId) ||
+            !ZoneSkillRestrictions.CanUseItem(Connection.ActiveChar, item, pos))
+            return;
 
         // Get cost from related skill
         var useSkill = SkillManager.Instance.GetSkillTemplate(item.Template.UseSkillId);

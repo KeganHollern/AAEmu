@@ -300,6 +300,14 @@ public class SlaveManager(WorldInstance parentWorldInstance)
     /// <param name="positionOverride"></param>
     public void Create(Character owner, SkillItem skillData, bool hideSpawnEffect = false, Transform positionOverride = null)
     {
+        var sourceItem = ZoneSkillRestrictions.GetSourceItem(owner, skillData);
+        if (sourceItem?.Template is not SummonSlaveTemplate itemTemplate ||
+            !ZoneSkillRestrictions.CanUseItem(owner, sourceItem, positionOverride?.World.Position))
+            return;
+        var slaveTemplate = SlaveGameData.Instance.GetSlaveTemplate(itemTemplate.SlaveId);
+        if (slaveTemplate == null || !ZoneSkillRestrictions.CanUseItem(owner, sourceItem,
+                GetItemSpawnDestination(owner.Transform.World, null, positionOverride, slaveTemplate.SpawnYOffset)))
+            return;
         var activeSlaveInfo = GetActiveSlaveByOwnerObjId(owner.ObjId);
         if (activeSlaveInfo != null)
         {
@@ -309,13 +317,19 @@ public class SlaveManager(WorldInstance parentWorldInstance)
             // return;
         }
 
-        if (skillData.ItemId == 0 || skillData.ItemTemplateId == 0)
-            return;
+        Create(owner, null, itemTemplate.SlaveId, sourceItem, hideSpawnEffect, positionOverride);
+    }
 
-        if (skillData.SkillSourceItem.Template is not SummonSlaveTemplate itemTemplate)
-            return;
-
-        Create(owner, null, itemTemplate.SlaveId, skillData.SkillSourceItem, hideSpawnEffect, positionOverride);
+    internal static Vector3 GetItemSpawnDestination(PositionAndRotation ownerPosition,
+        WorldSpawnPosition spawnerPosition, Transform positionOverride, float spawnYOffset)
+    {
+        if (positionOverride != null && !positionOverride.Local.IsOrigin())
+            return positionOverride.World.Position;
+        var position = spawnerPosition == null ? ownerPosition.Clone() : new PositionAndRotation(
+            spawnerPosition.X, spawnerPosition.Y, spawnerPosition.Z,
+            spawnerPosition.Roll, spawnerPosition.Pitch, spawnerPosition.Yaw);
+        position.AddDistanceToFront(Math.Clamp(spawnYOffset, 5f, 50f));
+        return position.Position;
     }
 
     // added "/slave spawn <templateId>" to be called from the script command
@@ -333,6 +347,14 @@ public class SlaveManager(WorldInstance parentWorldInstance)
     {
         var slaveTemplate = SlaveGameData.Instance.GetSlaveTemplate(useSpawner?.UnitId ?? templateId);
         if (slaveTemplate == null) return null;
+
+        if (owner != null && item != null)
+        {
+            var destination = GetItemSpawnDestination(owner.Transform.World, useSpawner?.Position,
+                positionOverride, slaveTemplate.SpawnYOffset);
+            if (!ZoneSkillRestrictions.CanUseItem(owner, item, destination))
+                return null;
+        }
 
         var tlId = (ushort)TlIdManager.Instance.GetNextId();
         var objId = ObjectIdManager.Instance.GetNextId();

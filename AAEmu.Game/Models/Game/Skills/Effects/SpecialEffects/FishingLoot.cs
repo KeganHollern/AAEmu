@@ -26,10 +26,15 @@ public class FishingLoot : SpecialEffectAction
         if (caster is not Character character)
             return;
 
+        if (!ZoneSkillRestrictions.CanApply(caster, skill, casterObj, target.Transform.World.Position))
+            return;
+
         Logger.Debug("Special effects: FishingLoot value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4);
 
-        var zoneGroupId = ZoneManager.Instance.GetZoneByKey(target.Transform.ZoneId).GroupId;
-        var zoneGroup = ZoneManager.Instance.GetZoneGroupById(zoneGroupId);
+        var position = target.Transform.World.Position;
+        var zoneKey = WorldManager.Instance.GetZoneId(caster.ParentWorld.Template, position.X, position.Y);
+        var zone = ZoneManager.Instance.GetZoneByKey(zoneKey);
+        var zoneGroup = zone == null ? null : ZoneManager.Instance.GetZoneGroupById(zone.GroupId);
         if (zoneGroup == null)
         {
             Logger.Warn($"{character.Name} seems to be trying to fish out of bounds.");

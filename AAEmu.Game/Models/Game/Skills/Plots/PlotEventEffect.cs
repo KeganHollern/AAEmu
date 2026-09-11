@@ -17,6 +17,12 @@ public class PlotEventEffect
 
     public void ApplyEffect(PlotState state, PlotTargetInfo targetInfo, PlotEventTemplate evt, ref byte flag, bool channeled = false, CompressedGamePackets gamePackets = null)
     {
+        // Plot source/target substitutions must not change the account's original skill source.
+        if (!ZoneSkillRestrictions.CanApply(state.Caster, state.ActiveSkill, state.CasterCaster))
+        {
+            state.RequestCancellation();
+            return;
+        }
         var template = SkillManager.Instance.GetEffectTemplate(ActualId, ActualType);
 
         var buffEffect = template as BuffEffect;

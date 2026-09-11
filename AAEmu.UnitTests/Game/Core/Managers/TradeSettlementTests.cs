@@ -60,6 +60,7 @@ public sealed class TradeSettlementTests
             new Lazy<IIndunManager>(() => Mock.Of<IIndunManager>().Object),
             new Lazy<IFamilyManager>(() => Mock.Of<IFamilyManager>().Object));
         SetInstance(_worldManager);
+        SetInstance(new ZoneManager(_worldManager, null));
         _world = CreateWorld(1);
         var itemManager = new ItemManager(Mock.Of<ISkillManager>().Object, new Ids(),
             Mock.Of<IContainerIdManager>().Object, Mock.Of<ILocalizationManager>().Object,
