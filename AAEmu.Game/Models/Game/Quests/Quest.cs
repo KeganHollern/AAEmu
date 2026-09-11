@@ -210,8 +210,10 @@ public partial class Quest : PacketMarshaler
     /// <param name="skillManager"></param>
     /// <param name="expressTextManager"></param>
     /// <param name="worldManager"></param>
+    /// <param name="initializeQuestActs">False when preparing an attempt before its database commit.</param>
     public Quest(IQuestTemplate questTemplate, ICharacter owner, IQuestManager questManager, ITaskManager taskManager,
-        ISkillManager skillManager, IExpressTextManager expressTextManager, IWorldManager worldManager)
+        ISkillManager skillManager, IExpressTextManager expressTextManager, IWorldManager worldManager,
+        bool initializeQuestActs = true)
     {
         Owner = owner;
         _questManager = questManager;
@@ -238,7 +240,8 @@ public partial class Quest : PacketMarshaler
         QuestCleanupItemsPool = [];
         ReadyToReportNpc = false;
 
-        InitializeQuestActs();
+        if (initializeQuestActs)
+            InitializeQuestActs();
     }
 
     public Quest(ICharacter owner) : this(null, owner, QuestManager.Instance, TaskManager.Instance, SkillManager.Instance, ExpressTextManager.Instance, WorldManager.Instance)
@@ -543,6 +546,10 @@ public partial class Quest : PacketMarshaler
     /// </summary>
     internal void RestoreLoadedState()
     {
+        // Older saves can contain Fail with Progress status because failed quests often have no Fail component.
+        if (_step == QuestComponentKind.Fail)
+            Status = QuestStatus.Failed;
+
         var persistedObjectives = Objectives.ToArray();
         var persistedComponentId = ComponentId;
         var timerAct = GetTimerActToRestore();
