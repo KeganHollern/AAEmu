@@ -12,7 +12,8 @@ A spam report at that opcode would report a player when the receiver selects Ret
 The exact client `X2Mail.ReportSpam` binding sends no packet.
 This change corrects the return registration and removes the false report stub.
 It does not add a report endpoint, moderation report records, or client content.
-Issue 522 needs correction as an incorrect packet identification, not a claim of completed spam reporting.
+The user chose to close issue 522 as an incorrect audit ticket after the Return Mail fix.
+The release does not claim completed spam reporting and does not add a new spam-report feature or client content.
 
 ## Approved expiry policy
 
@@ -65,7 +66,15 @@ The update creates 2 tables and does not change current mail or item rows.
 It contains the outcome, UTC time, new return ID, actor character ID, and versioned source JSON.
 The JSON preserves the mail fields, all amount fields, and the ordered attachment IDs.
 Automatic expiry and character removal use actor ID `0`.
-Mail ID allocation reserves terminal source IDs after restart.
+Mail ID allocation retains both source and returned IDs at commit and after restart.
+A claimed and manually deleted return cannot give its ID to an unrelated mail.
+
+The restart regression found a current allocator range overflow with stored mail IDs above its initial capacity.
+The allocator cast `uint.MaxValue - FirstId` to `int`, which produced a negative capacity limit.
+The correction uses long arithmetic and the current BitSet signed-index limit.
+It keeps the current lower-inclusive, upper-exclusive ID bounds and does not change packet or SQL ID formats.
+Bounds checks also stop exhausted ranges before allocation and keep retained next-free IDs reserved.
+Tests cover growth past the initial 100,000-slot target, valid high IDs, exhausted ranges, and retained release paths.
 
 `mail_archive_items` stores each archived item ID, source mail ID, and a snapshot of every `items` column.
 BLOB values use base64 in JSON. SQL NULL values remain JSON null.
@@ -153,9 +162,9 @@ This change preserves those settlement paths and their tests.
 ## Validation and release evidence
 
 The full solution build passed.
-The final complete runs passed 2,620 unit tests and 148 GameMySql tests on 2026-09-11 UTC.
+The final complete runs passed 2,624 unit tests and 149 GameMySql tests on 2026-09-11 UTC.
 The GameMySql run used the current loopback MySQL service and a randomly named disposable schema.
-The unit run took 16.975 seconds. The GameMySql run took 19.646 seconds.
+The unit run took 16.939 seconds. The GameMySql run took 20.439 seconds.
 Tests cover deadlines, read and unread mail, player and system mail, all amount fields, and full item-row preservation.
 They also cover full destinations, missing senders, returned-mail expiry, failed SQL writes, restart, duplicate requests, and lost commit acknowledgements.
 Packet tests cover the exact body, receiver ownership, nonpositive IDs, truncation, trailing bytes, and post-commit response timing.

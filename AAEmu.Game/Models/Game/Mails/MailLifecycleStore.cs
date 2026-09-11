@@ -70,7 +70,7 @@ internal static class MailLifecycleStore
         command.Parameters.AddWithValue("@id", source.Id);
         command.Parameters.AddWithValue("@outcome", (byte)outcome);
         command.Parameters.AddWithValue("@now", now);
-        command.Parameters.AddWithValue("@returned", returnedId);
+        command.Parameters.AddWithValue("@returned", returnedId == 0 ? DBNull.Value : returnedId);
         command.Parameters.AddWithValue("@actor", actorId);
         command.Parameters.AddWithValue("@source", snapshot);
         command.ExecuteNonQuery();

@@ -4,6 +4,7 @@ using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
@@ -426,5 +427,32 @@ public sealed partial class PlayerMailSendPersistenceTests
         graph.Mails.CommitLifecycle = commit;
         graph.Mails.CheckAllMailTimings();
         Assert.Equal(initiallyDeleted ? 1 : 2, Scalar($"SELECT outcome FROM mail_lifecycle WHERE mail_id={mail.Id}"));
+    }
+
+    [Fact]
+    public void ReturnedMail_ManualClaimAndDelete_NeverRecycleEitherLifecycleIdAcrossRestart()
+    {
+        using var graph = new SendGraph(useRealMailIds: true);
+        Assert.Equal(MailResult.Success, graph.Send(MailType.Express, 77));
+        var source = Assert.Single(graph.Mails._allPlayerMails.Values);
+        Assert.True(graph.Mails.ReturnMail(graph.Receiver, source.Id));
+        var returned = Assert.Single(graph.Mails._allPlayerMails.Values);
+        Assert.True(graph.Sender.Mails.GetAttached(returned.Id, true, false, false));
+        graph.Sender.Mails.DeleteMail(returned.Id, false);
+        Assert.Empty(graph.Mails._allPlayerMails);
+        Assert.NotEqual((uint)returned.Id, graph.MailAllocator.GetNextId());
+        graph.MailAllocator.ReleaseId((uint)source.Id);
+        Assert.NotEqual((uint)source.Id, graph.MailAllocator.GetNextId());
+        Assert.True(graph.Save.TryCommitEconomy([graph.Sender]));
+        Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM mails WHERE id={returned.Id}"));
+        Assert.Equal(returned.Id, Scalar($"SELECT returned_mail_id FROM mail_lifecycle WHERE mail_id={source.Id}"));
+
+        var restarted = new MailIdManager();
+        Assert.True(restarted.Initialize());
+        restarted.ReleaseId((uint)source.Id);
+        restarted.ReleaseId((uint)returned.Id);
+        var next = restarted.GetNextId();
+        Assert.NotEqual((uint)source.Id, next);
+        Assert.NotEqual((uint)returned.Id, next);
     }
 }

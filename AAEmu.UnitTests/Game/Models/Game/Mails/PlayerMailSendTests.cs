@@ -418,6 +418,7 @@ public sealed class PlayerMailSendTests
         public void Load() { }
         public uint GetNextId() => _next++;
         public uint[] GetNextId(int count) => Enumerable.Range(0, count).Select(_ => GetNextId()).ToArray();
+        public void RetainId(uint id) { }
         public void ReleaseId(uint usedObjectId) => Released.Add(usedObjectId);
         public void ReleaseId(IEnumerable<uint> usedObjectIds) => Released.AddRange(usedObjectIds);
     }

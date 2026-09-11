@@ -167,6 +167,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         private readonly IWorldManager _world;
         private readonly ITaskManager _tasks = Mock.Of<ITaskManager>();
         private readonly Mock<IMailIdManager> _mailIds = new();
+        private readonly IMailIdManager _mailAllocator;
         private readonly NameManager _names = new();
         private uint _nextMailId;
 
@@ -177,6 +178,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         public Character Receiver { get; }
         public uint NextMailId => _nextMailId + 1;
         public List<uint> ReleasedMailIds { get; } = [];
+        public IMailIdManager MailAllocator => _mailAllocator;
 
         public void ConnectReceiver(Mock<ISession> session)
         {
@@ -185,7 +187,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             Mock.Get(_world).Setup(world => world.GetCharacter(Receiver.Name)).Returns(Receiver);
         }
 
-        public SendGraph()
+        public SendGraph(bool useRealMailIds = false)
         {
             var id = (uint)Interlocked.Add(ref _nextId, 100);
             _nextMailId = id + 50;
@@ -225,6 +227,12 @@ public sealed partial class PlayerMailSendPersistenceTests
             _mailIds.Setup(manager => manager.GetNextId()).Returns(() => ++_nextMailId);
             _mailIds.Setup(manager => manager.ReleaseId(It.IsAny<uint>()))
                 .Callback<uint>(ReleasedMailIds.Add);
+            if (useRealMailIds)
+            {
+                _mailAllocator = new MailIdManager();
+                Assert.True(_mailAllocator.Initialize());
+            }
+            else _mailAllocator = _mailIds.Object;
             Mails = NewMailStore(Items);
             Save = new SaveManager(_tasks, Mock.Of<IHousingManager>(), Mails, Items,
                 Mock.Of<IAuctionManager>(), Mock.Of<ICrimeManager>(), _world, Mock.Of<IZoneManager>());
@@ -410,7 +418,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             finally { SwapSingleton(Items); }
         }
 
-        private MailManager NewMailStore(IItemManager items) => new(_mailIds.Object, _names, items,
+        private MailManager NewMailStore(IItemManager items) => new(_mailAllocator, _names, items,
             _tasks, _world, new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>()),
             Mock.Of<ILocalizationManager>()) { _allPlayerMails = [] };
 

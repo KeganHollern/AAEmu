@@ -1,3 +1,4 @@
+using AAEmu.Commons.Exceptions;
 using AAEmu.Game.Core.Managers.Id;
 
 namespace AAEmu.UnitTests.Game.Core.Managers.Id;
@@ -497,6 +498,64 @@ public class IdManagerTests
     #endregion
 
     #region Edge Cases and Stress Tests
+
+    [Test]
+    public async Task UintRange_GrowsPastInitialCapacityWithoutSignedOverflow()
+    {
+        var manager = new AAEmu.Game.Utils.IdManager("Wide range", 10000, uint.MaxValue, new string[0, 2], []);
+        await Assert.That(manager.Initialize()).IsTrue();
+        var ids = manager.GetNextId(120000);
+        await Assert.That(ids[0]).IsEqualTo(10000u);
+        await Assert.That(ids[^1]).IsEqualTo(129999u);
+        await Assert.That(ids.Distinct().Count()).IsEqualTo(ids.Length);
+        manager.RetainId(112000);
+        manager.ReleaseId(112000);
+        await Assert.That(manager.GetNextId()).IsEqualTo(130000u);
+    }
+
+    [Test]
+    public async Task RetainId_LargeValidId_GrowsWithoutReleasingTheReservation()
+    {
+        const uint first = 0xf0000000;
+        var manager = new AAEmu.Game.Utils.IdManager("High IDs", first, uint.MaxValue, new string[0, 2], []);
+        await Assert.That(manager.Initialize()).IsTrue();
+        manager.RetainId(first + 120000);
+        manager.ReleaseId(first + 120000);
+        var ids = manager.GetNextId(120001);
+        await Assert.That(ids[0]).IsEqualTo(first);
+        await Assert.That(ids[^1]).IsEqualTo(first + 120001);
+        await Assert.That(ids.Contains(first + 120000)).IsFalse();
+    }
+
+    [Test]
+    public async Task ExhaustedRange_DoesNotConsumeTheLastValidIdOrAllocateOutsideBounds()
+    {
+        var manager = new AAEmu.Game.Utils.IdManager("Small range", 10, 13, new string[0, 2], []);
+        await Assert.That(manager.Initialize()).IsTrue();
+        await Assert.That(manager.GetNextId()).IsEqualTo(10u);
+        await Assert.That(manager.GetNextId()).IsEqualTo(11u);
+        await Assert.That(manager.GetNextId()).IsEqualTo(12u);
+        await Assert.That(() => manager.GetNextId()).Throws<GameException>();
+        manager.ReleaseId(11);
+        await Assert.That(manager.GetNextId()).IsEqualTo(11u);
+        await Assert.That(() => manager.GetNextId()).Throws<GameException>();
+    }
+
+    [Test]
+    public async Task RetainId_NextFreeAndExhaustedRelease_NeverAllocatesRetainedIds()
+    {
+        var manager = new AAEmu.Game.Utils.IdManager("Retained range", 10, 13, new string[0, 2], []);
+        await Assert.That(manager.Initialize()).IsTrue();
+        manager.RetainId(10);
+        await Assert.That(manager.GetNextId()).IsEqualTo(11u);
+        manager.RetainId(12);
+        manager.ReleaseId(new uint[] { 10, 12 });
+        await Assert.That(() => manager.GetNextId()).Throws<GameException>();
+        manager.ReleaseId(11);
+        await Assert.That(manager.GetNextId()).IsEqualTo(11u);
+        await Assert.That(() => manager.RetainId(13)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => manager.RetainId(9)).Throws<ArgumentOutOfRangeException>();
+    }
 
     [Test]
     [MethodDataSource(nameof(IdManagerData))]

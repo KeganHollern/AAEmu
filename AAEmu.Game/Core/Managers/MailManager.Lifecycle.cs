@@ -125,6 +125,9 @@ public partial class MailManager
         mutation.Complete(false);
         try
         {
+            mailIdManager.RetainId(checked((uint)source.Id));
+            if (returned != null)
+                mailIdManager.RetainId(checked((uint)returned.Id));
             if (outcome == MailTerminalOutcome.Archived)
                 foreach (var item in source.Body.Attachments)
                     itemManager.DetachArchivedMailItem(item);
@@ -132,7 +135,7 @@ public partial class MailManager
         catch (Exception exception)
         {
             inventory.PreservePreparedState();
-            LifecycleCommitFailure($"Committed mail archive {source.Id} could not enter live state. Restart before another save.", exception);
+            LifecycleCommitFailure($"Committed mail lifecycle {source.Id} could not enter live state. Restart before another save.", exception);
             throw;
         }
         try

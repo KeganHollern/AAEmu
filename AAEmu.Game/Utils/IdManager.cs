@@ -44,7 +44,10 @@ public class IdManager
         _exclude = exclude;
         _distinct = distinct;
         _retainedObjTables = retainedObjTables;
-        _freeIdSize = (int)(_lastId - _firstId);
+        // BitSet uses signed indexes, even when the configured ID range uses uint.
+        _freeIdSize = (int)Math.Min((long)_lastId - _firstId, int.MaxValue);
+        if (_freeIdSize <= 0)
+            throw new ArgumentOutOfRangeException(nameof(lastId));
         PrimeFinder.Init();
     }
 
@@ -63,7 +66,7 @@ public class IdManager
 
         try
         {
-            _freeIds = new BitSet(PrimeFinder.NextPrime(100000));
+            _freeIds = new BitSet(Math.Min(PrimeFinder.NextPrime(100000), _freeIdSize));
             _freeIds.Clear();
             _freeIdCount = _freeIdSize;
 
@@ -84,12 +87,13 @@ public class IdManager
             {
                 if (_exclude.Contains(usedObjectId))
                     continue;
-                var objectId = (int)(usedObjectId - _firstId);
-                if (usedObjectId < _firstId)
+                var offset = (long)usedObjectId - _firstId;
+                if (offset < 0 || offset >= _freeIdSize)
                 {
-                    Logger.Warn($"{_name}: Object ID {usedObjectId} in DB is less than {_firstId}");
+                    Logger.Warn($"{_name}: Object ID {usedObjectId} in DB is outside the allocator bounds");
                     continue;
                 }
+                var objectId = (int)offset;
 
                 if (objectId >= _freeIds.Count)
                     IncreaseBitSetCapacity(objectId + 1);
@@ -173,11 +177,14 @@ public class IdManager
             if (_retainedIds.Contains(usedObjectId))
                 return;
 
-            var objectId = (int)(usedObjectId - _firstId);
-            if (objectId > -1)
+            var offset = (long)usedObjectId - _firstId;
+            if (offset >= 0 && offset < _freeIds.Count)
             {
+                var objectId = (int)offset;
+                if (!_freeIds.Get(objectId))
+                    return;
                 _freeIds.Clear(objectId);
-                if (_nextFreeId > objectId)
+                if (_nextFreeId < 0 || _nextFreeId > objectId)
                     _nextFreeId = objectId;
                 Interlocked.Increment(ref _freeIdCount);
             }
@@ -190,9 +197,10 @@ public class IdManager
     {
         lock (_lock)
         {
-            var objectId = (int)(usedObjectId - _firstId);
-            if (objectId < 0)
+            var offset = (long)usedObjectId - _firstId;
+            if (offset < 0 || offset >= _freeIdSize)
                 throw new ArgumentOutOfRangeException(nameof(usedObjectId));
+            var objectId = (int)offset;
             if (objectId >= _freeIds.Count)
                 IncreaseBitSetCapacity(objectId + 1);
             if (!_freeIds.Get(objectId))
@@ -202,6 +210,8 @@ public class IdManager
             }
 
             _retainedIds.Add(usedObjectId);
+            if (_nextFreeId == objectId)
+                _nextFreeId = _freeIds.NextClear(objectId + 1);
         }
     }
 
@@ -215,16 +225,10 @@ public class IdManager
     {
         lock (_lock)
         {
-            var newId = _nextFreeId;
-            _freeIds.Set(newId);
-            Interlocked.Decrement(ref _freeIdCount);
-
-            var nextFree = _freeIds.NextClear(newId);
-
-            while (nextFree < 0)
+            while (_nextFreeId < 0)
             {
-                nextFree = _freeIds.NextClear(0);
-                if (nextFree < 0)
+                _nextFreeId = _freeIds.NextClear(0);
+                if (_nextFreeId < 0)
                 {
                     if (_freeIds.Count < _freeIdSize)
                         IncreaseBitSetCapacity();
@@ -233,7 +237,10 @@ public class IdManager
                 }
             }
 
-            _nextFreeId = nextFree;
+            var newId = _nextFreeId;
+            _freeIds.Set(newId);
+            Interlocked.Decrement(ref _freeIdCount);
+            _nextFreeId = _freeIds.NextClear(newId + 1);
             return (uint)newId + _firstId;
         }
     }
@@ -248,7 +255,8 @@ public class IdManager
 
     private void IncreaseBitSetCapacity()
     {
-        var size = PrimeFinder.NextPrime(_freeIds.Count + _freeIdSize / 10);
+        var requestedSize = (int)Math.Min((long)_freeIds.Count + Math.Max(1, _freeIdSize / 10), _freeIdSize);
+        var size = PrimeFinder.NextPrime(requestedSize);
         if (size > _freeIdSize)
             size = _freeIdSize;
         var newBitSet = new BitSet(size);

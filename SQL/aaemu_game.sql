@@ -456,7 +456,7 @@ CREATE TABLE IF NOT EXISTS `mail_lifecycle` (
   `mail_id` bigint NOT NULL,
   `outcome` tinyint unsigned NOT NULL COMMENT '1 returned, 2 archived with contents, 3 removed without contents',
   `transitioned_at` datetime(6) NOT NULL,
-  `returned_mail_id` bigint NOT NULL DEFAULT 0,
+  `returned_mail_id` bigint NULL DEFAULT NULL,
   `actor_character_id` int unsigned NOT NULL DEFAULT 0 COMMENT '0 for expiry or character removal',
   `source_mail` json NOT NULL COMMENT 'Immutable versioned source snapshot, not claimable mail',
   PRIMARY KEY (`mail_id`),
