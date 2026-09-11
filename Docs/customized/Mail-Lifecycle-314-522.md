@@ -85,7 +85,8 @@ No archive transition deletes an item row or releases an item ID.
 
 The shared persistence lock covers source validation, item moves, mail changes, commit, and notifications.
 The economy checkpoint saves the source changes, returned contents, removal, and terminal record in one transaction.
-An archive snapshot uses the item row from that same transaction, after pending item changes reach SQL.
+A normal Mail-container archive uses the item row after pending item changes reach SQL in that same transaction.
+The legacy Auction-container exception below locks the original row before pending saves and rejects any row change.
 A known failure restores prepared live state and keeps the source for a retry.
 An uncertain commit result stops the Game process before a later save can lose the once-only record.
 This follows the current auction claim rule for uncertain economic commits.
@@ -94,6 +95,47 @@ No notification precedes commit. A notification failure cannot restore a removed
 Current damaged mail with unresolved item references remains in SQL for repair.
 The normal save skips that mail, so it cannot overwrite the unresolved references.
 The normal startup warning identifies the unresolved mail and item IDs.
+
+## Legacy auction winner correction
+
+The final read-only preflight found a valid older settlement shape that the strict Mail-container guard rejected.
+The correction starts from merged source `61565d8096161b7de1c0b7efac77112a43c807cf`.
+It does not add a schema change or a new archive policy.
+
+The old `MailForAuction.FinalizeForSaleBuyer` changed item ownership to the buyer but kept the seller's Auction container.
+The current `AuctionManager.Settlement.MoveToMail` moves new winner attachments into the buyer's Mail container.
+The current auction claim path accepts the older attachment shape and records its original slot type in the receipt.
+The older shape alone does not prove corruption or an active auction listing.
+
+The exception accepts only expired `AucBidWin` mail with receiver-owned attachments in an actual persisted Auction container.
+It requires persisted item slot `6`, container slot `6`, and container class `ItemContainer`.
+The container owner can differ from the mail receiver, as the old settlement kept the seller's container.
+The live item and container must be clean, with exact registry membership and one occupied source slot.
+Other mail types, container shapes, dirty sources, and unexpired sources remain outside this exception.
+
+An internal mail checkpoint checks SQL before the normal economy save changes any row.
+It locks the source mail, item, container, source slot, mail references, auction listings, and claim receipts in the same transaction.
+The checks require the exact receiver, ordered attachment references, expired delivery date, item ownership, item count, and item location.
+Each attachment needs one unique source mail and no auction listing or claim receipt for the mail or item.
+The archive callback checks references again after normal saves, when the source mail no longer exists.
+This second check rejects queued mail, listing, or receipt state that the checkpoint wrote after the first check.
+It also compares every original item column before it commits the archive.
+The archive does not move the item or change its owner, slot, container, or other persisted fields.
+Any failed check rolls back the checkpoint and keeps the source for a retry.
+
+Startup now keeps the persisted owner when it places an item into an Auction container.
+The AucBidWin mail loader does not replace that owner or mark that item dirty.
+This permits the valid archive after a real restart and keeps a foreign persisted owner invalid.
+The correction does not rely on an autosave to normalize or repair older items.
+Auction-container startup placement also disables inventory notifications, so it cannot grant false item-acquisition progress.
+Other container types keep their current startup behavior.
+
+The new numeric test found that Connector/NET maps `items.grade`, a `TINYINT(1)` column, to Boolean.
+Typed integer reads of that value also returned `1` for grade `4`.
+The snapshot query now projects `CAST(grade AS SIGNED)` and keeps that number under the original `grade` key.
+The projection is not an extra archive field and does not change shared connection settings.
+The regression checks grade `4` explicitly and rejects a checkpoint that changes it to `7`.
+SQL NULL values and all other original item columns retain their current representations.
 
 ## Exact-client evidence
 
@@ -175,6 +217,24 @@ Two mails use type `16`, status `0`, and `returned=0`.
 One mail uses type `31`, status `0`, and `returned=0`.
 All 3 use the approved archive path. No live write occurred during this development task.
 The aggregate query is `Mail-Lifecycle-314-522-Preflight.sql` beside this record.
+
+The later ownership preflight found 2 legacy Auction-container references and 1 normal Mail-container reference.
+The 2 `AucBidWin` references use item slot `6` and actual container slot `6` with class `ItemContainer`.
+Their item owners match the receivers, while their container owners retain the prior seller identities.
+Both have positive counts, unique mail references, no occupied-slot collision, no active listing, and no claim receipt.
+The type `31` reference uses item and container slot `5`, with matching receiver ownership.
+All 3 item rows exist. The read-only checks found no foreign item owner.
+The narrow correction preserves the 2 original Auction rows instead of changing them to Mail rows before archive.
+No live SQL repair or data rewrite is part of this correction.
+
+The correction passed all 178 GameMySql tests, including 29 new cases, in 25.093 seconds.
+The final solution build passed with no errors.
+The final unit run passed all 2,812 tests in 17.822 seconds, with the exact-client housing inputs enabled.
+All 50 Content Studio tests passed. These final runs had no skipped tests.
+Those cases cover real startup, original-row retention, grade `4`, unsafe references, failed writes, retries, and unknown commit results.
+Post-save conflict tests add a listing, claim receipt, or mail reference after the first check and prove rollback.
+A changed item-row test proves that grade `4` cannot silently become `7` during the checkpoint.
+The independent review found no blocking defect.
 
 No manual client validation occurred during development.
 After release, check Return Mail with an item and copper, the received and sent lists, unread counts, and a second return attempt.

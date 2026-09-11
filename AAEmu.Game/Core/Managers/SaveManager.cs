@@ -105,7 +105,14 @@ public class SaveManager(
         return CommitPersistence(participants, writeSettlement);
     }
 
-    private bool CommitPersistence(IReadOnlyCollection<Character> participants, Action<PersistenceSaveContext> writeSettlement)
+    internal bool TryCommitMailArchive(Action<PersistenceSaveContext> validateSource, Action<PersistenceSaveContext> writeArchive)
+    {
+        ArgumentNullException.ThrowIfNull(validateSource);
+        return CommitPersistence([], writeArchive, validateSource);
+    }
+
+    private bool CommitPersistence(IReadOnlyCollection<Character> participants, Action<PersistenceSaveContext> writeSettlement,
+        Action<PersistenceSaveContext> validateSource = null)
     {
         lock (PersistenceSyncRoot)
         {
@@ -120,6 +127,8 @@ public class SaveManager(
                 var context = new PersistenceSaveContext(connection, transaction);
                 try
                 {
+                    // Legacy auction mail needs its persisted source locked before pending saves can replace it.
+                    validateSource?.Invoke(context);
                     mailManager.Save(context);
                     itemManager.Save(context);
                     auctionManager.Save(context);

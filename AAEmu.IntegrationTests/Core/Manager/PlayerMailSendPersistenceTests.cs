@@ -383,7 +383,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         private ItemManager NewItemStore() => new(Mock.Of<ISkillManager>(), Mock.Of<IItemIdManager>(),
             Mock.Of<IContainerIdManager>(), Mock.Of<ILocalizationManager>(), _tasks, _world);
 
-        public (ItemManager Items, MailManager Mails) ReloadLifecycle()
+        public (ItemManager Items, MailManager Mails) ReloadLifecycle(bool useReloadedCheckpoint = false)
         {
             var items = NewItemStore();
             var templates = new Dictionary<uint, ItemTemplate>();
@@ -413,6 +413,13 @@ public sealed partial class PlayerMailSendPersistenceTests
                 items.LoadUserItems();
                 var mails = NewMailStore(items);
                 mails.Load();
+                if (useReloadedCheckpoint)
+                {
+                    var save = new SaveManager(_tasks, Mock.Of<IHousingManager>(), mails, items,
+                        Mock.Of<IAuctionManager>(), Mock.Of<ICrimeManager>(), _world, Mock.Of<IZoneManager>());
+                    mails.CommitAuctionArchive = save.TryCommitMailArchive;
+                    mails.CommitLifecycle = write => save.TryCommitEconomy([], write);
+                }
                 return (items, mails);
             }
             finally { SwapSingleton(Items); }

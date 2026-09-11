@@ -261,7 +261,11 @@ public partial class MailManager(IMailIdManager mailIdManager, INameManager name
                                 var item = itemManager.GetItemByItemId(itemId);
                                 if (item != null)
                                 {
-                                    item.OwnerId = tempMail.Header.ReceiverId;
+                                    // Keep persisted ownership for legacy auction attachments. Mail is not
+                                    // authority to replace it, and an archive must not rewrite the original row.
+                                    if (tempMail.MailType != MailType.AucBidWin ||
+                                        item._holdingContainer?.ContainerType != SlotType.Auction)
+                                        item.OwnerId = tempMail.Header.ReceiverId;
                                     tempMail.Body.Attachments.Add(item);
                                 }
                                 else

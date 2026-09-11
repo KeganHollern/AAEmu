@@ -114,6 +114,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         Assert.DoesNotContain(item, graph.Receiver.Inventory.MailAttachments.Items);
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse(originalRow), JsonNode.Parse(ItemRow(item.Id))));
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse(originalRow), JsonNode.Parse(TextScalar($"SELECT item_row FROM mail_archive_items WHERE item_id={item.Id}"))));
+        Assert.Equal(4, JsonNode.Parse(TextScalar($"SELECT item_row FROM mail_archive_items WHERE item_id={item.Id}"))["grade"].GetValue<int>());
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse(sourceSnapshot), JsonNode.Parse(TextScalar($"SELECT source_mail FROM mail_lifecycle WHERE mail_id={source.Id}"))));
         Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM mails WHERE id={source.Id}"));
         var (items, mails) = graph.ReloadLifecycle();
@@ -349,12 +350,15 @@ public sealed partial class PlayerMailSendPersistenceTests
     {
         using var connection = MySQL.CreateConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT * FROM items WHERE id={id}";
+        command.CommandText = $"SELECT items.*, grade + 0 AS numeric_grade FROM items WHERE id={id}";
         using var reader = command.ExecuteReader();
         Assert.True(reader.Read());
         var row = new Dictionary<string, object>();
-        for (var i = 0; i < reader.FieldCount; i++)
-            row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+        for (var i = 0; i < reader.FieldCount - 1; i++)
+        {
+            var valueIndex = reader.GetName(i) == "grade" ? reader.FieldCount - 1 : i;
+            row[reader.GetName(i)] = reader.IsDBNull(valueIndex) ? null : reader.GetValue(valueIndex);
+        }
         return JsonSerializer.Serialize(row);
     }
 

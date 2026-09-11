@@ -1872,8 +1872,15 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                     if (containerId > 0 && _allPersistentContainers.TryGetValue(containerId, out var container))
                     {
                         // Move item to its container (if defined)
-                        if (container.AddOrMoveExistingItem(ItemTaskType.Invalid, item, item.Slot))
+                        if (container.AddOrMoveExistingItem(ItemTaskType.Invalid, item, item.Slot,
+                                notifyInventory: container.ContainerType != SlotType.Auction))
+                        {
+                            // Older auction winner mail can keep the seller's Auction container.
+                            // Preserve the persisted buyer owner, including a foreign owner for validation.
+                            if (container.ContainerType == SlotType.Auction)
+                                item.OwnerId = reader.GetUInt64("owner");
                             item.IsDirty = false;
+                        }
                         else
                             Logger.Fatal($"Failed to add item {item} to existing container {container.ContainerId} !");
                     }

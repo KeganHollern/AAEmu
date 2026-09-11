@@ -15,6 +15,9 @@ internal enum MailTerminalOutcome : byte
 /// <summary>Immutable source evidence, separate from the active mailbox and its item rows.</summary>
 internal static class MailLifecycleStore
 {
+    // Connector/NET converts TINYINT(1) to Boolean before typed reader methods see it.
+    // Project numeric grade separately without changing the connection's behavior for other consumers.
+    internal const string ItemSnapshotColumns = "items.*, CAST(grade AS SIGNED) AS archive_numeric_grade";
     internal static bool? IsActiveSender(uint id)
     {
         try
@@ -47,8 +50,10 @@ internal static class MailLifecycleStore
     });
 
     internal static void Write(PersistenceSaveContext context, BaseMail source,
-        string snapshot, MailTerminalOutcome outcome, DateTime now, long returnedId, uint actorId)
+        string snapshot, MailTerminalOutcome outcome, DateTime now, long returnedId, uint actorId,
+        LegacyAuctionMailArchive auctionArchive = null)
     {
+        auctionArchive?.ValidateAfterSave(context);
         using var command = context.Connection.CreateCommand();
         command.Transaction = context.Transaction;
         if (outcome == MailTerminalOutcome.Returned ||
@@ -80,24 +85,39 @@ internal static class MailLifecycleStore
         foreach (var item in source.Body.Attachments)
         {
             command.Parameters.Clear();
-            command.CommandText = "SELECT * FROM items WHERE id=@id AND owner=@owner AND slot_type=@slot FOR UPDATE";
+            command.CommandText = $"SELECT {ItemSnapshotColumns} FROM items WHERE id=@id AND owner=@owner AND slot_type=@slot FOR UPDATE";
             command.Parameters.AddWithValue("@id", item.Id);
             command.Parameters.AddWithValue("@owner", source.Header.ReceiverId);
-            command.Parameters.AddWithValue("@slot", (byte)Items.SlotType.Mail);
-            var row = new Dictionary<string, object>();
+            command.Parameters.AddWithValue("@slot", (byte)(auctionArchive?.Contains(item.Id) == true ?
+                Items.SlotType.Auction : Items.SlotType.Mail));
+            Dictionary<string, object> row;
             using (var reader = command.ExecuteReader())
             {
                 if (!reader.Read())
                     throw new InvalidOperationException($"Mail {source.Id} has no persistent attachment {item.Id}.");
-                for (var index = 0; index < reader.FieldCount; index++)
-                    row.Add(reader.GetName(index), reader.IsDBNull(index) ? null : reader.GetValue(index));
+                row = ReadItemRow(reader);
             }
+            var itemSnapshot = JsonSerializer.Serialize(row);
+            auctionArchive?.CheckUnchanged(item.Id, itemSnapshot);
             command.Parameters.Clear();
             command.CommandText = "INSERT INTO mail_archive_items (item_id, mail_id, item_row) VALUES (@item, @mail, @row)";
             command.Parameters.AddWithValue("@item", item.Id);
             command.Parameters.AddWithValue("@mail", source.Id);
-            command.Parameters.AddWithValue("@row", JsonSerializer.Serialize(row));
+            command.Parameters.AddWithValue("@row", itemSnapshot);
             command.ExecuteNonQuery();
         }
+    }
+
+    internal static Dictionary<string, object> ReadItemRow(MySqlDataReader reader)
+    {
+        var row = new Dictionary<string, object>();
+        // The final projected field replaces grade's representation, not the original row's schema.
+        for (var index = 0; index < reader.FieldCount - 1; index++)
+        {
+            var name = reader.GetName(index);
+            var valueIndex = name == "grade" ? reader.FieldCount - 1 : index;
+            row.Add(name, reader.IsDBNull(valueIndex) ? null : reader.GetValue(valueIndex));
+        }
+        return row;
     }
 }
