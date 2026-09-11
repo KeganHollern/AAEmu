@@ -25,6 +25,11 @@ function also received direct disassembly and decompilation. The addresses
 below are virtual addresses in the supplied dump. Subtract `0x38ff0000` to
 get an RVA. No live server or client state changed during this research.
 
+The CGA check also used the exact, unprotected `cryanimation.dll` PE image.
+Its timestamp is `2014-10-14 00:44:15 UTC`, and its preferred base is `0x31500000`.
+Ghidra completed its analysis in 46 seconds.
+Addresses that start with `315` or `316` below refer to this image.
+
 ## Confirmed source contract
 
 | Request | Native path | Source rule |
@@ -113,8 +118,23 @@ it uses the doodad template model. The embedded catalog contains only
 models whose shapes the extraction record confirms. Unknown models reject
 the request instead of using an invented radius.
 
-The draft catalog still needs the Entity CGA helper from `quest_prop.quest_case`.
-Do not merge this draft until that native path and the catalog agree.
+### Entity CGA helpers
+
+The Entity callback `390ff010` gets the character for the prefab slot.
+It calls virtual method `+0x24`, then virtual method `+0x34` on the returned model.
+It passes the returned static object to `39152fc0` with the prefab element matrix.
+
+The exact animation DLL resolves these methods:
+
+- `CCharInstance` has virtual table `31675754`. Method `+0x24`, at `31520480`, returns the model pointer at `+0x180`.
+- `CCharacterModel` has virtual table `3167dea4`. Method `+0x34`, at `3160c530`, returns its static object through a smart pointer.
+- The model stores that static object at `+0x5c`.
+
+`LoadNewCGA`, at `315e3b30`, creates the model with type `0x55aa55aa` and calls `315e2220`.
+That method loads a static object from the complete model filename through engine method `+0xc8`.
+The geometry-name argument is null. The assignment at `315e2c33` stores the result at model offset `+0x5c`.
+The quest callback thus uses the root static object, not the current animation pose.
+The extraction record describes the parent transforms within that static object.
 
 ### Emote selection and visibility
 
@@ -173,11 +193,20 @@ The existing early-completion tests use visible nearby NPC fixtures.
 The source-less packet tests also cover alternate Start conditions and sphere-only quests.
 The phase tests cover known overrides, empty overrides, unknown models, and URI normalization.
 
-The command below passed 208 tests with 0 failures:
+After the deployment branch merge, the focused command passed 211 tests with 0 failures:
 
 ```sh
 dotnet run --project AAEmu.UnitTests/AAEmu.UnitTests.csproj -- --treenode-filter '/*/*/Quest*/*'
 ```
+
+The full unit suite also passed 2,439 tests with 0 failures:
+
+```sh
+dotnet run --project AAEmu.UnitTests/AAEmu.UnitTests.csproj --no-build
+```
+
+All 12 catalog extraction tests passed. The final catalog SHA-256 is
+`4453b040bbaeb0d384f99bfbd9fc6073603f31811bc4bb7f4523de616dabc645`.
 
 After deployment, check these behaviors with the exact client:
 

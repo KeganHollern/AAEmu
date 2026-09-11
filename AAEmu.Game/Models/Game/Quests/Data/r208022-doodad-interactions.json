@@ -2458,6 +2458,38 @@
           "sha256": "45dfef9f8db1f52553a37a5ab26b3d47f87b027fde05b4fe0740adcde0e35a06"
         }
       ]
+    },
+    {
+      "model": "prefab://prefabs/quest_prop.xml/quest_prop.quest_case",
+      "templateIds": [
+        685,
+        4421
+      ],
+      "sourceSha256": "d8df34e5876f1f33074ddafdb1bb09314bb0763d7d1fcdd504905445b5aabe73",
+      "spheres": [
+        {
+          "center": [
+            -0.0018835446238517762,
+            -0.2166555536233232,
+            0.23487173678966553
+          ],
+          "radius": 0.4111384201049805
+        }
+      ],
+      "dependencies": [
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/scroll_common_b.cgf",
+          "sha256": "9c3457878000f85fe2e7814201dc926a5abb93716474d4fd8c7c699e6d96a392"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/old/scroll_common_c.cgf",
+          "sha256": "f0a24d4442a9511516439fb780d3342191128694acd5baf6a0f8ee13397270bd"
+        },
+        {
+          "path": "game/objects/env/01_nuia/001_ndeco/quest/ndeco_quest_case03.cga",
+          "sha256": "c8d5a8ef04a5b5434f6ee9dfa24ebe44dc6a0dcb94573b7bff40034636bb4a88"
+        }
+      ]
     }
   ],
   "unsupportedModels": [
@@ -2474,14 +2506,6 @@
         272
       ],
       "reason": "Missing asset: game/objects/env/nuia/gweonid/statue/godofprophecy_statue/returnpoint_statue.cgf"
-    },
-    {
-      "model": "prefab://prefabs/quest_prop.xml/quest_prop.quest_case",
-      "templateIds": [
-        685,
-        4421
-      ],
-      "reason": "Nonidentity helper parent needs native review"
     }
   ]
 }

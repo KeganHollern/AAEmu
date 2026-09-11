@@ -3,6 +3,7 @@ import importlib.util
 import pathlib
 import struct
 import unittest
+import xml.etree.ElementTree as ET
 
 spec = importlib.util.spec_from_file_location('extract', pathlib.Path(__file__).with_name('extract-doodad-interactions.py'))
 extract = importlib.util.module_from_spec(spec)
@@ -57,6 +58,43 @@ class ExtractTests(unittest.TestCase):
         sphere = extract.transform_sphere({'center': [1, 0, 0], 'radius': 1},
                                          {'Rotate': '0,0,0,1'})
         self.assertEqual(sphere, {'center': [-1, 0, 0], 'radius': 1})
+
+    def test_parent_rotation_precedes_grandparent_translation(self):
+        child = {'parent': 1, 'matrix': [1,0,0,0, 0,1,0,0, 0,0,1,0, 100,0,0,0]}
+        nodes = {
+            1: {'parent': 2, 'matrix': [0,1,0,0, -1,0,0,0, 0,0,1,0, 100,0,0,0]},
+            2: {'parent': -1, 'matrix': [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,200,0,0]},
+        }
+        self.assertEqual(extract.world_translation(child, nodes), [1, 3, 0])
+
+    def test_parent_cycle_rejects_catalog_input(self):
+        child = {'parent': 1, 'matrix': [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,0]}
+        with self.assertRaisesRegex(ValueError, 'Cyclic'):
+            extract.world_translation(child, {1: child})
+
+    def test_prefab_combines_comments_brushes_and_entities_without_fallback(self):
+        prefab = ET.fromstring('''<Prefab><Objects>
+          <Object Type="Comment" Name="aimPoint_1" Pos="0,0,0" Comment="2" />
+          <Object Type="Brush" Prefab="objects/a.cgf" Pos="1,2,3" Scale="2,2,2" />
+          <Object Type="Entity"><Properties object_Model="objects/b.cga" /></Object>
+        </Objects></Prefab>''')
+        shapes, dependencies = extract.prefab_spheres(prefab, lambda path: (model(), path))
+        self.assertEqual(shapes, [
+            {'center': [0, 0, 0], 'radius': 2},
+            {'center': [3, 6, 9], 'radius': 2},
+            {'center': [1, 2, 3], 'radius': 1},
+        ])
+        self.assertEqual([item['path'] for item in dependencies], ['game/objects/a.cgf', 'game/objects/b.cga'])
+
+    def test_prefab_fallback_follows_the_complete_empty_group(self):
+        prefab = ET.fromstring('''<Prefab><Objects>
+          <Object Type="Comment" Name="name_tag" Pos="0,0,9" Comment="" />
+          <Object Type="Brush" Prefab="objects/a.cgf" Pos="5,6,7" Scale="2,2,2" />
+          <Object Type="Entity"><Properties object_Model="objects/b.chr" /></Object>
+        </Objects></Prefab>''')
+        shapes, dependencies = extract.prefab_spheres(prefab, lambda path: (model('ordinary'), path))
+        self.assertEqual(shapes, [{'center': [0, 0, 0], 'radius': 0.5}])
+        self.assertEqual(len(dependencies), 2)
 
 
 if __name__ == '__main__':

@@ -24,6 +24,22 @@ def normalized_model(model):
     return scheme + '://' + path
 
 
+def world_translation(node, nodes):
+    # CGF Node.tm is local. The root statObj helper uses the composed worldTM.
+    center = [node['matrix'][i] for i in (12, 13, 14)]
+    parent = node['parent']
+    visited = set()
+    while parent != -1:
+        if parent in visited:
+            raise ValueError('Cyclic helper parent chain')
+        visited.add(parent)
+        matrix = nodes[parent]['matrix']
+        center = [sum(matrix[i + axis * 4] * center[axis] for axis in range(3)) + matrix[12 + i]
+                  for i in range(3)]
+        parent = nodes[parent]['parent']
+    return [v * 0.01 for v in center]
+
+
 def cgf_spheres(data):
     if data[:6] != b'CryTek':
         raise ValueError('Unsupported CGF signature')
@@ -64,16 +80,8 @@ def cgf_spheres(data):
         helper_type, sx, sy, sz = struct.unpack_from('<I3f', data, body)
         if helper_type != 1:
             raise ValueError('Aim helper is not HP_DUMMY')
-        # Current quest CGFs have identity parent transforms. Reject new layouts.
-        parent = node['parent']
-        while parent != -1:
-            matrix = nodes[parent]['matrix']
-            if any(abs(matrix[i] - (1 if i in (0, 5, 10) else 0)) > 0.000001 for i in range(15)):
-                raise ValueError('Nonidentity helper parent needs native review')
-            parent = nodes[parent]['parent']
-        matrix = node['matrix']
         # Runtime HP_DUMMY size converts centimeters to meters. LoadProxy uses X.
-        spheres.append({'center': [matrix[i] * 0.01 for i in (12, 13, 14)], 'radius': sx * 0.005})
+        spheres.append({'center': world_translation(node, nodes), 'radius': sx * 0.005})
     return spheres
 
 
@@ -90,6 +98,31 @@ def transform_sphere(sphere, obj):
     tx, ty, tz = 2*(y*vz-z*vy), 2*(z*vx-x*vz), 2*(x*vy-y*vx)
     center = [vx+w*tx+y*tz-z*ty, vy+w*ty+z*tx-x*tz, vz+w*tz+x*ty-y*tx]
     return {'center': [c+p for c, p in zip(center, position)], 'radius': sphere['radius'] * scale[0]}
+
+
+def prefab_spheres(prefab, read_asset):
+    spheres = []
+    dependencies = []
+    for obj in prefab.findall('./Objects/Object'):
+        properties = obj.find('Properties')
+        asset = obj.get('Prefab') if obj.get('Type') == 'Brush' else None
+        if obj.get('Type') == 'Entity' and properties is not None:
+            asset = properties.get('object_Model')
+        if asset:
+            child_path = normalized_model('cgf://' + asset).split('://', 1)[1]
+            child_data, child_digest = read_asset(child_path)
+            dependencies.append({'path': child_path, 'sha256': child_digest})
+            spheres.extend(transform_sphere(sphere, obj) for sphere in cgf_spheres(child_data))
+            continue
+        if obj.get('Type') != 'Comment':
+            continue
+        name = obj.get('Name', '').lower()
+        if name.startswith('aimbox'):
+            raise ValueError('Prefab box needs a reviewed box implementation')
+        if name.startswith('aimpoint'):
+            spheres.append({'center': [float(v) for v in obj.get('Pos', '0,0,0').split(',')],
+                            'radius': float(obj.get('Comment'))})
+    return spheres or [{'center': [0, 0, 0], 'radius': 0.5}], dependencies
 
 
 def main():
@@ -142,27 +175,7 @@ def main():
                                if prefab.get('Name', '').lower() == name]
                     if len(matches) != 1:
                         raise ValueError('Prefab name is missing or ambiguous')
-                    spheres = []
-                    dependencies = []
-                    for obj in matches[0].findall('./Objects/Object'):
-                        properties = obj.find('Properties')
-                        asset = obj.get('Prefab') if obj.get('Type') == 'Brush' else None
-                        if obj.get('Type') == 'Entity' and properties is not None:
-                            asset = properties.get('object_Model')
-                        if asset:
-                            child_path = normalized_model('cgf://' + asset).split('://', 1)[1]
-                            child_data, child_digest = read_asset(child_path)
-                            dependencies.append({'path': child_path, 'sha256': child_digest})
-                            spheres.extend(transform_sphere(sphere, obj) for sphere in cgf_spheres(child_data))
-                            continue
-                        if obj.get('Type') != 'Comment':
-                            continue
-                        name = obj.get('Name', '').lower()
-                        if name.startswith('aimbox'):
-                            raise ValueError('Prefab box needs a reviewed box implementation')
-                        if name.startswith('aimpoint'):
-                            spheres.append({'center': [float(v) for v in obj.get('Pos', '0,0,0').split(',')],
-                                            'radius': float(obj.get('Comment'))})
+                    spheres, dependencies = prefab_spheres(matches[0], read_asset)
                 else:
                     raise ValueError('Unsupported model scheme')
                 if not spheres:

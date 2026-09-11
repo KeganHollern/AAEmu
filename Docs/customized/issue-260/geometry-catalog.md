@@ -7,10 +7,13 @@ The native contract record explains the consumer and the distance comparison.
 `r208022-doodad-interactions.json` covers 94 distinct model URIs.
 The input query includes quest acceptance sources, report sources, and all their phase model overrides.
 Each entry gives its model URI, affected template IDs, source SHA-256, and local spheres.
-Prefab entries also give the SHA-256 of each referenced Brush CGF.
+Prefab entries also give the SHA-256 of each referenced Brush or Entity model.
 The `clientSha256` field identifies the native client dump used for this research.
 It is not the hash of `game_pak`.
 The `compactSha256` field identifies the exact client compact used for the source query.
+The client and server snapshots contain the same relevant model and source data.
+A set comparison found no differences in 213 accept-doodad acts or 27 report-doodad acts.
+It also found no differences in 7,124 doodad models, 20,077 phase models, or 753 actor height and radius rows.
 
 ## Extraction rules
 
@@ -20,8 +23,10 @@ The parser follows the [engine chunk definitions](https://github.com/aws/lumbery
 The [engine loader](https://github.com/aws/lumberyard/blob/master/dev/Code/CryEngine/Cry3DEngine/StatObjLoad.cpp) converts HP_DUMMY sizes from centimeters to meters.
 Native `39152fc0` uses the helper X size and a factor of `0.5` for `$aimpoint` spheres.
 The node translation supplies the center.
-The current relevant helpers have identity parent transforms.
-The extractor rejects unreviewed parent transforms and box helpers.
+The extractor composes each helper's parent transforms before conversion to meters.
+The [engine CGF loader](https://github.com/aws/lumberyard/blob/master/dev/Code/CryEngine/Cry3DEngine/CGF/CGFLoader.cpp) stores local node matrices and composes their parents.
+The static object loader supplies that world matrix to each root statObj helper.
+The extractor rejects box helpers until a reviewed implementation supports them.
 
 Native `3989d420` reads prefab Comment objects with names that start with `aimPoint`.
 The Comment value supplies the radius in meters, without a factor of `0.5`.
@@ -36,6 +41,13 @@ Its radius is `2.6463327026367188` meters.
 The prefab `quest.ferre_machine1` also contains a transformed CGF helper and an explicit Comment sphere.
 Many phase models contain more than 1 Comment sphere.
 The runtime must use the minimum distance to those spheres.
+
+The animated Entity in `quest_prop.quest_case` uses the full static root model for quest geometry.
+Exact `cryanimation.dll` function `315e2c33` assigns that model to `CCharacterModel + 0x5c`.
+Function `3160c530` returns it to the quest callback `390ff010`.
+The callback does not read an animation pose.
+The catalog thus includes the CGA helper with its full parent transform.
+The native contract records the exact binary hash and calls.
 
 ## Unsupported sources
 
@@ -55,7 +67,7 @@ Set the output path to the AAEmu source checkout under review.
   --compact compact/client.sqlite3 \
   --pak-reader .agents/skills/aaemu-client-pak/scripts/aapak.py \
   --output k8s/vendor/AAEmu/AAEmu.Game/Models/Game/Quests/Data/r208022-doodad-interactions.json
-python -m unittest discover -s k8s/vendor/AAEmu/Docs/customized/issue-260
+python -B -m unittest discover -s k8s/vendor/AAEmu/Docs/customized/issue-260
 ```
 
 Compare the result with the reviewed catalog before a later content release.

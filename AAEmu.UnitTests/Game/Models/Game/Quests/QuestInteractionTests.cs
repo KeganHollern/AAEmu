@@ -248,6 +248,24 @@ public sealed class QuestInteractionTests
     }
 
     [Test]
+    public async Task DoodadCatalog_UsesEntityCgaHelperWithParentTransforms()
+    {
+        _doodad.Template.FuncGroups.Add(new DoodadFuncGroups
+        {
+            Id = 0,
+            Model = "prefab://prefabs/quest_prop.xml/quest_prop.quest_case"
+        });
+        var spheres = QuestDoodadInteractionShapes.Get(_doodad);
+        await Assert.That(spheres.Count).IsEqualTo(1);
+        await Assert.That(spheres[0].Center).IsEqualTo(new Vector3(-0.0018835446f, -0.21665555f, 0.23487173f));
+        await Assert.That(spheres[0].Radius).IsEqualTo(0.41113842f);
+        _doodad.Transform.Local.Position = new Vector3(9.91f, 0, 1) - spheres[0].Center;
+        await Assert.That(QuestInteraction.CanInteractWithDoodad(_owner, _doodad)).IsTrue();
+        _doodad.Transform.Local.Position = new Vector3(9.92f, 0, 1) - spheres[0].Center;
+        await Assert.That(QuestInteraction.CanInteractWithDoodad(_owner, _doodad)).IsFalse();
+    }
+
+    [Test]
     [Arguments("hidden")]
     [Arguments("unstreamed")]
     [Arguments("other_instance")]
