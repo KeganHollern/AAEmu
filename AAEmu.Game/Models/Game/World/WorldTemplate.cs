@@ -93,7 +93,7 @@ public class WorldTemplate
     /// <summary>
     /// List of housing zones in this world (zoneId, list)
     /// </summary>
-    public Dictionary<uint, List<Area>> HousingZones { get; set; } = []; 
+    public Dictionary<uint, List<AAEmu.Game.Models.Game.Housing.HousingAreaPolygon>> HousingZones { get; set; } = [];
 
     /// <summary>
     /// Handles navmesh data

@@ -6,6 +6,7 @@ using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.XML;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.IO;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
 
@@ -28,6 +29,7 @@ public class SubZoneManager(IWorldManager worldManager, IZoneManager zoneManager
         }
         foreach (var worldTemplate in worldTemplates)
         {
+            worldTemplate.HousingZones.Clear();
             var zonesList = worldManager.GetZoneKeysByWorldId(worldTemplate.Id);
 
             foreach (var zoneKey in zonesList)
@@ -172,120 +174,23 @@ public class SubZoneManager(IWorldManager worldManager, IZoneManager zoneManager
                 foreach (var pathFileName in pathFiles)
                 {
                     var contents = ClientFileManager.GetFileAsString(pathFileName);
-
                     if (string.IsNullOrWhiteSpace(contents))
                     {
-                        Logger.Warn($"{pathFileName} doesn't exists or is empty.");
+                        throw new InvalidDataException($"Housing geometry is empty: {pathFileName}");
                     }
-                    else
+                    if (!worldTemplate.XmlWorldZones.TryGetValue(zone.ZoneKey, out var xmlZone))
                     {
-                        var xmlDoc = new XmlDocument();
-                        xmlDoc.LoadXml(contents);
-                        var allSubzoneBlocks = xmlDoc.SelectNodes("/Objects/Entity");
-                        for (var i = 0; i < allSubzoneBlocks.Count; i++)
-                        {
-                            var block = allSubzoneBlocks[i];
-                            var entityAttribs = XmlHelper.ReadNodeAttributes(block);
-
-                            if (entityAttribs.TryGetValue("Name", out var blockName))
-                            {
-                                var cellXOffset = 0;
-                                var cellYOffset = 0;
-
-                                var template = new Area { Name = blockName };
-
-                                if (entityAttribs.TryGetValue("cellX", out var cellXOffsetString))
-                                {
-                                    try { cellXOffset = int.Parse(cellXOffsetString); }
-                                    catch { cellXOffset = 0; }
-                                }
-
-                                if (entityAttribs.TryGetValue("cellY", out var cellYOffsetString))
-                                {
-                                    try { cellYOffset = int.Parse(cellYOffsetString); }
-                                    catch { cellYOffset = 0; }
-                                }
-
-                                var areaNodes = block.SelectNodes("Area");
-
-                                for (var j = 0; j < areaNodes.Count; j++)
-                                {
-                                    var areaNode = areaNodes[j];
-                                    var areaAttribs = XmlHelper.ReadNodeAttributes(areaNode);
-                                    var startVector = Vector3.Zero;
-
-                                    //GET ID
-                                    if (areaAttribs.TryGetValue("Id", out var id))
-                                    {
-                                        template.Id = uint.Parse(id);
-                                    }
-
-                                    //POS
-                                    if (entityAttribs.TryGetValue("Pos", out var valPos))
-                                    {
-                                        var posVals = valPos.Split(',');
-                                        if (posVals.Length != 3)
-                                        {
-                                            continue;
-                                        }
-                                        try
-                                        {
-                                            startVector = new Vector3(float.Parse(posVals[0], CultureInfo.InvariantCulture), float.Parse(posVals[1], CultureInfo.InvariantCulture), float.Parse(posVals[2], CultureInfo.InvariantCulture));
-                                        }
-                                        catch
-                                        {
-                                            Logger.Debug("Invalid float inside Pos: " + valPos);
-                                        }
-                                    }
-
-                                    var worldOrigins = ZoneManager.Instance.GetZoneOriginCell(zone.ZoneKey);
-
-                                    var cellOffset = new Vector3 { X = (worldOrigins.X + cellXOffset) * 1024f, Y = (worldOrigins.Y + cellYOffset) * 1024f };
-
-                                    var pointsXml = areaNode.SelectNodes("Points/Point");
-                                    for (var n = 0; n < pointsXml.Count; n++)
-                                    {
-                                        var pointXml = pointsXml[n];
-                                        var pointAttribs = XmlHelper.ReadNodeAttributes(pointXml);
-                                        if (pointAttribs.TryGetValue("Pos", out var posString))
-                                        {
-                                            var posVals = posString.Split(',');
-                                            if (posVals.Length != 3)
-                                            {
-                                                Logger.Debug("Invalid number of values inside Pos: " + posString);
-                                                continue;
-                                            }
-                                            try
-                                            {
-                                                var vec = new Vector3(float.Parse(posVals[0], CultureInfo.InvariantCulture) + cellOffset.X, float.Parse(posVals[1], CultureInfo.InvariantCulture) + cellOffset.Y, float.Parse(posVals[2], CultureInfo.InvariantCulture));
-                                                vec.X += startVector.X;
-                                                vec.Y += startVector.Y;
-                                                vec.Z += startVector.Z;
-                                                template.Points.Add(vec);
-                                            }
-                                            catch
-                                            {
-                                                Logger.Debug("Invalid float inside Pos: " + posString);
-                                            }
-
-                                        }
-                                    }
-
-                                    if (!worldTemplate.HousingZones.TryGetValue(zone.Id, out var value))
-                                    {
-                                        value = [];
-                                        worldTemplate.HousingZones.Add(zone.Id, value);
-                                    }
-
-                                    value.Add(template);
-                                }
-                            }
-                        }
+                        throw new InvalidDataException($"Housing geometry references missing XML zone {zone.ZoneKey}.");
                     }
+                    if (!worldTemplate.HousingZones.TryGetValue(zone.ZoneKey, out var polygons))
+                        worldTemplate.HousingZones.Add(zone.ZoneKey, polygons = []);
+                    polygons.AddRange(HousingAreaPolygon.Read(contents, xmlZone));
                 }
 
                 #endregion housing_area
             }
+            Logger.Info("Loaded {0} housing polygons for {1}.",
+                worldTemplate.HousingZones.Values.Sum(polygons => polygons.Count), worldTemplate.Name);
         }
 
         #endregion
@@ -293,33 +198,9 @@ public class SubZoneManager(IWorldManager worldManager, IZoneManager zoneManager
 
     public List<uint> GetHousingZoneByPosition(WorldInstance world, float x, float y)
     {
-        var zoneId = worldManager.GetZoneId(world.Template, x, y);
-
-        var foundHousingZones = new List<uint>();
-
-        var found = false;
-
-        foreach (var houseZoneTemplate in world.Template.HousingZones[zoneId])
-        {
-            if (Point.IsInside(houseZoneTemplate.Points, houseZoneTemplate.Points.Count, new Vector3(x, y, 0)))
-            {
-                Logger.Debug($"Is in zone {zoneId} housezone name {houseZoneTemplate.Name} ({houseZoneTemplate.Id})");
-                found = true;
-
-                foundHousingZones.Add(houseZoneTemplate.Id);
-            }
-        }
-
-        if (found)
-        {
-            return foundHousingZones;
-        }
-        else
-        {
-            Logger.Debug("No housing zone found at this position!");
-            return [];
-        }
-
+        // A polygon can cross a terrain zone boundary. Search the whole world.
+        return world?.Template.HousingZones.Values.SelectMany(polygons => polygons)
+            .Where(polygon => polygon.Contains2D(x, y)).Select(polygon => polygon.Id).Distinct().ToList() ?? [];
     }
 
     public List<uint> GetSubZoneByPosition(WorldTemplate worldTemplate, Vector3 pos)
