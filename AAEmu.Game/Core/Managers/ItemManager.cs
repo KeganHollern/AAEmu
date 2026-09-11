@@ -49,6 +49,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
     // Socketing
     private Dictionary<uint, uint> _socketChance;
+    public ItemSocketingRules SocketingRules { get; private set; } = new();
     private Dictionary<uint, List<BonusTemplate>> _itemUnitModifiers;
     private Dictionary<uint, ItemCapScale> _itemCapScales;
 
@@ -1076,6 +1077,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
             using (var command = connection.CreateCommand())
             {
+                SocketingRules = ItemSocketingRules.Load(connection);
                 command.CommandText = "SELECT * FROM item_socket_chances";
                 command.Prepare();
                 using (var sqliteReader = command.ExecuteReader())

@@ -20,6 +20,7 @@ using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Effects.Enums;
+using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 using AAEmu.Game.Models.Game.Skills.Plots.Tree;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
 using AAEmu.Game.Models.Game.Skills.Static;
@@ -174,6 +175,9 @@ public class Skill
             skillResultValueUInt = requirementResult.ResultUInt;
             return SkillResultHelper.SkillResultErrorKeyToId(requirementResult.ResultKey);
         }
+
+        if (!ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
+            return SkillResult.InvalidTarget;
 
         if (Template.CooldownTime > 0 && cooldownOwner != null && !CanIgnoreCooldowns(cooldownOwner) && unit.Cooldowns.CheckCooldown(Template.Id))
         {
@@ -703,7 +707,43 @@ public class Skill
 
     public void Cast(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject)
     {
+        // Socket casts can finish after the initial entry lease ends. Exclude trades
+        // through validation, mana use, and immediate effect/source consumption.
+        if (!ItemSocketing.IsSocketingSkill(this))
+        {
+            CastCore(caster, casterCaster, target, targetCaster, skillObject);
+            return;
+        }
+        if (Cancelled)
+            return;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            ExecutionLease execution = null;
+            try
+            {
+                if (!TryEnterExecution(caster as Character, out execution))
+                {
+                    Stop(caster);
+                    return;
+                }
+                CastCore(caster, casterCaster, target, targetCaster, skillObject);
+            }
+            finally
+            {
+                execution?.Dispose();
+            }
+        }
+    }
+
+    private void CastCore(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject)
+    {
         if (caster is not Unit unit) { return; }
+
+        if (!ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
+        {
+            Stop(caster);
+            return;
+        }
 
         if (!_bypassGcd)
         {
@@ -1020,12 +1060,24 @@ public class Skill
         // SkillTask can already be null here, including during delayed/projectile effects.
         // The execution lease excludes new trade offers through final material consumption.
         using (execution)
-            ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
+        {
+            if (ItemSocketing.IsSocketingSkill(this))
+            {
+                // Keep the final socket check, roll, item mutation and source consumption
+                // together with respect to inventory movement and persistence snapshots.
+                lock (SaveManager.PersistenceSyncRoot)
+                    ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
+            }
+            else
+                ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
+        }
     }
 
     private void ApplyEffectsCore(BaseUnit caster, SkillCaster casterCaster, BaseUnit targetSelf, SkillCastTarget targetCaster, SkillObject skillObject)
     {
         if (caster is not Unit unit)
+            return;
+        if (!ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
             return;
         var player = caster as Character;
         var possibleTargets = new List<BaseUnit>(); // TODO crutches
