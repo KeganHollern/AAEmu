@@ -11,6 +11,7 @@ namespace AAEmu.Game.Models.Game.Housing;
 public sealed class HousingAreaPolygon
 {
     public uint Id { get; init; }
+    public int Group { get; init; } = 1;
     public string Name { get; init; }
     public int Priority { get; init; }
     public float Height { get; init; }
@@ -20,12 +21,7 @@ public sealed class HousingAreaPolygon
     {
         if (!IsFinite(position) || Points.Length < 3)
             return false;
-        if (Height > 0)
-        {
-            var bottom = Points.Min(p => p.Z);
-            if (position.Z < bottom || position.Z > bottom + Height)
-                return false;
-        }
+        // r208022's housing query calls the area predicate with ignoreHeight=true.
         return Contains2D(position.X, position.Y);
     }
 
@@ -33,24 +29,54 @@ public sealed class HousingAreaPolygon
     {
         if (!float.IsFinite(x) || !float.IsFinite(y) || Points.Length < 3)
             return false;
+        if (x < Points.Min(p => p.X) || x > Points.Max(p => p.X) ||
+            y < Points.Min(p => p.Y) || y > Points.Max(p => p.Y))
+            return false;
         var inside = false;
         for (int i = 0, j = Points.Length - 1; i < Points.Length; j = i++)
         {
             var a = Points[j];
             var b = Points[i];
-            var cross = ((double)x - a.X) * (b.Y - a.Y) - ((double)y - a.Y) * (b.X - a.X);
-            if (Math.Abs(cross) <= 0.00001 && x >= Math.Min(a.X, b.X) && x <= Math.Max(a.X, b.X) &&
-                y >= Math.Min(a.Y, b.Y) && y <= Math.Max(a.Y, b.Y))
-                return true;
-            if ((a.Y > y) != (b.Y > y) &&
-                x < ((double)b.X - a.X) * (y - a.Y) / (b.Y - a.Y) + a.X)
+            // Match the native half-open ray crossings, including its float rounding.
+            // Horizontal edges do not cross. Vertical edges include equality in X.
+            if (a.Y == b.Y || y <= Math.Min(a.Y, b.Y) || y > Math.Max(a.Y, b.Y) ||
+                x > Math.Max(a.X, b.X))
+                continue;
+            if (a.X == b.X)
                 inside = !inside;
+            else
+            {
+                var slope = (b.Y - a.Y) / (b.X - a.X);
+                var intercept = a.Y - a.X * slope;
+                if (x < (y - intercept) / slope)
+                    inside = !inside;
+            }
         }
         return inside;
     }
 
     public static bool IsFinite(Vector3 position) =>
         float.IsFinite(position.X) && float.IsFinite(position.Y) && float.IsFinite(position.Z);
+
+    public static IReadOnlyList<HousingAreaPolygon> ReadSources(IEnumerable<string> paths,
+        Func<string, string> read, XmlWorldZone zone)
+    {
+        var result = new List<HousingAreaPolygon>();
+        // The native caller names root housing_area.xml directly. The current server
+        // also discovers regional paths, whose r208022 shapes duplicate root entries.
+        foreach (var path in paths.OrderBy(path => path.Count(c => c is '/' or '\\'))
+                     .ThenBy(path => path, StringComparer.Ordinal))
+        {
+            foreach (var polygon in Read(read(path), zone))
+            {
+                if (!result.Any(current => current.Id == polygon.Id && current.Group == polygon.Group &&
+                        current.Height == polygon.Height && current.Priority == polygon.Priority &&
+                        current.Points.SequenceEqual(polygon.Points)))
+                    result.Add(polygon);
+            }
+        }
+        return result;
+    }
 
     public static IReadOnlyList<HousingAreaPolygon> Read(string xml, XmlWorldZone zone)
     {
@@ -79,8 +105,10 @@ public sealed class HousingAreaPolygon
             foreach (var area in entity.Elements("Area"))
             {
                 var id = (uint?)area.Attribute("value1") ?? 0;
-                // Unbound editor shapes are not housing permits.
-                if (id == 0)
+                // Only Group=1 participates in the native housing query. Keep value1=0:
+                // an unbound shape can be the first match and deny an overlapping permit.
+                var group = ReadInt(area, "Group");
+                if (group != 1)
                     continue;
                 var points = area.Element("Points")?.Elements("Point")
                     .Select(p => Vector3.Transform(ReadVector((string)p.Attribute("Pos")) * scale, rotation) + offset)
@@ -91,6 +119,7 @@ public sealed class HousingAreaPolygon
                 result.Add(new HousingAreaPolygon
                 {
                     Id = id,
+                    Group = group,
                     Name = (string)entity.Attribute("Name") ?? string.Empty,
                     Priority = ReadInt(area, "Priority"),
                     Height = height,

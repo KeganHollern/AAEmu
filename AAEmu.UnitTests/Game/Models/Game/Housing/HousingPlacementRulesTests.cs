@@ -34,23 +34,63 @@ public sealed class HousingPlacementRulesTests
     }
 
     [Test]
-    public async Task Read_UnboundEditorShape_DoesNotGrantArea()
+    public async Task Read_UnboundEditorShape_PreservesTheFirstMatchMask()
     {
         var areas = HousingAreaPolygon.Read(Geometry(id: 0), new XmlWorldZone());
+        await Assert.That(areas.Single().Id).IsEqualTo(0u);
+    }
+
+    [Test]
+    public async Task Read_OnlyGroupOne_ParticipatesInHousingQueries()
+    {
+        var areas = HousingAreaPolygon.Read(Geometry().Replace("Group=\"1\"", "Group=\"2\""), new XmlWorldZone());
         await Assert.That(areas).IsEmpty();
     }
 
     [Test]
-    public async Task Contains_HeightAndBoundaries_AreRespected()
+    public async Task ReadSources_PreservesRootOrderAndDistinctShapesWithTheSameId()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["client/na/housing_area.xml"] = Geometry(),
+            ["client/cn/housing_area.xml"] = Geometry(),
+            ["client/housing_area.xml"] = Geometry(id: 12).Replace("</Objects>",
+                Geometry().Replace("<Objects>", string.Empty)),
+            ["client/extra/housing_area.xml"] = Geometry().Replace("Pos=\"10,20,30\"", "Pos=\"30,20,30\"")
+        };
+        var polygons = HousingAreaPolygon.ReadSources(files.Keys, path => files[path], new XmlWorldZone());
+        await Assert.That(polygons.Count).IsEqualTo(3);
+        await Assert.That(polygons.Select(p => p.Id).ToArray()).IsEquivalentTo(new uint[] { 12, 11, 11 });
+        await Assert.That(polygons[0].Id).IsEqualTo(12u);
+        await Assert.That(polygons[1].Points[0].X).IsEqualTo(1034f);
+        await Assert.That(polygons[2].Points[0].X).IsEqualTo(1054f);
+    }
+
+    [Test]
+    public async Task Contains_IgnoresHeightAndUsesNativeHalfOpenBoundaries()
     {
         var area = HousingAreaPolygon.Read(Geometry(height: 50), new XmlWorldZone()).Single();
         var origin = area.Points[0];
-        await Assert.That(area.Contains(origin)).IsTrue();
+        await Assert.That(area.Contains(origin)).IsFalse();
+        await Assert.That(area.Contains(origin + new Vector3(0, 5, 0))).IsFalse();
+        await Assert.That(area.Contains(origin + new Vector3(5, 0, 0))).IsFalse();
+        await Assert.That(area.Contains(origin + new Vector3(10, 5, 0))).IsTrue();
+        await Assert.That(area.Contains(origin + new Vector3(5, 10, 0))).IsTrue();
+        await Assert.That(area.Contains(origin + new Vector3(10, 10, 0))).IsTrue();
         await Assert.That(area.Contains(origin + new Vector3(5, 5, 50))).IsTrue();
-        await Assert.That(area.Contains(origin + new Vector3(5, 5, 51))).IsFalse();
-        await Assert.That(area.Contains(origin + new Vector3(5, 5, -1))).IsFalse();
+        await Assert.That(area.Contains(origin + new Vector3(5, 5, 51))).IsTrue();
+        await Assert.That(area.Contains(origin + new Vector3(5, 5, -1))).IsTrue();
         await Assert.That(area.Contains(new Vector3(float.NaN, 0, 0))).IsFalse();
         await Assert.That(area.Contains2D(float.PositiveInfinity, 0)).IsFalse();
+    }
+
+    [Test]
+    public async Task Contains_SlopedEdge_UsesTheStrictNativeCrossing()
+    {
+        var area = new HousingAreaPolygon { Points = [new(0, 0, 0), new(10, 0, 0), new(0, 10, 0)] };
+        await Assert.That(area.Contains2D(4, 5)).IsTrue();
+        await Assert.That(area.Contains2D(5, 5)).IsFalse();
+        await Assert.That(area.Contains2D(6, 5)).IsFalse();
     }
 
     [Test]
@@ -119,6 +159,42 @@ public sealed class HousingPlacementRulesTests
     }
 
     [Test]
+    public async Task Check_Overlap_SelectsTheFirstRegisteredAreaWithoutPriorityIntersection()
+    {
+        using var connection = CreateDatabase();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO housing_areas VALUES (12, 'second area', 3);
+            INSERT INTO housing_groups VALUES (3, 'second group', '', 0, 'f', 0, 0, 'f');
+            INSERT INTO housing_group_categories VALUES (2, 3, 7, 0);
+            """;
+        command.ExecuteNonQuery();
+        var data = Load(connection);
+        var world = CreateWorld();
+        world.HousingZones[138].Add(new HousingAreaPolygon
+        {
+            Id = 12, Priority = 100, Points = world.HousingZones[138][0].Points
+        });
+        await Assert.That(Check(data, world, 16)).IsEqualTo(ErrorMessageType.NoErrorMessage);
+        await Assert.That(Check(data, world, 7)).IsEqualTo(ErrorMessageType.HouseCannotLoacateInvalidCategoryArea);
+        world.HousingZones[138].Reverse();
+        await Assert.That(Check(data, world, 7)).IsEqualTo(ErrorMessageType.NoErrorMessage);
+        await Assert.That(Check(data, world, 16)).IsEqualTo(ErrorMessageType.HouseCannotLoacateInvalidCategoryArea);
+    }
+
+    [Test]
+    public async Task Check_UnboundFirstMatch_DoesNotFallThroughToALaterPermit()
+    {
+        using var connection = CreateDatabase();
+        var world = CreateWorld();
+        world.HousingZones[138].Insert(0, new HousingAreaPolygon
+        {
+            Id = 0, Points = world.HousingZones[138][0].Points
+        });
+        await Assert.That(Check(Load(connection), world, 16)).IsEqualTo(ErrorMessageType.HouseCannotLoacateInvalidCategoryArea);
+    }
+
+    [Test]
     public async Task Load_RetainsAllGroupFieldsAndResetsOnReload()
     {
         using var connection = CreateDatabase(houseless: true, existingCategory: 17, maximum: 3);
@@ -162,21 +238,40 @@ public sealed class HousingPlacementRulesTests
             var folder = Path.Combine(worldRoot, "level_design", "zone", id.ToString(), "client");
             if (!Directory.Exists(folder))
                 continue;
-            foreach (var path in Directory.GetFiles(folder, "housing_area.xml", SearchOption.AllDirectories))
-                polygons.AddRange(HousingAreaPolygon.Read(File.ReadAllText(path), zone));
+            polygons.AddRange(HousingAreaPolygon.ReadSources(
+                Directory.GetFiles(folder, "housing_area.xml", SearchOption.AllDirectories), File.ReadAllText, zone));
         }
         await Assert.That(polygons.Count).IsGreaterThan(300);
-        foreach (var polygon in polygons)
+        foreach (var polygon in polygons.Where(p => p.Id != 0))
             await Assert.That(data.GetArea(polygon.Id)).IsNotNull();
         var first = polygons.First(p => p.Id == 11);
         await Assert.That(first.Points[0].X).IsEqualTo(24 * 1024 + 654.65906f);
         await Assert.That(first.Points[0].Y).IsEqualTo(9 * 1024 + 675.46289f);
+        var overlapPosition = new Vector3(20300, 18200, 0);
+        var overlapFolder = Path.Combine(worldRoot, "level_design", "zone", "283", "client");
+        foreach (var path in Directory.GetFiles(overlapFolder, "housing_area.xml", SearchOption.AllDirectories))
+        {
+            var overlapPolygons = HousingAreaPolygon.Read(File.ReadAllText(path), zones[283]).ToList();
+            var matches = overlapPolygons.Where(p => p.Contains(overlapPosition)).ToArray();
+            await Assert.That(matches.Select(p => p.Id).Contains(208u)).IsTrue();
+            await Assert.That(matches.Select(p => p.Id).Contains(209u)).IsTrue();
+            await Assert.That(matches[0].Id).IsEqualTo(208u);
+            var world = new WorldTemplate { HousingZones = new() { [283] = overlapPolygons } };
+            await Assert.That(HousingPlacementRules.Check(data, world, overlapPosition, 1, 42, []))
+                .IsEqualTo(ErrorMessageType.NoErrorMessage);
+            await Assert.That(HousingPlacementRules.Check(data, world, overlapPosition, 7, 42, []))
+                .IsEqualTo(ErrorMessageType.HouseCannotLoacateInvalidCategoryArea);
+        }
+        var mergedOverlap = HousingAreaPolygon.ReadSources(
+            Directory.GetFiles(overlapFolder, "housing_area.xml", SearchOption.AllDirectories).Reverse(), File.ReadAllText, zones[283]);
+        await Assert.That(mergedOverlap.Count).IsEqualTo(6);
+        await Assert.That(mergedOverlap.First(p => p.Contains(overlapPosition)).Id).IsEqualTo(208u);
         Console.WriteLine($"Housing client check: {polygons.Count} polygons, {polygons.Select(p => p.Id).Distinct().Count()} area IDs.");
     }
 
     private static string Geometry(uint id = 11, int height = 0, string rotation = "1,0,0,0", string scale = "1,1,1") => $$"""
         <Objects><Entity Name="test" Pos="10,20,30" cellX="1" cellY="2" Rotate="{{rotation}}" Scale="{{scale}}">
-        <Area Id="777" value1="{{id}}" Priority="0" Height="{{height}}"><Points>
+        <Area Id="777" value1="{{id}}" Group="1" Priority="0" Height="{{height}}"><Points>
         <Point Pos="0,0,0"/><Point Pos="10,0,0"/><Point Pos="10,10,0"/><Point Pos="0,10,0"/>
         </Points></Area></Entity></Objects>
         """;

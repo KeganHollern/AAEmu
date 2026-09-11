@@ -12,25 +12,21 @@ public static class HousingPlacementRules
     {
         if (world == null || !HousingAreaPolygon.IsFinite(position))
             return ErrorMessageType.HouseCannotLoacateInvalidCategoryArea;
-        var areas = world.HousingZones.Values.SelectMany(polygons => polygons)
-            .Where(polygon => polygon.Contains(position)).OrderByDescending(polygon => polygon.Priority).ToArray();
-        if (areas.Length == 0)
+        // CEntitySystem returns value1 from the first matching Group=1 shape in
+        // registration order. Priority, Height, and later matches do not select a permit.
+        var polygon = world.HousingZones.Values.SelectMany(polygons => polygons)
+            .FirstOrDefault(polygon => polygon.Group == 1 && polygon.Contains(position));
+        var area = polygon == null ? null : data.GetArea(polygon.Id);
+        var group = area == null ? null : data.GetGroup(area.GroupId);
+        if (group == null || !group.CategoryLimits.TryGetValue(categoryId, out var maximum))
             return ErrorMessageType.HouseCannotLoacateInvalidCategoryArea;
         var owned = houses.Where(h => h.AccountId == accountId).ToArray();
-        // Equal-priority overlaps cannot relax a restrictive area's ownership rules.
-        foreach (var polygon in areas.Where(p => p.Priority == areas[0].Priority).DistinctBy(p => p.Id))
-        {
-            var area = data.GetArea(polygon.Id);
-            var group = area == null ? null : data.GetGroup(area.GroupId);
-            if (group == null || !group.CategoryLimits.TryGetValue(categoryId, out var maximum))
-                return ErrorMessageType.HouseCannotLoacateInvalidCategoryArea;
-            if (group.Houseless && owned.Length > 0)
-                return ErrorMessageType.HouseCannotOwnMoreHouselessCondition;
-            if (group.ExistingCategoryId != 0 && owned.Any(h => h.Template.CategoryId == group.ExistingCategoryId))
-                return ErrorMessageType.HouseCannotOwnMoreExistingCategoryCondition;
-            if (maximum > 0 && owned.Count(h => h.Template.CategoryId == categoryId) >= maximum)
-                return ErrorMessageType.HouseCannotConstructInAreaByMaxConstructCount;
-        }
+        if (group.Houseless && owned.Length > 0)
+            return ErrorMessageType.HouseCannotOwnMoreHouselessCondition;
+        if (group.ExistingCategoryId != 0 && owned.Any(h => h.Template.CategoryId == group.ExistingCategoryId))
+            return ErrorMessageType.HouseCannotOwnMoreExistingCategoryCondition;
+        if (maximum > 0 && owned.Count(h => h.Template.CategoryId == categoryId) >= maximum)
+            return ErrorMessageType.HouseCannotConstructInAreaByMaxConstructCount;
         return ErrorMessageType.NoErrorMessage;
     }
 }

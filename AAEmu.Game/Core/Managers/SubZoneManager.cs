@@ -171,21 +171,10 @@ public class SubZoneManager(IWorldManager worldManager, IZoneManager zoneManager
                 worldLevelDesignDir = Path.Combine("game", "worlds", worldTemplate.Name, "level_design", "zone", zone.ZoneKey.ToString(), "client");
                 pathFiles = ClientFileManager.GetFilesInDirectory(worldLevelDesignDir, "housing_area.xml", true);
 
-                foreach (var pathFileName in pathFiles)
-                {
-                    var contents = ClientFileManager.GetFileAsString(pathFileName);
-                    if (string.IsNullOrWhiteSpace(contents))
-                    {
-                        throw new InvalidDataException($"Housing geometry is empty: {pathFileName}");
-                    }
-                    if (!worldTemplate.XmlWorldZones.TryGetValue(zone.ZoneKey, out var xmlZone))
-                    {
-                        throw new InvalidDataException($"Housing geometry references missing XML zone {zone.ZoneKey}.");
-                    }
-                    if (!worldTemplate.HousingZones.TryGetValue(zone.ZoneKey, out var polygons))
-                        worldTemplate.HousingZones.Add(zone.ZoneKey, polygons = []);
-                    polygons.AddRange(HousingAreaPolygon.Read(contents, xmlZone));
-                }
+                if (!worldTemplate.XmlWorldZones.TryGetValue(zone.ZoneKey, out var housingXmlZone))
+                    throw new InvalidDataException($"Housing geometry references missing XML zone {zone.ZoneKey}.");
+                worldTemplate.HousingZones[zone.ZoneKey] = HousingAreaPolygon.ReadSources(pathFiles,
+                    ClientFileManager.GetFileAsString, housingXmlZone).ToList();
 
                 #endregion housing_area
             }
