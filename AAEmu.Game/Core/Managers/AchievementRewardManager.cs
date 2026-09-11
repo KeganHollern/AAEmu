@@ -28,8 +28,8 @@ internal static class AchievementRewardManager
     {
         ArgumentNullException.ThrowIfNull(character);
 
-        // SaveManager holds this lock for its complete database transaction.
-        // Use the same lock so reward delivery cannot overlap the normal save.
+        // Character store state is always locked before the cross-manager save epoch.
+        lock (character.StorePurchaseSyncRoot)
         lock (SaveManager.PersistenceSyncRoot)
             return TryDeliverLocked(character, achievementId, itemTemplateId);
     }

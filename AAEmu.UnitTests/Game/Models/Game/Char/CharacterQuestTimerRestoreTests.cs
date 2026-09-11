@@ -4,6 +4,7 @@ using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Quests.Acts;
@@ -34,10 +35,13 @@ public sealed class CharacterQuestTimerRestoreTests
     private ServiceProvider _testServiceProvider;
     private QuestManager _questManager;
     private TaskManager _taskManager;
+    private bool _previousDebugInfo;
 
     [Before(Test)]
     public void SetUp()
     {
+        _previousDebugInfo = AppConfiguration.Instance.DebugInfo;
+        AppConfiguration.Instance.DebugInfo = false;
         _previousServiceProvider = SingletonContainer.ServiceProvider;
         _previousQuestManager = (QuestManager)s_questManagerInstanceField.GetValue(null);
         _previousTaskManager = (TaskManager)s_taskManagerInstanceField.GetValue(null);
@@ -58,6 +62,7 @@ public sealed class CharacterQuestTimerRestoreTests
     [After(Test)]
     public void TearDown()
     {
+        AppConfiguration.Instance.DebugInfo = _previousDebugInfo;
         SingletonContainer.ServiceProvider = _previousServiceProvider;
         s_questManagerInstanceField.SetValue(null, _previousQuestManager);
         s_taskManagerInstanceField.SetValue(null, _previousTaskManager);
@@ -168,6 +173,44 @@ public sealed class CharacterQuestTimerRestoreTests
         owner.Events.Returns(new UnitEvents());
         owner.Quests.Returns(new CharacterQuests(new CharacterMock()));
         return owner;
+    }
+
+    [Test]
+    public async Task RestartMainQuest_StartTimer_PersistsDeadlineAndRejectsOldTimeout()
+    {
+        var owner = new CharacterMock { Id = OwnerId, Name = "Questor" };
+        owner.Quests = new CharacterQuests(owner);
+        var failed = CreateTimedQuest(owner, QuestComponentKind.Start);
+        failed.Template.DetailId = QuestDetail.Main;
+        failed.Template.RestartOnFail = true;
+        owner.Quests.ActiveQuests.Add(QuestId, failed);
+        failed.Step = QuestComponentKind.Start;
+        var oldTimeout = _questManager.QuestTimeoutTask[OwnerId][QuestId];
+        _questManager.FailQuest(owner, QuestId);
+        await Assert.That(failed.Status).IsEqualTo(QuestStatus.Failed);
+        await Assert.That(oldTimeout.Cancelled).IsTrue();
+        byte[] savedData = null;
+        DateTime savedDeadline = default;
+
+        await Assert.That(owner.Quests.RestartMainQuest(QuestId, restarted =>
+        {
+            savedDeadline = restarted.Time;
+            savedData = restarted.WriteData();
+            return true;
+        })).IsTrue();
+
+        var active = owner.Quests.ActiveQuests[QuestId];
+        await Assert.That(active.Time).IsEqualTo(savedDeadline);
+        await Assert.That(HasTimer()).IsTrue();
+        await Assert.That(_questManager.QuestTimeoutTask[OwnerId][QuestId].TriggerTime).IsEqualTo(savedDeadline);
+        oldTimeout.Execute();
+        await Assert.That(active.Step).IsEqualTo(QuestComponentKind.Start);
+
+        var reloaded = CreateTimedQuest(owner, QuestComponentKind.Start);
+        reloaded.ReadData(savedData!);
+        await Assert.That((active.Time - reloaded.Time).TotalSeconds).IsLessThan(1d);
+        _questManager.RemoveQuestTimer(OwnerId, QuestId);
+        active.FinalizeQuestActs();
     }
 
     private Quest CreateTimedQuest(ICharacter owner, QuestComponentKind timerStep)

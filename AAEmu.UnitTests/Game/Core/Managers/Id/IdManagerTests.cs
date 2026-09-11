@@ -479,6 +479,21 @@ public class IdManagerTests
         await Assert.That(reusedId).IsEqualTo(id);
     }
 
+    [Test]
+    public async Task ItemIdManager_RetainId_PreventsRuntimeReuse()
+    {
+        var manager = new ItemIdManager();
+        manager.Initialize(true);
+        var retainedId = manager.GetNextId();
+        var nextId = manager.GetNextId();
+
+        manager.RetainId(retainedId);
+        manager.ReleaseId(retainedId);
+        var allocatedId = manager.GetNextId();
+
+        await Assert.That(allocatedId).IsEqualTo(nextId + 1);
+    }
+
     #endregion
 
     #region Edge Cases and Stress Tests

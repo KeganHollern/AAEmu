@@ -49,6 +49,64 @@ public class CharacterQuests(Character owner)
         return ActiveQuests.ContainsKey(questId);
     }
 
+    public bool RestartMainQuest(uint questId)
+    {
+        return RestartMainQuest(questId, FlushRestartedQuest);
+    }
+
+    internal bool RestartMainQuest(uint questId, Func<Quest, bool> persistRestart)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!ActiveQuests.TryGetValue(questId, out var failed) || !ReferenceEquals(failed.Owner, Owner) ||
+                failed.Step != QuestComponentKind.Fail || failed.Status != QuestStatus.Failed ||
+                failed.Template.DetailId != QuestDetail.Main || !failed.Template.RestartOnFail ||
+                HasQuestCompleted(questId) ||
+                !failed.QuestSteps.TryGetValue(QuestComponentKind.Start, out var start) || start.Components.Count == 0)
+                return false;
+
+            // Keep the failed attempt and its supplies intact until the new Start row commits.
+            // No reward, item, completion, timer, or event action runs while preparing this row.
+            var restarted = failed.PrepareRestart(DateTime.UtcNow);
+            if (!persistRestart(restarted))
+                return false;
+
+            failed.CurrentStep?.FinalizeStep();
+            failed.FinalizeQuestActs();
+            ActiveQuests[questId] = restarted;
+            restarted.ActivateRestart();
+            return true;
+        }
+    }
+
+    private bool FlushRestartedQuest(Quest quest)
+    {
+        var commitAttempted = false;
+        try
+        {
+            using var connection = MySQL.CreateConnection();
+            using var transaction = connection.BeginTransaction();
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText =
+                "REPLACE INTO quests(`id`,`template_id`,`data`,`status`,`owner`) VALUES(@id,@template_id,@data,@status,@owner)";
+            command.Parameters.AddWithValue("@id", quest.Id);
+            command.Parameters.AddWithValue("@template_id", quest.TemplateId);
+            command.Parameters.AddWithValue("@data", quest.WriteData());
+            command.Parameters.AddWithValue("@status", (byte)quest.Status);
+            command.Parameters.AddWithValue("@owner", Owner.Id);
+            command.ExecuteNonQuery();
+            commitAttempted = true;
+            transaction.Commit();
+            return true;
+        }
+        catch (Exception exception) when (!commitAttempted)
+        {
+            Logger.Warn(exception, "Failed to restart quest {QuestId} for character {OwnerId}", quest.TemplateId, Owner.Id);
+            return false;
+        }
+    }
+
     public bool HasQuestCompleted(uint questId)
     {
         var questBlockId = (ushort)(questId / 64);
