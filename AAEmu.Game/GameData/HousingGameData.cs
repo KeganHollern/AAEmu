@@ -317,6 +317,9 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
         return 0;
     }
 
+    public bool IsDesignItem(uint designId, uint itemTemplateId) =>
+        _housingItemHousings.Any(item => item.Design_Id == designId && item.Item_Id == itemTemplateId);
+
     /// <summary>
     /// Get decoration design by Id
     /// </summary>
