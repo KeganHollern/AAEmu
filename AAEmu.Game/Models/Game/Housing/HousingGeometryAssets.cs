@@ -66,7 +66,22 @@ public sealed class HousingGeometryAssets
     }
 
     public CryWorldObjectIndex GetWorld(WorldTemplate world) => _worlds.GetOrAdd(world,
-        template => new Lazy<CryWorldObjectIndex>(() => CryWorldObjectIndex.Load(template, _openFile))).Value;
+        template => new Lazy<CryWorldObjectIndex>(() => CryWorldObjectIndex.Load(template, _openFile,
+            IncludesVegetationGeometry))).Value;
+
+    private bool IncludesVegetationGeometry(string path)
+    {
+        try
+        {
+            return Load(path).Parts.Any(part =>
+                CryGeometryLayerRules.GetVegetationUsage(part.PhysicsType) != CryGeometryQueryUsage.None);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or ArgumentException or OverflowException)
+        {
+            // Keep an unresolved model in the index so a query cannot silently pass through it.
+            return true;
+        }
+    }
 
     public CryTerrainGrid GetTerrain(WorldTemplate world, int x, int y)
     {

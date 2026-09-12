@@ -8,6 +8,7 @@ using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
 
@@ -17,15 +18,19 @@ public partial class HousingManager
 {
     internal HousingGeometryAssets GeometryAssets { get; set; } = new();
 
-    private HousingGeometryWorld GeometryWorld(WorldInstance world, Func<Doodad, bool> ignoreDoodad = null) =>
-        new(GeometryAssets, world, () => _houses.Values,
-            bounds => OtherGeometry(world, bounds), ignoreDoodad);
+    private HousingGeometryWorld GeometryWorld(WorldInstance world, Func<Doodad, bool> ignoreDoodad = null,
+        bool construction = false, bool includeStatic = true) =>
+        new(GeometryAssets, world, () => construction ? [] : _houses.Values,
+            bounds => OtherGeometry(world, bounds, construction), ignoreDoodad, includeStatic);
 
-    private IEnumerable<CryGeometryInstance> OtherGeometry(WorldInstance world, CryBounds bounds)
+    private IEnumerable<CryGeometryInstance> OtherGeometry(WorldInstance world, CryBounds bounds, bool construction)
     {
         foreach (var unit in world.GetAllUnits())
         {
             if (unit is House || unit.ModelId == 0)
+                continue;
+            // Native39181170 and39180530 ignore these logical unit types during construction.
+            if (construction && unit.BaseUnitType is BaseUnitType.Character or BaseUnitType.Slave or BaseUnitType.Mate)
                 continue;
             var actor = ModelManager.Instance.GetActorModel(unit.ModelId);
             CryGeometryAsset asset;
@@ -89,7 +94,7 @@ public partial class HousingManager
                     return new HousingDecorationRayResult(result, hit.IsTerrain);
                 }, scene.IntersectBox);
         }
-        catch (Exception exception) when (exception is IOException or NotSupportedException or ArgumentException or OverflowException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or ArgumentException or OverflowException)
         {
             Logger.Warn(exception, "Cannot resolve decoration geometry for house {0}, decoration {1}", house.Id, design.Id);
             return ErrorMessageType.HouseCannotDecorateSurface;
@@ -105,8 +110,10 @@ public partial class HousingManager
             if (template.CategoryId is 2 or 3 or 4 or 5 or 14)
                 return new(position, yaw, ErrorMessageType.HouseCannotLocateNotDominatedZone);
             var asset = GeometryAssets.LoadHouse(template);
-            var scene = GeometryWorld(player.ParentWorld, doodad =>
-                CommonFarmGameData.Instance.IsRemovedByHouse(doodad.Template.GroupId));
+            bool IgnoreDoodad(Doodad doodad) => doodad.ParentObjId != 0 ||
+                CommonFarmGameData.Instance.IsRemovedByHouse(doodad.Template.GroupId) ||
+                GetHouseAtLocation(player.ParentWorld, doodad.Transform.World.Position) != null;
+            var scene = GeometryWorld(player.ParentWorld, IgnoreDoodad, construction: true);
             var (_, _, encodedYaw) = PositionAndRotation.ToRollPitchYawSBytes(new Vector3(0, 0, yaw));
             yaw = PositionAndRotation.FromRollPitchYawSBytes(0, 0, encodedYaw).Z;
             var pose = HousingConstructionGeometry.Resolve(template, position, yaw, player.Transform.World.Position,
@@ -151,12 +158,15 @@ public partial class HousingManager
             if (template.GardenRadius > 0)
             {
                 var garden = HousingGeometryAssets.GardenBounds(template, asset.Bounds, transform);
-                if (scene.IntersectBox(new CryBox(garden.Center, garden.HalfSize, Matrix4x4.Identity)) != CryIntersection.Clear)
+                // Native39180530 checks logical units and unbound doodads in the garden cells.
+                // Static world geometry participates in the model OBB query above, not this cell query.
+                var gardenScene = GeometryWorld(player.ParentWorld, IgnoreDoodad, construction: true, includeStatic: false);
+                if (gardenScene.IntersectBox(new CryBox(garden.Center, garden.HalfSize, Matrix4x4.Identity)) != CryIntersection.Clear)
                     return pose with { Error = ErrorMessageType.HouseCannotLocateOverlapUnit };
             }
             return pose;
         }
-        catch (Exception exception) when (exception is IOException or NotSupportedException or ArgumentException or OverflowException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or ArgumentException or OverflowException)
         {
             Logger.Warn(exception, "Cannot resolve construction geometry for design {0}", template.Id);
             return new(position, yaw, ErrorMessageType.HouseCannotLocateInvalidArea);

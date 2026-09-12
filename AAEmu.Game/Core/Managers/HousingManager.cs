@@ -1742,7 +1742,7 @@ public partial class HousingManager(
                         position.Z >= bounds.Min.Z && position.Z < bounds.Max.Z)
                         return house;
                 }
-                catch (Exception exception) when (exception is IOException or NotSupportedException or ArgumentException or OverflowException)
+                catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or ArgumentException or OverflowException)
                 {
                     Logger.Warn(exception, "Cannot resolve garden geometry for house {0}", house.Id);
                 }

@@ -85,3 +85,26 @@ The candidate reserves its alley. The neighboring plot uses its full footprint.
 A plot and a house without a garden use the full separating-axis box test from `39332c10`.
 Two houses without gardens use the oriented-box test from `390318f0`.
 These box tests count touching faces as overlap.
+
+## Construction collision exceptions
+
+`39335860` checks neighboring plots before the physical queries.
+It then excludes the house entities, bound objects, removable crop groups,
+and doodads inside the neighboring gardens from those queries.
+
+The model query `39181170` uses entity mask `0x1f` and part mask `0xffb`.
+It ignores logical unit types 0, 2, and 5: Character, Slave, and Mate.
+It also ignores a doodad with a parent unit. The parent field is at offset
+`0x88`. `3983b7d0` writes it from the parent identifier in the created-doodad
+record. A static world object without a logical identifier blocks the model.
+
+The garden callback `393357f0` calls `39180530` with its logical-object flag
+set. It uses the same unit and parent exceptions. It skips static objects
+without a logical identifier. Thus a tree beside the model can stand inside
+the garden, while an unbound world doodad blocks construction there.
+The server uses separate model and garden queries for these rules.
+
+The server reads the client files without a renderer. It keeps the current
+server ocean level and uses the authored physical water volumes.
+The client can add renderer-dependent waves through `300e3250`.
+That function returns 0 when no renderer exists.
