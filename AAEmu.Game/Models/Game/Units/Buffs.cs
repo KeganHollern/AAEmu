@@ -915,6 +915,9 @@ public partial class Buffs : IBuffs
     }
 
     #region Buff Persistence
+    private static bool IsPaidBuff(uint id) => SkillManager.Instance.IsPaidSkillBuff(id) ||
+        PriestBuffGameData.Instance.Offers.Any(offer => offer.BuffId == id && offer.CostPerLevel > 0);
+
     private static bool IsBotReportBuff(uint id) => id is (uint)BuffConstants.SuspectedUser or
         (uint)BuffConstants.TransformingIntoPrimeSuspect or (uint)BuffConstants.PrimeSuspect;
 
@@ -967,12 +970,12 @@ public partial class Buffs : IBuffs
             // Authored paid cooldowns can be Bad buffs, such as the four-hour language cooldown.
             // Keep ordinary combat debuffs excluded. The authored save rule and duration still apply.
             if (buff.Template.Kind == BuffKind.Bad && !IsBotReportBuff(buff.Template.Id) &&
-                !SkillManager.Instance.IsPaidSkillBuff(buff.Template.Id))
+                !IsPaidBuff(buff.Template.Id))
                 return false;
 
             // A restored paid cooldown can have less than one minute left.
             // Use its authored duration to distinguish it from a short combat buff.
-            var paidLongBuff = SkillManager.Instance.IsPaidSkillBuff(buff.Template.Id) &&
+            var paidLongBuff = IsPaidBuff(buff.Template.Id) &&
                 buff.Template.GetDuration(buff.AbLevel) >= MinimumBuffDurationToSave;
             if (buff.Duration < MinimumBuffDurationToSave && !IsBotReportBuff(buff.Template.Id) && !paidLongBuff)
                 return false;
@@ -1125,7 +1128,7 @@ public partial class Buffs : IBuffs
                     }
 
                     if (buffTemplate.SaveRuleId != BuffSaveRuleType.DontSave &&
-                        SkillManager.Instance.IsPaidSkillBuff(row.buffId))
+                        IsPaidBuff(row.buffId))
                         retainedBuffIds.Add(row.buffId);
 
                     // The permanent report marker has no countdown.
