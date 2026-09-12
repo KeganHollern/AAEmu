@@ -10,7 +10,11 @@ Trade checks both participants' block lists and configured minimum levels. It ch
 
 ## Block lists
 
-A character can add or remove a known offline character by name. Duplicate entries and self-blocks fail. The recipient's block list controls whispers, mail, team invitations, family invitations, and expedition invitations. Pending team and family invitations also check the current block list.
+A character can add or remove a known offline character by name. Duplicate entries and self-blocks fail. The recipient's block list controls whispers, mail, team invitations, family invitations, and expedition invitations. Pending team, family, and expedition invitations also check the current block list.
+
+Expedition replies need a current invitation for the same recipient object, inviter, and guild. Each recipient has at most 1 pending invitation. The server removes it after a reply, disconnect, or 1 minute. Acceptance checks the inviter's current guild and permission again. A forged reply cannot create membership.
+
+The exact r208022 native handler `0x391d2820` passes the received inviter and guild fields to dialog constructor `0x392f88b0`. Reply callback `0x392f8970` supplies the guild ID, inviter ID, and reply flag to packet setter `0x397ab470`. Serializer `0x397b9190` writes those fields as 2 u32 values and 1 Boolean. This agrees with the current AAEmu packet reader. The x2game source and dump hashes are in [the UCC evidence record](UCC-Purchase-519.md).
 
 Online mail recipients use their current block list before the next save. Offline recipients use the persisted list. A deleted recipient fails even when the name cache still contains that character. Block deletion acknowledgements preserve later changes that occur during a save.
 
@@ -24,7 +28,7 @@ The legacy attachment path also checks wallet credit success. An overflow keeps 
 
 ## Tests
 
-The focused unit suite covers auction ownership, bound item errors, trade state, blocks, mail eligibility, level limits, and wallet overflow. The mail packet fixture uses a registered mailbox in the character's current world.
+The focused unit suite covers auction ownership, bound item errors, trade state, blocks, mail eligibility, level limits, and wallet overflow. The block-list suite has 17 cases. These include forged replies, later blocks, revoked permission, character replacement, declines, and invitation expiry. The mail packet fixture uses a registered mailbox in the character's current world.
 
 The disposable MySQL suite uses the production mail transition and save code. It covers a partial return failure, process-state reload, retry, duplicate completion, a cancelled deletion request, deleted recipient rejection, and offline block persistence. It checks exact mail counts, item IDs, owners, and money amounts.
 
