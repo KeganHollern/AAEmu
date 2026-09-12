@@ -39,6 +39,8 @@ public class ReportBot : SpecialEffectAction
             var targetPlayer = caster.ParentWorld.GetCharacterByObjId(targetObj.ObjId);
             if (targetPlayer == null)
             {
+                skill.Cancelled = true;
+                SkillLaborBatch.Current?.Fail();
                 Logger.Debug($"Special effects: ReportBot target is not a player, ObjId: {targetObj.ObjId}");
                 return;
             }
@@ -47,14 +49,22 @@ public class ReportBot : SpecialEffectAction
 
             if (!CrimeManager.Instance.ReportBot(targetPlayer, casterPlayer, msg))
             {
+                skill.Cancelled = true;
+                SkillLaborBatch.Current?.Fail();
                 Logger.Warn($"Special effects: ReportBot target {targetPlayer.Name} failed to get reported by {casterPlayer.Name} (possible multiple reports)");
                 return;
             }
             // Broadcast result
-            casterPlayer.BroadcastPacket(new SCBotSuspectReportedPacket(casterPlayer.Name, targetPlayer.Name), true);
+            void Notify() => casterPlayer.BroadcastPacket(new SCBotSuspectReportedPacket(casterPlayer.Name, targetPlayer.Name), true);
+            if (SkillLaborBatch.Current is { } batch)
+                batch.AfterCommit(Notify);
+            else
+                Notify();
         }
         else
         {
+            skill.Cancelled = true;
+            SkillLaborBatch.Current?.Fail();
             Logger.Debug($"Special effects: ReportBot target is not a Unit, ObjId: {targetObj?.ObjId ?? 0}");
         }
     }

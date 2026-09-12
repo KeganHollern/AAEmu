@@ -800,3 +800,12 @@ CREATE TABLE IF NOT EXISTS `dominion_states` (
   `house_tax_balance` bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (`zone_group_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- Retain distinct paid bot reports across restart. No historical reports are inferred.
+-- Character saves use REPLACE, so these stable IDs must not use cascading foreign keys.
+CREATE TABLE IF NOT EXISTS `bot_reports` (
+  `reported_id` int unsigned NOT NULL,
+  `reporter_id` int unsigned NOT NULL,
+  PRIMARY KEY (`reported_id`, `reporter_id`),
+  KEY `idx_bot_reports_reporter` (`reporter_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;

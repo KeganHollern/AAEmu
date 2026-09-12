@@ -915,6 +915,12 @@ public partial class Buffs : IBuffs
     }
 
     #region Buff Persistence
+    private static bool IsBotReportBuff(uint id) => id is (uint)BuffConstants.SuspectedUser or
+        (uint)BuffConstants.TransformingIntoPrimeSuspect or (uint)BuffConstants.PrimeSuspect;
+
+    private static bool IsPermanentBotReportBuff(uint id, int duration) =>
+        id == (uint)BuffConstants.SuspectedUser && duration == 0;
+
     /// <summary>
     /// Determines whether a buff should be saved to the database on logout.
     /// </summary>
@@ -930,6 +936,10 @@ public partial class Buffs : IBuffs
         // Passive buffs are restored via the skill system
         if (buff.Passive)
             return false;
+
+        // The authored report marker is permanent. Other permanent buffs come from race/template data.
+        if (IsPermanentBotReportBuff(buff.Template.Id, buff.Duration))
+            return buff.State != EffectState.Finishing && buff.State != EffectState.Finished;
 
         // Permanent buffs (Duration=0) are race/template buffs
         if (buff.Duration <= 0)
@@ -956,11 +966,12 @@ public partial class Buffs : IBuffs
         {
             // Authored paid cooldowns can be Bad buffs, such as the four-hour language cooldown.
             // Keep ordinary combat debuffs excluded. The authored save rule and duration still apply.
-            if (buff.Template.Kind == BuffKind.Bad && !SkillManager.Instance.IsPaidSkillBuff(buff.Template.Id))
+            if (buff.Template.Kind == BuffKind.Bad && !IsBotReportBuff(buff.Template.Id) &&
+                !SkillManager.Instance.IsPaidSkillBuff(buff.Template.Id))
                 return false;
 
             // Very short buffs (< 60s) are combat abilities, not consumables
-            if (buff.Duration < MinimumBuffDurationToSave)
+            if (buff.Duration < MinimumBuffDurationToSave && !IsBotReportBuff(buff.Template.Id))
                 return false;
 
             return true;
@@ -1011,8 +1022,9 @@ public partial class Buffs : IBuffs
                 if (!ShouldPersistBuff(buff) || (changedBuffIds != null && !changedBuffIds.Contains(buff.Template.Id)))
                     continue;
 
-                var timeLeft = (int)buff.GetTimeLeft();
-                if (timeLeft <= 0)
+                var permanent = IsPermanentBotReportBuff(buff.Template.Id, buff.Duration);
+                var timeLeft = permanent ? 0 : (int)buff.GetTimeLeft();
+                if (timeLeft <= 0 && !permanent)
                     continue;
 
                 using var cmd = connection.CreateCommand();
@@ -1103,9 +1115,12 @@ public partial class Buffs : IBuffs
                         continue;
                     }
 
-                    // Calculate remaining time
+                    // The permanent report marker has no countdown.
+                    var permanent = IsPermanentBotReportBuff(row.buffId, row.duration) && buffTemplate.Duration == 0;
                     int remainingMs;
-                    if (row.realTime)
+                    if (permanent)
+                        remainingMs = 0;
+                    else if (row.realTime)
                     {
                         // RealTime: subtract offline time
                         var offlineMs = (int)(DateTime.UtcNow - row.savedAt).TotalMilliseconds;
@@ -1123,7 +1138,7 @@ public partial class Buffs : IBuffs
                         remainingMs = row.timeLeft;
                     }
 
-                    if (remainingMs <= 0)
+                    if (remainingMs <= 0 && !permanent)
                         continue;
 
                     // Check if buff is already active (e.g. from passive skills)
@@ -1150,12 +1165,17 @@ public partial class Buffs : IBuffs
                 }
             }
 
-            // Delete saved buffs — they are now active again
+            // Keep paid report statuses durable if the process stops before the next character save.
+            // Appeal and the next character checkpoint replace these rows in their own transaction.
             using (var deleteCmd = connection.CreateCommand())
             {
                 deleteCmd.CommandText =
-                    "DELETE FROM `character_active_buffs` WHERE `character_id` = @characterId";
+                    "DELETE FROM `character_active_buffs` WHERE `character_id` = @characterId " +
+                    "AND `buff_id` NOT IN (@suspected, @transforming, @prime)";
                 deleteCmd.Parameters.AddWithValue("@characterId", character.Id);
+                deleteCmd.Parameters.AddWithValue("@suspected", (uint)BuffConstants.SuspectedUser);
+                deleteCmd.Parameters.AddWithValue("@transforming", (uint)BuffConstants.TransformingIntoPrimeSuspect);
+                deleteCmd.Parameters.AddWithValue("@prime", (uint)BuffConstants.PrimeSuspect);
                 deleteCmd.ExecuteNonQuery();
             }
 

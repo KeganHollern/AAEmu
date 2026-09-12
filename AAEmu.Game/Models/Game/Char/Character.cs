@@ -2938,7 +2938,7 @@ public partial class Character : Unit, ICharacter
                     "`hostile_faction_kills`,`pvp_honor`,`died_in_pvp`,`died_in_pvp_war_zone`," +
                     "`delete_request_time`,`transfer_request_time`,`delete_time`,`auto_use_aapoint`,`prev_point`,`point`,`gift`," +
                     "`num_inv_slot`,`num_bank_slot`,`expanded_expert`,`slots`,`created_at`,`updated_at`,`return_district`,`online_time`," +
-                    "`arrest_count`, `accept_guilty_count`, `accept_trial_count`, `not_guilty_count`, `guilty_count`, `evidence_reported_count`, `bot_reported_count`," +
+                    "`arrest_count`, `accept_guilty_count`, `accept_trial_count`, `not_guilty_count`, `guilty_count`, `evidence_reported_count`, `bot_reported_count`, `reported_as_bot_count`," +
                     "`offline_guilty_time`,`offline_guilty_region`" +
                     ") VALUES (" +
                     "@id,@account_id,@name,@race,@gender,@unit_model_params,@level,@experience,@recoverable_exp," +
@@ -2949,7 +2949,7 @@ public partial class Character : Unit, ICharacter
                     "@hostile_faction_kills,@pvp_honor,@died_in_pvp,@died_in_pvp_war_zone," +
                     "@delete_request_time,@transfer_request_time,@delete_time,@auto_use_aapoint,@prev_point,@point,@gift," +
                     "@num_inv_slot,@num_bank_slot,@expanded_expert,@slots,@created_at,@updated_at,@return_district,@online_time," +
-                    "@arrest_count, @accept_guilty_count, @accept_trial_count, @not_guilty_count, @guilty_count, @evidence_reported_count, @bot_reported_count," +
+                    "@arrest_count, @accept_guilty_count, @accept_trial_count, @not_guilty_count, @guilty_count, @evidence_reported_count, @bot_reported_count, @reported_as_bot_count," +
                     "@offline_guilty_time,@offline_guilty_region" +
                     ")";
 

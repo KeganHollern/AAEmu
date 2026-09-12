@@ -31,9 +31,26 @@ public class ReportBotExpired : SpecialEffectAction
             return;
         }
 
-        if (CrimeManager.Instance.ReportBotExpired(player))
+        bool Apply() => CrimeManager.Instance.ReportBotExpired(player);
+        var result = false;
+        // The authored free appeal also needs the same durable buff/report removal.
+        if (SkillLaborBatch.Current == null)
+            result = SkillLaborBatch.Run(player, skill, false, () =>
+            {
+                result = Apply();
+                if (!result)
+                    SkillLaborBatch.Current.Fail();
+            });
+        else
+            result = Apply();
+        if (result)
         {
             Logger.Info($"Special effects: ReportBotExpired, {player.Name} ({player.Id}) removed their suspect buffs");
+        }
+        else
+        {
+            skill.Cancelled = true;
+            SkillLaborBatch.Current?.Fail();
         }
     }
 }

@@ -36,6 +36,7 @@
     <Content Include="..\SQL\updates\2026-09-12_aaemu_game_specialty_demand.sql" Link="SQL\updates\2026-09-12_aaemu_game_specialty_demand.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\updates\2026-09-12_aaemu_game_house_tax_receipts.sql" Link="SQL\updates\2026-09-12_aaemu_game_house_tax_receipts.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\updates\2026-09-12_aaemu_game_dominion_states.sql" Link="SQL\updates\2026-09-12_aaemu_game_dominion_states.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\SQL\updates\2026-09-12_aaemu_game_bot_reports.sql" Link="SQL\updates\2026-09-12_aaemu_game_bot_reports.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\aaemu_game.sql" Link="SQL\aaemu_game.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\updates\2026-09-01_aaemu_game_auction_mail_claims.sql" Link="SQL\updates\2026-09-01_aaemu_game_auction_mail_claims.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\updates\2026-09-01_aaemu_game_account_daily_login_claims.sql" Link="SQL\updates\2026-09-01_aaemu_game_account_daily_login_claims.sql" CopyToOutputDirectory="PreserveNewest" />
