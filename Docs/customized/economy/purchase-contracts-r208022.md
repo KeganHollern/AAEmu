@@ -88,3 +88,15 @@ The resurrection packet uses the offer location, not a temple location.
 5. Check that premium purchases are absent from the client service menu.
 
 These focused client checks need the published server. Native research and automated tests do not replace them.
+
+## Doodad sale-limit field review
+
+The later comment on issue 311 identifies 28 zero-coin purchase rows with limited-sale output fields.
+Purchase IDs 493 through 520 grant item IDs 31740 through 31767.
+All 28 rows have count 1, limited_sale_count 1, and one_time_sale false.
+The native purchase loader reads only coin count, coin item, output count, currency, and output item.
+The gold dialog and confirmation use the item price at descriptor offset 0x84 and the authored output count.
+The sender at FUN_393b8040 reads no item descriptor or sale-limit field.
+No item-limit check appears in the retained dispatch, dialog, confirmation, or request sender.
+These fields provide no confirmed account-limit rule for this doodad route.
+This result does not establish a general retail merchant policy or prove the absence of retail server checks.

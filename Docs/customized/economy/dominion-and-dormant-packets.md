@@ -59,7 +59,9 @@ The unclaimed record sends 0 for these fields. No active claim depends on an inf
 
 ## Limits and next work
 
-Issue 143 permits voting and elections as later work.
+The original issue 143 body permits voting and elections as later work.
+Its later owner comment asks for a complete Dominion and siege lifecycle, including declarations and ownership changes.
+This economy release does not complete that wider scope, so issue 143 remains open.
 The minimum state now includes authored territories, login data, persistent zero ownership, and a durable balance store.
 It does not create a working castle economy or award ownership.
 
