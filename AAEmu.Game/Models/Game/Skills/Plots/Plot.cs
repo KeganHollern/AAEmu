@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Core.Packets.G2C;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Skills.Plots.Tree;
@@ -30,13 +31,17 @@ public class Plot
         if (skill.Template.PlotOnly && !state.CancellationRequested())
             skill.RecordUseSkillAchievement(caster);
 
-        if (casterCaster is SkillItem skillItem && caster is Character player && skillItem.SkillSourceItem != null)
+        if (casterCaster is SkillItem skillItem && caster is Character player)
         {
-            // Trigger item use if not cancelled
-            if (!state.CancellationRequested())
-                player.ItemUse(skillItem.SkillSourceItem);
-            // Free the item from lock
-            player.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.ItemUnlock, new ItemUpdate(skillItem.SkillSourceItem), []));
+            lock (SaveManager.PersistenceSyncRoot)
+            {
+                var item = player.Inventory.GetItemById(skillItem.ItemId);
+                if (item == null)
+                    return;
+                if (!state.CancellationRequested())
+                    player.ItemUse(item);
+                player.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.ItemUnlock, new ItemUpdate(item), []));
+            }
         }
     }
 }

@@ -1,5 +1,7 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Mails;
 
@@ -11,6 +13,12 @@ public class CSTakeAllAttachmentItemPacket() : GamePacket(CSOffsets.CSTakeAllAtt
     {
         var mailId = stream.ReadInt64();
         Logger.Debug($"CSTakeAllAttachmentItemPacket {mailId} -> {Connection.ActiveChar.Name}");
+        if (!ServiceInteraction.CanUseMailbox(Connection.ActiveChar))
+        {
+            Connection.ActiveChar.SendErrorMessage(ErrorMessageType.MailFailMailboxNotFound);
+            return;
+        }
+
         if (Connection.ActiveChar.Mails.GetAttached(mailId, true, true, true))
         {
             Connection.ActiveChar.SendPacket(new SCMailStatusUpdatedPacket(false, mailId, MailStatus.Read));

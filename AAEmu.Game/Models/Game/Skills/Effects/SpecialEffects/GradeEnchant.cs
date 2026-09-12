@@ -37,7 +37,13 @@ public class GradeEnchant : SpecialEffectAction
         int value3,
         int value4)
     {
-        if (caster is Character) { Logger.Debug("Special effects: GradeEnchant value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4); }
+        lock (SaveManager.PersistenceSyncRoot)
+            ExecuteLocked(caster, casterObj, targetObj, skill, skillObject, value1, value3);
+    }
+
+    private static void ExecuteLocked(BaseUnit caster, SkillCaster casterObj, SkillCastTarget targetObj,
+        Skill skill, SkillObject skillObject, int value1, int value3)
+    {
 
         // Get Player
         if (caster is not Character character || character is null)
@@ -82,7 +88,7 @@ public class GradeEnchant : SpecialEffectAction
         var tasks = new List<ItemTask>();
 
         var cost = GoldCost(gradeTemplate, item, value3);
-        if (cost == -1)
+        if (cost < 0)
         {
             // No gold on template, invalid ?
             return;
@@ -112,6 +118,9 @@ public class GradeEnchant : SpecialEffectAction
             }
 
             charmInfo = ItemManager.Instance.GetItemGradEnchantingSupportByItemId(charmItem.TemplateId);
+            if (charmInfo == null || charmItem.SlotType != SlotType.Inventory ||
+                TradeReservation.GetReservedCount(charmItem) > 0)
+                return;
             if (charmInfo.RequireGradeMin != -1 && item.Grade < charmInfo.RequireGradeMin)
             {
                 character.SendErrorMessage(ErrorMessageType.NotEnoughRequiredItem);
@@ -127,7 +136,11 @@ public class GradeEnchant : SpecialEffectAction
             // tasksRemove.Add(InventoryHelper.GetTaskAndRemoveItem(character, charmItem, 1));
         }
 
-        // All seems to be in order, roll item, consume items and send the results
+        if (TradeReservation.GetReservedCount(item) > 0 ||
+            !character.SubtractMoney(SlotType.Inventory, cost, ItemTaskType.GradeEnchant))
+            return;
+
+        // Payment succeeded while inventory movement and saves are excluded.
         var result = RollRegrade(gradeTemplate, item, isLucky, useCharm, charmInfo);
         if (result == GradeEnchantResult.Break)
         {
@@ -141,7 +154,6 @@ public class GradeEnchant : SpecialEffectAction
         }
 
         // Consume
-        character.SubtractMoney(SlotType.Inventory, cost);
         // TODO: Handled by skill already, do more tests
         // character.Inventory.PlayerInventory.ConsumeItem(ItemTaskType.GradeEnchant, scroll.ItemTemplateId, 1, character.Inventory.GetItemById(scroll.ItemId));
         if (useCharm)

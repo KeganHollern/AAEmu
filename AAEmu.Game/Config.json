@@ -1,4 +1,4 @@
-{
+﻿{
     "Id": 1,
     "AdditionalesId": [],
     "SecretKey": "test",
@@ -37,6 +37,18 @@
     "HeightMapsEnable": true,
     "DebugInfo": true,
 	"DefaultLanguage" : "en_us",
+    "LevelRestrictions": {
+        "AuctionSearch": 10,
+        "AuctionBid": 10,
+        "AuctionPost": 10,
+        "Trade": 10,
+        "Mail": 10,
+        "Shout": 15,
+        "TradeChat": 15,
+        "GroupFind": 15,
+        "Region": 15,
+        "Ally": 15
+    },
     "TrionWeb": {
         "Activate": true,
         "AuthUrl": "http://localhost/aaemu/login",

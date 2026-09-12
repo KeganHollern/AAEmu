@@ -294,14 +294,24 @@ public class Inventory
     private bool SplitOrMoveItemLocked(ItemTaskType taskType, ulong fromItemId, SlotType fromType, byte fromSlot,
         ulong toItemId, SlotType toType, byte toSlot, int count)
     {
-        var fromItem = ItemManager.Instance.GetItemByItemId(fromItemId);
+        if (fromType is not (SlotType.Inventory or SlotType.Equipment or SlotType.Bank) ||
+            toType is not (SlotType.Inventory or SlotType.Equipment or SlotType.Bank))
+            return false;
+
+        if ((fromType == SlotType.Bank || toType == SlotType.Bank) && !ServiceInteraction.CanUseBank(Owner as Character))
+        {
+            Owner.SendErrorMessage(ErrorMessageType.NoInteractionAvailable);
+            return false;
+        }
+
+        var fromItem = GetItemById(fromItemId);
         if (fromItem == null && fromItemId != 0)
         {
             Logger.Error($"SplitOrMoveItem - ItemId {fromItemId} no longer exists, possibly a phantom item.");
             return false;
         }
 
-        var toItem = ItemManager.Instance.GetItemByItemId(toItemId);
+        var toItem = GetItemById(toItemId);
         if (toItem == null && toItemId != 0)
         {
             Logger.Error($"SplitOrMoveItem - ItemId {toItemId} no longer exists, possibly a phantom item.");
@@ -771,13 +781,17 @@ public class Inventory
     /// <returns></returns>
     public Item GetItemById(ulong id)
     {
+        if (id == 0)
+            return null;
         foreach (var c in _itemContainers)
         {
-            if (c.Key == SlotType.Equipment || c.Key == SlotType.Inventory || c.Key == SlotType.Bank)
+            if ((c.Key == SlotType.Equipment || c.Key == SlotType.Inventory || c.Key == SlotType.Bank) &&
+                c.Value.OwnerId == Owner.Id && ReferenceEquals(c.Value.Owner, Owner))
             {
                 foreach (var i in c.Value.Items)
                 {
-                    if (i != null && i.Id == id)
+                    if (i != null && i.Id == id && i.OwnerId == Owner.Id && i.SlotType == c.Key &&
+                        ReferenceEquals(i._holdingContainer, c.Value))
                         return i;
                 }
             }
@@ -892,6 +906,8 @@ public class Inventory
 
     private void ExpandSlotLocked(SlotType slotType)
     {
+        if (slotType is not (SlotType.Inventory or SlotType.Bank))
+            return;
         var isBank = slotType == SlotType.Bank;
         var step = ((isBank ? Owner.NumBankSlots : Owner.NumInventorySlots) - 50) / 10;
         var expands = CharacterManager.Instance.GetExpands(step);

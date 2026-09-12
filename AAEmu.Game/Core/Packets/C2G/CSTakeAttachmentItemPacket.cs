@@ -1,5 +1,7 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Char;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -24,6 +26,12 @@ public class CSTakeAttachmentItemPacket() : GamePacket(CSOffsets.CSTakeAttachmen
 
         var slotType = stream.ReadByte();
         var slot = stream.ReadByte();
+
+        if (!ServiceInteraction.CanUseMailbox(Connection.ActiveChar))
+        {
+            Connection.ActiveChar.SendErrorMessage(ErrorMessageType.MailFailMailboxNotFound);
+            return;
+        }
 
         Connection.ActiveChar.Mails.GetAttached(mailId, false, true, false, id);
     }

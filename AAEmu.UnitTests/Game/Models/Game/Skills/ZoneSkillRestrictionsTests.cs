@@ -642,6 +642,9 @@ public sealed class ZoneSkillRestrictionsTests
         SetField(itemManager, "_allItems", new Dictionary<ulong, Item> { [item.Id] = item });
         SetInstance(itemManager);
         character.Inventory = new Inventory(character);
+        item.OwnerId = character.Id;
+        item.SlotType = SlotType.Inventory;
+        item._holdingContainer = character.Inventory.Bag;
         character.Inventory.Bag.Items.Add(item);
         typeof(GameObject).GetField("_parentWorld", BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(character, _caster.ParentWorld);

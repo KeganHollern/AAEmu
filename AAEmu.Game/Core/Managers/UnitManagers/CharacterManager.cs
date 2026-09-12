@@ -66,7 +66,7 @@ public class CharacterManager(
 
     public List<Expand> GetExpands(int step)
     {
-        return _expands[step];
+        return _expands.GetValueOrDefault(step);
     }
 
     public ActabilityTemplate GetActability(uint id)

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Data;
 using System.Drawing;
 
@@ -1543,16 +1543,31 @@ public partial class Character : Unit, ICharacter
         }
     }
 
-    public bool ChangeMoney(SlotType moneyLocation, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney) => ChangeMoney(SlotType.None, moneyLocation, amount, itemTaskType);
+    public bool ChangeMoney(SlotType moneyLocation, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney)
+    {
+        if (amount == int.MinValue)
+            return false;
+        return amount < 0
+            ? SubtractMoney(moneyLocation, -amount, itemTaskType)
+            : AddMoney(moneyLocation, amount, itemTaskType);
+    }
 
     public bool ChangeMoney(SlotType typeFrom, SlotType typeTo, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney)
+    {
+        if (amount < 0 || typeFrom == typeTo ||
+            (typeFrom != SlotType.None && typeTo != SlotType.None && amount == 0))
+            return false;
+        return TryMoveMoney(typeFrom, typeTo, amount, itemTaskType);
+    }
+
+    private bool TryMoveMoney(SlotType typeFrom, SlotType typeTo, int amount, ItemTaskType itemTaskType)
     {
         lock (StorePurchaseSyncRoot)
         {
             if (typeFrom is not (SlotType.None or SlotType.Inventory or SlotType.Bank) ||
                 typeTo is not (SlotType.None or SlotType.Inventory or SlotType.Bank) ||
                 (typeFrom == SlotType.None && typeTo == SlotType.None) ||
-                (typeFrom != SlotType.None && amount < 0))
+                amount < 0)
                 return false;
 
             var money = Money;
@@ -1636,14 +1651,14 @@ public partial class Character : Unit, ICharacter
     {
         if (amount < 0)
             return false;
-        return ChangeMoney(SlotType.None, moneyLocation, amount, itemTaskType);
+        return TryMoveMoney(SlotType.None, moneyLocation, amount, itemTaskType);
     }
 
     public bool SubtractMoney(SlotType moneyLocation, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney)
     {
         if (amount < 0)
             return false;
-        return ChangeMoney(moneyLocation, SlotType.None, amount, itemTaskType);
+        return TryMoveMoney(moneyLocation, SlotType.None, amount, itemTaskType);
     }
 
     public void ChangeLabor(short change, int actabilityId)
@@ -2287,73 +2302,51 @@ public partial class Character : Unit, ICharacter
 
     public void DoRepair(List<Item> items)
     {
-        var tasks = new List<ItemTask>();
-        var repairCost = 0;
-
-        foreach (var item in items)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (item == null)
-                continue;
-
-            if (!Inventory.Bag.Items.Contains(item) && !Equipment.Items.Contains(item))
+            if (items == null || !ServiceInteraction.CanUseNpc(this, CurrentInteractionObject as Npc,
+                    template => template.Blacksmith))
             {
-                Logger.Warn($"Attempting to repair an item that isn't in your inventory or equipment, Item: {item.Id}");
-                continue;
+                SendErrorMessage(ErrorMessageType.NoInteractionAvailable);
+                return;
             }
 
-            if (!(item is EquipItem equipItem && item.Template is EquipItemTemplate))
+            var repairs = new List<EquipItem>();
+            long cost = 0;
+            foreach (var item in items.Distinct())
             {
-                Logger.Warn($"Attempting to repair a non-equipment item, Item: {item.Id}");
-                continue;
+                if (item == null || !ReferenceEquals(Inventory.GetItemById(item.Id), item) ||
+                    item.SlotType is not (SlotType.Inventory or SlotType.Equipment))
+                    return;
+                if (item is not EquipItem equipment || item.Template is not EquipItemTemplate ||
+                    equipment.Durability >= equipment.MaxDurability)
+                    continue;
+                var itemCost = equipment.RepairCost;
+                if (itemCost < 0 || TradeReservation.GetReservedCount(item) > 0)
+                    return;
+                cost += itemCost;
+                if (cost > int.MaxValue)
+                    return;
+                repairs.Add(equipment);
             }
 
-            if (equipItem.Durability >= equipItem.MaxDurability)
+            using var mutation = new InventoryMutation(ItemTaskType.Repair);
+            if (!mutation.TryChangeMoney(this, -(int)cost))
             {
-                Logger.Warn($"Attempting to repair an item that has max durability, Item: {item.Id}");
-                continue;
+                SendErrorMessage(ErrorMessageType.NotEnoughMoney);
+                return;
             }
-
-            if (CurrentInteractionObject is not Npc npc)
-                continue;
-
-            if (!npc.Template.Blacksmith)
+            foreach (var item in repairs)
             {
-                Logger.Warn($"Attempting to repair an item while not at a blacksmith, Item: {item.Id}, NPC: {npc}");
-                continue;
+                item.Durability = item.MaxDurability;
+                item.IsDirty = true;
             }
-
-            var dist = MathUtil.CalculateDistance(Transform.World.Position, npc.Transform.World.Position);
-
-            if (dist > 5f)
-            {
-                SendErrorMessage(ErrorMessageType.TooFarAway);
-                continue;
-            }
-
-            var currentRepairCost = equipItem.RepairCost;
-
-            if (Money < currentRepairCost)
-            {
-                Logger.Warn($"Not enough money to repair, Item: {item.Id}, Money: {Money}, RepairCost: {currentRepairCost}");
-                continue;
-            }
-
-            equipItem.Durability = equipItem.MaxDurability;
-            equipItem.IsDirty = true;
-            repairCost += currentRepairCost;
-
-            tasks.Add(new ItemUpdate(item));
+            mutation.Complete();
+            if (repairs.Count > 0)
+                Achievements?.Increment(CharRecordKind.ItemFix, 0, 0, (uint)repairs.Count);
+            SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.Repair,
+                repairs.Select(item => (ItemTask)new ItemUpdate(item)).ToList(), []));
         }
-
-        if (repairCost > 0)
-        {
-            ChangeMoney(SlotType.Inventory, -repairCost);
-        }
-
-        if (tasks.Count > 0)
-            Achievements?.Increment(CharRecordKind.ItemFix, 0, 0, (uint)tasks.Count);
-
-        Connection.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.Repair, tasks, []));
     }
 
     /// <summary>

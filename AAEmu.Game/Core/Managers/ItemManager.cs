@@ -2168,7 +2168,13 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
     public bool UnwrapItem(Character character, SlotType slotType, byte slot, ulong itemId)
     {
-        var item = GetItemByItemId(itemId);
+        lock (SaveManager.PersistenceSyncRoot)
+            return UnwrapOwnedItem(character, slotType, slot, itemId);
+    }
+
+    private bool UnwrapOwnedItem(Character character, SlotType slotType, byte slot, ulong itemId)
+    {
+        var item = character?.Inventory?.GetItemById(itemId);
         if (item == null)
             return false;
         if (item.SlotType != slotType || item.Slot != slot)

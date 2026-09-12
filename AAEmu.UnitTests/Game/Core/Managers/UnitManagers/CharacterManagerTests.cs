@@ -208,7 +208,7 @@ public class CharacterManagerTests
     }
 
     [Test]
-    public void GetExpands_StepDoesNotExist_ThrowsKeyNotFoundException()
+    public async Task GetExpands_StepDoesNotExist_ReturnsNull()
     {
         // Arrange
         var manager = CreateCharacterManager();
@@ -216,7 +216,7 @@ public class CharacterManagerTests
         SetPrivateField(manager, "_expands", expandsDict);
 
         // Act & Assert
-        Assert.Throws<KeyNotFoundException>(() => manager.GetExpands(999));
+        await Assert.That(manager.GetExpands(999)).IsNull();
     }
 
     #endregion
@@ -502,7 +502,7 @@ public class CharacterManagerTests
     }
 
     [Test]
-    public void GetExpands_ZeroStep_ThrowsKeyNotFoundException()
+    public async Task GetExpands_ZeroStep_ReturnsNull()
     {
         // Arrange
         var manager = CreateCharacterManager();
@@ -510,7 +510,7 @@ public class CharacterManagerTests
         SetPrivateField(manager, "_expands", expandsDict);
 
         // Act & Assert
-        Assert.Throws<KeyNotFoundException>(() => manager.GetExpands(0));
+        await Assert.That(manager.GetExpands(0)).IsNull();
     }
 
     [Test]

@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
@@ -878,9 +878,9 @@ public class Skill
         if (caster is Character player && casterCaster is SkillItem castItem)
         {
             var castItemTemplate = ItemManager.Instance.GetTemplate(castItem.ItemTemplateId);
-            if (castItemTemplate.UseSkillAsReagent)
+            if (castItemTemplate?.UseSkillAsReagent == true)
             {
-                var useItem = ItemManager.Instance.GetItemByItemId(castItem.ItemId);
+                var useItem = player.Inventory.GetItemById(castItem.ItemId);
                 if (useItem == null)
                 {
                     Logger.Warn("SkillItem does not exists {0} (templateId: {1})", castItem.ItemId, castItem.ItemTemplateId);
@@ -1102,10 +1102,10 @@ public class Skill
         // The execution lease excludes new trade offers through final material consumption.
         using (execution)
         {
-            if (ItemSocketing.IsSocketingSkill(this))
+            if (casterCaster is SkillItem || ItemSocketing.IsSocketingSkill(this))
             {
-                // Keep the final socket check, roll, item mutation and source consumption
-                // together with respect to inventory movement and persistence snapshots.
+                // Keep item-source validation, effects and consumption together with
+                // respect to inventory movement and persistence snapshots.
                 lock (SaveManager.PersistenceSyncRoot)
                     ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
             }
@@ -1126,6 +1126,13 @@ public class Skill
             return;
         }
         var player = caster as Character;
+        if (casterCaster is SkillItem itemSource &&
+            !SkillItemSource.CanUse(ZoneSkillRestrictions.GetSourceItem(caster, casterCaster), caster.ObjId,
+                itemSource, Template, targetCaster, skillObject))
+        {
+            Cancelled = true;
+            return;
+        }
         var possibleTargets = new List<BaseUnit>(); // TODO crutches
         // Get a list of all possible targets
         if (Template.TargetSiege && Template.TargetSelection == SkillTargetSelection.Source && caster is Slave)
@@ -1377,13 +1384,13 @@ public class Skill
             // Consume the item
             if (casterCaster is SkillItem castItem && player != null)
             {
-                var useItem = ItemManager.Instance.GetItemByItemId(castItem.ItemId);
+                var useItem = player.Inventory.GetItemById(castItem.ItemId);
                 if (lastAppliedEffect.ConsumeSourceItem)
                     consumedItems.Add((useItem, lastAppliedEffect.ConsumeItemCount));
                 else
                 {
                     var castItemTemplate = ItemManager.Instance.GetTemplate(castItem.ItemTemplateId);
-                    if (castItemTemplate.UseSkillAsReagent)
+                    if (castItemTemplate?.UseSkillAsReagent == true)
                         consumedItems.Add((useItem, lastAppliedEffect.ConsumeItemCount));
                 }
             }
@@ -1559,7 +1566,7 @@ public class Skill
             // but has none attached, consume 1 of the source item instead
             // 2026-07-15 - Added an additional check if the skill has no effects of it's own. This fixed the bug with Wrapped Sugerplum Fairy Music Box (27627) unwrapping
             // TODO: Check if this is intended behaviour, or if this is a bug in the compact.sqlite3 file
-            var item = ItemManager.Instance.GetItemByItemId(skillItem.ItemId);
+            var item = player.Inventory.GetItemById(skillItem.ItemId);
             if (item?.Template.UseSkillAsReagent == true && reagents.Count <= 0 && skillProducts.Count <= 0 && consumedItems.Count <= 0 && Template.Effects.Count == 0)
             {
                 consumedItems.Add((item, 1));

@@ -2,9 +2,9 @@
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Mails;
-using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -36,28 +36,7 @@ public class CSSendMailPacket() : GamePacket(CSOffsets.CSSendMailPacket, 1)
         }
 
         var doodadObjId = stream.ReadBc();
-        var doodad = Connection.ActiveChar.ParentWorld.GetDoodad(doodadObjId);
-
-        // Validate if we are near a MailBox
-        bool mailCheckOK;
-
-        if (doodad != null)
-        {
-            // Cannot rely on doodad GroupID being "Other - Mailboxes (6)", as some of the mailboxes belong to other groups (e.g. "Housing - Furniture").
-            // Instead, ensure the doodad in its current state supports opening of the mailbox.
-            if (doodad.CurrentFuncs?.Any(func => func.FuncType == "DoodadFuncNaviOpenMailbox") == true)
-            {
-                var dist = MathUtil.CalculateDistance(Connection.ActiveChar.Transform.World.Position, doodad.Transform.World.Position);
-                mailCheckOK = dist <= 5f; // 5m is kinda generous I guess
-            }
-            else
-            {
-                Logger.Warn($"SendMail by {Connection.ActiveChar.Name} invalid - doodad ObjId {doodad.Id} ({doodad.TemplateId}) does not have DoodadFuncNaviOpenMailbox func");
-                mailCheckOK = false;
-            }
-        }
-        else
-            mailCheckOK = false;
+        var mailCheckOK = ServiceInteraction.CanUseMailbox(Connection.ActiveChar, doodadObjId);
 
         if (mailCheckOK)
         {
