@@ -35,9 +35,6 @@ public partial class Character
     private int _consecutiveDeathCount;
     private DateTime _lastDeathTime = DateTime.MinValue;
 
-    public uint ResurrectHpPercent { get; set; } = 1;
-    public uint ResurrectMpPercent { get; set; } = 1;
-
     /// <summary>True if last death was a PvP kill in a War zone (Leech debuff on temple-revive).</summary>
     public bool DiedInPvpWarZone { get; set; }
     /// <summary>True if last death was a PvP kill (any zone — skips Weakened Body debuff on temple-revive).</summary>
@@ -64,9 +61,13 @@ public partial class Character
     {
         // Escalating respawn timer — runs BEFORE base.DoDie sends SCUnitDeathPacket
         ComputeDeathWaitTime();
+        ClearResurrectionOffer();
+        var priestResurrection = FindPriestResurrectionBuff(DateTime.UtcNow);
 
         lock (StorePurchaseSyncRoot)
         {
+            LastExpLoss = 0;
+            RecoverableExp = 0;
             LastDurabilityLoss = Level >= AppConfiguration.Instance.World.MinimumExpLossLevel
                 ? ItemManager.Instance.GetDeathDurabilityLossRatio()
                 : (byte)0;
@@ -85,7 +86,7 @@ public partial class Character
                 else
                 {
                     // Free resurrect below level 10
-                    SendPacket(new SCNotifyResurrectionPacket(new SkillCasterUnit(ObjId)));
+                    OfferResurrection(new SkillCasterUnit(ObjId), 1, 1);
                     SendDebugMessage($"Free resurrect below level {AppConfiguration.Instance.World.MinimumExpLossLevel}");
                 }
             }
@@ -107,6 +108,9 @@ public partial class Character
         }
 
         base.DoDie(killer, killReason);
+        if (priestResurrection != null)
+            OfferResurrection(new SkillCasterUnit(ObjId), priestResurrection.ResurrectionHealth,
+                priestResurrection.ResurrectionMana, priestResurrection.ResurrectionPercent, LastExpLoss);
         ParentWorld?.MateManager.RemoveActiveMatesOnOwnerDeath(this);
 
         if (LastDurabilityLoss > 0)

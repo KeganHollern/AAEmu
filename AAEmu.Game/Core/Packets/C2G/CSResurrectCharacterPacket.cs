@@ -1,4 +1,4 @@
-using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
@@ -20,7 +20,23 @@ public class CSResurrectCharacterPacket() : GamePacket(CSOffsets.CSResurrectChar
 
     public override void Read(PacketStream stream)
     {
-        var inPlace = stream.ReadBoolean();
+        if (stream.Count - stream.Pos != 1 || Connection.ActiveChar is not { } character)
+            return;
+        var flag = stream.ReadByte();
+        if (flag > 1)
+            return;
+        lock (character.StorePurchaseSyncRoot)
+            Resurrect(character, flag == 1);
+    }
+
+    private static void Resurrect(Character character, bool inPlace)
+    {
+        if (character.Hp > 0)
+            return;
+        Character.ResurrectionOffer offer = null;
+        if (inPlace && !character.TryTakeResurrectionOffer(out offer))
+            return;
+        character.ClearResurrectionOffer();
 
         Logger.Debug("ResurrectCharacter, InPlace: {0}", inPlace);
 
@@ -28,12 +44,19 @@ public class CSResurrectCharacterPacket() : GamePacket(CSOffsets.CSResurrectChar
 
         // поищем сначала "UnitId": 502, "Title": "Temple Priestess",
         // Inside dungeons or other instances, just respawn at the nearest Priestess
-        if (Connection.ActiveChar.Transform.InstanceId != WorldManager.DefaultInstanceId)
+        if (inPlace)
         {
-            var npcs = Connection.ActiveChar.ParentWorld.GetAllNpcs();
+            portal.X = offer.Position.X;
+            portal.Y = offer.Position.Y;
+            portal.Z = offer.Position.Z;
+            portal.ZRot = offer.Rotation;
+        }
+        else if (character.Transform.InstanceId != WorldManager.DefaultInstanceId)
+        {
+            var npcs = character.ParentWorld.GetAllNpcs();
             foreach (var npc in npcs.Where(npc => npc.TemplateId == 502))
             {
-                portal.WorldId = Connection.ActiveChar.Transform.WorldId;
+                portal.WorldId = character.Transform.WorldId;
                 portal.ZoneId = npc.Transform.ZoneId;
                 portal.X = npc.Transform.World.Position.X + Random.Shared.Next(1, 3);
                 portal.Y = npc.Transform.World.Position.Y + Random.Shared.Next(1, 3);
@@ -47,13 +70,13 @@ public class CSResurrectCharacterPacket() : GamePacket(CSOffsets.CSResurrectChar
         {
             // Check if the current zone is at War and if it has special respawn areas for factions
             var usePortalId = 0u;
-            var currentZone = ZoneManager.Instance.GetZoneByKey(Connection.ActiveChar.Transform.ZoneId);
+            var currentZone = ZoneManager.Instance.GetZoneByKey(character.Transform.ZoneId);
             if (currentZone != null)
             {
                 var conflictData = ZoneManager.Instance.GetConflicts().FirstOrDefault(c => c.ZoneGroupId == currentZone.GroupId);
                 if (conflictData?.CurrentZoneState == ZoneConflictType.War)
                 {
-                    switch (Connection.ActiveChar.Faction.MotherId)
+                    switch (character.Faction.MotherId)
                     {
                         case FactionsEnum.NuiaAlliance:
                             usePortalId = conflictData.NuiaReturnPointId;
@@ -74,30 +97,29 @@ public class CSResurrectCharacterPacket() : GamePacket(CSOffsets.CSResurrectChar
             // Find the closest return portal (in the world) for the player if none has been found yet
             if (usePortalId == 0 || portal == null)
             {
-                portal = PortalManager.Instance.GetClosestReturnPortal(Connection.ActiveChar);
+                portal = PortalManager.Instance.GetClosestReturnPortal(character);
             }
         }
 
         if (inPlace)
         {
-            Connection.ActiveChar.Hp = (int)(Connection.ActiveChar.MaxHp * (Connection.ActiveChar.ResurrectHpPercent / 100.0f));
-            Connection.ActiveChar.Mp = (int)(Connection.ActiveChar.MaxMp * (Connection.ActiveChar.ResurrectMpPercent / 100.0f));
-            Connection.ActiveChar.ResurrectHpPercent = 1;
-            Connection.ActiveChar.ResurrectMpPercent = 1;
-            Connection.ActiveChar.PostUpdateCurrentHp(Connection.ActiveChar, 0, Connection.ActiveChar.Hp, KillReason.Unknown);
+            character.Hp = offer.GetHealth(character.MaxHp);
+            character.Mp = offer.GetMana(character.MaxMp);
+            character.RestorePriestExperience(offer);
+            character.PostUpdateCurrentHp(character, 0, character.Hp, KillReason.Unknown);
         }
         else
         {
-            Connection.ActiveChar.Hp = (int)(Connection.ActiveChar.MaxHp * 0.1);
-            Connection.ActiveChar.Mp = (int)(Connection.ActiveChar.MaxMp * 0.1);
-            Connection.ActiveChar.PostUpdateCurrentHp(Connection.ActiveChar, 0, Connection.ActiveChar.Hp, KillReason.Unknown);
+            character.Hp = (int)(character.MaxHp * 0.1);
+            character.Mp = (int)(character.MaxMp * 0.1);
+            character.PostUpdateCurrentHp(character, 0, character.Hp, KillReason.Unknown);
         }
 
-        if (portal.X != 0)
+        if (portal != null && (inPlace || portal.X != 0))
         {
-            Connection.ActiveChar.BroadcastPacket(
+            character.BroadcastPacket(
                 new SCCharacterResurrectedPacket(
-                    Connection.ActiveChar.ObjId,
+                    character.ObjId,
                     portal.X,
                     portal.Y,
                     portal.Z,
@@ -108,39 +130,39 @@ public class CSResurrectCharacterPacket() : GamePacket(CSOffsets.CSResurrectChar
         }
         else
         {
-            Connection.ActiveChar.BroadcastPacket(
+            character.BroadcastPacket(
                 new SCCharacterResurrectedPacket(
-                    Connection.ActiveChar.ObjId,
-                    Connection.ActiveChar.Transform.World.Position.X,
-                    Connection.ActiveChar.Transform.World.Position.Y,
-                    Connection.ActiveChar.Transform.World.Position.Z,
+                    character.ObjId,
+                    character.Transform.World.Position.X,
+                    character.Transform.World.Position.Y,
+                    character.Transform.World.Position.Z,
                     0
                 ),
                 true
             );
         }
 
-        Connection.ActiveChar.BroadcastPacket(
+        character.BroadcastPacket(
             new SCUnitPointsPacket(
-                Connection.ActiveChar.ObjId,
-                Connection.ActiveChar.Hp,
-                Connection.ActiveChar.Mp
+                character.ObjId,
+                character.Hp,
+                character.Mp
             ),
             true
         );
 
         // Route death-debuffs based on death context (set by Character.DoDie).
-        ApplyRevivalDebuffs(Connection.ActiveChar, inPlace);
+        ApplyRevivalDebuffs(character, inPlace);
 
         // Retail grants a short protection shield after any resurrection
         // (Beginner's Blessing, 6s); it falls off early on skill use or when
         // interacting with nearby objects.
-        ApplyBuff(Connection.ActiveChar, new SkillCasterUnit(Connection.ActiveChar.ObjId),
+        ApplyBuff(character, new SkillCasterUnit(character.ObjId),
             (uint)BuffConstants.BeginnersBlessing);
 
-        Connection.ActiveChar.IsUnderWater = false;
-        //Connection.ActiveChar.StartRegen();
-        Connection.ActiveChar.Breath = Connection.ActiveChar.LungCapacity;
+        character.IsUnderWater = false;
+        //character.StartRegen();
+        character.Breath = character.LungCapacity;
     }
 
     /// <summary>

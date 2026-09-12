@@ -62,6 +62,23 @@ It reads the product structure even when `size` is zero.
 The structure parser at `0x397bf920` reads all current `PremiumDetail` fields.
 The empty response includes this zero structure. It does not include a placeholder product.
 
+## Priest purchases
+
+The client binds `BuyPriestBuff` to `0x3949ac20`.
+It selects a row from the priest list, checks the current NPC priest field, and multiplies the row cost by the player level.
+`CSBuyPriestBuff`, opcode `0xb2`, level 1, has a 7-byte body.
+Its serializer at `0x397cb080` writes a `u32` priest row ID and a fixed `u24` NPC object ID.
+The packet does not contain a price.
+
+The server compact row is `priest_buffs(1, buff_id=239, cost=100, position=1)`.
+Buff 239 lasts 1,800,000 milliseconds and has `resurrection_health=10`, `resurrection_mana=10`, and `resurrection_percent=true`.
+It has `remove_on_death=true` and `save_rule_id=1`.
+Its text describes one in-place resurrection with 10 percent health and mana, plus recovery of the experience lost on that death.
+The server captures this offer before death removes the buff.
+A server skill or the free low-level offer uses the same one-use state.
+A client cannot request in-place resurrection without a current server offer.
+The resurrection packet uses the offer location, not a temple location.
+
 ## Human checks
 
 1. Open an ability changer service at levels 10, 50, and 55.
