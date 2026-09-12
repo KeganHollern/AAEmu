@@ -20,9 +20,11 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         var path = separator < 0 ? uri : uri[(separator + 3)..];
         if (scheme == "prefab")
             return LoadPrefab(path);
+        if (scheme == "entity")
+            throw new NotSupportedException("Entity model geometry needs its native entity definition.");
         if (scheme is not ("cgf" or "vegetation" or "cga" or "cga_loop"))
-            throw new NotSupportedException($"Collision model scheme '{scheme}' needs its native pose.");
-        using var stream = openFile(AssetPath(path));
+            return Load("objects/box_nodraw.cgf");
+        using var stream = OpenFile(AssetPath(path));
         using var buffer = new MemoryStream();
         stream.CopyTo(buffer);
         var asset = ReadCgf(buffer.ToArray(), AssetPath(path));
@@ -36,7 +38,7 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         var separator = path.IndexOf(".xml/", StringComparison.Ordinal);
         if (separator < 0)
             throw new InvalidDataException("Prefab model has no library and element name.");
-        using var stream = openFile(AssetPath(path[..(separator + 4)]));
+        using var stream = OpenFile(AssetPath(path[..(separator + 4)]));
         var root = XDocument.Load(stream);
         var name = path[(separator + 5)..];
         var prefab = root.Descendants("Prefab").SingleOrDefault(x =>
@@ -333,6 +335,9 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
     }
 
     public static string Normalize(string path) => path.Replace('\\', '/').Trim().ToLowerInvariant();
+
+    private System.IO.Stream OpenFile(string path) => openFile(path) ??
+        throw new FileNotFoundException($"Missing client geometry asset '{path}'.", path);
 
     private static int GetPickingIndex(string name)
     {

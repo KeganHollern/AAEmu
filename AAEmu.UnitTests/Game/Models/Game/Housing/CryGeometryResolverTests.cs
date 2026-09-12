@@ -49,6 +49,29 @@ public sealed class CryGeometryResolverTests
         await Assert.That(() => CryGeometryResolver.ReadCgf(bytes)).Throws<InvalidDataException>();
     }
 
+    [Test]
+    public async Task Load_UnknownDoodadScheme_UsesNativeInvisibleBox()
+    {
+        string loaded = null;
+        var resolver = new CryGeometryResolver(path =>
+        {
+            loaded = path;
+            return new MemoryStream(Model(true));
+        });
+        var model = resolver.Load("a://invalid");
+        await Assert.That(loaded).IsEqualTo("game/objects/box_nodraw.cgf");
+        await Assert.That(model.Bounds.Max).IsEqualTo(Vector3.One);
+    }
+
+    [Test]
+    [Arguments("cgf://objects/missing.cgf")]
+    [Arguments("prefab://prefabs/missing.xml/house")]
+    public async Task Load_MissingFile_ThrowsFileNotFound(string path)
+    {
+        var resolver = new CryGeometryResolver(_ => null);
+        await Assert.That(() => resolver.Load(path)).Throws<FileNotFoundException>();
+    }
+
     private static byte[] Model(bool merge)
     {
         var chunks = new List<(uint Kind, int Version, int Id, byte[] Data)>();
