@@ -301,6 +301,9 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
         return _housingItemHousingDecorations.Find(x => x.DesignId == decoDesignId);
     }
 
+    public ItemHousingDecoration GetItemHousingDecorationByItem(uint itemTemplateId) =>
+        _housingItemHousingDecorations.Find(item => item.ItemId == itemTemplateId);
+
     /// <summary>
     /// Get original item template based on house design
     /// </summary>

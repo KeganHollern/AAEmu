@@ -17,8 +17,6 @@ public class PublicFarmManager(ITaskManager taskManager, IWorldManager worldMana
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
-    private Dictionary<uint, FarmType> _farmZones;
-
     public void Initialize()
     {
         Logger.Info("Initialising Public Farm Manager...");
@@ -35,16 +33,23 @@ public class PublicFarmManager(ITaskManager taskManager, IWorldManager worldMana
 
     public void PublicFarmTick()
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            PublicFarmTickLocked(DateTime.UtcNow);
+        }
+    }
+
+    private void PublicFarmTickLocked(DateTime now)
+    {
         // NOTE: Public farms only available in main_world
         var world = worldManager.GetWorld(WorldManager.DefaultInstanceId);
         var deleted = new List<Doodad>();
-        foreach (var doodad in world.SpawnManager?.GetAllPlayerDoodads() ?? [])
+        foreach (var doodad in world?.SpawnManager?.GetAllPlayerDoodads().ToArray() ?? [])
         {
             if (doodad is null)
                 continue;
             if (doodad.FarmType == FarmType.Invalid) { continue; }
-            var guardTime = CommonFarmGameData.Instance.GetDoodadGuardTime(doodad.Template.GroupId);
-            if (DateTime.UtcNow < doodad.PlantTime.AddSeconds(guardTime)) { continue; }
+            if (IsProtected(doodad, now)) { continue; }
 
             // defense time is up
             doodad.OwnerId = 0;
@@ -64,20 +69,20 @@ public class PublicFarmManager(ITaskManager taskManager, IWorldManager worldMana
     public bool InPublicFarm(WorldTemplate worldTemplate, Vector3 pos)
     {
         var subZoneList = subZoneManager.GetSubZoneByPosition(worldTemplate, pos);
-        return subZoneList.Count > 0 && subZoneList.Any(subZoneId => _farmZones.ContainsKey(subZoneId));
+        return subZoneList.Any(subZoneId => CommonFarmGameData.Instance.GetSubzoneFarmGroup(subZoneId) != FarmType.Invalid);
     }
 
     private uint GetFarmId(WorldInstance world, Vector3 pos)
     {
         var subZoneList = subZoneManager.GetSubZoneByPosition(world.Template, pos);
 
-        return subZoneList.Count > 0 ? subZoneList.FirstOrDefault(subZoneId => _farmZones.ContainsKey(subZoneId)) : 0;
+        return subZoneList.FirstOrDefault(subZoneId => CommonFarmGameData.Instance.GetSubzoneFarmGroup(subZoneId) != FarmType.Invalid);
     }
 
     public FarmType GetFarmType(WorldInstance world, Vector3 pos)
     {
         var subZoneId = GetFarmId(world, pos);
-        return _farmZones.GetValueOrDefault(subZoneId, FarmType.Invalid);
+        return CommonFarmGameData.Instance.GetSubzoneFarmGroup(subZoneId);
     }
 
     /// <summary>
@@ -112,9 +117,17 @@ public class PublicFarmManager(ITaskManager taskManager, IWorldManager worldMana
 
     public Dictionary<FarmType, List<Doodad>> GetCommonFarmDoodads(Character character)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            return GetCommonFarmDoodadsLocked(character, DateTime.UtcNow);
+        }
+    }
+
+    private Dictionary<FarmType, List<Doodad>> GetCommonFarmDoodadsLocked(Character character, DateTime now)
+    {
         var list = new Dictionary<FarmType, List<Doodad>>();
 
-        var playerDoodads = character.ParentWorld.SpawnManager.GetPlayerDoodads(character.Id);
+        var playerDoodads = character.ParentWorld?.SpawnManager?.GetPlayerDoodads(character.Id) ?? [];
 
         foreach (var doodad in playerDoodads)
         {
@@ -122,7 +135,7 @@ public class PublicFarmManager(ITaskManager taskManager, IWorldManager worldMana
             {
                 var farmType = GetFarmType(character.ParentWorld, doodad.Transform.World.Position);
 
-                if (doodad.FarmType == farmType)
+                if (doodad.FarmType == farmType && IsProtected(doodad, now))
                 {
                     if (!list.ContainsKey(farmType))
                         list.Add(farmType, []);
@@ -134,25 +147,19 @@ public class PublicFarmManager(ITaskManager taskManager, IWorldManager worldMana
         return list;
     }
 
-    public static bool IsProtected(Doodad doodad)
-    {
-        var guardTime = CommonFarmGameData.Instance.GetDoodadGuardTime(doodad.Template.GroupId);
-        var protectionTime = doodad.PlantTime.AddSeconds(guardTime);
+    public static bool IsProtected(Doodad doodad) => IsProtected(doodad, DateTime.UtcNow);
 
-        return doodad.PlantTime < protectionTime;
+    public static bool IsProtected(Doodad doodad, DateTime now)
+    {
+        if (doodad == null || doodad.OwnerId == 0 || doodad.FarmType == FarmType.Invalid)
+            return false;
+        return IsWithinProtection(doodad.PlantTime, now,
+            CommonFarmGameData.Instance.GetGuardTimeMilliseconds(doodad.FarmType));
     }
 
-    public void Load()
-    {
-        //common farm subzone ID's
-        _farmZones = new Dictionary<uint, FarmType>
-        {
-            { 998, FarmType.Farm },
-            { 966, FarmType.Farm },
-            { 968, FarmType.Nursery },
-            { 967, FarmType.Ranch },
-            { 974, FarmType.Stable }
-        };
-    }
+    public static bool IsWithinProtection(DateTime planted, DateTime now, uint guardTimeMilliseconds) =>
+        guardTimeMilliseconds > 0 && now - planted < TimeSpan.FromMilliseconds(guardTimeMilliseconds);
+
+    public void Load() { }
 
 }

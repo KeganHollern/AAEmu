@@ -58,6 +58,18 @@ public partial class HousingManager
             return false;
         quat = Quaternion.Normalize(quat);
 
+        var decorationItem = HousingGameData.Instance.GetItemHousingDecorationByItem(item.TemplateId);
+        var houseDoodads = house.ParentWorld.GetDoodadByHouseDbId(house.Id)
+            .Where(candidate => candidate.TemplateId != ForSaleMarkerDoodadId).ToArray();
+        var limitError = HousingDecorationRules.Check(house.Template, house.CurrentStep, houseDoodads.Length,
+            decorationItem, design, HousingDecorationRules.GetPlaced(houseDoodads, HousingGameData.Instance),
+            HousingDecorationGameData.Instance);
+        if (limitError != ErrorMessageType.NoErrorMessage)
+        {
+            player.SendErrorMessage(limitError);
+            return false;
+        }
+
         var skill = new Skill(new SkillTemplate())
         {
             CommitLaborBatch = (owner, write) =>

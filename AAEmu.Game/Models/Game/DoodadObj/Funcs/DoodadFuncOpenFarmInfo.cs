@@ -10,7 +10,9 @@ public class DoodadFuncOpenFarmInfo : DoodadFuncTemplate
 
     public override void Use(BaseUnit caster, Doodad owner, uint skillId, int nextPhase = 0)
     {
-        Logger.Info("DoodadFuncOpenFarmInfo");
-        owner.ToNextPhase = true;
+        // r208022 opens this UI locally from FarmId (native 393b8700). It reads
+        // compact metadata; SCShowCommonFarmPacket belongs to the map marker cache.
+        // The authored next_phase=-1 is not a request to delete the notice board.
+        owner.ToNextPhase = false;
     }
 }

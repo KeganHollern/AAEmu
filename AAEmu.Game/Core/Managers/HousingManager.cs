@@ -1678,17 +1678,6 @@ public partial class HousingManager(
     }
 
     /// <summary>
-    /// Places a piece of furniture at a given location, using item and design
-    /// </summary>
-    /// <param name="player"></param>
-    /// <param name="houseTlId"></param>
-    /// <param name="designId"></param>
-    /// <param name="pos"></param>
-    /// <param name="quat"></param>
-    /// <param name="parentObjId"></param>
-    /// <param name="itemId"></param>
-    /// <returns></returns>
-    /// <summary>
     /// Toggles the allow furniture recovery flag
     /// </summary>
     /// <param name="character"></param>
@@ -1740,36 +1729,15 @@ public partial class HousingManager(
 
     public uint GetActAbilityBonusFromHouse(int actabilityGroupId, House house)
     {
-        var res = 0u;
-        if (actabilityGroupId <= 0)
-            return res;
-
-        var furniture = house.ParentWorld.GetDoodadByHouseDbId(house.Id);
-        var bonusByDoodadTemplate = new Dictionary<uint, uint>(); // Make sure every furniture type only counts once
-        // TODO: Implement special decor effect limit
-        // This should not break gameplay as the server-side value would always be greater than or equal to what the client thinks
-
-        foreach (var f in furniture)
+        if (actabilityGroupId <= 0 || house == null || house.CurrentStep != -1)
+            return 0;
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            // Ignore attached objects (those are doors/windows etc)
-            if (f.AttachPoint != AttachPointKind.None)
-                continue;
-
-            // Ignore for sale signs
-            if (f.TemplateId == ForSaleMarkerDoodadId)
-                continue;
-            var decoDesign = HousingGameData.Instance.GetDecorationDesignFromDoodadId(f.TemplateId);
-            if (decoDesign != null && decoDesign.ActabilityGroupId == actabilityGroupId)
-            {
-                if (!bonusByDoodadTemplate.ContainsKey(f.TemplateId))
-                    bonusByDoodadTemplate.Add(f.TemplateId, decoDesign.ActabilityUp);
-            }
+            var furniture = house.ParentWorld.GetDoodadByHouseDbId(house.Id)
+                .Where(doodad => doodad.TemplateId != ForSaleMarkerDoodadId);
+            var placed = HousingDecorationRules.GetPlaced(furniture, HousingGameData.Instance);
+            return HousingDecorationRules.GetActAbilityBonus((uint)actabilityGroupId, house.Template,
+                placed, HousingDecorationGameData.Instance);
         }
-
-        foreach (var bonus in bonusByDoodadTemplate.Values)
-        {
-            res += bonus;
-        }
-        return res;
     }
 }
