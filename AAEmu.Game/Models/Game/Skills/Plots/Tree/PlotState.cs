@@ -1,5 +1,7 @@
 ﻿using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.TowerDefs;
 
 namespace AAEmu.Game.Models.Game.Skills.Plots.Tree;
 
@@ -11,7 +13,8 @@ public class PlotState(
     SkillObject skillObject,
     Skill skill)
 {
-    private bool _cancellationRequest = false;
+    private volatile bool _cancellationRequest;
+    private readonly TowerDefenseSpawnToken _eventToken = (caster as Npc)?.TowerDefenseSpawnToken;
     private bool _finishChanneling = false;
     public Dictionary<uint, int> Tickets { get; set; } = [];
     public int[] Variables { get; set; } = new int[12];
@@ -29,7 +32,9 @@ public class PlotState(
 
     public Dictionary<uint, List<GameObject>> HitObjects { get; set; } = [];
 
-    public bool CancellationRequested() => _cancellationRequest;
+    public bool CancellationRequested() => _cancellationRequest ||
+        (_eventToken != null && (_eventToken.Lifetime.IsCancelled ||
+         Caster is not Npc npc || !ReferenceEquals(npc.TowerDefenseSpawnToken, _eventToken)));
     public bool RequestCancellation() => _cancellationRequest = true;
     public bool ChannelingFinishRequested() => _finishChanneling;
     public bool FinishChanneling() => _finishChanneling = true;

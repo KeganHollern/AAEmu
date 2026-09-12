@@ -13,6 +13,15 @@
                     "key": { "type": "string", "minLength": 1 },
                     "towerDefId": { "type": "integer", "minimum": 1 },
                     "enabled": { "type": "boolean" },
+                    "completionTarget": {
+                        "type": "object",
+                        "required": [ "npcId", "count" ],
+                        "properties": {
+                            "npcId": { "type": "integer", "minimum": 1 },
+                            "count": { "type": "integer", "minimum": 1 }
+                        },
+                        "additionalProperties": false
+                    },
                     "worldTemplate": { "type": "string", "minLength": 1 },
                     "zoneGroupId": { "type": "integer", "minimum": 0 },
                     "trigger": {

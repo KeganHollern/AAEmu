@@ -408,9 +408,7 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
             ZoneGroupId = zoneGroupId,
             DefinitionHash = ComputeDefinitionHash(manifest, definition)
         };
-        if (definition.KillNpcId is > 0 && definition.KillNpcCount is > 0)
-            occurrence.TerminalObjective = new TowerDefenseObjectiveProgress(
-                definition.KillNpcId.Value, definition.KillNpcCount.Value, 0);
+        occurrence.TerminalObjective = CreateTerminalObjective(manifest, definition);
         _occurrences.Add(occurrenceKey, occurrence);
         _seenOccurrenceKeys.Add(occurrenceKey);
         _repository.Save(occurrence);
@@ -631,6 +629,7 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
         occurrence.ScheduledTasks.Clear();
         occurrence.Status = TowerDefenseOccurrenceStatus.Cleaning;
 
+        occurrence.World.EventSpawnOwnership.CancelOccurrence(occurrence.OccurrenceKey);
         foreach (var owned in occurrence.World.EventSpawnOwnership.GetOccurrence(occurrence.OccurrenceKey))
             DespawnOwned(occurrence.World, owned);
         foreach (var placementId in occurrence.Site.Bindings.Values.SelectMany(value => value).Distinct())
@@ -665,6 +664,7 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
         foreach (var task in occurrence.ScheduledTasks.ToList())
             _taskManager.Cancel(task);
         occurrence.ScheduledTasks.Clear();
+        occurrence.World.EventSpawnOwnership.CancelOccurrence(occurrence.OccurrenceKey);
         foreach (var owned in occurrence.World.EventSpawnOwnership.GetOccurrence(occurrence.OccurrenceKey))
             DespawnOwned(occurrence.World, owned);
         foreach (var placementId in occurrence.Site.Bindings.Values.SelectMany(value => value).Distinct())
@@ -710,10 +710,15 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
         var previousStep = occurrence.Definition.Progs[occurrence.CurrentStepOrdinal];
         var actionPrefixes = previousStep.SpawnTargets
             .Where(target => target.DespawnOnNextStep)
-            .Select(target => $"step:{occurrence.CurrentStepOrdinal}:target:{target.Id}")
+            .Select(target => $"step:{occurrence.CurrentStepOrdinal}:target:{target.Id}:")
             .ToList();
         if (actionPrefixes.Count == 0)
             return;
+        foreach (var owned in occurrence.World.EventSpawnOwnership.GetOccurrence(occurrence.OccurrenceKey))
+        {
+            if (actionPrefixes.Any(prefix => owned.Token.ActionKey.StartsWith(prefix, StringComparison.Ordinal)))
+                owned.Token.Lifetime.Cancel();
+        }
         foreach (var owned in occurrence.World.EventSpawnOwnership.GetOccurrence(occurrence.OccurrenceKey))
         {
             if (actionPrefixes.Any(prefix => owned.Token.ActionKey.StartsWith(prefix, StringComparison.Ordinal)))
@@ -789,9 +794,7 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
                 ZoneGroupId = zoneGroupId,
                 DefinitionHash = currentHash
             };
-            if (definition.KillNpcId is > 0 && definition.KillNpcCount is > 0)
-                occurrence.TerminalObjective = new TowerDefenseObjectiveProgress(
-                    definition.KillNpcId.Value, definition.KillNpcCount.Value, 0);
+            occurrence.TerminalObjective = CreateTerminalObjective(manifest, definition);
             _occurrences.Add(occurrence.OccurrenceKey, occurrence);
             try
             {
@@ -963,6 +966,19 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
             TowerDefenseOccurrenceStatus.Cancelled or TowerDefenseOccurrenceStatus.Cleaning or
             TowerDefenseOccurrenceStatus.Ended);
 
+    internal static TowerDefenseObjectiveProgress CreateTerminalObjective(TowerDefenseEventManifest manifest, TowerDef definition)
+    {
+        if (manifest.CompletionTarget is { } target)
+        {
+            if (target.NpcId == 0 || target.Count == 0)
+                throw new InvalidDataException($"Event '{manifest.Key}' has an invalid completion target.");
+            return new TowerDefenseObjectiveProgress(target.NpcId, target.Count, 0);
+        }
+        return definition.KillNpcId is > 0 && definition.KillNpcCount is > 0
+            ? new TowerDefenseObjectiveProgress(definition.KillNpcId.Value, definition.KillNpcCount.Value, 0)
+            : null;
+    }
+
     private static string ComputeDefinitionHash(TowerDefenseEventManifest manifest, TowerDef definition)
     {
         var payload = JsonConvert.SerializeObject(new
@@ -974,6 +990,7 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
             manifest.ConcurrencyGroup,
             manifest.RestartPolicy,
             manifest.ImmediateTransitionAllowed,
+            manifest.CompletionTarget,
             sites = manifest.Sites.Select(site => new
             {
                 site.Key,
@@ -1015,6 +1032,8 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
             throw new InvalidDataException($"Tower-defense event key '{duplicateKey.Key}' is empty or duplicated.");
         foreach (var eventManifest in manifest.Events)
         {
+            if (eventManifest.CompletionTarget is { } target && (target.NpcId == 0 || target.Count == 0))
+                throw new InvalidDataException($"Event '{eventManifest.Key}' has an invalid completion target.");
             eventManifest.ConcurrencyGroup ??= eventManifest.Key;
             if (eventManifest.TowerDefId == 0 || string.IsNullOrWhiteSpace(eventManifest.WorldTemplate) ||
                 eventManifest.Sites.Count == 0 || eventManifest.Trigger.DayInterval == 0 ||

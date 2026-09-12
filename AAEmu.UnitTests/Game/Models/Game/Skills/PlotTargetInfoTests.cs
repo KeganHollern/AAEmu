@@ -5,17 +5,17 @@ namespace AAEmu.UnitTests.Game.Models.Game.Skills;
 public class PlotTargetInfoTests
 {
     [Test]
-    public async Task ResolvePlotLandHeight_AerialPortalTarget_LandsOnGround()
+    public async Task ResolvePlotLandHeight_AerialPortalTarget_PreservesLaunchAltitude()
     {
-        var result = PlotTargetInfo.ResolvePlotLandHeight(300f, 0, 223f, previousIsAerial: true);
+        var result = PlotTargetInfo.ResolvePlotLandHeight(300f, 0, 223f);
 
-        await Assert.That(result).IsEqualTo(223f);
+        await Assert.That(result).IsEqualTo(300f);
     }
 
     [Test]
     public async Task ResolvePlotLandHeight_LargeVerticalSearchRange_DoesNotLiftImpact()
     {
-        var result = PlotTargetInfo.ResolvePlotLandHeight(223f, 500000, 223f, previousIsAerial: false);
+        var result = PlotTargetInfo.ResolvePlotLandHeight(300f, 500000, 223f);
 
         await Assert.That(result).IsEqualTo(223f);
     }
@@ -23,16 +23,15 @@ public class PlotTargetInfoTests
     [Test]
     public async Task ResolvePlotLandHeight_GroundedShallowOffset_PreservesLift()
     {
-        var result = PlotTargetInfo.ResolvePlotLandHeight(100f, 3000, 100f, previousIsAerial: false);
+        var result = PlotTargetInfo.ResolvePlotLandHeight(100f, 3000, 100f);
 
         await Assert.That(result).IsEqualTo(103f);
     }
 
     [Test]
-    public async Task ResolvePlotLandHeight_WithoutGroundData_PreservesLegacyHeight()
+    public async Task ResolvePlotLandHeight_ImpactWithoutGroundData_RejectsAirborneSummon()
     {
-        var result = PlotTargetInfo.ResolvePlotLandHeight(300f, 500000, null, previousIsAerial: true);
-
-        await Assert.That(result).IsEqualTo(800f);
+        await Assert.That(() => PlotTargetInfo.ResolvePlotLandHeight(300f, 500000, null))
+            .Throws<InvalidOperationException>();
     }
 }
