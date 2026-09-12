@@ -27,10 +27,10 @@ The existing 5 percent interest and 80/20 maker share remain in use.
 The maker share uses the active feature flag.
 Commerce applies its current labor multiplier to the 60 labor base cost.
 
-One SQL transaction saves the consumed pack, payout mail, account labor, and demand.
-A known failure restores the prepared inventory, mail, and labor state.
+One SQL transaction saves the consumed pack, payout mail, account labor, demand, and automatic experience and Commerce rewards.
+A known failure restores the prepared inventory, mail, labor, and reward state.
 An unknown commit result keeps the prepared state and passes the error to the central consistency stop.
-Only a committed sale sends asset notifications and grants Commerce experience.
+Only a committed sale sends asset and reward notifications. The reward values already exist in durable state at that point.
 
 ## House behavior
 
