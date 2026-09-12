@@ -160,3 +160,30 @@ The server keeps `CSListSpecialtyGoodsPacket` as an unsupported old request.
 The G2C goods and record constants do not imply a usable client feature.
 No invented goods catalog, purchase settlement, or record packet was added.
 An active implementation needs a confirmed caller, complete response contract, and authored purchase data.
+
+## Authored craft duration in issue 469
+
+The current client and server compact snapshots agree on all 7005 joined craft and skill rows.
+There are 6471 crafts whose `cast_delay` differs from the skill's `casting_time`.
+The other 534 rows have equal values. Authored craft delays range from 500 through 15000 milliseconds.
+Craft 4107 uses skill 15086. Its craft delay is 15000 milliseconds, while the skill delay is 5000 milliseconds.
+
+The client compact SHA-256 is `4f1ac86b2ae79fd35886d0cd7b1e5cccc3287a011a200667d97eb1c5bc4d79a4`.
+The server compact SHA-256 is `636ca9ecfe777bc86542e4b828f930c7861d2b4639b1bcfff670c064fee9c1ac`.
+The check used this query against both snapshots:
+
+```sql
+SELECT crafts.id, crafts.skill_id, crafts.cast_delay, skills.casting_time
+FROM crafts JOIN skills ON skills.id = crafts.skill_id;
+```
+
+Craft execution must use `Craft.CastDelay` as its base before the current proficiency multiplier.
+Ordinary skill execution keeps `SkillTemplate.CastingTime`.
+`CraftDuration.GetBaseMilliseconds` selects the base without a change to the shared skill template.
+The call site must use a value on the individual skill instance.
+This prevents one recipe from changing another recipe that shares its skill.
+No packet contract or compact data change is needed.
+
+The helper tests cover craft 4107, shared skill templates, and ordinary instant skills.
+The execution test must also check the final scheduled duration after proficiency.
+After release, craft 4107 at novice proficiency and check a 15-second base duration before other active speed bonuses.
