@@ -59,7 +59,10 @@ public sealed record CryGeometryAsset(CryBounds Bounds, IReadOnlyList<CryGeometr
 public sealed record CryGeometryHelper(string Name, string Text, Matrix4x4 Transform);
 
 public sealed record CryGeometryPoseRequirement(string ModelUri, string Name, Matrix4x4 Transform,
-    string Animation, bool Playing, bool Physicalized);
+    string Animation, bool Playing, bool Physicalized)
+{
+    public bool AffectsCollision { get; init; } = true;
+}
 
 public readonly record struct CryRayHit(float Distance, Vector3 Position, Vector3 Normal, int MaterialId,
     int TriangleIndex);

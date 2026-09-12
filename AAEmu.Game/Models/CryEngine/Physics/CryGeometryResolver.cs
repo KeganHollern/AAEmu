@@ -29,7 +29,8 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         stream.CopyTo(buffer);
         var asset = ReadCgf(buffer.ToArray(), AssetPath(path));
         if (scheme is "cga" or "cga_loop" || path.EndsWith(".chr", StringComparison.Ordinal))
-            asset = asset with { PoseRequirements = [new CryGeometryPoseRequirement(uri, "", Matrix4x4.Identity, "", true, true)] };
+            asset = asset with { PoseRequirements = [new CryGeometryPoseRequirement(uri, "", Matrix4x4.Identity, "", true, true)
+                { AffectsCollision = asset.HasAnimatedCollision }] };
         return asset;
     }
 
@@ -83,7 +84,8 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
             var animation = obj.Element("Properties")?.Element("Animation");
             if (animation != null && (string)animation.Attribute("bPlaying") == "1")
                 poses.Add(new CryGeometryPoseRequirement(childPath, (string)obj.Attribute("Name") ?? "", transform,
-                    (string)animation.Attribute("Animation") ?? "", true, physicalized));
+                    (string)animation.Attribute("Animation") ?? "", true, physicalized)
+                    { AffectsCollision = child.HasAnimatedCollision });
             poses.AddRange(child.PoseRequirements.Select(pose => pose with { Transform = pose.Transform * transform }));
             helpers.AddRange(child.Helpers.Select(helper => helper with { Transform = helper.Transform * transform }));
             if (physicalized)

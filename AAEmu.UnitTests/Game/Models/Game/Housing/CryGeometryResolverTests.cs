@@ -82,6 +82,25 @@ public sealed class CryGeometryResolverTests
         await Assert.That(model.HasAnimatedCollision).IsEqualTo(expected);
     }
 
+    [Test]
+    public async Task LoadPrefab_ActiveVisualAndPassiveDoor_DoesNotMarkTheDoorCollisionActive()
+    {
+        var xml = Encoding.UTF8.GetBytes("""
+            <PrefabsLibrary><Prefab Name="house"><Objects>
+            <Object Type="Entity"><Properties object_Model="objects/visual.cga">
+            <Animation bPlaying="1" Animation="Default" /></Properties></Object>
+            <Object Type="Entity"><Properties object_Model="objects/door.cga">
+            <Animation bPlaying="0" Animation="Default" /></Properties></Object>
+            </Objects></Prefab></PrefabsLibrary>
+            """);
+        var resolver = new CryGeometryResolver(path => new MemoryStream(path.EndsWith(".xml", StringComparison.Ordinal)
+            ? xml : path.EndsWith("door.cga", StringComparison.Ordinal) ? Model(false, true, true) : Model(false)));
+        var asset = resolver.Load("prefab://prefabs/housing.xml/house");
+        await Assert.That(asset.HasAnimatedCollision).IsTrue();
+        await Assert.That(asset.PoseRequirements.Count).IsEqualTo(1);
+        await Assert.That(asset.PoseRequirements[0].AffectsCollision).IsFalse();
+    }
+
     private static byte[] Model(bool merge, bool physics = false, bool animatedParent = false)
     {
         var chunks = new List<(uint Kind, int Version, int Id, byte[] Data)>();
