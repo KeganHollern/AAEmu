@@ -172,6 +172,19 @@ public sealed class WorldEconomySettlementTests
     }
 
     [Test]
+    public async Task Sale_TraderAboveRange_DoesNotConsumePackOrLabor()
+    {
+        _trader.Transform.Local.SetPosition(0, 0, 2.51f);
+        await Assert.That(_specialty.SellSpecialty(_seller, 20)).IsEqualTo(0);
+        await Assert.That(_pack.Count).IsEqualTo(1);
+        await Assert.That(_seller.LaborPower).IsEqualTo((short)100);
+        await Assert.That(_mail._allPlayerMails).IsEmpty();
+        await Assert.That(Demand).IsEmpty();
+        _trader.Transform.Local.SetPosition(0, 0, 2.5f);
+        await Assert.That(_specialty.TryQuote(_seller, 20, out _, out _, out _, out _)).IsEqualTo(ErrorMessageType.NoErrorMessage);
+    }
+
+    [Test]
     public async Task Quote_KeepsBundlePrecedence_AndUsesMatrixForUnmappedTrader()
     {
         await Assert.That(_specialty.TryQuote(_seller, 20, out _, out _, out _, out var bundled)).IsEqualTo(ErrorMessageType.NoErrorMessage);

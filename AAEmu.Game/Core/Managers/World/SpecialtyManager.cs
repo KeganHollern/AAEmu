@@ -186,7 +186,7 @@ public partial class SpecialtyManager(
             return ErrorMessageType.StoreBackpackNogoods;
         if (npc?.Template is not { Specialty: true })
             return ErrorMessageType.InvalidTarget;
-        if (MathUtil.CalculateDistance(player.Transform.World.Position, npc.Transform.World.Position) > 2.5)
+        if (!ServiceInteraction.CanReach(player, npc, 2.5f))
             return ErrorMessageType.TooFarAway;
         destination = zoneManager.GetZoneByKey(npc.Transform.ZoneId)?.GroupId ?? 0;
         if (destination == 0 || template.SpecialtyZoneId == 0)
