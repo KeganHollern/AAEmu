@@ -86,6 +86,7 @@ public sealed class QuestActCheckSphereTests
         for (var cycle = 0; cycle < 20; cycle++)
         {
             template.InitializeAction(quest, act);
+            await Assert.That(act.RunAct()).IsFalse();
             await Assert.That(manager.GetSphereQuestTriggers().Count).IsEqualTo(1);
             quest.Owner.Events.OnEnterSphere(quest.Owner, new OnEnterSphereArgs { SphereQuest = sphere });
             await Assert.That(act.RunAct()).IsTrue();

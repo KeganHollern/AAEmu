@@ -153,7 +153,7 @@ public sealed class SphereQuestTriggerTests
     {
         var template = new QuestTemplate { Id = 100 };
         var component = new QuestComponentTemplate(template) { Id = 101, KindId = QuestComponentKind.Progress };
-        component.ActTemplates.Add(new QuestActObjSphere(component) { ActId = 1000, SphereId = 500 });
+        component.ActTemplates.Add(new QuestActObjSphere(component) { ActId = 1000, SphereId = 500, ThisComponentObjectiveIndex = 0 });
         component.ActTemplates.Add(new QuestActCheckSphere(component) { ActId = 1001, SphereId = 501 });
         template.Components[component.Id] = component;
         var quest = new Quest(template, _owner, Mock.Of<IQuestManager>().Object, Mock.Of<ITaskManager>().Object,
@@ -182,6 +182,63 @@ public sealed class SphereQuestTriggerTests
         _owner.ParentWorld = _world;
         await Assert.That(_otherWorld.SphereQuestManager.GetSphereQuestTriggers()).IsEmpty();
         await Assert.That(_world.SphereQuestManager.GetSphereQuestTriggers().Count).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ParentWorld_DepartsSource_ClearsLocationStateAndPreservesCompletedArrival(bool detachFromWorld)
+    {
+        SetField(SphereGameData.Instance, "_spheres", new Dictionary<uint, Spheres>
+        {
+            [500] = new() { Id = 500, TriggerConditionId = AreaSphereTriggerCondition.None },
+            [501] = new() { Id = 501, TriggerConditionId = AreaSphereTriggerCondition.TriggerEveryNTimeAfter }
+        });
+        var template = new QuestTemplate { Id = 100 };
+        var component = new QuestComponentTemplate(template) { Id = 101, KindId = QuestComponentKind.Progress };
+        component.ActTemplates.Add(new QuestActObjSphere(component)
+        {
+            ActId = 1000, SphereId = 500, ThisComponentObjectiveIndex = 0
+        });
+        component.ActTemplates.Add(new QuestActObjSphere(component)
+        {
+            ActId = 1001, SphereId = 501, ThisComponentObjectiveIndex = 1
+        });
+        component.ActTemplates.Add(new QuestActObjItemUse(component)
+        {
+            ActId = 1002, ItemId = 5130, Count = 3, ThisComponentObjectiveIndex = 2
+        });
+        component.ActTemplates.Add(new QuestActCheckSphere(component) { ActId = 1003, SphereId = 502 });
+        template.Components[component.Id] = component;
+        var quest = new Quest(template, _owner, Mock.Of<IQuestManager>().Object, Mock.Of<ITaskManager>().Object,
+            Mock.Of<ISkillManager>().Object, Mock.Of<IExpressTextManager>().Object, Mock.Of<IWorldManager>().Object, false);
+        SetField(quest, "_step", QuestComponentKind.Progress);
+        _owner.Quests.ActiveQuests[quest.TemplateId] = quest;
+        var acts = quest.CurrentStep.Components[component.Id].Acts;
+        quest.Objectives[0] = 1;
+        quest.Objectives[1] = 1;
+        quest.Objectives[2] = 1;
+        acts.Single(act => act.Id == 1003).OverrideObjectiveCompleted = true;
+        _world.SphereQuestManager.AddSphereQuestTrigger(new SphereQuestTrigger
+        {
+            Owner = _owner, Quest = quest,
+            Sphere = new SphereQuest { ComponentId = 101, QuestId = 100, Radius = 10 }
+        });
+
+        _owner.ParentWorld = detachFromWorld ? null : _otherWorld;
+
+        await Assert.That(_world.SphereQuestManager.GetSphereQuestTriggers()).IsEmpty();
+        await Assert.That(acts.Single(act => act.Id == 1000).RunAct()).IsFalse();
+        await Assert.That(acts.Single(act => act.Id == 1001).RunAct()).IsTrue();
+        await Assert.That(acts.Single(act => act.Id == 1002).RunAct()).IsFalse();
+        await Assert.That(acts.Single(act => act.Id == 1003).RunAct()).IsFalse();
+        await Assert.That(quest.Objectives[0]).IsEqualTo(0);
+        await Assert.That(quest.Objectives[1]).IsEqualTo(1);
+        await Assert.That(quest.Objectives[2]).IsEqualTo(1);
+        await Assert.That(quest.Step).IsEqualTo(QuestComponentKind.Progress);
+        await Assert.That(_owner.Quests.ActiveQuests[100]).IsSameReferenceAs(quest);
+        await Assert.That(_entered).IsEqualTo(0);
+        await Assert.That(_exited).IsEqualTo(0);
     }
 
     private SphereQuestTrigger CreateTrigger()

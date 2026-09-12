@@ -59,6 +59,11 @@ public class QuestActObjSphere(QuestComponentTemplate parentComponent) : QuestAc
             return;
 
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnExitSphere: Quest: {questAct.QuestComponent.Parent.Parent.TemplateId}, Owner {questAct.QuestComponent.Parent.Parent.Owner.Name} ({questAct.QuestComponent.Parent.Parent.Owner.Id}), ComponentId {args.SphereQuest.ComponentId}");
+        ClearLocationState(questAct);
+    }
+
+    internal void ClearLocationState(QuestAct questAct)
+    {
         if (SphereGameData.Instance.GetSphere(SphereId)?.TriggerConditionId == AreaSphereTriggerCondition.TriggerEveryNTimeAfter)
             return;
 

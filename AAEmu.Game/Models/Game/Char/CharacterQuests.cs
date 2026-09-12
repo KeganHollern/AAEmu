@@ -57,8 +57,6 @@ public class CharacterQuests(Character owner)
     internal void RefreshSphereTriggers(WorldInstance previousWorld, WorldInstance world)
     {
         previousWorld?.SphereQuestManager?.RemoveSphereQuestTriggers(Owner.Id, 0);
-        if (world?.SphereQuestManager == null)
-            return;
 
         foreach (var quest in ActiveQuests.Values)
         {
@@ -69,11 +67,15 @@ public class CharacterQuests(Character owner)
                 foreach (var act in component.Acts)
                 {
                     if (act.Template is QuestActObjSphere objective)
-                        world.SphereQuestManager.AddSphereQuestTriggers(Owner, quest, component.Template.Id, objective.NpcId, objective.SphereId);
+                    {
+                        // Removing the old trigger must also apply its normal exit state.
+                        objective.ClearLocationState(act);
+                        world?.SphereQuestManager?.AddSphereQuestTriggers(Owner, quest, component.Template.Id, objective.NpcId, objective.SphereId);
+                    }
                     else if (act.Template is QuestActCheckSphere check)
                     {
                         act.OverrideObjectiveCompleted = false;
-                        world.SphereQuestManager.AddSphereQuestTriggers(Owner, quest, component.Template.Id, 0, check.SphereId);
+                        world?.SphereQuestManager?.AddSphereQuestTriggers(Owner, quest, component.Template.Id, 0, check.SphereId);
                     }
                 }
             }
