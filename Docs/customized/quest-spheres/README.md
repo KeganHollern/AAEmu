@@ -120,8 +120,10 @@ The release checks include the Release build, Game script compiler, full unit su
 5. Leave the instance and enter it again with an active sphere objective.
 6. Drop and accept an available sphere quest 20 times, then check that each entry gives one event.
 7. Use a level 28 or higher Nuia character to approach NPC 2445 in Burnt Castle and check quest 578 acceptance.
+8. Log out and reconnect with an active sphere quest, then check entry and exit again.
 
-For each new location, check the objective at its center and at the 30 m boundary.
+For quests 5716, 5979, 6213, and 6216, check the objective at its center and at the 30 m boundary.
+For quest 578, check the starter at its center and at the 5 m boundary.
 The automated boundary tests also check a point immediately outside the radius.
 The tests do not establish human gameplay results.
 
