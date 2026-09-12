@@ -1,0 +1,53 @@
+# Housing water physics for r208022
+
+Housing placement uses `HousingWaterGeometry`, separate from movement water.
+It reads authored physics contours without the legacy 5000 m² ingest cutoff.
+`HousingGeometryAssets` caches the result per world template.
+
+## Native evidence
+
+The checked client Cry3DEngine SHA-256 is
+`34d6b73690d1a9d8d0ea0f5eb743fd0624107cfda28c1302826b19a3bc9546de`.
+Native exports remain under the ignored
+`.tools-re/housing-20260912/permissions` and `placement` directories.
+
+| Native function | Confirmed contract |
+| --- | --- |
+| `39331d20` | Housing samples terrain and calls `I3DEngine::GetWaterLevel` at the sample. |
+| `301491a0` | Each cell loads `object.dat` before its `big_object.dat` path. |
+| `301f6ab0`, `301fbb10` | A world registry uses the full 64-bit VolumeId. Duplicate Area nodes stop loading. Duplicate River nodes add no physics contour. Only Area/River create these physics areas. |
+| `301f6ab0` | Every vertex receives the cell's X/Y offset. Area plane D uses the first render vertex Z. River plane D starts at the render AABB maximum and shifts the highest projected render vertex to the maximum Z. |
+| `300ea010`, `300eaa00` | Area and River physics contours project vertically onto the adjusted fog plane. Both need at least 4 vertices. Rivers also need an even count. Raw nonplanar heights do not describe the final physics surface. |
+| `300e73b0` | Physicalization calls CreateArea with the projected contour, lower extent `min(0,-Depth)`, and upper extent `10` (`3024c8bc=0x41200000`). |
+| `35054890` | CreateArea uses a fitted plane basis. A planar area without flow adds `0.01` to its upper extent (`351fa42c=0x3c23d70a`). Rivers supply a flow field and a triangle mesh. |
+| `35050f30`, `351df070` | Area containment checks strict depth limits and the contour. River meshes also require the query ray along the mesh normal to reach an outward-facing surface. |
+| `35053450`, `35052b90`, `3504ef50` | Water registers at the head of its medium list. The first local match replaces global buoyancy and clears its medium marker to -1. Later matches append, up to 4 slots. The query takes the maximum of those 4 newest intersecting volumes. There is no smallest-footprint policy. |
+| `3012b2e0` | The height is `point.Z - dot(normal, point - planeOrigin) * normal.Z`. The result cannot be below the ocean surface. This is a normal projection, not a vertical intersection with a sloped plane. |
+
+The server uses the authored ocean baseline. Renderer-dependent waves do not
+exist in the server process. The cache uses cell Y/X order, then record order,
+with object data before big-object data. A client's prior cell load history
+can give it different selected volumes when more than 4 overlap. The server does not keep
+per-client cell streaming history.
+
+## Client scan and fixture
+
+The complete main-world scan found 5758 object-file water records with 455 IDs.
+The 1175 big-object records use 134 IDs. They add only 1 ID absent from object
+files. The earlier count of 619 different complete records includes alternate
+render segments and does not mean 619 new physics volumes.
+
+`main_world/cells/020_031/client/big_object.dat` adds Area ID
+`4639442551196662424`. Its 6-point contour has surface Z `298` and depth `10`.
+The fixture checks that `(21000,32800,297)` changes from ocean-only to that area.
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `020_031/client/object.dat` | 17243 | `8073daa6319e44aaf500345bf2e312a20b42b350f64548188556c8a45a9b673b` |
+| `020_031/client/big_object.dat` | 1069 | `335c0a546117bbfe403d29f6b7e42ef13cc14e58a933365587eaf4a11a671e48` |
+
+The focused tests cover small authored areas, strict depth, normal projection,
+raw river heights, duplicate IDs, overlap order, ocean precedence, cell offset,
+file order, and the exact missing area. Set `AAEMU_STATIC_WORLD_CLIENT_ROOT` to
+the extracted client root for the optional exact-file test. No extracted
+client assets belong in Git.

@@ -24,6 +24,7 @@ public sealed class HousingGeometryAssets
     private readonly ConcurrentDictionary<uint, CryGeometryAsset> _models = [];
     private readonly ConcurrentDictionary<(WorldTemplate World, int X, int Y), Lazy<CryTerrainGrid>> _terrain = [];
     private readonly ConcurrentDictionary<WorldTemplate, Lazy<CryWorldObjectIndex>> _worlds = [];
+    private readonly ConcurrentDictionary<WorldTemplate, Lazy<HousingWaterGeometry>> _water = [];
 
     public HousingGeometryAssets() : this(ClientFileManager.GetFileStream,
         (model, state) => HousingGeometryGameData.Instance.GetModelPaths(model, state)) { }
@@ -123,6 +124,9 @@ public sealed class HousingGeometryAssets
                 new Vector2(key.X * WorldManager.CELL_SIZE, key.Y * WorldManager.CELL_SIZE));
         })).Value;
     }
+
+    public HousingWaterGeometry GetWater(WorldTemplate world) => _water.GetOrAdd(world,
+        template => new Lazy<HousingWaterGeometry>(() => HousingWaterGeometry.Load(template, _openFile))).Value;
 
     public static Matrix4x4 Transform(BaseUnit unit)
     {

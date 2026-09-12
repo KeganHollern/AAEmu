@@ -133,7 +133,7 @@ public partial class HousingManager
                     var ground = scene.SampleRawHeight((int)corner.X, (int)corner.Y);
                     var point = corner with { Z = ground };
                     var waterError = HousingConstructionGeometry.CheckWater(template.CategoryId, ground,
-                        player.ParentWorld.Water.GetWaterSurface(point, out _));
+                        GeometryAssets.GetWater(player.ParentWorld.Template).GetWaterLevel(point, player.ParentWorld.Water.OceanLevel));
                     if (waterError != ErrorMessageType.NoErrorMessage)
                         return pose with { Error = waterError };
                 }
@@ -141,7 +141,7 @@ public partial class HousingManager
             else
             {
                 var waterError = HousingConstructionGeometry.CheckWater(template.CategoryId, pose.Position.Z,
-                    player.ParentWorld.Water.GetWaterSurface(pose.Position, out _));
+                    GeometryAssets.GetWater(player.ParentWorld.Template).GetWaterLevel(pose.Position, player.ParentWorld.Water.OceanLevel));
                 if (waterError != ErrorMessageType.NoErrorMessage)
                     return pose with { Error = waterError };
             }
