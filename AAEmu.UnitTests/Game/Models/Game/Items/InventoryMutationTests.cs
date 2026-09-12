@@ -8,6 +8,7 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
@@ -1027,6 +1028,58 @@ public sealed class InventoryMutationTests
         {
             accountsField.SetValue(null, previousAccounts);
             formulasField.SetValue(null, previousFormulas);
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Conversion_FullBag_SettlesInputOutputAndLaborTogether(bool commit)
+    {
+        var accountsField = typeof(Singleton<AccountManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var formulasField = typeof(Singleton<FormulaManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var conversionsField = typeof(Singleton<ItemConversionGameData>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousAccounts = accountsField.GetValue(null);
+        var previousFormulas = formulasField.GetValue(null);
+        var previousConversions = conversionsField.GetValue(null);
+        try
+        {
+            accountsField.SetValue(null, new AccountManager(null, null, TimeProvider.System));
+            var formulas = new FormulaManager();
+            SetField(formulas, "_formulas", new Dictionary<uint, Formula>());
+            formulasField.SetValue(null, formulas);
+            var conversions = new ItemConversionGameData();
+            SetField(conversions, "_reagents", new List<ItemConversionReagent>
+                { new() { InputItemId = 100, ConversionId = 1, MaxItemGrade = 12 } });
+            SetField(conversions, "_products", new List<ItemConversionProduct>
+                { new() { ConversionId = 1, ChanceRate = 10000, OuputItemId = 200, MinOutput = 1, MaxOutput = 1 } });
+            conversionsField.SetValue(null, conversions);
+            _owner.InitializeLaborCache(20, DateTime.UtcNow);
+            var input = AddItem(1, 100, 1);
+            input.Template.Disenchantable = true;
+            Template(200);
+            _bag.ContainerSize = 1;
+            var skill = new Skill(new SkillTemplate { Id = 15996, ConsumeLaborPower = 10 });
+            var prepared = false;
+            skill.CommitLaborBatch = (_, _) =>
+            {
+                prepared = _owner.LaborPower == 10 && input.Count == 0 && _bag.Items.Single().TemplateId == 200;
+                return commit;
+            };
+            var result = SkillLaborBatch.Run(_owner, skill, true, () =>
+                new ItemConversion().Execute(_owner, null, _owner, new SkillCastItemTarget { Id = input.Id },
+                    null, skill, null, DateTime.UtcNow, 0, 0, 0, 0));
+            await Assert.That(prepared).IsTrue();
+            await Assert.That(result).IsEqualTo(commit);
+            await Assert.That(_owner.LaborPower).IsEqualTo((short)(commit ? 10 : 20));
+            await Assert.That(_bag.Items.Single().TemplateId).IsEqualTo(commit ? 200U : 100U);
+            await Assert.That(input.Count).IsEqualTo(commit ? 0 : 1);
+        }
+        finally
+        {
+            accountsField.SetValue(null, previousAccounts);
+            formulasField.SetValue(null, previousFormulas);
+            conversionsField.SetValue(null, previousConversions);
         }
     }
 
