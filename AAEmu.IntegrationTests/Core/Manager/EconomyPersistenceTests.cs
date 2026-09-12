@@ -313,6 +313,8 @@ public sealed class EconomyPersistenceTests
     {
         var graph = new SaveGraph();
         var item = graph.AddItem(1);
+        var stopped = false;
+        graph.Save.StopForConsistencyFailure = (_, _) => stopped = true;
         Assert.ThrowsAny<Exception>(() => graph.Save.TryCommitEconomy([], context =>
         {
             using var command = context.Connection.CreateCommand();
@@ -324,7 +326,9 @@ public sealed class EconomyPersistenceTests
         Assert.True(item.IsDirty);
         Assert.True(graph.Container.IsDirty);
         Assert.Equal(0, Count("items", item.Id));
-        Assert.True(graph.Save.TryCommitEconomy([]));
+        Assert.True(stopped);
+        Assert.Throws<InvalidOperationException>(() => graph.Save.TryCommitEconomy([]));
+        Assert.False(graph.Save.DoSave());
     }
 
     [Fact]
