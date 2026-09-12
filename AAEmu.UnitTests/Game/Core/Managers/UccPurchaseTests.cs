@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Reflection;
 using AAEmu.Commons.Network;
@@ -225,14 +225,49 @@ public sealed class UccPurchaseTests
     [Test]
     [Arguments(0)]
     [Arguments(1)]
+    [Arguments(3)]
+    [Arguments(11)]
     [Arguments(14)]
+    [Arguments(15)]
     [Arguments(66)]
     [Arguments(68)]
     public async Task StartPacket_InvalidBodyLengthHasNoEffect(int length)
     {
-        new CTStartUploadEmblemStreamPacket { Connection = _connection }.Read(new PacketStream(new byte[length]));
+        var body = new PacketStream(new byte[length]);
+        new CTStartUploadEmblemStreamPacket { Connection = _connection }.Read(body);
+        await Assert.That(body.Pos).IsEqualTo(0);
         await Assert.That(_commits).IsEqualTo(0);
         await Assert.That(_character.Inventory.Bag.Items.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(13)]
+    public async Task UploadPacket_IncompleteHeaderCancelsWithoutPayment(int length)
+    {
+        Material();
+        await Assert.That(_uccs.StartUpload(_connection, 99, Dds().Length, new CustomUcc())).IsTrue();
+        var body = new PacketStream(new byte[length]);
+        new CTUploadEmblemStreamPacket { Connection = _connection }.Read(body);
+        await Assert.That(body.Pos).IsEqualTo(0);
+        await Assert.That(_uccs.ConfirmDefaultUcc(_connection, 0)).IsFalse();
+        await Assert.That(_commits).IsEqualTo(0);
+        await Assert.That(_character.Money).IsEqualTo(100000L);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(2)]
+    public async Task UploadStatusPacket_InvalidBodyLengthCancelsWithoutPayment(int length)
+    {
+        await Assert.That(_uccs.StartUpload(_connection, 99, 0, Simple())).IsTrue();
+        var body = new PacketStream(new byte[length]);
+        new CTEmblemStreamUploadStatusPacket { Connection = _connection }.Read(body);
+        await Assert.That(body.Pos).IsEqualTo(0);
+        await Assert.That(_uccs.ConfirmDefaultUcc(_connection, 0)).IsFalse();
+        await Assert.That(_commits).IsEqualTo(0);
+        await Assert.That(_character.Money).IsEqualTo(100000L);
     }
 
     [Test]

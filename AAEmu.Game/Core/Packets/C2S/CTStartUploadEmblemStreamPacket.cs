@@ -1,4 +1,4 @@
-using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers.Stream;
 using AAEmu.Game.Core.Network.Stream;
 using AAEmu.Game.Models.Game;
@@ -10,6 +10,12 @@ public class CTStartUploadEmblemStreamPacket() : StreamPacket(CTOffsets.CTStartU
 {
     public override void Read(PacketStream stream)
     {
+        // The r208022 start body is a 15-byte header and a 52-byte UCC description.
+        if (stream.LeftBytes != 67)
+        {
+            UccManager.Instance.FailUpload(Connection, ErrorMessageType.UccInvalidData);
+            return;
+        }
         try
         {
             var printerId = stream.ReadBc();
