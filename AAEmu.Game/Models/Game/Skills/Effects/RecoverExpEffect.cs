@@ -39,6 +39,20 @@ public class RecoverExpEffect : EffectTemplate
             return;
         }
 
+        // The labor-free recovery route belongs to a consumable source item.
+        // A generic unit cast must not bypass the scroll's authored payment.
+        if (!NeedLaborPower)
+        {
+            var item = ZoneSkillRestrictions.GetSourceItem(player, casterObj);
+            if (casterObj is not SkillItem itemSource || item?.Template.UseSkillAsReagent != true ||
+                !SkillItemSource.CanUse(item, player.ObjId, itemSource, source?.Skill?.Template, targetObj, skillObject))
+            {
+                player.SendErrorMessage(ErrorMessageType.InvalidTarget);
+                batch.Fail();
+                return;
+            }
+        }
+
         // Check for nearby priest if needed (caster and target are always the player)
         if (NeedPriest)
         {

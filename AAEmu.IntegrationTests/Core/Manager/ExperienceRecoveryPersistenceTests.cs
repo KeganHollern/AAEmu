@@ -56,6 +56,9 @@ public sealed partial class PlayerMailSendPersistenceTests
         });
         var skill = new Skill(new SkillTemplate { Id = paidLabor ? 17063U : 26611U });
         var effect = new RecoverExpEffect { NeedLaborPower = paidLabor };
+        scroll.Template.UseSkillId = skill.Template.Id;
+        scroll.Template.UseSkillAsReagent = true;
+        var source = paidLabor ? null : new SkillItem(player.ObjId, scroll.Id, scroll.TemplateId);
         skill.CommitLaborBatch = (_, write) => graph.Save.TryCommitEconomy([player], context =>
         {
             Assert.Empty(notifications);
@@ -69,7 +72,7 @@ public sealed partial class PlayerMailSendPersistenceTests
 
         Assert.Equal(!failBeforeCommit, SkillLaborBatch.Run(player, skill, true, () =>
         {
-            effect.Apply(player, null, player, null, null, new EffectSource(skill), null, DateTime.UtcNow);
+            effect.Apply(player, source, player, null, null, new EffectSource(skill), null, DateTime.UtcNow);
             if (!paidLabor && !skill.Cancelled)
                 Assert.True(SkillLaborBatch.Current.Inventory.TryConsume(player.Inventory.Bag, scroll, 1));
         }));
