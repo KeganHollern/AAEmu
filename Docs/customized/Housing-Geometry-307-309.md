@@ -167,7 +167,9 @@ Native `393b03b0` uses the base model when the supplied phase model is empty.
 An empty base model cannot create the preview.
 For an unknown nonempty model scheme, the normal client uses `objects/box_nodraw.cgf`.
 This rule includes the authored `a://invalid` value.
-The resolver retains missing-file failures for recognized asset paths.
+Missing brush models use the authored native fallback.
+Missing animation models and prefab elements keep the native empty result.
+Malformed files still report an error.
 
 Native `393aa540` applies the template collision flags to all doodad physical parts.
 The `no_collision` field sets `flagsAND=0` and `flagsOR=0x8000`.
@@ -223,7 +225,10 @@ The retained tests cover binary formats, transforms, intersection queries, and a
 
 ## Server animation clock
 
-The server samples placed CHR geometry from the persisted doodad phase time.
+The server samples placed CGA, CHR, and prefab geometry from the persisted doodad phase time.
+House geometry uses the placement time and current build model.
+Placement previews use the native initial bounds.
+All support and overlap queries for one placement use the same time.
 `DoodadFuncAnimate.play_once` selects the last key or a repeated clip.
 Native `393a4210` selects a random animation when a phase supplies several entries.
 The server selects the entry with the lowest authored ID for repeatable collision checks.
@@ -234,6 +239,9 @@ Native `393a4360` supplies a 0.5 second transition to that animation.
 A client can thus show another animation time or selected clip.
 The server uses the authored physical proxies at its own phase time.
 It does not claim to reproduce each client's visual frame or transition.
+
+These server clock rules remain downstream-only for the r208022 deployment.
+No client content, compact input, or SQL schema changes accompany this release.
 
 ## CGA poses and bounds
 

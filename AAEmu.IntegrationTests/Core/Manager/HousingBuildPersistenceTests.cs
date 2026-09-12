@@ -171,7 +171,8 @@ public sealed partial class PlayerMailSendPersistenceTests
                     Assert.True(house.IsVisible);
                     Assert.False(house.IsDirty);
                     Assert.Equal(new Vector3(100, 200, 300), house.Transform.World.Position);
-                    Assert.Equal(0.5f, house.Transform.World.Rotation.Z);
+                    // The requested yaw is encoded as native signed byte 20 before placement.
+                    Assert.Equal(0.494739f, house.Transform.World.Rotation.Z, 6);
                     Assert.Equal(0, house.CurrentStep);
                     Assert.Equal(player.Id, house.OwnerId);
                     Assert.Equal(player.AccountId, house.AccountId);
@@ -249,7 +250,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                     Assert.Equal(0, restoredHouse.CurrentStep);
                     Assert.Equal(HousingPermission.Private, restoredHouse.Permission);
                     Assert.Equal(expectedPosition, restoredHouse.Transform.World.Position);
-                    Assert.Equal(expectedRotation, restoredHouse.Transform.World.Rotation);
+                    Assert.InRange(Vector3.Distance(expectedRotation, restoredHouse.Transform.World.Rotation), 0, 0.000001f);
                     Assert.Equal(expectedPlaceDate.Ticks / TimeSpan.TicksPerSecond,
                         restoredHouse.PlaceDate.Ticks / TimeSpan.TicksPerSecond);
                     Assert.Equal(expectedProtection.Ticks / TimeSpan.TicksPerSecond,

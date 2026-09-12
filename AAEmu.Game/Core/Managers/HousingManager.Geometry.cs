@@ -131,6 +131,8 @@ public partial class HousingManager
                 point => player.ParentWorld.Template.HousingZones.Values.SelectMany(areas => areas)
                     .FirstOrDefault(area => area.Group == 1 && area.Contains(point))))
                 return pose with { Error = ErrorMessageType.HouseCannotLocateInvalidArea };
+            var water = GeometryAssets.GetWater(player.ParentWorld.Template);
+            var prefabWater = GeometryAssets.GetPrefabWater(player.ParentWorld, _houses.Values);
             if (template.GardenRadius > 0)
             {
                 foreach (var cell in HousingFootprint.GetCells(new Vector2(pose.Position.X, pose.Position.Y), template.GardenRadius, template.Alley))
@@ -139,7 +141,7 @@ public partial class HousingManager
                     var ground = scene.SampleRawHeight((int)corner.X, (int)corner.Y);
                     var point = corner with { Z = ground };
                     var waterError = HousingConstructionGeometry.CheckWater(template.CategoryId, ground,
-                        GeometryAssets.GetWater(player.ParentWorld.Template).GetWaterLevel(point, player.ParentWorld.Water.OceanLevel));
+                        water.GetWaterLevel(point, player.ParentWorld.Water.OceanLevel, prefabWater));
                     if (waterError != ErrorMessageType.NoErrorMessage)
                         return pose with { Error = waterError };
                 }
@@ -147,7 +149,7 @@ public partial class HousingManager
             else
             {
                 var waterError = HousingConstructionGeometry.CheckWater(template.CategoryId, pose.Position.Z,
-                    GeometryAssets.GetWater(player.ParentWorld.Template).GetWaterLevel(pose.Position, player.ParentWorld.Water.OceanLevel));
+                    water.GetWaterLevel(pose.Position, player.ParentWorld.Water.OceanLevel, prefabWater));
                 if (waterError != ErrorMessageType.NoErrorMessage)
                     return pose with { Error = waterError };
             }

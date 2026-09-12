@@ -98,19 +98,18 @@ public sealed class HousingGeometryAssets
     {
         var elapsedSeconds = ElapsedSeconds(doodad.PhaseTime, utcNow);
         var path = DoodadModelPath(doodad.Template, doodad.FuncGroupId);
-        var asset = string.IsNullOrEmpty(path) ? null : _resolver.LoadPose(path, elapsedSeconds);
-        if (asset?.CharacterBones.Count is not > 0)
-            return asset;
+        if (string.IsNullOrEmpty(path))
+            return null;
         var animations = doodad.CurrentPhaseFuncs
             .Where(func => func.FuncType == nameof(DoodadFuncAnimate))
             .Select(func => DoodadManager.Instance.GetPhaseFuncTemplate(func.FuncId, func.FuncType))
             .OfType<DoodadFuncAnimate>().OrderBy(animation => animation.Id).ToArray();
         if (animations.Length == 0)
-            return asset;
+            return _resolver.LoadPose(path, elapsedSeconds);
         // The client picks one phase clip at random. Server collision uses the first authored ID.
         var animation = animations[0];
         // Native393a4360 uses CA_LOOP_ANIMATION (2) or CA_REPEAT_LAST_KEY (4).
-        return _resolver.LoadCharacterPose(path, animation.Name,
+        return _resolver.LoadAnimationPose(path, animation.Name,
             elapsedSeconds, !animation.PlayOnce);
     }
 
@@ -150,6 +149,30 @@ public sealed class HousingGeometryAssets
 
     public HousingWaterGeometry GetWater(WorldTemplate world) => _water.GetOrAdd(world,
         template => new Lazy<HousingWaterGeometry>(() => HousingWaterGeometry.Load(template, _openFile))).Value;
+
+    public IReadOnlyList<CryWaterVolumeInstance> GetPrefabWater(WorldInstance world, IEnumerable<House> houses)
+    {
+        var instances = new List<(DateTime Time, uint ObjectId, CryWaterVolumeInstance Water)>();
+        foreach (var doodad in world.GetAllDoodads())
+        {
+            if (doodad.Template == null)
+                continue;
+            var volumes = _resolver.LoadWater(DoodadModelPath(doodad.Template, doodad.FuncGroupId));
+            if (volumes.Count > 0)
+                instances.Add((doodad.PhaseTime, doodad.ObjId, new CryWaterVolumeInstance(volumes, Transform(doodad))));
+        }
+        foreach (var house in houses.Where(house => ReferenceEquals(house.ParentWorld, world) && house.Template != null))
+        {
+            var modelId = house.CurrentStep >= 0 && house.Template.BuildSteps.TryGetValue(house.CurrentStep, out var step)
+                ? step.ModelId : house.Template.MainModelId;
+            var volumes = _modelPaths(modelId, 1).SelectMany(_resolver.LoadWater).ToArray();
+            if (volumes.Length > 0)
+                instances.Add((house.PlaceDate, house.ObjId, new CryWaterVolumeInstance(volumes, Transform(house))));
+        }
+        // The client registers visible prefabs. The server uses persisted phase/placement order.
+        return instances.OrderBy(instance => instance.Time).ThenBy(instance => instance.ObjectId)
+            .Select(instance => instance.Water).ToArray();
+    }
 
     public static Matrix4x4 Transform(BaseUnit unit)
     {
