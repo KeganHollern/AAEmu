@@ -8,6 +8,15 @@ namespace AAEmu.UnitTests.Game.Models.Game.Housing;
 public sealed class CryGeometryResolverTests
 {
     [Test]
+    [Arguments("cgf://Objects//Trees///Palm.cgf", "cgf://objects/trees/palm.cgf")]
+    [Arguments("Objects/\\Trees//Palm.cgf///", "objects/trees/palm.cgf/")]
+    [Arguments("prefab://Prefabs//House.xml/House.Door", "prefab://prefabs/house.xml/house.door")]
+    public async Task Normalize_CollapsesNativeSeparatorsAndPreservesUriAndTrailingSlash(string path, string expected)
+    {
+        await Assert.That(CryGeometryResolver.Normalize(path)).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task ReadCgf_CompoundModel_UsesParentTransformAndEmptyProxyBounds()
     {
         var model = CryGeometryResolver.ReadCgf(Model(false));

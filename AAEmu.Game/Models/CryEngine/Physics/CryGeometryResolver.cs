@@ -461,8 +461,6 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
         return value;
     }
 
-    public static string Normalize(string path) => path.Replace('\\', '/').Trim().ToLowerInvariant();
-
     private System.IO.Stream OpenFile(string path) => openFile(path) ??
         throw new FileNotFoundException($"Missing client geometry asset '{path}'.", path);
 

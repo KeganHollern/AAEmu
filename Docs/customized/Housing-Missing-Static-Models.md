@@ -78,3 +78,25 @@ The missing-reference work resolves 24 absent files, 16 absent prefab elements, 
 The local fixture records each path and its source templates in `world-doodad-models.json`.
 `world-doodad-coverage.json` contains its geometry results.
 The 15 resolver tests and 6 static resolver tests passed, including the full static client fixture.
+
+## Native path separators
+
+CrySystem `3650f4a0` calls `3650f0f0` to prepare an asset path.
+That function calls `XlNormalizePath` at `33017a00` in `xlcommon.dll`.
+Its helper `33018010` maps slash and backslash separators to one slash.
+It removes repeated separators and preserves one trailing separator.
+It does not remove `.` or `..` path elements.
+
+The resolver now uses the same separator rule after the model URI scheme.
+It preserves `prefab://`, `cgf://`, and the other model schemes.
+This makes 5 authored banana-tree and bottle model paths match files in the exact archive.
+A trailing slash after `.cgf` stays in the path and still follows native missing-file behavior.
+
+The 18 resolver tests and 6 static resolver tests passed after this change.
+The static fixture still finds exactly 8 absent brush models.
+The path evidence is in `native-path1.log` through `native-path7.log` and their decompiles.
+
+| Native module | SHA-256 |
+| --- | --- |
+| `xlcommon.dll` | `0e0881aa837553d7e307a5c6f9d886f3e82a0d72d94b6d666448aedaa94e2203` |
+| `crysystem.dll` | `523ac57702ea9e17d7ced30e3701317169b80fa5cb37e2e876c33f9d2d112353` |
