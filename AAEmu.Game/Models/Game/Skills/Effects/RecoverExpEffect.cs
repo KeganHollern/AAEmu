@@ -1,6 +1,5 @@
 ﻿using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets;
-using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Templates;
@@ -25,25 +24,19 @@ public class RecoverExpEffect : EffectTemplate
     {
         if (caster is not Character player)
             return;
-        Logger.Debug($"Player {player.Name}");
-        if (player.RecoverableExp <= 0)
+        var batch = SkillLaborBatch.For(player);
+        if (batch == null)
         {
-            player.SendErrorMessage(ErrorMessageType.CannotRecoverAllNotEnough); // Is this one correct?
+            if (source?.Skill != null)
+                source.Skill.Cancelled = true;
             return;
         }
-
-        // TODO: Verify this formula
-        var neededLaborCost = player.Level <= 50 ? player.Level : 50 + ((player.Level - 50) * 20);
-        if (NeedLaborPower && player.LaborPower < neededLaborCost)
-        {
-            player.SendErrorMessage(ErrorMessageType.NotEnoughLaborPower);
-            return;
-        }
-
         if (NeedMoney)
         {
-            // TODO: Check what this actually does if it's enabled.
-            // Not used in 1.2
+            // Neither authored r208022 recovery effect defines a money charge.
+            player.SendErrorMessage(ErrorMessageType.InvalidTarget);
+            batch.Fail();
+            return;
         }
 
         // Check for nearby priest if needed (caster and target are always the player)
@@ -62,19 +55,13 @@ public class RecoverExpEffect : EffectTemplate
             if (!found)
             {
                 player.SendErrorMessage(ErrorMessageType.TooFarAway);
+                batch.Fail();
                 return;
             }
         }
 
-        // Use labor and recover exp without generating extra exp from labor consumption.
-        if (!player.SpendLaborWithoutExperience((short)neededLaborCost))
-        {
-            player.SendErrorMessage(ErrorMessageType.NotEnoughLaborPower);
-            return;
-        }
-        player.SendPacket(new SCRecoverableExpPacket(player.ObjId, 0, 0, 1));
-        player.RestoreExperience(player.RecoverableExp);
-        player.RecoverableExp = 0;
-        player.LastExpLoss = 0;
+        // Preserve the current level-based cost. Scroll effect 5 explicitly has no labor charge.
+        var neededLaborCost = !NeedLaborPower ? 0 : player.Level <= 50 ? player.Level : 50 + ((player.Level - 50) * 20);
+        player.StageExperienceRecovery((short)neededLaborCost);
     }
 }
