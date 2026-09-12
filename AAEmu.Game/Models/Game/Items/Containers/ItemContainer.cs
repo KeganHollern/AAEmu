@@ -325,7 +325,7 @@ public class ItemContainer
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
-            if (SkillLaborBatch.For(Owner) is { } batch)
+            if (SkillLaborBatch.Current != null && SkillLaborBatch.For(Owner) is { } batch)
             {
                 var moved = item?._holdingContainer == null
                     ? batch.Inventory.TryAddCreated(item, this, preferredSlot)
@@ -494,7 +494,7 @@ public class ItemContainer
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
-            if (SkillLaborBatch.For(Owner) is { } batch)
+            if (SkillLaborBatch.Current != null && SkillLaborBatch.For(Owner) is { } batch)
                 return item != null && releaseIdAsWell && batch.Inventory.TryConsume(this, item, item.Count) || batch.Fail();
             return RemoveItemLocked(task, item, releaseIdAsWell);
         }
@@ -554,7 +554,7 @@ public class ItemContainer
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
-            if (SkillLaborBatch.For(Owner) is { } batch)
+            if (SkillLaborBatch.Current != null && SkillLaborBatch.For(Owner) is { } batch)
                 return batch.Consume(this, templateId, amountToConsume, preferredItem);
             return ConsumeItemLocked(taskType, templateId, amountToConsume, preferredItem);
         }
@@ -769,7 +769,7 @@ public class ItemContainer
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
-            if (SkillLaborBatch.For(Owner) is { } batch)
+            if (SkillLaborBatch.Current != null && SkillLaborBatch.For(Owner) is { } batch)
             {
                 var previous = Items.ToHashSet();
                 var granted = batch.Inventory.TryGrant(this, templateId, amountToAdd, out var items, gradeToAdd);
