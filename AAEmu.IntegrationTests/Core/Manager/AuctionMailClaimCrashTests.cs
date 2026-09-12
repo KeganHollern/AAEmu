@@ -53,13 +53,12 @@ public sealed partial class AuctionMailClaimStoreTests
             {
                 if (!afterCommit)
                 {
-                    // A nontransactional probe records entry into the real transaction.
+                    // A connection-owned lock reports entry into the real transaction.
                     // It is private test state and never appears in production SQL.
-                    await ExecuteAsync("CREATE TABLE auction_claim_crash_probe (entered INT NOT NULL) ENGINE=MyISAM");
                     await ExecuteAsync($"""
                         CREATE TRIGGER pause_auction_claim BEFORE INSERT ON mails FOR EACH ROW
                         BEGIN
-                            INSERT INTO auction_claim_crash_probe VALUES (1);
+                            DO GET_LOCK('{gateName}_entered', 0);
                             DO GET_LOCK('{gateName}', 30);
                         END
                         """);
@@ -81,7 +80,7 @@ public sealed partial class AuctionMailClaimStoreTests
                 var output = child.StandardOutput.ReadToEndAsync();
                 var errors = child.StandardError.ReadToEndAsync();
                 var timeout = Stopwatch.StartNew();
-                while (afterCommit ? !File.Exists(marker) : await ScalarAsync("SELECT COUNT(*) FROM auction_claim_crash_probe") == 0)
+                while (afterCommit ? !File.Exists(marker) : await ScalarAsync($"SELECT COALESCE(IS_USED_LOCK('{gateName}_entered'), 0)") == 0)
                 {
                     Assert.False(child.HasExited, "The claim worker exited before the crash point.");
                     Assert.True(timeout.Elapsed < TimeSpan.FromSeconds(20), "The claim worker did not reach the crash point.");
@@ -95,7 +94,7 @@ public sealed partial class AuctionMailClaimStoreTests
                 if (!afterCommit)
                 {
                     // This waits for the disconnected worker's statement to release its metadata lock.
-                    await ExecuteAsync("DROP TRIGGER pause_auction_claim; DROP TABLE auction_claim_crash_probe");
+                    await ExecuteAsync("DROP TRIGGER pause_auction_claim");
                 }
                 var restarted = new MySqlAuctionMailClaimStore();
                 Assert.Equal(afterCommit ? plan.Receipt : null, restarted.FindReceipt(plan.Mail.Id, 7));
@@ -135,7 +134,7 @@ public sealed partial class AuctionMailClaimStoreTests
                 }
                 gateCommand.CommandText = "SELECT RELEASE_LOCK(@gate)";
                 await gateCommand.ExecuteScalarAsync();
-                await ExecuteAsync("DROP TRIGGER IF EXISTS pause_auction_claim; DROP TABLE IF EXISTS auction_claim_crash_probe");
+                await ExecuteAsync("DROP TRIGGER IF EXISTS pause_auction_claim");
                 File.Delete(marker);
             }
         }
