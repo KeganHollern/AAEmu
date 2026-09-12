@@ -20,6 +20,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Mails;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.StaticValues;
@@ -507,88 +508,88 @@ public partial class HousingManager(
             return;
         }
 
-        using var inventory = new InventoryMutation(ItemTaskType.HouseCreation);
-        if (!TryStageCreationPayment(inventory, connection.ActiveChar, sourceDesignItem, totalTaxAmountDue,
-                FeaturesManager.Fsets.Check(Models.Game.Features.Feature.taxItem)))
+        var player = connection.ActiveChar;
+        var skill = new Skill(new SkillTemplate())
         {
-            connection.ActiveChar.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
-            return;
-        }
-
-        // Spawn the actual house
-        var house = Create(designId, connection.ActiveChar.Faction.Id, connection.ActiveChar.ParentWorld);
-
-        // Fallback for un-translated buildings (en_us)
-        if (house.Name == string.Empty)
+            CommitLaborBatch = (owner, write) =>
+                (saveManager?.Value ?? SaveManager.Instance).TryCommitEconomy([owner], write)
+        };
+        SkillLaborBatch.RunPlacement(player, skill, 0, () =>
         {
-            var fakeLocalizedName = localizationManager.Get("items", "name", sourceDesignItem.Template.Id, houseTemplate.Name);
-            if (fakeLocalizedName.EndsWith(" Design"))
-                fakeLocalizedName = fakeLocalizedName.Replace(" Design", "");
-            house.Name = fakeLocalizedName;
-        }
+            var batch = SkillLaborBatch.Current;
+            if (!TryStageCreationPayment(batch.Inventory, player, sourceDesignItem, totalTaxAmountDue,
+                    FeaturesManager.Fsets.Check(Models.Game.Features.Feature.taxItem)))
+            {
+                player.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
+                batch.Fail();
+                return;
+            }
 
-        house.Id = housingIdManager.GetNextId();
-        house.Transform.Local.SetPosition(posX, posY, posZ);
-        // In 1.2 the rotation in SCUnitStatePacket is sent as X, Y, Z using 1 byte each.
-        // This limits us to 256 unique rotations around Z (up) that can be represented.
-        // When placing the house with the preview and then finalizing it, this causes the actual rotation to be different from the preview.
-        // 3.0 sends a full 32-bit float for the Z-rotation for BaseUnitType.Housing, so this seems to have been fixed in later versions.
-        // The fact the server has a more accurate view of the rotation than the client means positions of objects (doodads) placed in the house
-        // can be offset.
-        // To make the server and client agree on the rotation, we convert the float zRot to a sbyte, then back to a float.
-        // The server then knows the rotation as one of the 256 unique rotations that the client can be sent.
-        var (_, _, yaw) = PositionAndRotation.ToRollPitchYawSBytes(new Vector3(0, 0, zRot));
-        zRot = PositionAndRotation.FromRollPitchYawSBytes(0, 0, yaw).Z;
-        house.Transform.Local.SetRotation(0, 0, zRot);
+            var house = Create(designId, player.Faction.Id, player.ParentWorld);
+            house.ParentWorld = player.ParentWorld;
+            batch.Enlist(null, () =>
+            {
+                _houses.Remove(house.Id);
+                _housesTl.Remove(house.TlId);
+                housingIdManager.ReleaseId(house.Id);
+                housingTldManager.ReleaseId(house.TlId);
+                objectIdManager.ReleaseId(house.ObjId);
+            });
+            house.Id = housingIdManager.GetNextId();
+            if (string.IsNullOrEmpty(house.Name))
+            {
+                var localizedName = localizationManager.Get("items", "name", sourceDesignItem.Template.Id, houseTemplate.Name);
+                house.Name = localizedName.EndsWith(" Design", StringComparison.Ordinal)
+                    ? localizedName[..^7] : localizedName;
+            }
 
-        if (house.Template.BuildSteps.Count > 0)
-            house.CurrentStep = 0;
-        else
-            house.CurrentStep = -1;
-        house.OwnerId = connection.ActiveChar.Id;
-        house.CoOwnerId = connection.ActiveChar.Id;
-        house.AccountId = connection.AccountId;
-        house.Permission = HousingPermission.Private;
-        house.AllowRecover = true;
-        SetInitialTaxDates(house, DateTime.UtcNow);
-        _houses.Add(house.Id, house);
-        _housesTl.Add(house.TlId, house);
-        bool committed;
-        try
-        {
-            committed = (saveManager?.Value ?? SaveManager.Instance).TryCommitEconomy([connection.ActiveChar], context =>
+            house.Transform.Local.SetPosition(posX, posY, posZ);
+            // SCUnitStatePacket represents housing yaw with a signed byte in r208022.
+            // Use the same quantized rotation for server geometry and client placement.
+            var (_, _, yaw) = PositionAndRotation.ToRollPitchYawSBytes(new Vector3(0, 0, zRot));
+            var placedYaw = PositionAndRotation.FromRollPitchYawSBytes(0, 0, yaw).Z;
+            house.Transform.Local.SetRotation(0, 0, placedYaw);
+            house.SetInitialConstructionStep();
+            house.OwnerId = player.Id;
+            house.CoOwnerId = player.Id;
+            house.AccountId = player.AccountId;
+            house.Permission = house.Template.AlwaysPublic ? HousingPermission.Public : HousingPermission.Private;
+            house.AllowRecover = true;
+            SetInitialTaxDates(house, DateTime.UtcNow);
+            _houses.Add(house.Id, house);
+            _housesTl.Add(house.TlId, house);
+            batch.Enlist(context =>
             {
                 if (!house.Save(context))
                     throw new InvalidOperationException("The new house could not be saved.");
+            }, null);
+            RemoveCropsForNewHouse(house);
+            batch.AfterCommit(() =>
+            {
+                house.CompleteConstructionStepChange();
+                player.SendPacket(new SCMyHousePacket(house));
+                house.Spawn();
+                UpdateTaxInfo(house);
+                if (house.CurrentStep == -1)
+                    player.Achievements?.Increment(CharRecordKind.MakeHousing, house.TemplateId, 0);
             });
-        }
-        catch
-        {
-            // A commit exception has an unknown SQL result. Keep house and payment together.
-            inventory.PreservePreparedState();
-            throw;
-        }
-        if (!committed)
-        {
-            _houses.Remove(house.Id);
-            _housesTl.Remove(house.TlId);
-            housingIdManager.ReleaseId(house.Id);
-            housingTldManager.ReleaseId(house.TlId);
-            objectIdManager.ReleaseId(house.ObjId);
-            connection.ActiveChar.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
-            return;
-        }
-        inventory.Complete();
-        connection.ActiveChar.SendPacket(new SCMyHousePacket(house));
-        house.Spawn();
-        UpdateTaxInfo(house);
+        }, ItemTaskType.HouseCreation);
+    }
 
-        if (house.CurrentStep == -1)
+    private static void RemoveCropsForNewHouse(House house)
+    {
+        var position = house.Transform.World.Position;
+        if (!HousingFootprint.TryCreateGarden(new Vector2(position.X, position.Y),
+                house.Template.GardenRadius, 0, out var footprint))
+            return;
+        foreach (var doodad in house.ParentWorld.GetAllDoodads())
         {
-            connection.ActiveChar.Achievements?.Increment(
-                CharRecordKind.MakeHousing,
-                house.TemplateId,
-                0);
+            if (doodad.Template == null ||
+                !CommonFarmGameData.Instance.IsRemovedByHouse(doodad.Template.GroupId))
+                continue;
+            var point = doodad.Transform.World.Position;
+            if (footprint.Contains(point.X, point.Y))
+                doodad.Delete();
         }
     }
 
