@@ -22,6 +22,9 @@ public class NpcSpawnerSpawnEffect : EffectTemplate
         CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time,
         CompressedGamePackets packetBuilder = null)
     {
+        if (caster is Npc { Despawned: true } ||
+            caster is Npc { TowerDefenseSpawnToken.Lifetime.IsCancelled: true })
+            return;
         Logger.Info($"NpcSpawnerSpawnEffect: SpawnerId={SpawnerId}, LifeTime={LifeTime}, UseSummonerAggroTarget={UseSummonerAggroTarget}, ActivationState={ActivationState}");
 
         // aaemu-cluster#92 (#99): search both the normal and the pinned/event spawner dictionaries,

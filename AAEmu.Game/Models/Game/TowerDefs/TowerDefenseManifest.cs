@@ -19,7 +19,14 @@ public sealed class TowerDefenseEventManifest
     public string ConcurrencyGroup { get; set; }
     public string RestartPolicy { get; set; } = "RestartCurrentStep";
     public bool ImmediateTransitionAllowed { get; set; }
+    public TowerDefenseCompletionTarget CompletionTarget { get; set; }
     public List<TowerDefenseSiteManifest> Sites { get; set; } = [];
+}
+
+public sealed class TowerDefenseCompletionTarget
+{
+    public uint NpcId { get; set; }
+    public uint Count { get; set; }
 }
 
 public sealed class TowerDefenseTriggerManifest

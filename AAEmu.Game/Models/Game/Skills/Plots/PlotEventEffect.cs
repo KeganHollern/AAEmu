@@ -85,9 +85,13 @@ public class PlotEventEffect
                 NpcSpawnerSpawnEffect or NpcSpawnerDespawnEffect or KillNpcWithoutCorpseEffect)
             {
                 var deferredTarget = target;
-                batch.AfterCommit(() => template.Apply(source, state.CasterCaster, deferredTarget, state.TargetCaster,
-                    new CastPlot(evt.PlotId, state.ActiveSkill.TlId, evt.Id, state.ActiveSkill.Template.Id),
-                    new EffectSource(state.ActiveSkill), state.SkillObject, DateTime.UtcNow));
+                batch.AfterCommit(() =>
+                {
+                    if (!state.CancellationRequested())
+                        template.Apply(source, state.CasterCaster, deferredTarget, state.TargetCaster,
+                            new CastPlot(evt.PlotId, state.ActiveSkill.TlId, evt.Id, state.ActiveSkill.Template.Id),
+                            new EffectSource(state.ActiveSkill), state.SkillObject, DateTime.UtcNow);
+                });
                 continue;
             }
             template.Apply(

@@ -5,6 +5,7 @@
         {
             "key": "rift.crimson.cinderstone",
             "towerDefId": 3,
+            "completionTarget": { "npcId": 8850, "count": 2 },
             "enabled": false,
             "worldTemplate": "main_world",
             "zoneGroupId": 20,
@@ -50,6 +51,7 @@
         {
             "key": "rift.crimson.ynystere",
             "towerDefId": 5,
+            "completionTarget": { "npcId": 8850, "count": 2 },
             "enabled": false,
             "worldTemplate": "main_world",
             "zoneGroupId": 17,
@@ -84,6 +86,7 @@
         {
             "key": "rift.crimson.auroria",
             "towerDefId": 6,
+            "completionTarget": { "npcId": 8952, "count": 1 },
             "enabled": false,
             "worldTemplate": "main_world",
             "zoneGroupId": 0,

@@ -1539,6 +1539,10 @@ public partial class Npc : Unit
 
     public override void Delete()
     {
+        ActivePlotState?.RequestCancellation();
+        if (ParentWorld?.EventSpawnOwnership.TryGet(ObjId, out var owned) == true && ReferenceEquals(owned.Npc, this))
+            ParentWorld.EventSpawnOwnership.Unregister(ObjId);
+
         // Detach AI
         if (Ai != null)
         {

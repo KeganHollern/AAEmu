@@ -1,6 +1,5 @@
 ﻿using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Faction;
-using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Plots.Type;
 using AAEmu.Game.Models.Game.Skills.Plots.UpdateTargetMethods;
 using AAEmu.Game.Models.Game.Skills.Utils;
@@ -11,6 +10,8 @@ namespace AAEmu.Game.Models.Game.Skills.Plots.Tree;
 
 public class PlotTargetInfo
 {
+    private readonly Func<BaseUnit, float?> _groundHeightResolver = position =>
+        WorldManager.Instance.TryGetHeight(position.Transform, out var height) ? height : null;
     public BaseUnit Source { get; set; }
     private BaseUnit PreviousSource { get; set; }
     public BaseUnit Target { get; set; }
@@ -31,6 +32,12 @@ public class PlotTargetInfo
         PreviousTarget = target;
         Source = source;
         Target = target;
+    }
+
+    internal PlotTargetInfo(BaseUnit source, BaseUnit target, Func<BaseUnit, float?> groundHeightResolver)
+        : this(source, target)
+    {
+        _groundHeightResolver = groundHeightResolver;
     }
 
     public void UpdateTargetInfo(PlotEventTemplate template, PlotState state)
@@ -198,41 +205,36 @@ public class PlotTargetInfo
         return posUnit;
     }
 
-    private static float ResolvePlotLandHeight(BaseUnit previous, BaseUnit position, int rawHeightParameter)
+    private float ResolvePlotLandHeight(BaseUnit previous, BaseUnit position, int rawHeightParameter)
     {
         var anchorHeight = previous?.Transform?.World.Position.Z ?? 0f;
-        var hasGroundHeight = WorldManager.Instance.TryGetHeight(position.Transform, out var groundHeight);
-        var previousIsAerial = previous is Npc { CanFly: true } ||
-                               (previous is { ObjId: not uint.MaxValue } && hasGroundHeight &&
-                                anchorHeight > groundHeight + 8f);
-
+        var groundHeight = _groundHeightResolver(position);
         return ResolvePlotLandHeight(
             anchorHeight,
             rawHeightParameter,
-            hasGroundHeight ? groundHeight : null,
-            previousIsAerial);
+            groundHeight);
     }
 
     /// <summary>
-    /// Resolves the surface used by area-location plot nodes. The raw height field is also used as a
-    /// vertical search range by retail plots; treating large values as a positive offset places rift
-    /// impacts and their SpawnEffects hundreds of metres above the terrain.
+    /// Retail rift plots use 500000 on the downward projectile node and zero on its aerial launch
+    /// node. Ground the impact, not the launch. The general meaning of param4 is not confirmed;
+    /// do not interpret every large offset or every flying source as a request to land.
     /// </summary>
     internal static float ResolvePlotLandHeight(
         float anchorHeight,
         int rawHeightParameter,
-        float? groundHeight,
-        bool previousIsAerial)
+        float? groundHeight)
     {
         var offset = rawHeightParameter / 1000f;
         var raisedHeight = anchorHeight + offset;
         if (groundHeight is not { } ground || !float.IsFinite(ground))
+        {
+            if (rawHeightParameter == 500000)
+                throw new InvalidOperationException("Cannot resolve terrain for plot impact; check world geodata/heightmaps. Refusing an airborne summon.");
             return raisedHeight;
+        }
 
-        if (Math.Abs(offset) >= 100f)
-            return ground;
-
-        if (previousIsAerial && raisedHeight > ground + 2f)
+        if (rawHeightParameter == 500000)
             return ground;
 
         return Math.Max(raisedHeight, ground);
