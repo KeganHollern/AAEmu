@@ -139,8 +139,11 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
                     child = LoadCharacterPose(childPath, (string)animation.Attribute("Animation") ?? "Default", time, loop);
             }
             var transform = ReadPrefabTransform(obj);
-            var childBounds = child.Bounds.Transform(transform);
-            bounds = bounds?.Union(childBounds) ?? childBounds;
+            if (child.HasModelBounds)
+            {
+                var childBounds = child.Bounds.Transform(transform);
+                bounds = bounds?.Union(childBounds) ?? childBounds;
+            }
             var material = (string)obj.Attribute("Material");
             var physics = obj.Element("Properties")?.Element("Physics");
             var physicalized = (string)physics?.Attribute("bPhysicalize") != "0";
@@ -159,8 +162,9 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
                 MaterialPath = string.IsNullOrWhiteSpace(material) ? part.MaterialPath : AssetPath(material)
             }));
         }
-        return new CryGeometryAsset(bounds ?? throw new InvalidDataException("Prefab contains no supported model bounds."), parts)
+        return new CryGeometryAsset(bounds ?? new CryBounds(Vector3.Zero, Vector3.Zero), parts)
         {
+            HasModelBounds = bounds.HasValue,
             Helpers = helpers,
             PoseRequirements = poses,
             HasAnimatedCollision = animatedCollision

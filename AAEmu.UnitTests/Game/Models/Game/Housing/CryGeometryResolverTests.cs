@@ -142,6 +142,39 @@ public sealed class CryGeometryResolverTests
         await Assert.That(asset.PoseRequirements.Count).IsEqualTo(hasDefault ? 1 : 0);
     }
 
+    [Test]
+    public async Task LoadPrefab_VisualEffectsWithoutModel_ContributeNoSolidGeometryOrModelBounds()
+    {
+        var xml = Encoding.UTF8.GetBytes("""
+            <PrefabsLibrary><Prefab Name="effect"><Objects>
+              <Object Type="Comment" Name="note" Pos="100,100,100" />
+              <Object Type="Entity" EntityClass="ParticleEffect"><Properties ParticleEffect="smoke" /></Object>
+              <Object Type="Decal" Pos="10,10,10" />
+            </Objects></Prefab></PrefabsLibrary>
+            """);
+        var resolver = new CryGeometryResolver(_ => new MemoryStream(xml));
+        var asset = resolver.Load("prefab://prefabs/fx.xml/effect");
+        await Assert.That(asset.HasModelBounds).IsFalse();
+        await Assert.That(asset.Parts.Count).IsEqualTo(0);
+        await Assert.That(asset.Helpers.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task LoadPrefab_MissingAnimationChild_DoesNotExtendTheOtherModelBounds()
+    {
+        var xml = Encoding.UTF8.GetBytes("""
+            <PrefabsLibrary><Prefab Name="house"><Objects>
+              <Object Type="Brush" Prefab="objects/house.cgf" Pos="10,10,10" />
+              <Object Type="Entity" Pos="100,100,100"><Properties object_Model="cga://objects/missing.cga" /></Object>
+            </Objects></Prefab></PrefabsLibrary>
+            """);
+        var resolver = new CryGeometryResolver(path => path.EndsWith("missing.cga", StringComparison.Ordinal) ? null :
+            new MemoryStream(path.EndsWith(".xml", StringComparison.Ordinal) ? xml : Model(true)));
+        var asset = resolver.Load("prefab://prefabs/housing.xml/house");
+        await Assert.That(asset.HasModelBounds).IsTrue();
+        await Assert.That(asset.Bounds.Max).IsEqualTo(new Vector3(11, 11, 11));
+    }
+
     private static byte[] Model(bool merge, bool physics = false, bool animatedParent = false)
     {
         var chunks = new List<(uint Kind, int Version, int Id, byte[] Data)>();

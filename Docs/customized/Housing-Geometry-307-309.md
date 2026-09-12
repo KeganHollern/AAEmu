@@ -272,3 +272,16 @@ The resolver loads the referenced skeleton and replaces the part material paths.
 It resolves animation names through that skeleton's CAL file.
 An attachment or nonzero shape deformation still needs its own authored geometry rules.
 The reader does not discard those fields to accept an unsupported definition.
+
+## Prefabs without solid models
+
+Native `3910f570` loads each prefab object by its type.
+Particle and decal objects use the default bounds getter `39104df0`.
+That getter returns a reset box, so these objects do not extend the model bounds.
+Comments and sounds do not supply solid geometry.
+
+The world fixture includes 46 prefab paths without a solid model.
+The resolver returns their empty part list and sets `HasModelBounds` to false.
+It also excludes a missing animation child from the bounds of other valid children.
+Placement candidates still need model bounds.
+An empty effect in another part of the world does not cause a model-read failure for all housing queries.
