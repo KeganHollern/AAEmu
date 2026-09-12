@@ -101,6 +101,20 @@ public sealed class CryGeometryResolverTests
         await Assert.That(asset.PoseRequirements[0].AffectsCollision).IsFalse();
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Load_Character_DefaultOnlyStartsWhenItsCalDefinesIt(bool hasDefault)
+    {
+        var resolver = new CryGeometryResolver(path => new MemoryStream(path.EndsWith(".chr", StringComparison.Ordinal)
+            ? Model(false, true, true)
+            : Encoding.UTF8.GetBytes(path.EndsWith("model.cal", StringComparison.Ordinal)
+                ? "#filepath = animations/cat\n$Include = objects/shared.cal\n"
+                : hasDefault ? "Default = idle.caf // clip\n" : "idle = idle.caf\n")));
+        var asset = resolver.Load("cga://objects/model.chr");
+        await Assert.That(asset.PoseRequirements.Count).IsEqualTo(hasDefault ? 1 : 0);
+    }
+
     private static byte[] Model(bool merge, bool physics = false, bool animatedParent = false)
     {
         var chunks = new List<(uint Kind, int Version, int Id, byte[] Data)>();

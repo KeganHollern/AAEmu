@@ -10,8 +10,28 @@ namespace AAEmu.Game.Models.CryEngine.Physics;
 public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
 {
     private readonly ConcurrentDictionary<string, CryGeometryAsset> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, CryCharacterAnimation> _animations = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<(string Model, string Name), string> _animationPaths = new();
 
     public CryGeometryAsset Load(string modelUri) => _cache.GetOrAdd(Normalize(modelUri), LoadCore);
+
+    public CryGeometryAsset LoadCharacterPose(string modelUri, string animationName, double elapsedSeconds, bool loop)
+    {
+        var asset = Load(modelUri);
+        var uri = Normalize(modelUri);
+        var separator = uri.IndexOf("://", StringComparison.Ordinal);
+        var path = separator < 0 ? uri : uri[(separator + 3)..];
+        var animationPath = FindCharacterAnimation(path, animationName) ??
+            throw new NotSupportedException($"Character animation '{animationName}' is not in the model CAL file.");
+        var animation = _animations.GetOrAdd(animationPath, file =>
+        {
+            using var stream = OpenFile(file);
+            using var buffer = new MemoryStream();
+            stream.CopyTo(buffer);
+            return CryCharacterAnimation.Read(buffer.ToArray());
+        });
+        return animation.Sample(asset, elapsedSeconds, loop);
+    }
 
     private CryGeometryAsset LoadCore(string uri)
     {
@@ -28,7 +48,10 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         using var buffer = new MemoryStream();
         stream.CopyTo(buffer);
         var asset = ReadCgf(buffer.ToArray(), AssetPath(path));
-        if (scheme is "cga" or "cga_loop" || path.EndsWith(".chr", StringComparison.Ordinal))
+        var startsAnimation = scheme is "cga" or "cga_loop";
+        if (path.EndsWith(".chr", StringComparison.Ordinal))
+            startsAnimation &= FindCharacterAnimation(path, "Default") != null;
+        if (startsAnimation)
             asset = asset with { PoseRequirements = [new CryGeometryPoseRequirement(uri, "", Matrix4x4.Identity, "", true, true)
                 { AffectsCollision = asset.HasAnimatedCollision }] };
         return asset;
@@ -303,7 +326,8 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
             foreach (var bone in bones.Where(bone => bone.Shape != null && (bone.PhysicsFlags & 0xffff0000) != 0x30000))
                 parts.Add(new CryGeometryPart(bone.Shape, bone.BindTransform, 0x1000, "", bone.Name)
                 {
-                    PhysicsGroup = $"{path}#bone{bone.Index}"
+                    PhysicsGroup = $"{path}#bone{bone.Index}",
+                    BoneIndex = bone.Index
                 });
             animatedCollision = bones.Any(bone => bone.Shape != null);
         }
@@ -387,6 +411,48 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
 
     private System.IO.Stream OpenFile(string path) => openFile(path) ??
         throw new FileNotFoundException($"Missing client geometry asset '{path}'.", path);
+
+    private string FindCharacterAnimation(string modelPath, string name)
+    {
+        if (!modelPath.EndsWith(".chr", StringComparison.Ordinal))
+            throw new NotSupportedException("A compiled character animation needs a CHR model.");
+        var result = _animationPaths.GetOrAdd((modelPath, name.ToLowerInvariant()), _ =>
+            ReadCal(AssetPath(modelPath[..^4] + ".cal"), "", []) ?? "");
+        return result.Length == 0 ? null : result;
+
+        string ReadCal(string path, string animationDirectory, HashSet<string> chain)
+        {
+            if (!chain.Add(path))
+                throw new InvalidDataException("Cyclic character CAL include.");
+            System.IO.Stream stream;
+            try { stream = OpenFile(path); }
+            catch (FileNotFoundException) { return null; }
+            using var input = stream;
+            using var reader = new StreamReader(input);
+            while (reader.ReadLine() is { } line)
+            {
+                var comment = line.IndexOf("//", StringComparison.Ordinal);
+                if (comment >= 0)
+                    line = line[..comment];
+                var separator = line.IndexOf('=');
+                if (separator < 0)
+                    continue;
+                var key = line[..separator].Trim();
+                var value = line[(separator + 1)..].Trim();
+                if (key.Equals("#filepath", StringComparison.OrdinalIgnoreCase))
+                    animationDirectory = Normalize(value).TrimEnd('/');
+                else if (key.Equals("$Include", StringComparison.OrdinalIgnoreCase))
+                {
+                    var found = ReadCal(AssetPath(value), animationDirectory, new HashSet<string>(chain, StringComparer.OrdinalIgnoreCase));
+                    if (found != null)
+                        return found;
+                }
+                else if (key.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    return AssetPath(animationDirectory.Length == 0 ? value : animationDirectory + "/" + value);
+            }
+            return null;
+        }
+    }
 
     private static int GetPickingIndex(string name)
     {

@@ -180,12 +180,32 @@ The query must not invent such a triangle filter.
 `HasAnimatedCollision` records whether a collision node or one of its ancestors has a controller.
 An animated visual child does not make a static root proxy move.
 The resolver retains separate pose requirements for the model bounds.
-Skeletal CHR geometry still needs its compiled bone proxies and active bone transforms.
+The CHR reader loads the authored live-LOD bone proxies and their bind transforms.
+Native `301af880` reads compiled bones, and `301b1c00` reads compiled physical proxies.
+The reader preserves analytic proxy boxes, spheres, cylinders, and capsules.
+Native `3153b5b0` places these proxies with the current global bone transforms.
+Native `31543950` calls `315391e0` to update non-articulated character physics after animation.
+This includes static character physics, so an active CHR needs its current bone pose.
+
+`LoadCharacterPose` resolves a named clip through the model CAL file and its includes.
+The CAF reader supports authored controller version `0x829` and timing version `0x918`.
+Native `315fbd40` selects packed quaternion formats `5` and `8`.
+Their decoders are `315fb0b0` and `315fb4f0`.
+Native `31653e80` uses shortest-path normalized linear interpolation between quaternion keys.
+The sampler reads local bone tracks, then applies the parent hierarchy to each physical proxy.
+Its returned bounds cover the physical proxies for broad-phase scene queries.
+It keeps a separate active bounds requirement because these bounds do not represent the animated render mesh.
+
 Native `3910b080` requests the `Default` animation for a direct CGA model.
 The `cga_loop` flag controls looping, not whether the animation starts.
+Native `39108450` cancels that request when `GetAnimIDByName` cannot find the name.
+The authored cat and worn machine CAL files contain no `Default` entry.
+Their previews therefore use the bind pose.
+Their placed doodads use named phase animations, which the CAF reader samples.
 Native `3903c2e0` reads model bounds each time it builds the placement box.
 An initial render box alone does not prove the bounds of an active model.
 
 The local asset fixture parsed 612 distinct housing CGF, CGA, and CHR containers without format errors.
-This count covers container parsing, not unresolved skeletal collision or active poses.
+It also sampled all 4 authored cat and worn machine clips with their exact physical proxies.
+The wider fixture retains an unresolved mermaid asset with missing referenced bone proxies.
 The retained tests cover binary formats, transforms, intersection queries, and animation ancestry.
