@@ -1496,7 +1496,7 @@ public partial class Character : Unit, ICharacter
 
         if (applyModifiers)
             expDelta = CalculateExperienceGain(expDelta, labor);
-        
+
         if (SkillLaborBatch.For(this) is { } batch)
         {
             StageSkillExperience(batch, expDelta, shouldAddAbilityExp);
