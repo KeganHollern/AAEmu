@@ -1880,9 +1880,9 @@
   ],
   "ok": true,
   "schema_version": 1,
-  "supplement_volume_count": 6,
+  "supplement_volume_count": 7,
   "supplements": {
     "file_count": 2,
-    "sha256": "162f29aff3e8860be9dbf8b40427933f9721a0d3ca2312c529b7bfe88d3c9317"
+    "sha256": "e041f93061450781595fdf216d8303bcb2a54059c29e1fdf9523636f9b483121"
   }
 }

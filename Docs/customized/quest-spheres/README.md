@@ -33,6 +33,8 @@ Its condition uses `OverrideObjectiveCompleted` because it has no objective coun
 An instance transfer removes the old world's triggers and registers current sphere acts with the destination world.
 This procedure does not restart quest supplies, timers, or event subscriptions.
 It clears the current `CheckSphere` condition before the destination check.
+It also clears location objectives that normally reset on exit.
+It preserves completed arrival objectives with `TriggerEveryNTimeAfter`.
 AreaSphere skill requirements also use the owner's world instance.
 
 ## Data decisions
@@ -47,6 +49,10 @@ The supplement adds 5 volumes for quests 5716, 5979, 6213, and 6216.
 The [destination evidence](late-quest-findings.md) gives exact anchors, world identities, zone keys, and input hashes.
 The 30 m radius is an authored value from the issue guidance.
 The exact client does not contain the original retail trigger radius for these objectives.
+
+The wider review adds a sixth volume for the starter of quest 578, Burnt Castle Jailbreak.
+The [starter findings](starter-findings.md) record its source radius of 5 m and its current NPC anchor.
+The other starter gaps remain in [issue 536](https://github.com/KeganHollern/aaemu-cluster/issues/536).
 
 The [exclusion manifest](exclusions.json) records unavailable content and the conditions that keep each exclusion valid.
 It does not remove quests or change compact data.
@@ -109,6 +115,7 @@ The release checks include the Release build, Game script compiler, full unit su
 4. Accept quest 5979, then enter Drill Camp from each team entry.
 5. Leave the instance and enter it again with an active sphere objective.
 6. Drop and accept an available sphere quest 20 times, then check that each entry gives one event.
+7. Use a level 28 or higher Nuia character to approach NPC 2445 in Burnt Castle and check quest 578 acceptance.
 
 For each new location, check the objective at its center and at the 30 m boundary.
 The automated boundary tests also check a point immediately outside the radius.

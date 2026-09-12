@@ -38,5 +38,15 @@
         "Y": 8314.3,
         "Z": 372.3,
         "Radius": 30.0
+    },
+    {
+        "Name": "Burnt Castle Jailbreak (578): exact legacy mission volume for sphere 149 near captive Thesen (npc 2445), current zone 257; source radius 5 m",
+        "QuestId": 578,
+        "ComponentId": 2319,
+        "ZoneId": 257,
+        "X": 15496.9167,
+        "Y": 12534.2473,
+        "Z": 148.44249,
+        "Radius": 5.0
     }
 ]

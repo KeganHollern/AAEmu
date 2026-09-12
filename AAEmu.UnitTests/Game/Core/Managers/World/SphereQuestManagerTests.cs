@@ -10,6 +10,9 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Quests;
+using AAEmu.Game.Models.Game.Quests.Acts;
+using AAEmu.Game.Models.Game.Quests.Static;
+using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.Game.World.Xml;
@@ -267,6 +270,51 @@ public sealed class SphereQuestManagerTests
         world.SphereQuestManager.TickQuestStarters((_, _, _) => entered++);
 
         await Assert.That(entered).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task Load_BurntCastleJailbreakStarter_UsesShippedVolumeAndCorrectAcceptor()
+    {
+        SetInstance(new UnitRequirementsGameData());
+        var world = new WorldInstance(new WorldTemplate { Id = 1, Name = "main_world" }, 0, true, 1);
+        world.SphereQuestManager = new SphereQuestManager(world);
+        var template = new QuestTemplate { Id = 578 };
+        var component = new QuestComponentTemplate(template) { Id = 2319, KindId = QuestComponentKind.Start };
+        var accept = new QuestActConAcceptSphere(component) { SphereId = 149 };
+        component.ActTemplates.Add(accept);
+        SetField(QuestManager.Instance, "_componentTemplates", new Dictionary<uint, QuestComponentTemplate> { [2319] = component });
+        SetField(_sphereData, "_spheres", new Dictionary<uint, Spheres>
+        {
+            [149] = new() { Id = 149, SphereDetailId = 149, SphereDetailType = "SphereQuest" }
+        });
+        SetField(_sphereData, "_sphereQuests", new Dictionary<uint, SphereQuests>
+        {
+            [149] = new() { Id = 149, QuestId = 578 }
+        });
+        world.SphereQuestManager.Load();
+        var starter = GetField<List<SphereQuestStarter>>(world.SphereQuestManager, "_questStartingSpheres").Single();
+        await Assert.That(starter.SphereId).IsEqualTo(149u);
+        await Assert.That(starter.Sphere.ComponentId).IsEqualTo(2319u);
+        await Assert.That(starter.Sphere.Radius).IsEqualTo(5f);
+        var owner = CreateCharacter(world, 7);
+        var region = new Region(world, 0, 0, 257);
+        SetField(region, "_neighbors", new[] { region });
+        SetField(region, "_objects", new GameObject[] { owner });
+        SetField(region, "_objectsSize", 1);
+        SetField(region, "_playerCount", 1);
+        starter.Region = region;
+        var entered = new List<SphereQuestStarter>();
+        owner.Transform.Local.Position = starter.Sphere.Xyz + new Vector3(5.01f, 0, 0);
+        world.SphereQuestManager.TickQuestStarters((_, sphere, _) => entered.Add(sphere));
+        await Assert.That(entered.Count).IsEqualTo(0);
+        owner.Transform.Local.Position = starter.Sphere.Xyz + new Vector3(5f, 0, 0);
+        world.SphereQuestManager.TickQuestStarters((_, sphere, _) => entered.Add(sphere));
+        world.SphereQuestManager.TickQuestStarters((_, sphere, _) => entered.Add(sphere));
+        await Assert.That(entered.Count).IsEqualTo(1);
+        var quest = CreateQuest(owner);
+        quest.QuestAcceptorType = QuestAcceptorType.Sphere;
+        quest.AcceptorId = entered[0].SphereId;
+        await Assert.That(accept.RunAct(quest, null, 0)).IsTrue();
     }
 
     private WorldInstance CreateWorld(uint id, string label, int originX, int originY)

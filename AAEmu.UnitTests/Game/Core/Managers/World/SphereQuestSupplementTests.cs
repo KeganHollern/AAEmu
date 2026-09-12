@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Models.Game.InstantGame;
@@ -88,6 +88,25 @@ public class SphereQuestSupplementTests
         await Assert.That(sphere.X).IsEqualTo(destination.X);
         await Assert.That(sphere.Y).IsEqualTo(destination.Y);
         await Assert.That(sphere.Z).IsEqualTo(destination.Z);
+    }
+
+    [Test]
+    public async Task BurntCastleJailbreakStarter_UsesExactMissionRadiusAndContainsCurrentCaptive()
+    {
+        var contents = await File.ReadAllTextAsync(SupplementPath("main_world"));
+        JsonHelper.TryDeserializeObject(contents, out List<QuestSphereSupplement> supplements, out _);
+        var entry = supplements.Single(s => s.QuestId == 578 && s.ComponentId == 2319);
+        var npcContents = await File.ReadAllTextAsync(Path.Combine(WorldPath("main_world"), "npc_spawns.json"));
+        JsonHelper.TryDeserializeObject(npcContents, out List<DestinationSpawn> spawns, out _);
+        var captive = spawns.Single(s => s.UnitId == 2445).Position;
+        var sphere = new SphereQuest { Xyz = new Vector3(entry.X, entry.Y, entry.Z), Radius = entry.Radius };
+
+        await Assert.That(sphere.Xyz).IsEqualTo(new Vector3(15496.9167f, 12534.2473f, 148.44249f));
+        await Assert.That(entry.ZoneId).IsEqualTo(257u);
+        await Assert.That(sphere.Radius).IsEqualTo(5f);
+        await Assert.That(sphere.Contains(new Vector3(captive.X, captive.Y, captive.Z))).IsTrue();
+        await Assert.That(sphere.Contains(sphere.Xyz + new Vector3(0, 0, 5f))).IsTrue();
+        await Assert.That(sphere.Contains(sphere.Xyz + new Vector3(0, 0, 5.01f))).IsFalse();
     }
 
     [Test]
