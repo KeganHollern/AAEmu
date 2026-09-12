@@ -54,6 +54,7 @@ public sealed record CryGeometryAsset(CryBounds Bounds, IReadOnlyList<CryGeometr
     public IReadOnlyList<CryGeometryHelper> Helpers { get; init; } = [];
     public IReadOnlyList<CryGeometryPoseRequirement> PoseRequirements { get; init; } = [];
     public bool HasAnimatedCollision { get; init; }
+    public IReadOnlyList<CryCharacterBone> CharacterBones { get; init; } = [];
 }
 
 public sealed record CryGeometryHelper(string Name, string Text, Matrix4x4 Transform);

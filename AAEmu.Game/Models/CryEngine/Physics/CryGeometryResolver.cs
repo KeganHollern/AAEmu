@@ -141,6 +141,14 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
                 throw new InvalidDataException("Invalid CGF chunk range.");
             chunks.Add(id, new Chunk(kind, chunkVersion, offset + 16, size));
         }
+        foreach (var (id, chunk) in chunks.ToArray())
+        {
+            if (chunk.Size != 0)
+                continue;
+            var end = chunks.Values.Where(other => other.Body > chunk.Body).Select(other => other.Body - 16)
+                .Append(table > chunk.Body ? table : data.Length).Min();
+            chunks[id] = chunk with { Size = end - chunk.Body + 16 };
+        }
         var nodes = new Dictionary<int, Node>();
         var mergeAll = false;
         var spineCount = 0;
@@ -284,7 +292,26 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         }
         if (bounds == null)
             throw new InvalidDataException("CGF contains no supported model bounds.");
-        return new CryGeometryAsset(bounds.Value, parts) { HasAnimatedCollision = animatedCollision };
+        IReadOnlyList<CryCharacterBone> bones = [];
+        var boneChunk = chunks.Values.SingleOrDefault(chunk => chunk.Kind == 0xacdc0000);
+        var proxyChunk = chunks.Values.SingleOrDefault(chunk => chunk.Kind == 0xacdc0003);
+        if (boneChunk != null)
+        {
+            bones = CryCharacterPhysicsReader.Read(data.AsSpan(boneChunk.Body, boneChunk.Size - 16).ToArray(),
+                boneChunk.Version, proxyChunk == null ? new byte[4] : data.AsSpan(proxyChunk.Body, proxyChunk.Size - 16).ToArray(),
+                proxyChunk?.Version ?? 0x800);
+            foreach (var bone in bones.Where(bone => bone.Shape != null && (bone.PhysicsFlags & 0xffff0000) != 0x30000))
+                parts.Add(new CryGeometryPart(bone.Shape, bone.BindTransform, 0x1000, "", bone.Name)
+                {
+                    PhysicsGroup = $"{path}#bone{bone.Index}"
+                });
+            animatedCollision = bones.Any(bone => bone.Shape != null);
+        }
+        return new CryGeometryAsset(bounds.Value, parts)
+        {
+            HasAnimatedCollision = animatedCollision,
+            CharacterBones = bones
+        };
     }
 
     private static byte[] ReadMaterials(BinaryReader reader, Dictionary<int, Chunk> chunks, int id, int indexCount)
