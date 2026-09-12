@@ -14,11 +14,16 @@ public class CSICSBuyGoodPacket() : GamePacket(CSOffsets.CSICSBuyGoodPacket, 1)
     public override void Read(PacketStream stream)
     {
         var buyer = Connection.ActiveChar;
+        if (buyer == null || stream.Count - stream.Pos < 3)
+            return;
         var buyList = new List<IcsSku>();
         var thisChar = Connection.ActiveChar;
         byte buyMode = 1; // No idea what this means
 
+        var invalidCart = false;
         var numBuys = stream.ReadByte();
+        if (numBuys == 0 || stream.Count - stream.Pos < numBuys * 7 + 2)
+            return;
         for (var i = 0; i < numBuys; i++)
         {
             var cashShopId = stream.ReadUInt32();
@@ -29,6 +34,7 @@ public class CSICSBuyGoodPacket() : GamePacket(CSOffsets.CSICSBuyGoodPacket, 1)
             if (!CashShopManager.Instance.ShopItems.TryGetValue(cashShopId, out var shopItem))
             {
                 Logger.Warn($"{Connection.ActiveChar.Name} is trying to shop for invalid ShopItem: {cashShopId}");
+                invalidCart = true;
                 continue;
             }
 
@@ -48,13 +54,25 @@ public class CSICSBuyGoodPacket() : GamePacket(CSOffsets.CSICSBuyGoodPacket, 1)
             {
                 Logger.Warn(
                     $"{Connection.ActiveChar.Name} is trying to shop from ShopItem: {shopItem.ShopId}, but with invalid index: {detailIndex}");
+                invalidCart = true;
                 continue;
             }
 
             buyList.Add(sku);
         }
 
+        var namePosition = stream.Pos;
+        var nameBytes = stream.ReadUInt16();
+        if (nameBytes != stream.Count - stream.Pos)
+            return;
+        stream.Pos = namePosition;
         var receiverName = stream.ReadString();
+        if (invalidCart)
+        {
+            buyer.SendErrorMessage(ErrorMessageType.IngameShopBuyFail);
+            buyer.SendPacket(new SCICSBuyResultPacket(false, buyMode, receiverName, 0));
+            return;
+        }
 
         // Default target: the buyer themselves
         var targetId = thisChar.Id;
