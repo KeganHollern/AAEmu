@@ -8,15 +8,22 @@ public class CSLootItemPacket() : GamePacket(CSOffsets.CSLootItemPacket, 1)
 {
     public override void Read(PacketStream stream)
     {
-        var itemIndex = stream.ReadUInt16();
-        var ownerType = (LootOwnerType)stream.ReadUInt16();
-        var ownerObjId = stream.ReadBc();
-        var u1 = stream.ReadUInt16(); // also item index?
-        var u2 = stream.ReadUInt16();
-        
-        Logger.Warn($"LootItem, itemIndex: {itemIndex}, LootOwner: {ownerType}:{ownerObjId}, u1: {u1}, u2: {u2}");
+        var lootId = stream.ReadUInt64();
+        _ = stream.ReadInt32(); // Client item value; the server container determines the granted quantity.
+        if (stream.LeftBytes != 0)
+            return;
 
-        var owner = Connection.ActiveChar.ParentWorld.GetBaseUnit(ownerObjId);
+        var itemIndex = (ushort)lootId;
+        var ownerType = (LootOwnerType)(ushort)(lootId >> 16);
+        var ownerObjId = (uint)(lootId >> 32);
+
+        var world = Connection.ActiveChar.ParentWorld;
+        AAEmu.Game.Models.Game.Units.BaseUnit owner = ownerType switch
+        {
+            LootOwnerType.Npc => world.GetNpc(ownerObjId),
+            LootOwnerType.Doodad => world.GetDoodad(ownerObjId),
+            _ => null
+        };
 
         owner?.LootingContainer.TryTakeLoot(Connection.ActiveChar, itemIndex, null, false);
     }

@@ -55,6 +55,15 @@ public class ExpeditionMember : PacketMarshaler
             command.Parameters.AddWithValue("@memo", this.Memo);
             command.ExecuteNonQuery();
         }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE characters SET expedition_id = @expedition_id WHERE id = @character_id";
+            command.Parameters.AddWithValue("@expedition_id", ExpeditionId);
+            command.Parameters.AddWithValue("@character_id", CharacterId);
+            command.ExecuteNonQuery();
+        }
     }
 
     public override PacketStream Write(PacketStream stream)

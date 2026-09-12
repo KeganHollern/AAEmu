@@ -95,14 +95,13 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
                     );
                 break;
             case ChatType.Clan:
-                if (Connection.ActiveChar.Expedition != null)
+                lock (SaveManager.PersistenceSyncRoot)
                 {
-                    ChatManager.Instance.GetGuildChat(Connection.ActiveChar.Expedition).SendMessage(Connection.ActiveChar, message, ability, languageType);
-                }
-                else
-                {
-                    // Looks like the client blocks the chat even before it can get to the server, but let's intercept it anyway
-                    Connection.ActiveChar.SendErrorMessage(ErrorMessageType.ChatNotInExpedition);
+                    var expedition = Connection.ActiveChar.Expedition;
+                    if (expedition?.CanChat(Connection.ActiveChar) == true)
+                        ChatManager.Instance.GetGuildChat(expedition).SendMessage(Connection.ActiveChar, message, ability, languageType);
+                    else
+                        Connection.ActiveChar.SendErrorMessage(ErrorMessageType.ChatNotInExpedition);
                 }
                 break;
             case ChatType.Family:

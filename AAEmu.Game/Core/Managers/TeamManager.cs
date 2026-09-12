@@ -438,99 +438,118 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
         // Get Team data
         var activeTeam = GetActiveTeam(teamId);
         if (activeTeam == null) return;
-        var isAutoDisband = false;
-
-        // Check if action is allowed; Kick only by raid leader ; Leave only by self
-        if (riskyAction == RiskyAction.Kick && activeTeam.OwnerId != unit.Id ||
-            riskyAction == RiskyAction.Leave && unit.Id != targetId) return;
-
-        // Remove from ChatManager channels
-        if (!activeTeam.IsParty)
-            chatManager.GetRaidChat(activeTeam).LeaveChannel(unit);
-        chatManager.GetPartyChat(activeTeam, unit).LeaveChannel(unit);
-
-        if ((riskyAction == RiskyAction.Leave || riskyAction == RiskyAction.Kick) && activeTeam.RemoveMember(targetId))
+        lock (activeTeam.SyncLock)
         {
-            // Check if person leaving is the leader, if so, find a new leader
-            if (targetId == activeTeam.OwnerId)
+            if (!ReferenceEquals(GetActiveTeam(teamId), activeTeam)) return;
+            if (!activeTeam.IsMember(unit.Id)) return;
+            var isAutoDisband = false;
+
+            var allowed = riskyAction switch
             {
-                var newOwner = activeTeam.GetNewOwner();
-                if (newOwner != 0)
-                {
-                    activeTeam.OwnerId = newOwner;
-                    activeTeam.BroadcastPacket(new SCTeamOwnerChangedPacket(teamId, newOwner));
-                }
-                else
-                {
-                    // couldn't find a new leader, only party will auto-disband, raids will keep the one remaining person in it
-                    if (activeTeam.IsParty)
-                        isAutoDisband = true;
-                }
+                RiskyAction.Dismiss => activeTeam.OwnerId == unit.Id,
+                RiskyAction.Kick => activeTeam.OwnerId == unit.Id && activeTeam.IsMember(targetId),
+                RiskyAction.Leave => unit.Id == targetId,
+                _ => false
+            };
+            if (!allowed) return;
+
+            // Remove the affected member from chat, not the leader who sends a kick.
+            if (riskyAction != RiskyAction.Dismiss)
+            {
+                var leavingMember = activeTeam.Members[activeTeam.GetIndex(targetId)].Character;
+                if (!activeTeam.IsParty)
+                    chatManager.GetRaidChat(activeTeam).LeaveChannel(leavingMember);
+                chatManager.GetPartyChat(activeTeam, leavingMember).LeaveChannel(leavingMember);
             }
 
-            // Send Leave info the team
-            activeTeam.BroadcastPacket(new SCTeamMemberLeavedPacket(teamId, targetId, riskyAction == RiskyAction.Kick));
-            // Find the target, and send its leave info
-            var target = worldManager.GetCharacterById(targetId);
-            if (target != null)
+            if ((riskyAction == RiskyAction.Leave || riskyAction == RiskyAction.Kick) && activeTeam.RemoveMember(targetId))
             {
-                target.InParty = false;
-                target.SendPacket(new SCLeavedTeamPacket(teamId, riskyAction == RiskyAction.Kick, false));
-                target.Events?.OnTeamLeave(target, new OnTeamLeaveArgs { Id = activeTeam.Id, Team = activeTeam, Player = target });
-            }
-
-            // Drop cached remote-sync state for the leaver
-            ClearSyncState(targetId);
-        }
-
-        // Disband if only one member left in Party (not raid)
-        if (activeTeam.IsParty && activeTeam.MembersCount() <= 1)
-            isAutoDisband = true;
-
-        // If everybody is offline, also disband regardless of raid or party status
-        if (activeTeam.MembersOnlineCount() <= 0)
-            isAutoDisband = true;
-
-        // TODO - Need to find why we need this
-        activeTeam.BroadcastPacket(new SCTeamAckRiskyActionPacket(teamId, targetId, riskyAction, 0, 0));
-
-        if (isAutoDisband || riskyAction == RiskyAction.Dismiss)
-        {
-            activeTeam.BroadcastPacket(new SCTeamDismissedPacket(teamId));
-            foreach (var member in activeTeam.Members)
-            {
-                if (member?.Character != null)
+                // Check if person leaving is the leader, if so, find a new leader
+                if (targetId == activeTeam.OwnerId)
                 {
-                    if (!activeTeam.IsParty)
-                        chatManager.GetRaidChat(activeTeam).LeaveChannel(member.Character);
-                    chatManager.GetPartyChat(activeTeam, member.Character).LeaveChannel(member.Character);
-
-                    if (member.Character.IsOnline)
+                    var newOwner = activeTeam.GetNewOwner();
+                    if (newOwner != 0)
                     {
-                        member.Character.SendPacket(new SCLeavedTeamPacket(teamId, false, true));
-                        member.Character.InParty = false;
-                        // trigger event
-                        member.Character.Events?.OnTeamLeave(member.Character, new OnTeamLeaveArgs { Id = activeTeam.Id, Team = activeTeam, Player = member.Character });
+                        activeTeam.OwnerId = newOwner;
+                        activeTeam.BroadcastPacket(new SCTeamOwnerChangedPacket(teamId, newOwner));
                     }
-
-                    // Drop cached remote-sync state per disbanded member
-                    ClearSyncState(member.Character.Id);
+                    else
+                    {
+                        // couldn't find a new leader, only party will auto-disband, raids will keep the one remaining person in it
+                        if (activeTeam.IsParty)
+                            isAutoDisband = true;
+                    }
                 }
+
+                // Send Leave info the team
+                activeTeam.BroadcastPacket(new SCTeamMemberLeavedPacket(teamId, targetId, riskyAction == RiskyAction.Kick));
+                // Find the target, and send its leave info
+                var target = worldManager.GetCharacterById(targetId);
+                if (target != null)
+                {
+                    target.InParty = false;
+                    target.SendPacket(new SCLeavedTeamPacket(teamId, riskyAction == RiskyAction.Kick, false));
+                    target.Events?.OnTeamLeave(target, new OnTeamLeaveArgs { Id = activeTeam.Id, Team = activeTeam, Player = target });
+                }
+
+                // Drop cached remote-sync state for the leaver
+                ClearSyncState(targetId);
             }
 
-            _activeTeams.TryRemove(teamId, out _);
+            // Disband if only one member left in Party (not raid)
+            if (activeTeam.IsParty && activeTeam.MembersCount() <= 1)
+                isAutoDisband = true;
+
+            // If everybody is offline, also disband regardless of raid or party status
+            if (activeTeam.MembersOnlineCount() <= 0)
+                isAutoDisband = true;
+
+            // TODO - Need to find why we need this
+            activeTeam.BroadcastPacket(new SCTeamAckRiskyActionPacket(teamId, targetId, riskyAction, 0, 0));
+
+            if (isAutoDisband || riskyAction == RiskyAction.Dismiss)
+            {
+                activeTeam.BroadcastPacket(new SCTeamDismissedPacket(teamId));
+                foreach (var member in activeTeam.Members)
+                {
+                    if (member?.Character != null)
+                    {
+                        if (!activeTeam.IsParty)
+                            chatManager.GetRaidChat(activeTeam).LeaveChannel(member.Character);
+                        chatManager.GetPartyChat(activeTeam, member.Character).LeaveChannel(member.Character);
+
+                        if (member.Character.IsOnline)
+                        {
+                            member.Character.SendPacket(new SCLeavedTeamPacket(teamId, false, true));
+                            member.Character.InParty = false;
+                            // trigger event
+                            member.Character.Events?.OnTeamLeave(member.Character, new OnTeamLeaveArgs { Id = activeTeam.Id, Team = activeTeam, Player = member.Character });
+                        }
+
+                        // Drop cached remote-sync state per disbanded member
+                        ClearSyncState(member.Character.Id);
+                    }
+                }
+
+                _activeTeams.TryRemove(teamId, out _);
+            }
+            // TODO: Add this to a timer or trigger instead of calling on a party/raid disband. But is good enough and functional for now
+            chatManager.CleanUpChannels();
         }
-        // TODO: Add this to a timer or trigger instead of calling on a party/raid disband. But is good enough and functional for now
-        chatManager.CleanUpChannels();
     }
 
     public void MakeTeamOwner(Character unit, uint teamId, uint memberId)
     {
         var activeTeam = GetActiveTeam(teamId);
-        if (activeTeam?.OwnerId != unit.Id || activeTeam.OwnerId == memberId) return;
+        if (activeTeam == null) return;
+        lock (activeTeam.SyncLock)
+        {
+            if (!ReferenceEquals(GetActiveTeam(teamId), activeTeam)) return;
+            if (activeTeam.OwnerId != unit.Id || activeTeam.OwnerId == memberId) return;
 
-        if (activeTeam.IsMember(memberId)) activeTeam.OwnerId = memberId;
-        activeTeam.BroadcastPacket(new SCTeamOwnerChangedPacket(activeTeam.Id, activeTeam.OwnerId));
+            if (activeTeam.IsMember(memberId)) activeTeam.OwnerId = memberId;
+            activeTeam.BroadcastPacket(new SCTeamOwnerChangedPacket(activeTeam.Id, activeTeam.OwnerId));
+        }
     }
 
     public void ConvertToRaid(Character owner, uint teamId)
@@ -582,64 +601,90 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
     public void SetOverHeadMarker(Character unit, uint teamId, OverHeadMark index, byte type, uint targetId)
     {
         var activeTeam = GetActiveTeam(teamId);
-        if (activeTeam == null || activeTeam.OwnerId != unit.Id && !activeTeam.IsParty) return;
-
-        if (Enum.IsDefined(typeof(OverHeadMark), index) && index != OverHeadMark.ResetAll && type <= 2)
+        if (activeTeam == null) return;
+        lock (activeTeam.SyncLock)
         {
-            activeTeam.MarksList[(int)index].Item1 = type;
-            activeTeam.MarksList[(int)index].Item2 = type != 0 ? targetId : 0u;
-        }
-        else
-        {
-            activeTeam.ResetMarks();
-            index = OverHeadMark.ResetAll;
-            type = 100;
-            targetId = 0;
-        }
+            if (!ReferenceEquals(GetActiveTeam(teamId), activeTeam)) return;
+            if (!activeTeam.IsMember(unit.Id) ||
+                !activeTeam.IsParty && activeTeam.OwnerId != unit.Id) return;
 
-        activeTeam.BroadcastPacket(new SCOverHeadMarkerSetPacket(teamId, index, type == 2, targetId));
+            if (Enum.IsDefined(typeof(OverHeadMark), index) && index != OverHeadMark.ResetAll && type <= 2)
+            {
+                activeTeam.MarksList[(int)index].Item1 = type;
+                activeTeam.MarksList[(int)index].Item2 = type != 0 ? targetId : 0u;
+            }
+            else
+            {
+                activeTeam.ResetMarks();
+                index = OverHeadMark.ResetAll;
+                type = 100;
+                targetId = 0;
+            }
+
+            activeTeam.BroadcastPacket(new SCOverHeadMarkerSetPacket(teamId, index, type == 2, targetId));
+        }
     }
 
     public void ChangeLootingRule(Character owner, uint teamId, byte flags, LootingRuleMethod lootingRuleMethod, byte minimumGrade, uint lootMaster, bool rollForBindOnPickup)
     {
         var activeTeam = GetActiveTeam(teamId);
-        if (activeTeam?.OwnerId != owner.Id) return;
+        if (activeTeam == null) return;
+        lock (activeTeam.SyncLock)
+        {
+            if (!ReferenceEquals(GetActiveTeam(teamId), activeTeam)) return;
+            if (activeTeam.OwnerId != owner.Id || !activeTeam.IsMember(owner.Id)) return;
 
-        // Flags:
-        // 1: Method
-        // 2: Grade
-        // 4: LootMaster
-        // 8: BindOnPickup
-        if ((flags & 0x08) != 0)
-        {
-            activeTeam.LootingRule.RollForBindOnPickup = rollForBindOnPickup;
-        }
-        if ((flags & 0x04) != 0)
-        {
-            activeTeam.LootingRule.LootMaster = lootMaster;
-        }
-        if ((flags & 0x02) != 0)
-        {
-            activeTeam.LootingRule.MinimumGrade = minimumGrade;
-        }
-        if ((flags & 0x01) != 0)
-        {
-            activeTeam.LootingRule.LootMethod = lootingRuleMethod;
-            if (activeTeam.LootingRule.LootMethod != LootingRuleMethod.LootMaster)
-                activeTeam.LootingRule.LootMaster = 0;
-        }
+            var method = (flags & 0x01) != 0 ? lootingRuleMethod : activeTeam.LootingRule.LootMethod;
+            if (!Enum.IsDefined(method)) return;
+            if ((flags & 0x04) != 0 && lootMaster != 0 && !activeTeam.IsMember(lootMaster)) return;
+            var nextMaster = (flags & 0x04) != 0 ? lootMaster : activeTeam.LootingRule.LootMaster;
+            if (method == LootingRuleMethod.LootMaster)
+            {
+                if (nextMaster == 0 && (flags & 0x04) == 0)
+                    nextMaster = owner.Id;
+                if (!activeTeam.IsMember(nextMaster)) return;
+            }
 
-        activeTeam.BroadcastPacket(new SCTeamLootingRuleChangedPacket(teamId, activeTeam.LootingRule, flags));
+            // Flags:
+            // 1: Method
+            // 2: Grade
+            // 4: LootMaster
+            // 8: BindOnPickup
+            if ((flags & 0x08) != 0)
+            {
+                activeTeam.LootingRule.RollForBindOnPickup = rollForBindOnPickup;
+            }
+            if ((flags & 0x04) != 0)
+            {
+                activeTeam.LootingRule.LootMaster = nextMaster;
+            }
+            if ((flags & 0x02) != 0)
+            {
+                activeTeam.LootingRule.MinimumGrade = minimumGrade;
+            }
+            if ((flags & 0x01) != 0)
+            {
+                activeTeam.LootingRule.LootMethod = lootingRuleMethod;
+                activeTeam.LootingRule.LootMaster = method == LootingRuleMethod.LootMaster ? nextMaster : 0;
+            }
+
+            activeTeam.BroadcastPacket(new SCTeamLootingRuleChangedPacket(teamId, activeTeam.LootingRule, flags));
+        }
     }
 
     public void SetPingPos(Character unit, uint teamId, bool hasPing, WorldSpawnPosition position, uint insId)
     {
         var activeTeam = GetActiveTeam(teamId);
-        if (activeTeam == null || (activeTeam.OwnerId != unit.Id && !activeTeam.IsMarked(unit.Id)))
-            return;
+        if (activeTeam == null) return;
+        lock (activeTeam.SyncLock)
+        {
+            if (!ReferenceEquals(GetActiveTeam(teamId), activeTeam) || !activeTeam.IsMember(unit.Id) ||
+                activeTeam.OwnerId != unit.Id && !activeTeam.IsMarked(unit.Id))
+                return;
 
-        activeTeam.PingPosition = position;
-        activeTeam.BroadcastPacket(new SCTeamPingPosPacket(hasPing, position, insId));
+            activeTeam.PingPosition = position;
+            activeTeam.BroadcastPacket(new SCTeamPingPosPacket(hasPing, position, insId));
+        }
     }
 
     public void SetOffline(Character unit)

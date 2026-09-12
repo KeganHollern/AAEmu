@@ -7,6 +7,8 @@ namespace AAEmu.Game.Models.Game;
 
 public class Family : PacketMarshaler
 {
+    public const int MaximumMembers = 8;
+
     private readonly List<uint> _removedMembers = [];
 
     public uint Id { get; init; }
@@ -14,10 +16,11 @@ public class Family : PacketMarshaler
 
     public override PacketStream Write(PacketStream stream)
     {
+        var memberCount = Math.Min(Members.Count, MaximumMembers);
         stream.Write(Id);
-        stream.Write(Members.Count); // TODO max length 8
-        foreach (var member in Members)
-            stream.Write(member);
+        stream.Write(memberCount);
+        for (var index = 0; index < memberCount; index++)
+            stream.Write(Members[index]);
         return stream;
     }
 
@@ -28,8 +31,8 @@ public class Family : PacketMarshaler
 
     public void RemoveMember(FamilyMember member)
     {
-        Members.Remove(member);
-        _removedMembers.Add(member.Id);
+        if (member != null && Members.Remove(member))
+            _removedMembers.Add(member.Id);
     }
 
     public void RemoveMember(Character character)
@@ -39,14 +42,11 @@ public class Family : PacketMarshaler
         character.Family = 0;
     }
 
-    public FamilyMember GetMember(Character character)
-    {
-        foreach (var member in Members)
-            if (member.Id == character.Id)
-                return member;
+    public FamilyMember GetMember(Character character) => character == null ? null : GetMember(character.Id);
 
-        return null;
-    }
+    public FamilyMember GetMember(uint characterId) => Members.Find(member => member.Id == characterId);
+
+    internal void AcceptSave() => _removedMembers.Clear();
 
     public void SendPacket(GamePacket packet, uint exclude = 0)
     {
@@ -88,7 +88,7 @@ public class Family : PacketMarshaler
                 command.Connection = connection;
                 command.Transaction = transaction;
 
-                command.CommandText = $"DELETE FROM family_members WHERE character_id IN ({removedMembers})";
+                command.CommandText = $"DELETE FROM family_members WHERE family_id = @family_id AND character_id IN ({removedMembers})";
                 command.Parameters.AddWithValue("@family_id", Id);
                 command.Prepare();
                 command.ExecuteNonQuery();
@@ -99,13 +99,12 @@ public class Family : PacketMarshaler
                 command.Connection = connection;
                 command.Transaction = transaction;
 
-                command.CommandText = $"UPDATE characters SET family = 0 WHERE `characters`.`id` IN ({removedMembers})";
+                command.CommandText = $"UPDATE characters SET family = 0 WHERE family = @family_id AND `characters`.`id` IN ({removedMembers})";
                 command.Parameters.AddWithValue("@family_id", Id);
                 command.Prepare();
                 command.ExecuteNonQuery();
             }
 
-            _removedMembers.Clear();
         }
 
         using (var command = connection.CreateCommand())
@@ -123,6 +122,12 @@ public class Family : PacketMarshaler
                 command.Parameters.AddWithValue("@name", member.Name);
                 command.Parameters.AddWithValue("@role", member.Role);
                 command.Parameters.AddWithValue("@title", member.Title);
+                command.ExecuteNonQuery();
+                command.Parameters.Clear();
+
+                command.CommandText = "UPDATE characters SET family = @family_id WHERE id = @character_id";
+                command.Parameters.AddWithValue("@family_id", Id);
+                command.Parameters.AddWithValue("@character_id", member.Id);
                 command.ExecuteNonQuery();
                 command.Parameters.Clear();
             }

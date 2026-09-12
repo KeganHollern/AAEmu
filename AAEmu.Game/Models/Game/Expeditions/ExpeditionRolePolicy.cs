@@ -1,4 +1,4 @@
-using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Models.StaticValues;
 using MySql.Data.MySqlClient;
 
@@ -78,6 +78,20 @@ public class ExpeditionRolePolicy : PacketMarshaler
         stream.Write(SiegeMaster);
         stream.Write(JoinSiege);
         return stream;
+    }
+
+    public void CopyFrom(ExpeditionRolePolicy policy)
+    {
+        Name = policy.Name;
+        DominionDeclare = policy.DominionDeclare;
+        Invite = policy.Invite;
+        Expel = policy.Expel;
+        Promote = policy.Promote;
+        Dismiss = policy.Dismiss;
+        Chat = policy.Chat;
+        ManagerChat = policy.ManagerChat;
+        SiegeMaster = policy.SiegeMaster;
+        JoinSiege = policy.JoinSiege;
     }
 
     public ExpeditionRolePolicy Clone()

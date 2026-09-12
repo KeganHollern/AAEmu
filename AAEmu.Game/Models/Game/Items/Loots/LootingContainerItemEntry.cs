@@ -20,6 +20,8 @@ public class LootingContainerItemEntry
     /// List of the current roll results of all eligible player (PlayerId, RollResult), roll results: 0=not rolled, -1=pass 
     /// </summary>
     public Dictionary<Character, sbyte> PlayerRolls { get; } = [];
+    public bool RollInProgress { get; internal set; }
+    public bool RollCompleted { get; internal set; }
     /// <summary>
     /// PlayerId of the highest roller (or the person that claimed this loot entry)
     /// </summary>

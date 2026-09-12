@@ -18,38 +18,71 @@ public class Expedition : SystemFaction
 
     public bool isDisbanded { get; set; } = false;
 
+    public bool IsOwner(Character character) =>
+        !isDisbanded && character != null && OwnerId == character.Id && GetMember(character)?.Role == 255;
+
+    public bool CanManageMember(ExpeditionMember actor, ExpeditionMember target) =>
+        !isDisbanded && actor != null && target != null && target.CharacterId != OwnerId &&
+        target.Role != 255 && actor.Role > target.Role;
+
+    public bool CanChat(Character character)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            var member = character == null || !ReferenceEquals(character.Expedition, this) ? null : GetMember(character);
+            return !isDisbanded && member != null && GetPolicyByRole(member.Role)?.Chat == true;
+        }
+    }
+
     public void RemoveMember(ExpeditionMember member)
     {
-        var character = WorldManager.Instance.GetCharacterById(member.CharacterId);
-        ChatManager.Instance.GetGuildChat(this).LeaveChannel(character);
         Members.Remove(member);
         _removedMembers.Add(member.CharacterId);
     }
 
+    internal void RestoreMember(ExpeditionMember member, int index)
+    {
+        Members.Insert(index, member);
+        _removedMembers.Remove(member.CharacterId);
+    }
+
     public void OnCharacterLogin(Character character)
     {
-        var member = GetMember(character);
-        if (member == null)
-            return;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!ReferenceEquals(character?.Expedition, this))
+                return;
+            var member = GetMember(character);
+            if (isDisbanded || member == null)
+            {
+                character.Expedition = null;
+                character.BroadcastPacket(new SCUnitExpeditionChangedPacket(character.ObjId, character.Id,
+                    "", character.Name, (uint)Id, 0, false), true);
+                return;
+            }
 
-        member.Refresh(character);
-
-        SendPacket(new SCExpeditionMemberStatusChangedPacket(member, 0));
-        ChatManager.Instance.GetGuildChat(this).JoinChannel(character);
-        character.Achievements.UpdateMaximum(CharRecordKind.EnrollGuild, 0, 0, 1);
+            member.Refresh(character);
+            SendPacket(new SCExpeditionMemberStatusChangedPacket(member, 0));
+            ChatManager.Instance.GetGuildChat(this).JoinChannel(character);
+            character.Achievements.UpdateMaximum(CharRecordKind.EnrollGuild, 0, 0, 1);
+        }
     }
 
     public void OnCharacterLogout(Character character)
     {
-        var member = GetMember(character);
-        if (member != null)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            member.IsOnline = false;
-            member.LastWorldLeaveTime = DateTime.UtcNow;
-
-            SendPacket(new SCExpeditionMemberStatusChangedPacket(member, 0));
+            if (isDisbanded || !ReferenceEquals(character?.Expedition, this))
+                return;
+            var member = GetMember(character);
+            if (member != null)
+            {
+                member.IsOnline = false;
+                member.LastWorldLeaveTime = DateTime.UtcNow;
+                SendPacket(new SCExpeditionMemberStatusChangedPacket(member, 0));
+            }
+            ChatManager.Instance.GetGuildChat(this).LeaveChannel(character);
         }
-        ChatManager.Instance.GetGuildChat(this).LeaveChannel(character);
     }
 
     public ExpeditionRolePolicy GetPolicyByRole(byte role)
@@ -79,8 +112,11 @@ public class Expedition : SystemFaction
 
     public void SendPacket(GamePacket packet)
     {
-        foreach (var member in Members)
-            WorldManager.Instance.GetCharacterById(member.CharacterId)?.SendPacket(packet);
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            foreach (var member in Members)
+                WorldManager.Instance.GetCharacterById(member.CharacterId)?.SendPacket(packet);
+        }
     }
 
     public void Save(MySqlConnection connection, MySqlTransaction transaction)
@@ -108,12 +144,18 @@ public class Expedition : SystemFaction
                 command.Prepare();
                 command.ExecuteNonQuery();
             }
-
-            _removedMembers.Clear();
         }
 
         if (isDisbanded)
         {
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = "UPDATE characters SET expedition_id = 0 WHERE expedition_id = @id";
+                command.Parameters.AddWithValue("@id", Id);
+                command.ExecuteNonQuery();
+            }
+
             using (var command = connection.CreateCommand())
             {
                 command.Connection = connection;
@@ -167,12 +209,19 @@ public class Expedition : SystemFaction
         }
     }
 
+    internal void OnSaved() => _removedMembers.Clear();
+
     public void OnCharacterRefresh(Character character)
     {
-        var member = GetMember(character);
-        if (member == null)
-            return;
-        member.Refresh(character);
-        SendPacket(new SCExpeditionMemberStatusChangedPacket(member, 0));
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (isDisbanded || !ReferenceEquals(character?.Expedition, this))
+                return;
+            var member = GetMember(character);
+            if (member == null)
+                return;
+            member.Refresh(character);
+            SendPacket(new SCExpeditionMemberStatusChangedPacket(member, 0));
+        }
     }
 }
