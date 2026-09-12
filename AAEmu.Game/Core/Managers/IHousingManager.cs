@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Models.Game.Char;
@@ -34,7 +34,7 @@ public interface IHousingManager
     void OfferTaxPrepayment(House house);
     bool DecorateHouse(Character player, ushort houseTlId, uint designId, Vector3 pos, Quaternion quat, uint parentObjId, ulong itemId);
     void HousingToggleAllowRecover(Character character, ushort houseTl);
-    House GetHouseAtLocation(float x, float y);
+    House GetHouseAtLocation(WorldInstance world, Vector3 position);
     int? GetWeeklyTaxAmount(House house);
     bool CanPayTaxMail(House house);
     bool PayWeeklyTax(House house);

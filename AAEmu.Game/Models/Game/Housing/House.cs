@@ -73,6 +73,11 @@ public sealed class House : Unit
         set => SetConstructionStep(value, true);
     }
 
+    internal void SetInitialConstructionStep()
+    {
+        SetConstructionStep(Template.BuildSteps.Count > 0 ? 0 : -1, false);
+    }
+
     private void SetConstructionStep(int value, bool updateDoodads)
     {
         _currentStep = value;

@@ -1,4 +1,4 @@
-using AAEmu.Game.GameData.Framework;
+﻿using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.Models.Game.Auction.Templates;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
@@ -38,6 +38,7 @@ public interface IItemManager : ILoadable
     float GetStatValueConst();
     AttributeModifiers GetAttributeModifiers(uint id);
     List<uint> GetItemIdsFromDoodad(uint doodadId);
+    uint GetDoodadTemplateIdForItem(uint itemTemplateId);
     ItemTemplate GetItemTemplateFromItemId(uint itemId);
     List<ItemTemplate> GetItemTemplatesForAuctionSearch(AuctionSearch searchTemplate);
     ItemProcTemplate GetItemProcTemplate(uint templateId);

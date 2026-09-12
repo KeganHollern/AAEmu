@@ -1166,6 +1166,19 @@ public class Doodad : BaseUnit
 
     internal void MarkLaborDeletion(bool deleted) => _deleted = deleted;
 
+    internal void PublishCommittedDeletion(Action delete)
+    {
+        // The batch already deleted the row and associated item in its transaction.
+        // Publish removal without opening a second database connection.
+        _deleted = false;
+        if (IsPersistent)
+        {
+            IsPersistent = false;
+            ParentWorld?.SpawnManager?.RemovePlayerDoodad(this);
+        }
+        delete();
+    }
+
     internal Action CaptureLaborState()
     {
         var phase = _funcGroupId;

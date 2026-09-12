@@ -317,6 +317,18 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
         return 0;
     }
 
+    public HousingTemplate GetTemplateForItem(uint itemTemplateId)
+    {
+        var design = _housingItemHousings.Find(item => item.Item_Id == itemTemplateId);
+        return design == null ? null : GetTemplate(design.Design_Id);
+    }
+
+    public HousingDecoration GetDecorationDesignForItem(uint itemTemplateId)
+    {
+        var design = _housingItemHousingDecorations.Find(item => item.ItemId == itemTemplateId);
+        return design == null ? null : GetDecorationDesignFromId(design.DesignId);
+    }
+
     public bool IsDesignItem(uint designId, uint itemTemplateId) =>
         _housingItemHousings.Any(item => item.Design_Id == designId && item.Item_Id == itemTemplateId);
 

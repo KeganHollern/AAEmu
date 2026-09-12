@@ -48,7 +48,7 @@ public class PutDownBackpackEffect : EffectTemplate
         //pos.Local.AddDistance(0f,1f,0f); // This function isn't finished yet
         pos.Local.SetRotation(0f, 0f, 0f); // Always faces north when placed
 
-        var targetHouse = HousingManager.Instance.GetHouseAtLocation(pos.World.Position.X, pos.World.Position.Y);
+        var targetHouse = HousingManager.Instance.GetHouseAtLocation(caster.ParentWorld, pos.World.Position);
         if (targetHouse != null)
         {
             // Trying to put on a house location, we need to do some checks

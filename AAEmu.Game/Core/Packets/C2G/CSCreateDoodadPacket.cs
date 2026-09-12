@@ -37,7 +37,7 @@ public class CSCreateDoodadPacket() : GamePacket(CSOffsets.CSCreateDoodadPacket,
                 return;
             }
 
-            if (!ItemManager.Instance.GetItemIdsFromDoodad(id).Contains(item.TemplateId) ||
+            if (id == 0 || ItemManager.Instance.GetDoodadTemplateIdForItem(item.TemplateId) != id ||
                 !ZoneSkillRestrictions.CanUseItem(Connection.ActiveChar, item, pos))
                 return;
 
@@ -67,7 +67,7 @@ public class CSCreateDoodadPacket() : GamePacket(CSOffsets.CSCreateDoodadPacket,
 
             // Check if labor cost can be skipped by planting on "owned" land (or with permission)
             // Also blocks if not owned
-            var house = HousingManager.Instance.GetHouseAtLocation(x, y);
+            var house = HousingManager.Instance.GetHouseAtLocation(Connection.ActiveChar.ParentWorld, pos);
             if (house is not null)
             {
                 if (!house.AllowedToInteract(Connection.ActiveChar))

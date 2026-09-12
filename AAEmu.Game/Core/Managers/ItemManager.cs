@@ -235,6 +235,11 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         return _itemDoodadTemplates.TryGetValue(doodadId, out var template) ? template.ItemIds : [];
     }
 
+    public uint GetDoodadTemplateIdForItem(uint itemTemplateId)
+    {
+        return _itemDoodadTemplates.Values.FirstOrDefault(template => template.ItemIds.Contains(itemTemplateId))?.DoodadId ?? 0;
+    }
+
     public ItemTemplate GetItemTemplateFromItemId(uint itemId)
     {
         return _templates.GetValueOrDefault(itemId);

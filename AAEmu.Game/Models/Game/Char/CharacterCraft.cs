@@ -181,7 +181,7 @@ public class CharacterCraft(Character owner)
             }
 
             // Check bonus from housing
-            var house = HousingManager.Instance.GetHouseAtLocation(owner.Transform.World.Position.X, owner.Transform.World.Position.Y);
+            var house = HousingManager.Instance.GetHouseAtLocation(owner.ParentWorld, owner.Transform.World.Position);
             // We don't bother to check house permission here as you can't use the workbench if you don't have permission anyway
             if (house != null)
                 currentActAbilityPoints += HousingManager.Instance.GetActAbilityBonusFromHouse(skill.Template.ActabilityGroupId, house);

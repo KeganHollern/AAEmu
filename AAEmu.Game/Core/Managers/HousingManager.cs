@@ -1,5 +1,4 @@
-﻿using System.Drawing;
-using System.Numerics;
+﻿using System.Numerics;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
@@ -33,7 +32,7 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public class HousingManager(
+public partial class HousingManager(
     IObjectIdManager objectIdManager,
     IFactionManager factionManager,
     ILocalizationManager localizationManager,
@@ -48,7 +47,8 @@ public class HousingManager(
     IZoneManager zoneManager,
     IDoodadManager doodadManager,
     IUccManager uccManager,
-    Lazy<ISaveManager> saveManager = null) : Singleton<HousingManager>, IHousingManager
+    Lazy<ISaveManager> saveManager = null,
+    IDoodadIdManager decorationIdManager = null) : Singleton<HousingManager>, IHousingManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -479,18 +479,19 @@ public class HousingManager(
         if (connection?.ActiveChar == null)
             return;
 
-        var sourceDesignItem = connection.ActiveChar.Inventory.GetItemById(itemId);
+        var sourceDesignItem = connection.ActiveChar.Inventory.Bag.GetItemByItemId(itemId);
+        var houseTemplate = sourceDesignItem == null
+            ? null : HousingGameData.Instance.GetTemplateForItem(sourceDesignItem.TemplateId);
         if (sourceDesignItem == null || sourceDesignItem.OwnerId != connection.ActiveChar.Id ||
             sourceDesignItem.SlotType != SlotType.Inventory || sourceDesignItem.Count < 1 ||
-            !HousingGameData.Instance.IsDesignItem(designId, sourceDesignItem.TemplateId))
+            houseTemplate == null || houseTemplate.Id != designId)
         {
             // Invalid itemId supplied or the id is not owned by the user
             connection.ActiveChar.SendErrorMessage(ErrorMessageType.BagInvalidItem);
             return;
         }
 
-        var houseTemplate = HousingGameData.Instance.GetTemplate(designId);
-        var placementError = houseTemplate == null || !float.IsFinite(zRot)
+        var placementError = !float.IsFinite(zRot)
             ? ErrorMessageType.HouseCannotLoacateInvalidCategoryArea
             : HousingPlacementRules.Check(HousingAreaGameData.Instance, connection.ActiveChar.ParentWorld?.Template,
                 new Vector3(posX, posY, posZ), houseTemplate.CategoryId, connection.ActiveChar.AccountId, _houses.Values);
@@ -1677,105 +1678,6 @@ public class HousingManager(
     /// <param name="parentObjId"></param>
     /// <param name="itemId"></param>
     /// <returns></returns>
-    public bool DecorateHouse(Character player, ushort houseTlId, uint designId, Vector3 pos, Quaternion quat, uint parentObjId, ulong itemId)
-    {
-        lock (SaveManager.PersistenceSyncRoot)
-        {
-            return DecorateHouseLocked(player, houseTlId, designId, pos, quat, parentObjId, itemId);
-        }
-    }
-
-    private bool DecorateHouseLocked(Character player, ushort houseTlId, uint designId, Vector3 pos, Quaternion quat, uint parentObjId, ulong itemId)
-    {
-        // Check Player
-        if (player == null)
-            return false;
-
-        // Check Item
-        var item = itemManager.GetItemByItemId(itemId);
-        if (item == null || item.OwnerId != player.Id)
-        {
-            // Invalid Item
-            return false;
-        }
-
-        // Check House
-        var house = GetHouseByTlId(houseTlId);
-        if (!IsActiveSaleHouse(house))
-        {
-            // Invalid House
-            player.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
-            return false;
-        }
-
-        if (!house.AllowedToInteract(player))
-        {
-            player.SendErrorMessage(ErrorMessageType.InteractionPermissionDeny);
-            return false;
-        }
-
-        var itemUcc = uccManager.GetUccFromItem(item);
-
-        // Create decoration doodad
-        var decorationDesign = HousingGameData.Instance.GetDecorationDesignFromId(designId);
-
-        // TODO: Validate if designId is correct for the given item
-        /*
-        if (item.TemplateId != decorationDesign.ItemTemplateId)
-        {
-            player.SendErrorMessage(ErrorMessageType.FailedToUseItem);
-            return false;
-        }
-        */
-
-        var doodad = doodadManager.Create(house.ParentWorld, 0, decorationDesign.DoodadId, house, true);
-        doodad.Transform.Parent = house.Transform;
-        doodad.Transform.Local.SetPosition(pos.X, pos.Y, pos.Z);
-        doodad.Transform.Local.ApplyFromQuaternion(quat);
-        doodad.ItemTemplateId = item.TemplateId; // designId;
-        doodad.ItemId = item.Template.MaxCount <= 1 ? itemId : 0;
-        doodad.OwnerDbId = house.Id;
-
-        if (house.Id > 0 && item is BigFish fish)
-        {
-            var weight = (short)fish.Weight;
-            var length = (short)fish.Length;
-            doodad.Data = (length << 16) + weight;
-        }
-
-        doodad.OwnerId = player.Id;
-        doodad.ParentObjId = house.ObjId;
-        doodad.ParentObj = house;
-        doodad.AttachPoint = AttachPointKind.None;
-        doodad.OwnerType = DoodadOwnerType.Housing;
-        doodad.UccId = itemUcc?.Id ?? 0;
-        doodad.IsPersistent = true;
-
-        if (doodad is DoodadCoffer coffer)
-        {
-            coffer.InitializeCoffer(player.Id);
-        }
-
-        doodad.InitDoodad();
-        doodad.Spawn();
-        doodad.Save();
-
-        bool res;
-        if (item.Template.MaxCount > 1)
-        {
-            // Stackable items are simply consumed
-            res = player.Inventory.Bag.ConsumeItem(ItemTaskType.DoodadCreate, item.TemplateId, 1, item) == 1;
-        }
-        else
-        {
-            // Non-stackable items are stored in the owner's system container as to retain crafter information and such 
-            res = player.Inventory.SystemContainer.AddOrMoveExistingItem(ItemTaskType.DoodadCreate, item);
-        }
-
-        // Logger.Debug($"DecorateHouse => DoodadTemplate: {doodad.TemplateId} , DoodadId {doodad.ObjId}, Pos: {doodad.Transform}");
-        return res;
-    }
-
     /// <summary>
     /// Toggles the allow furniture recovery flag
     /// </summary>
@@ -1803,21 +1705,25 @@ public class HousingManager(
     /// <summary>
     /// Returns a house where the given position falls within boundaries of the house 
     /// </summary>
-    /// <param name="x"></param>
-    /// <param name="y"></param>
+    /// <param name="world"></param>
+    /// <param name="position"></param>
     /// <returns>Target House or Null</returns>
-    public House GetHouseAtLocation(float x, float y)
+    public House GetHouseAtLocation(WorldInstance world, Vector3 position)
     {
-        // TODO: Check if all houses actually use a square shape aligned to grid
-        // TODO: Add world and/or instance checks
-        foreach (var h in _houses)
+        if (world == null || !HousingAreaPolygon.IsFinite(position))
+            return null;
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            var house = h.Value;
-            var r = house.Template.GardenRadius;
-            var bounds = new RectangleF(house.Transform.World.Position.X - r, house.Transform.World.Position.Y - r,
-                r * 2f, r * 2f);
-            if (bounds.Contains(x, y))
-                return house;
+            foreach (var house in _houses.Values)
+            {
+                if (!ReferenceEquals(house.ParentWorld, world) || house.Template == null)
+                    continue;
+                var origin = house.Transform.World.Position;
+                if (HousingFootprint.TryCreateGarden(new Vector2(origin.X, origin.Y),
+                        house.Template.GardenRadius, house.Template.Alley, out var footprint) &&
+                    footprint.Contains(position.X, position.Y))
+                    return house;
+            }
         }
         return null;
     }
