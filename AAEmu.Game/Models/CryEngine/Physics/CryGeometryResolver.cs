@@ -47,8 +47,10 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         var poses = new List<CryGeometryPoseRequirement>();
         CryBounds? bounds = null;
         var objects = prefab.Element("Objects")?.Elements("Object") ?? [];
+        var objectIndex = 0;
         foreach (var obj in objects)
         {
+            objectIndex++;
             var kind = (string)obj.Attribute("Type");
             if (kind == "Comment")
             {
@@ -84,6 +86,7 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
                 parts.AddRange(child.Parts.Select(part => part with
             {
                 Transform = part.Transform * transform,
+                PhysicsGroup = $"{path}#{objectIndex}/{part.PhysicsGroup}",
                 MaterialPath = string.IsNullOrWhiteSpace(material) ? part.MaterialPath : AssetPath(material)
             }));
         }
@@ -133,6 +136,13 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         }
         var nodes = new Dictionary<int, Node>();
         var mergeAll = false;
+        var spineCount = 0;
+        foreach (var chunk in chunks.Values.Where(chunk => chunk.Kind == 0xaafc0005))
+        {
+            RequireVersion(chunk, 1);
+            Seek(reader, chunk.Body, 16);
+            spineCount = CryPhysicsDataReader.ReadCount(reader, data.Length / 24);
+        }
         foreach (var chunk in chunks.Values.Where(chunk => chunk.Kind == 0xcccc0015))
         {
             RequireVersion(chunk, 1);
@@ -240,7 +250,11 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
                 var size = reader.ReadInt32();
                 Seek(reader, chunk.Body + 24, size);
                 var shape = CryPhysicsDataReader.Read(CryPhysicsDataReader.ReadExactly(reader, size), vertices, indices, materials);
-                parts.Add(new CryGeometryPart(shape, transform, 0x1000 + slot, materialPath, node.Name));
+                parts.Add(new CryGeometryPart(shape, transform, 0x1000 + slot, materialPath, node.Name)
+                {
+                    PhysicsGroup = $"{path}#{(merged ? 0 : id)}",
+                    SpineCount = merged ? spineCount : 0
+                });
             }
         }
         if (bounds == null)

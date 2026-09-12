@@ -42,7 +42,11 @@ public sealed record CryTriangleMesh(Vector3[] Vertices, ushort[] Indices, byte[
     int SurfaceIndex = 0) : CryPhysicsShape(SurfaceIndex);
 
 public sealed record CryGeometryPart(CryPhysicsShape Shape, Matrix4x4 Transform, int PhysicsType,
-    string MaterialPath, string NodeName);
+    string MaterialPath, string NodeName)
+{
+    public string PhysicsGroup { get; init; } = "";
+    public int SpineCount { get; init; }
+}
 
 public sealed record CryGeometryAsset(CryBounds Bounds, IReadOnlyList<CryGeometryPart> Parts)
 {
