@@ -876,11 +876,14 @@ public sealed class InventoryMutationTests
     }
 
     [Test]
-    public async Task DoodadPurchase_GoldPrice_DebitsFullCountAndRejectsInsufficientFunds()
+    [Arguments(0u, 0)]
+    [Arguments(0u, 3)]
+    [Arguments(100u, 0)]
+    public async Task DoodadPurchase_GoldPrice_DebitsFullCountAndRejectsInsufficientFunds(uint coinItemId, int coinCount)
     {
         var output = Template(200);
         output.Price = 30;
-        var purchase = new DoodadFuncPurchase { ItemId = 200, Count = 2 };
+        var purchase = new DoodadFuncPurchase { ItemId = 200, Count = 2, CoinItemId = coinItemId, CoinCount = coinCount };
         ErrorMessageType first;
         ErrorMessageType second;
         lock (SaveManager.PersistenceSyncRoot)

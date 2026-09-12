@@ -30,15 +30,15 @@ public class DoodadFuncPurchase : DoodadFuncTemplate
     internal ErrorMessageType TryPurchase(Character character)
     {
         var template = ItemManager.Instance.GetTemplate(ItemId);
-        if (template == null || Count <= 0 || CurrencyId != 0 || CoinCount < 0 ||
-            (CoinItemId == 0) != (CoinCount == 0))
+        if (template == null || Count <= 0 || CurrencyId != 0)
             return ErrorMessageType.StoreInvalidItem;
         var backpack = ItemManager.Instance.IsAutoEquipTradePack(ItemId);
         var destination = backpack ? character.Inventory.Equipment : character.Inventory.Bag;
         if (backpack && character.Inventory.Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack) != null)
             return ErrorMessageType.BackpackOccupied;
         using var mutation = new InventoryMutation(ItemTaskType.DoodadInteraction);
-        if (CoinItemId != 0)
+        // r208022 selects item payment only when both authored values are positive.
+        if (CoinItemId != 0 && CoinCount > 0)
         {
             if (!InventoryPayment.TryConsume(mutation, character.Inventory.Bag, CoinItemId, CoinCount))
                 return ErrorMessageType.NotEnoughItem;

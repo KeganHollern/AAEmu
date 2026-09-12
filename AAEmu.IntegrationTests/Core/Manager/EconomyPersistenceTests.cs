@@ -15,7 +15,10 @@ using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Mails;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.StaticValues;
 
 using Moq;
 using Xunit;
@@ -27,6 +30,50 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 public sealed class EconomyPersistenceTests
 {
     private static int _nextId = 960000;
+
+    [Fact]
+    public void PriestPurchase_BuffInsertFailureRestoresWallet_AndRetryPersistsBoth()
+    {
+        var graph = new SaveGraph();
+        var character = CreateCharacter(graph.Id);
+        character.Money = 10000;
+        Assert.True(graph.Save.TryCommitEconomy([character]));
+        var effects = Field<List<Buff>>(character.Buffs, "_effects");
+        var buff = new Buff(character, character, new SkillCasterUnit(character.ObjId),
+            new BuffTemplate { Id = 239, SaveRuleId = BuffSaveRuleType.Normal }, null, DateTime.UtcNow)
+            { State = EffectState.Acting, Duration = 1800000 };
+        var trigger = $"reject_priest_{graph.Id}";
+        Execute($"CREATE TRIGGER {trigger} BEFORE INSERT ON character_active_buffs FOR EACH ROW " +
+            $"BEGIN IF NEW.character_id={character.Id} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected priest buff failure'; END IF; END");
+        try
+        {
+            Assert.False(Purchase());
+            Assert.Equal(10000, character.Money);
+            Assert.Equal(10000, Read("characters", "money", character.Id));
+            Assert.Empty(effects);
+            Assert.Equal(0, PersistedBuffs());
+        }
+        finally
+        {
+            Execute($"DROP TRIGGER {trigger}");
+        }
+        Assert.True(Purchase());
+        Assert.Equal(5000, character.Money);
+        Assert.Equal(5000, Read("characters", "money", character.Id));
+        Assert.Same(buff, Assert.Single(effects));
+        Assert.Equal(1, PersistedBuffs());
+
+        bool Purchase() => character.CompletePriestPurchase(5000,
+            () => effects.Add(buff), () => effects.Remove(buff),
+            () => graph.Save.TryCommitEconomy([character]));
+        long PersistedBuffs()
+        {
+            using var connection = MySQL.CreateConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = $"SELECT COUNT(*) FROM character_active_buffs WHERE character_id={character.Id} AND buff_id=239";
+            return Convert.ToInt64(command.ExecuteScalar());
+        }
+    }
 
     [Theory]
     [InlineData("specialty_demand")]
@@ -397,27 +444,35 @@ public sealed class EconomyPersistenceTests
             _ => throw new ArgumentOutOfRangeException(nameof(table))
         };
         Execute(Seed(id));
-        var removed = Field<List<uint>>(child, field);
-        removed.Add(id);
+        var removedList = table == "blocked" ? null : Field<List<uint>>(child, field);
+        var removedVersions = table == "blocked" ? Field<Dictionary<uint, long>>(child, field) : null;
+        long sequence = 0;
+        void QueueRemoval(uint value)
+        {
+            if (removedVersions != null) removedVersions[value] = ++sequence;
+            else removedList!.Add(value);
+        }
+        uint[] RemovedIds() => removedVersions?.Keys.ToArray() ?? removedList!.ToArray();
+        QueueRemoval(id);
 
         Assert.False(graph.Save.TryCommitEconomy([character], _ => throw new InvalidOperationException("Rollback child deletion.")));
         Assert.Equal(1, CountChild(id));
-        Assert.Equal([id], removed);
+        Assert.Equal([id], RemovedIds());
 
         var laterId = id + 1;
         Execute(Seed(laterId));
         Assert.True(graph.Save.TryCommitEconomy([character], _ =>
         {
-            Assert.Equal([id], removed);
-            removed.Add(laterId);
+            Assert.Equal([id], RemovedIds());
+            QueueRemoval(laterId);
         }));
         Assert.Equal(0, CountChild(id));
         Assert.Equal(1, CountChild(laterId));
-        Assert.Equal([laterId], removed);
+        Assert.Equal([laterId], RemovedIds());
 
         Assert.True(graph.Save.TryCommitEconomy([character]));
         Assert.Equal(0, CountChild(laterId));
-        Assert.Empty(removed);
+        Assert.Empty(RemovedIds());
 
         long CountChild(uint childId)
         {

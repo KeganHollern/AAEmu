@@ -1009,6 +1009,7 @@ public class Buffs : IBuffs
         catch (Exception ex)
         {
             Logger.Error(ex, $"Failed to save active buffs for character {characterId}");
+            throw;
         }
     }
 
