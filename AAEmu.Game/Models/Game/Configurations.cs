@@ -1,4 +1,4 @@
-using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Network;
 // ReSharper disable ClassNeverInstantiated.Global
 
 namespace AAEmu.Game.Models.Game;
@@ -78,6 +78,9 @@ public class WorldConfig
     /// Number of days 1 week worth of tax pays for, set this to 3640 would make 1 tax payment last for about 10 years.
     /// </summary>
     public uint DaysForTaxPayment { get; set; } = 7u;
+
+    /// <summary>Custom one-time late fee. Zero leaves the unknown retail rate disabled.</summary>
+    public uint HouseLateFeePercent { get; set; } = 0u;
 
     /// <summary>
     /// Maximum number of optional tax periods that can be prepaid after paying the current bill.

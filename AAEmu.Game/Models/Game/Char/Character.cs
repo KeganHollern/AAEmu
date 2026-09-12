@@ -286,6 +286,44 @@ public partial class Character : Unit, ICharacter
         _laborPowerModified = newTime;
     }
 
+    internal bool TryStageLaborConsumption(short amount)
+    {
+        if (!Monitor.IsEntered(SaveManager.PersistenceSyncRoot) ||
+            !Monitor.IsEntered(AccountManager.Instance.GetAccountSyncRoot(AccountId)))
+            throw new InvalidOperationException("Staged labor needs the persistence and account locks.");
+        if (amount <= 0 || _laborPower < amount)
+            return false;
+        _laborPower -= amount;
+        ConsumedLaborPower = (int)Math.Min((long)Math.Max(ConsumedLaborPower, 0) + amount, int.MaxValue);
+        return true;
+    }
+
+    internal void RestoreStagedLabor(short labor, int consumedLabor)
+    {
+        _laborPower = labor;
+        ConsumedLaborPower = consumedLabor;
+    }
+
+    internal void CompleteStagedLaborConsumption(short amount, uint actabilityId)
+    {
+        var actabilityChange = 0;
+        byte step = 0;
+        var expMultiplier = 1f;
+        if (actabilityId != 0 && Actability.Actabilities.TryGetValue(actabilityId, out var actability))
+        {
+            expMultiplier = actability.GetExpMultiplier();
+            step = actability.Step;
+            actabilityChange = Actability.AddPoint(actabilityId,
+                (int)(amount * AppConfiguration.Instance.World.ActabilityRate));
+        }
+        var formula = FormulaManager.Instance.GetFormula((uint)FormulaKind.ExpByLaborPower);
+        if (formula != null)
+            AddExp((int)(formula.Evaluate(new Dictionary<string, double>
+                { ["labor_power"] = amount, ["pc_level"] = Level }) * expMultiplier), true);
+        Achievements?.Increment(CharRecordKind.SpendLabor, 0, 0, (uint)amount);
+        SendPacket(new SCCharacterLaborPowerChangedPacket(-amount, (int)actabilityId, actabilityChange, step));
+    }
+
     internal void ApplyCommittedAuctionSaleState(
         long money,
         short labor,

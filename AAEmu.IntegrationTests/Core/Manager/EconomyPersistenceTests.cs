@@ -1,12 +1,16 @@
 ﻿using System.Collections.Concurrent;
 using System.Reflection;
 
+using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Auction;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Housing;
+using AAEmu.Game.Models.Game.Trading;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
@@ -23,6 +27,120 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 public sealed class EconomyPersistenceTests
 {
     private static int _nextId = 960000;
+
+    [Theory]
+    [InlineData("specialty_demand")]
+    [InlineData("house_tax_receipts")]
+    public void WorldEconomyMigration_CanRepeatWithoutChangingRows(string suffix)
+    {
+        var update = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "SQL", "updates",
+            $"2026-09-12_aaemu_game_{suffix}.sql"));
+        Execute(update);
+        Execute(update);
+    }
+
+    [Fact]
+    public void PackSettlement_LaborDemandAndMailRollbackTogether_AndReloadDemand()
+    {
+        var graph = new SaveGraph();
+        var character = CreateCharacter(graph.Id);
+        character.InitializeLaborCache(100, DateTime.UtcNow);
+        Execute($"INSERT INTO accounts (account_id, labor) VALUES ({character.AccountId}, 100)");
+        var pack = graph.AddItem(1);
+        Assert.True(graph.Save.TryCommitEconomy([character]));
+        var accountField = typeof(Singleton<AccountManager>).GetField("s_instance", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var previous = accountField.GetValue(null);
+        var accounts = new AccountManager(Mock.Of<ITickManager>(), Mock.Of<ITimedRewardsManager>(), TimeProvider.System);
+        accountField.SetValue(null, accounts);
+        try
+        {
+            lock (SaveManager.PersistenceSyncRoot)
+            lock (accounts.GetAccountSyncRoot(character.AccountId))
+            {
+                var config = new SpecialtyConfig();
+                var now = new DateTime(2026, 9, 12, 0, 0, 0, DateTimeKind.Utc);
+                var demand = SpecialtyDemand.Create(graph.Id, 2, now, config).RecordSale(now, config);
+                pack.Count = 0;
+                pack._holdingContainer = null;
+                graph.Container.Items.Remove(pack);
+                var mail = graph.AddMail(2);
+                mail.Body.CopperCoins = 1234;
+                using (var labor = new CharacterLaborMutation(character))
+                {
+                    Assert.True(labor.TryConsume(60, 0));
+                    Assert.False(graph.Save.TryCommitEconomy([character], context =>
+                    {
+                        labor.Save(context);
+                        SpecialtyDemandStore.Save(context.Connection, context.Transaction, demand);
+                        throw new InvalidOperationException("Fail after labor and demand writes.");
+                    }));
+                }
+                Assert.Equal(100, character.LaborPower);
+                Assert.Equal(1, Count("items", pack.Id));
+                Assert.Equal(0, Count("mails", (ulong)mail.Id));
+                using (var connection = MySQL.CreateConnection())
+                    Assert.DoesNotContain(SpecialtyDemandStore.Load(connection), value => value.ItemId == graph.Id);
+
+                using (var labor = new CharacterLaborMutation(character))
+                {
+                    Assert.True(labor.TryConsume(60, 0));
+                    Assert.True(graph.Save.TryCommitEconomy([character], context =>
+                    {
+                        labor.Save(context);
+                        SpecialtyDemandStore.Save(context.Connection, context.Transaction, demand);
+                    }));
+                    labor.PreservePreparedState();
+                }
+                Assert.Equal(40, character.LaborPower);
+                Assert.Equal(0, Count("items", pack.Id));
+                Assert.Equal(1234, Read("mails", "money_amount_1", (ulong)mail.Id));
+                using var restoredConnection = MySQL.CreateConnection();
+                Assert.Equal(demand, Assert.Single(SpecialtyDemandStore.Load(restoredConnection), value => value.ItemId == graph.Id));
+                using var readLabor = restoredConnection.CreateCommand();
+                readLabor.CommandText = $"SELECT labor FROM accounts WHERE account_id={character.AccountId}";
+                Assert.Equal(40, Convert.ToInt32(readLabor.ExecuteScalar()));
+            }
+        }
+        finally
+        {
+            accountField.SetValue(null, previous);
+        }
+    }
+
+    [Fact]
+    public void HouseTaxReceipt_IsAtomicWithHouseAndWallet_AndRejectsReplay()
+    {
+        var graph = new SaveGraph();
+        var character = CreateCharacter(graph.Id);
+        character.Money = 1000;
+        var before = new DateTime(2026, 9, 20, 0, 0, 0, DateTimeKind.Utc);
+        var house = new House
+        {
+            Id = graph.Id, AccountId = graph.Id, OwnerId = graph.Id, TemplateId = 1,
+            Name = "Tax receipt test", Template = new HousingTemplate { HousingBindingDoodad = [] },
+            PlaceDate = before.AddDays(-14), ProtectionEndDate = before,
+            Faction = new SystemFaction(), IsDirty = true
+        };
+        Assert.True(graph.Save.TryCommitEconomy([character], context => house.Save(context)));
+        character.Money -= 110;
+        house.ProtectionEndDate = before.AddDays(7);
+        void WritePayment(PersistenceSaveContext context)
+        {
+            house.Save(context);
+            HouseTaxReceipt.Save(context, graph.Id, house, character.Id, 110, false, before, before.AddDays(-1), 10);
+        }
+        Assert.False(graph.Save.TryCommitEconomy([character], context =>
+        {
+            WritePayment(context);
+            throw new InvalidOperationException("Fail after receipt write.");
+        }));
+        Assert.Equal(1000, Read("characters", "money", character.Id));
+        Assert.True(graph.Save.TryCommitEconomy([character], WritePayment));
+        Assert.Equal(890, Read("characters", "money", character.Id));
+        character.Money -= 100;
+        Assert.False(graph.Save.TryCommitEconomy([character], WritePayment));
+        Assert.Equal(890, Read("characters", "money", character.Id));
+    }
 
     [Fact]
     public void FailedSettlement_RetryCommitsConsumedItemWalletMailAndAuctionTogether()

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <NoWarn>CA1859</NoWarn>
@@ -33,6 +33,8 @@
     <Content Include="..\SQL\updates\2026-09-10_aaemu_game_account_roles.sql" Link="SQL\updates\2026-09-10_aaemu_game_account_roles.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\updates\2026-09-07_aaemu_game_zone_conflict_states.sql" Link="SQL\updates\2026-09-07_aaemu_game_zone_conflict_states.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\updates\2026-09-12_aaemu_game_ics_sale_quantity.sql" Link="SQL\updates\2026-09-12_aaemu_game_ics_sale_quantity.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\SQL\updates\2026-09-12_aaemu_game_specialty_demand.sql" Link="SQL\updates\2026-09-12_aaemu_game_specialty_demand.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\SQL\updates\2026-09-12_aaemu_game_house_tax_receipts.sql" Link="SQL\updates\2026-09-12_aaemu_game_house_tax_receipts.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\aaemu_game.sql" Link="SQL\aaemu_game.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\updates\2026-09-01_aaemu_game_auction_mail_claims.sql" Link="SQL\updates\2026-09-01_aaemu_game_auction_mail_claims.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\SQL\updates\2026-09-01_aaemu_game_account_daily_login_claims.sql" Link="SQL\updates\2026-09-01_aaemu_game_account_daily_login_claims.sql" CopyToOutputDirectory="PreserveNewest" />

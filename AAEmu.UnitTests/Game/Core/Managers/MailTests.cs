@@ -8,6 +8,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
@@ -33,15 +34,19 @@ public sealed class MailTests
     private CharacterMails _senderMails;
     private MailManager _mailManager;
     private Mock<IHousingManager> _housingManager;
+    private Mock<ISaveManager> _saveManager;
     private Mock<IWorldManager> _worldManager;
     private Mock<ISession> _recipientSession;
     private Mock<ISession> _otherRecipientSession;
     private Mock<ISession> _senderSession;
     private ItemManager _previousItems;
+    private WorldConfig _previousWorld;
 
     [Before(Test)]
     public void Setup()
     {
+        _previousWorld = AppConfiguration.Instance.World;
+        AppConfiguration.Instance.World = new WorldConfig();
         _recipientSession = Mock.Of<ISession>();
         _otherRecipientSession = Mock.Of<ISession>();
         _senderSession = Mock.Of<ISession>();
@@ -97,6 +102,8 @@ public sealed class MailTests
         _worldManager.GetCharacter(_otherRecipient.Name).Returns(_otherRecipient);
         _worldManager.GetCharacter(_sender.Name).Returns(_sender);
         _housingManager = Mock.Of<IHousingManager>();
+        _saveManager = Mock.Of<ISaveManager>();
+        _saveManager.TryCommitEconomy(Any<IReadOnlyCollection<Character>>(), Any<Action<PersistenceSaveContext>>()).Returns(true);
 
         var itemField = typeof(Singleton<ItemManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
         _previousItems = (ItemManager)itemField.GetValue(null);
@@ -126,7 +133,8 @@ public sealed class MailTests
             Mock.Of<ITaskManager>().Object,
             _worldManager.Object,
             new Lazy<IHousingManager>(() => _housingManager.Object),
-            Mock.Of<ILocalizationManager>().Object);
+            Mock.Of<ILocalizationManager>().Object,
+            new Lazy<ISaveManager>(() => _saveManager.Object));
 
         new FeaturesManager(Mock.Of<IExperienceManager>().Object).Initialize();
         FeaturesManager.Fsets.Set(Feature.taxItem, false);
@@ -150,6 +158,7 @@ public sealed class MailTests
     [After(Test)]
     public void Teardown()
     {
+        AppConfiguration.Instance.World = _previousWorld;
         typeof(Singleton<ItemManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!
             .SetValue(null, _previousItems);
         _mailManager._allPlayerMails = null;
@@ -514,6 +523,29 @@ public sealed class MailTests
         await Assert.That(_mailManager.AllPlayerMails.ContainsKey(successorMail.Id)).IsTrue();
         _housingManager.PayWeeklyTax(house).WasCalled(Times.Once);
         _housingManager.OfferTaxPrepayment(house).WasCalled(Times.Once);
+    }
+
+    [Test]
+    public async Task PayChargeMoney_FailedCheckpoint_RestoresMoneyDateAndBill()
+    {
+        var house = CreateTaxHouse();
+        ConfigureTaxPayment(house, 100);
+        var before = house.ProtectionEndDate;
+        _housingManager.PayWeeklyTax(house).Returns(() =>
+        {
+            house.ProtectionEndDate = before.AddDays(7);
+            return true;
+        });
+        var mail = AddTaxMail(house, 100);
+        _saveManager.TryCommitEconomy(Any<IReadOnlyCollection<Character>>(), Any<Action<PersistenceSaveContext>>()).Returns(false);
+
+        var result = _mailManager.PayChargeMoney(_character, mail.Id, false);
+
+        await Assert.That(result).IsFalse();
+        await Assert.That(_character.Money).IsEqualTo(1000);
+        await Assert.That(house.ProtectionEndDate).IsEqualTo(before);
+        await Assert.That(_mailManager.AllPlayerMails[mail.Id]).IsSameReferenceAs(mail);
+        _housingManager.OfferTaxPrepayment(house).WasCalled(Times.Never);
     }
 
     [Test]

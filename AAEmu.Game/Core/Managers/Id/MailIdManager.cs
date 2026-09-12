@@ -13,9 +13,9 @@ public class MailIdManager() : IdManager("MailIdManager", FirstId, LastId, ObjTa
     private static readonly uint[] Exclude = [];
     // A committed claim can coexist with its read mail until the player deletes it, so duplicate IDs are valid.
     private static readonly string[,] ObjTables = { { "mails", "id" }, { "auction_mail_claims", "mail_id" },
-        { "mail_lifecycle", "mail_id" }, { "mail_lifecycle", "returned_mail_id" } };
+        { "mail_lifecycle", "mail_id" }, { "mail_lifecycle", "returned_mail_id" }, { "house_tax_receipts", "mail_id" } };
     private static readonly string[,] RetainedObjTables =
-        { { "mail_lifecycle", "mail_id" }, { "mail_lifecycle", "returned_mail_id" } };
+        { { "mail_lifecycle", "mail_id" }, { "mail_lifecycle", "returned_mail_id" }, { "house_tax_receipts", "mail_id" } };
 
     public static MailIdManager Instance =>
         _instance ??= SingletonContainer.ServiceProvider?.GetService<MailIdManager>() ?? new MailIdManager();

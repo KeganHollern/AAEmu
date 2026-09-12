@@ -6,9 +6,11 @@ using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Features;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Mails;
@@ -19,7 +21,7 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public partial class MailManager(IMailIdManager mailIdManager, INameManager nameManager, IItemManager itemManager, ITaskManager taskManager, IWorldManager worldManager, Lazy<IHousingManager> housingManager, ILocalizationManager localizationManager) : Singleton<MailManager>, IMailManager
+public partial class MailManager(IMailIdManager mailIdManager, INameManager nameManager, IItemManager itemManager, ITaskManager taskManager, IWorldManager worldManager, Lazy<IHousingManager> housingManager, ILocalizationManager localizationManager, Lazy<ISaveManager> saveManager = null) : Singleton<MailManager>, IMailManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -637,94 +639,65 @@ public partial class MailManager(IMailIdManager mailIdManager, INameManager name
                 return false;
             }
 
+            var lateFeePercent = house.TaxDueDate <= DateTime.UtcNow ? AppConfiguration.Instance.World.HouseLateFeePercent : 0;
             var previousProtectionEndDate = house.ProtectionEndDate;
-            if (!housingManager.Value.PayWeeklyTax(house))
+            var previousDirty = house.IsDirty;
+            var certificates = FeaturesManager.Fsets.Check(Feature.taxItem);
+            using var inventory = new InventoryMutation(ItemTaskType.Mail);
+            using var mails = BeginMutation();
+            if (!HousingManager.TryStageTaxPayment(inventory, character, currentTaxAmount.Value, certificates))
             {
-                Logger.Error("Could not update protection time when paying taxes, mailId {0}", mail.Id);
-                character.SendErrorMessage(ErrorMessageType.InvalidTaxation);
+                character.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
                 return false;
             }
+            foreach (var oldBill in GetMyHouseMails(house.Id))
+                if (!mails.TryRemove(oldBill))
+                    return false;
+            if (!housingManager.Value.PayWeeklyTax(house))
+                return false;
 
-            // Extend first while the validated house lock is held. If payment cannot be consumed,
-            // restore the original deadline before releasing the lock.
+            bool committed;
             try
             {
-                if (!TryConsumeTaxPayment(character, mail))
+                committed = (saveManager?.Value ?? SaveManager.Instance).TryCommitEconomy([character], context =>
                 {
-                    house.ProtectionEndDate = previousProtectionEndDate;
-                    return false;
-                }
+                    if (!house.Save(context))
+                        throw new InvalidOperationException("The paid house could not be saved.");
+                    HouseTaxReceipt.Save(context, mail.Id, house, character.Id,
+                        currentTaxAmount.Value, certificates, previousProtectionEndDate, DateTime.UtcNow, lateFeePercent);
+                });
             }
             catch
             {
-                house.ProtectionEndDate = previousProtectionEndDate;
+                // Commit outcome is unknown. Keep the prepared debit and deadline together.
+                inventory.PreservePreparedState();
+                mails.PreservePreparedState();
                 throw;
             }
-
-            if (mail.Header.Status != MailStatus.Read)
+            if (!committed)
             {
-                mail.Header.Status = MailStatus.Read;
-                character.Mails.UnreadMailCount.UpdateReceived(mail.MailType, -1);
+                house.ProtectionEndDate = previousProtectionEndDate;
+                house.IsDirty = previousDirty;
+                character.SendErrorMessage(ErrorMessageType.MailUnknownFailure);
+                return false;
             }
-
-            character.SendPacket(new SCChargeMoneyPaidPacket(mail.Id));
-            character.SendPacket(new SCMailDeletedPacket(false, mail.Id, false, character.Mails.UnreadMailCount));
-            DeleteTaxMail(mail.Id);
-
-            // Remove any pre-existing duplicate bills before issuing the single next-period offer.
-            DeleteHouseMails(house.Id);
+            try
+            {
+                inventory.Complete();
+                character.SendPacket(new SCChargeMoneyPaidPacket(mail.Id));
+                mails.Complete();
+            }
+            catch
+            {
+                inventory.PreservePreparedState();
+                mails.PreservePreparedState();
+                throw;
+            }
             housingManager.Value.OfferTaxPrepayment(house);
             character.Mails.SendUnreadMailCount();
         }
 
         return true;
-    }
-
-    private static bool TryConsumeTaxPayment(Character character, BaseMail mail)
-    {
-        if (FeaturesManager.Fsets.Check(Feature.taxItem))
-        {
-            lock (character.StorePurchaseSyncRoot)
-            {
-                // Use Tax Certificates as payment. Bound certificates are consumed first.
-                var userTaxCount = character.Inventory.GetItemsCount(SlotType.Inventory, Item.TaxCertificate);
-                var userBoundTaxCount = character.Inventory.GetItemsCount(SlotType.Inventory, Item.BoundTaxCertificate);
-                var requiredCerts = (int)Math.Ceiling(mail.Body.BillingAmount / 10000f);
-
-                if (TryConsumeTaxCertificates(
-                        requiredCerts,
-                        userBoundTaxCount,
-                        userTaxCount,
-                        count => character.Inventory.Bag.ConsumeItem(
-                            ItemTaskType.Mail, Item.BoundTaxCertificate, count, null),
-                        count => character.Inventory.Bag.ConsumeItem(
-                            ItemTaskType.Mail, Item.TaxCertificate, count, null),
-                        count => character.Inventory.Bag.AcquireDefaultItem(
-                            ItemTaskType.Mail, Item.BoundTaxCertificate, count),
-                        count => character.Inventory.Bag.AcquireDefaultItem(
-                            ItemTaskType.Mail, Item.TaxCertificate, count),
-                        out var fullyRestored))
-                    return true;
-
-                if (!fullyRestored)
-                    Logger.Error("Could not restore partially consumed tax certificates for mailId {0}", mail.Id);
-
-                character.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
-                return false;
-            }
-        }
-
-        lock (character.StorePurchaseSyncRoot)
-        {
-            if (mail.Body.BillingAmount > character.Money ||
-                !character.SubtractMoney(SlotType.Inventory, mail.Body.BillingAmount, ItemTaskType.Mail))
-            {
-                character.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
-                return false;
-            }
-
-            return true;
-        }
     }
 
     internal static bool TryConsumeTaxCertificates(

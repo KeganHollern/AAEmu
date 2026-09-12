@@ -11,7 +11,7 @@ public class CSSpecialtyRatioPacket() : GamePacket(CSOffsets.CSSpecialtyRatioPac
     {
         var id = stream.ReadUInt32();
 
-        var ratio = SpecialtyManager.Instance.GetRatioForSpecialty(Connection.ActiveChar);
+        var ratio = SpecialtyManager.Instance.GetRatioForSpecialty(Connection.ActiveChar, id);
         Connection.ActiveChar.SendPacket(new SCSpecialtyRatioPacket(ratio));
     }
 }

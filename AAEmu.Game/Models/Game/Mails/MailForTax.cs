@@ -2,6 +2,7 @@
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Housing;
+using AAEmu.Game.Models;
 
 namespace AAEmu.Game.Models.Game.Mails;
 
@@ -80,6 +81,8 @@ public class MailForTax : BaseMail
         int hostileTaxRate,
         DateTime utcNow)
     {
+        totalTaxAmountDue = HouseTaxAmount.WithLateFee(totalTaxAmountDue, house.TaxDueDate, utcNow,
+            AppConfiguration.Instance.World.HouseLateFeePercent);
         mail.Header.ReceiverId = house.OwnerId;
         mail.ReceiverName = ownerName;
         mail.Title = "title(" + zoneGroupId.ToString() + ")"; // Title calls a function to call zone group name

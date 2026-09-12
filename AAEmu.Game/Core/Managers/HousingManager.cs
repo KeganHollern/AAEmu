@@ -430,21 +430,11 @@ public class HousingManager(
         var baseTax = (int)(house.Template.Taxation?.Tax ?? 0);
         var depositTax = baseTax * 2;
 
-        // Note: I'm sure this can be done better, but it works and displays correctly
-        var requiresPayment = false;
-        var weeksWithoutPay = -1;
-        if (house.TaxDueDate <= DateTime.UtcNow)
-        {
-            requiresPayment = true;
-            weeksWithoutPay = 0;
-        }
-        else if (house.ProtectionEndDate <= DateTime.UtcNow)
-        {
-            requiresPayment = true;
-            weeksWithoutPay = 1;
-        }
-
-        // Logger.Debug($"SCHouseTaxInfoPacket; tlId:{house.TlId}, domTaxRate: 0, deposit: {depositTax}, taxDue:{totalTaxAmountDue}, protectEnd:{house.ProtectionEndDate}, isPaid:{requiresPayment}, weeksWithoutPay:{weeksWithoutPay}, isHeavy:{house.Template.HeavyTax}");
+        var utcNow = DateTime.UtcNow;
+        totalTaxAmountDue = HouseTaxAmount.WithLateFee(totalTaxAmountDue, house.TaxDueDate, utcNow,
+            AppConfiguration.Instance.World.HouseLateFeePercent);
+        var isAlreadyPaid = house.TaxDueDate > utcNow;
+        var weeksWithoutPay = isAlreadyPaid ? 0 : 1;
 
         connection.SendPacket(
             new SCHouseTaxInfoPacket(
@@ -453,7 +443,7 @@ public class HousingManager(
                 depositTax, // this is used in the help text on (?) when you hover your mouse over it to display deposit tax for this building
                 totalTaxAmountDue, // Amount Due
                 house.ProtectionEndDate,
-                requiresPayment,
+                isAlreadyPaid,
                 weeksWithoutPay,  // TODO: do proper calculation ?
                 house.Template.HeavyTax
             )
@@ -509,63 +499,18 @@ public class HousingManager(
             connection.ActiveChar.SendErrorMessage(placementError);
             return;
         }
-        CalculateBuildingTaxInfo(connection.ActiveChar.AccountId, houseTemplate, true, out var totalTaxAmountDue, out _, out _, out _, out _);
-
-        if (FeaturesManager.Fsets.Check(Models.Game.Features.Feature.taxItem))
+        if (!CalculateBuildingTaxInfo(connection.ActiveChar.AccountId, houseTemplate, true,
+                out var totalTaxAmountDue, out _, out _, out _, out _))
         {
-            // Pay in Tax Certificate
-
-            var userTaxCount = connection.ActiveChar.Inventory.GetItemsCount(SlotType.Inventory, Item.TaxCertificate);
-            var userBoundTaxCount = connection.ActiveChar.Inventory.GetItemsCount(SlotType.Inventory, Item.BoundTaxCertificate);
-            var totalUserTaxCount = userTaxCount + userBoundTaxCount;
-            var totalCertsCost = (int)Math.Ceiling(totalTaxAmountDue / 10000f);
-
-            // Annoyingly complex item consumption, maybe we need a separate function in inventory to handle this kind of thing
-            var consumedCerts = totalCertsCost;
-            if (totalCertsCost > totalUserTaxCount)
-            {
-                connection.ActiveChar.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
-                return;
-            }
-            else
-            {
-                var c = consumedCerts;
-                // Use Bound First
-                if (userBoundTaxCount > 0 && c > 0)
-                {
-                    if (c > userBoundTaxCount)
-                        c = userBoundTaxCount;
-                    connection.ActiveChar.Inventory.Bag.ConsumeItem(ItemTaskType.HouseCreation, Item.BoundTaxCertificate, c, null);
-                    consumedCerts -= c;
-                }
-                c = consumedCerts;
-                if (userTaxCount > 0 && c > 0)
-                {
-                    if (c > userTaxCount)
-                        c = userTaxCount;
-                    connection.ActiveChar.Inventory.Bag.ConsumeItem(ItemTaskType.HouseCreation, Item.TaxCertificate, c, null);
-                    consumedCerts -= c;
-                }
-
-                if (consumedCerts != 0)
-                    Logger.Error($"Something went wrong when paying tax for new building for player {connection.ActiveChar.Name}");
-            }
-        }
-        else
-        {
-            // Pay in Gold
-            // TODO: test house with actual gold tax
-            if (totalTaxAmountDue > connection.ActiveChar.Money)
-            {
-                connection.ActiveChar.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
-                return;
-            }
-            connection.ActiveChar.SubtractMoney(SlotType.Inventory, totalTaxAmountDue, ItemTaskType.HouseCreation);
+            connection.ActiveChar.SendErrorMessage(ErrorMessageType.InvalidTaxation);
+            return;
         }
 
-        if (connection.ActiveChar.Inventory.Bag.ConsumeItem(ItemTaskType.HouseBuilding, sourceDesignItem.TemplateId, 1, sourceDesignItem) <= 0)
+        using var inventory = new InventoryMutation(ItemTaskType.HouseCreation);
+        if (!TryStageCreationPayment(inventory, connection.ActiveChar, sourceDesignItem, totalTaxAmountDue,
+                FeaturesManager.Fsets.Check(Models.Game.Features.Feature.taxItem)))
         {
-            connection.ActiveChar.SendErrorMessage(ErrorMessageType.BagInvalidItem);
+            connection.ActiveChar.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
             return;
         }
 
@@ -604,10 +549,35 @@ public class HousingManager(
         house.AccountId = connection.AccountId;
         house.Permission = HousingPermission.Private;
         house.AllowRecover = true;
-        house.PlaceDate = DateTime.UtcNow;
-        house.ProtectionEndDate = DateTime.UtcNow.AddDays(AppConfiguration.Instance.World.DaysForTaxPayment);
+        SetInitialTaxDates(house, DateTime.UtcNow);
         _houses.Add(house.Id, house);
         _housesTl.Add(house.TlId, house);
+        bool committed;
+        try
+        {
+            committed = (saveManager?.Value ?? SaveManager.Instance).TryCommitEconomy([connection.ActiveChar], context =>
+            {
+                if (!house.Save(context))
+                    throw new InvalidOperationException("The new house could not be saved.");
+            });
+        }
+        catch
+        {
+            // A commit exception has an unknown SQL result. Keep house and payment together.
+            inventory.PreservePreparedState();
+            throw;
+        }
+        if (!committed)
+        {
+            _houses.Remove(house.Id);
+            _housesTl.Remove(house.TlId);
+            housingIdManager.ReleaseId(house.Id);
+            housingTldManager.ReleaseId(house.TlId);
+            objectIdManager.ReleaseId(house.ObjId);
+            connection.ActiveChar.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return;
+        }
+        inventory.Complete();
         connection.ActiveChar.SendPacket(new SCMyHousePacket(house));
         house.Spawn();
         UpdateTaxInfo(house);
@@ -619,6 +589,44 @@ public class HousingManager(
                 house.TemplateId,
                 0);
         }
+    }
+
+    internal static void SetInitialTaxDates(House house, DateTime utcNow)
+    {
+        house.PlaceDate = utcNow;
+        // Placement pays one period. A second period is the unpaid-tax grace window.
+        house.ProtectionEndDate = utcNow.AddDays(2d * Math.Max(1u, AppConfiguration.Instance.World.DaysForTaxPayment));
+    }
+
+    internal static bool TryStageCreationPayment(InventoryMutation inventory, Character owner, Item design,
+        int taxAmount, bool payInCertificates)
+    {
+        if (taxAmount < 0 || !inventory.TryConsume(owner.Inventory.Bag, design, 1))
+            return false;
+        return TryStageTaxPayment(inventory, owner, taxAmount, payInCertificates);
+    }
+
+    internal static bool TryStageTaxPayment(InventoryMutation inventory, Character owner, int taxAmount, bool payInCertificates)
+    {
+        if (taxAmount < 0)
+            return false;
+        if (!payInCertificates)
+            return inventory.TryChangeMoney(owner, -taxAmount);
+
+        var needed = (int)(((long)taxAmount + 9999) / 10000);
+        foreach (var templateId in new[] { Item.BoundTaxCertificate, Item.TaxCertificate })
+        {
+            foreach (var certificate in owner.Inventory.Bag.Items.Where(item => item.TemplateId == templateId).ToArray())
+            {
+                var count = Math.Min(needed, Math.Max(0, certificate.Count - TradeReservation.GetReservedCount(certificate)));
+                if (count > 0 && !inventory.TryConsume(owner.Inventory.Bag, certificate, count))
+                    return false;
+                needed -= count;
+                if (needed == 0)
+                    return true;
+            }
+        }
+        return needed == 0;
     }
 
     /// <summary>
@@ -682,15 +690,11 @@ public class HousingManager(
             // Check if owner
             if (connection is null || house.OwnerId == connection.ActiveChar?.Id)
             {
-                // VERIFY: check if tax paid, cannot manually demolish or sell a house with unpaid taxes ?
-                // Note - ZeromusXYZ: I'm disabling this "feature", as it would prevent you from demolishing freshly placed buildings that you want to move
-                /*
-                if (house.TaxDueDate <= DateTime.UtcNow)
+                if (connection != null && !failedToPayTax && house.TaxDueDate <= DateTime.UtcNow)
                 {
                     connection.ActiveChar.SendErrorMessage(ErrorMessageType.HouseCannotDemolishUnpaidTax);
                     return;
                 }
-                */
                 var ownerChar = worldManager.GetCharacterById(house.OwnerId);
 
                 lock (house.TaxPaymentSyncRoot)
@@ -898,7 +902,8 @@ public class HousingManager(
     public int? GetWeeklyTaxAmount(House house)
     {
         return CalculateBuildingTaxInfo(house.AccountId, house.Template, false, out _, out _, out _, out _, out var oneWeekTaxCount)
-            ? oneWeekTaxCount
+            ? HouseTaxAmount.WithLateFee(oneWeekTaxCount, house.TaxDueDate, DateTime.UtcNow,
+                AppConfiguration.Instance.World.HouseLateFeePercent)
             : null;
     }
 
