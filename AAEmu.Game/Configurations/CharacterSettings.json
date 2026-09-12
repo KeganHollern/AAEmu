@@ -32,7 +32,7 @@
 		"DailyLogin": 0,
 		"Default": 0,
 		"TickAmount": 0,
-		"TickAmountPremium": 100,
+		"TickAmountPremium": 0,
 		"TickMinutes": 5
 	},
 	"Labor": {

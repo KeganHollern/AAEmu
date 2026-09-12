@@ -1,7 +1,9 @@
-﻿using AAEmu.Commons.Utils.DB;
+﻿using AAEmu.Commons.Utils;
+using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game;
 using MySql.Data.MySqlClient;
 
 namespace AAEmu.Game.Models.Game.Char;
@@ -10,7 +12,18 @@ public class CharacterBlocked(Character owner)
 {
     public Character Owner { get; set; } = owner;
     public Dictionary<uint, BlockedTemplate> BlockedList { get; set; } = []; // bvId, Template
-    private readonly List<uint> _removedBlocked = []; // blockedId
+    private readonly Dictionary<uint, long> _removedBlocked = [];
+    private long _changeSequence;
+    private readonly object _sync = new();
+
+    public bool Contains(uint characterId)
+    {
+        lock (_sync)
+            return BlockedList.ContainsKey(characterId);
+    }
+
+    public static bool IsBlockedBy(Character receiver, uint senderId) =>
+        receiver?.Blocked?.Contains(senderId) == true;
 
     public static List<Blocked> GetBlockedInfo(List<uint> ids)
     {
@@ -57,8 +70,11 @@ public class CharacterBlocked(Character owner)
     public void Send()
     {
 
-        if (BlockedList.Count <= 0) return;
-        var allBlocked = GetBlockedInfo([.. BlockedList.Keys]);
+        List<uint> ids;
+        lock (_sync)
+            ids = [.. BlockedList.Keys];
+        if (ids.Count == 0) return;
+        var allBlocked = GetBlockedInfo(ids);
         var allBlockedArray = new Blocked[allBlocked.Count];
         allBlocked.CopyTo(allBlockedArray, 0);
         Owner.SendPacket(new SCBlockedUsersPacket(allBlockedArray.Length, allBlockedArray));
@@ -98,9 +114,16 @@ public class CharacterBlocked(Character owner)
 
     private void Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
     {
+        lock (_sync)
+            SaveLocked(connection, transaction, context);
+    }
+
+    private void SaveLocked(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
+    {
         if (_removedBlocked.Count > 0)
         {
-            var removedIds = _removedBlocked.ToArray();
+            var removed = _removedBlocked.ToArray();
+            var removedIds = removed.Select(entry => entry.Key).ToArray();
             using (var command = connection.CreateCommand())
             {
                 command.Connection = connection;
@@ -115,8 +138,10 @@ public class CharacterBlocked(Character owner)
                 else
                     context.AfterCommit(() =>
                     {
-                        foreach (var id in removedIds)
-                            _removedBlocked.Remove(id);
+                        lock (_sync)
+                            foreach (var (id, sequence) in removed)
+                                if (_removedBlocked.GetValueOrDefault(id) == sequence)
+                                    _removedBlocked.Remove(id);
                     });
             }
         }
@@ -138,25 +163,36 @@ public class CharacterBlocked(Character owner)
 
     public void AddBlockedUser(string name)
     {
-        var blocked = WorldManager.Instance.GetCharacter(name);
-
-        if (blocked == null || BlockedList.ContainsKey(blocked.Id)) return; // already blocked
-        var template = new BlockedTemplate
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+        var id = NameManager.Instance.GetCharacterId(name.NormalizeName());
+        if (id == 0)
+            return;
+        if (id == Owner.Id)
         {
-            BlockedId = blocked.Id,
-            Owner = Owner.Id
-        };
-        BlockedList.Add(blocked.Id, template);
-        Owner.SendPacket(new SCAddBlockedUserPacket(blocked.Id, blocked.Name, true, 0));
+            Owner.SendErrorMessage(ErrorMessageType.CannotBlockUserSelf);
+            return;
+        }
+        lock (_sync)
+        {
+            if (!BlockedList.TryAdd(id, new BlockedTemplate { BlockedId = id, Owner = Owner.Id }))
+                return;
+        }
+        Owner.SendPacket(new SCAddBlockedUserPacket(id, NameManager.Instance.GetCharacterName(id), true, 0));
     }
 
     public void RemoveBlockedUser(string name)
     {
-        var blocked = WorldManager.Instance.GetCharacter(name);
-        if (blocked == null || !BlockedList.ContainsKey(blocked.Id)) return; // not blocked
-        BlockedList.Remove(blocked.Id);
-        _removedBlocked.Add(blocked.Id);
-        Owner.SendPacket(new SCDeleteBlockedUserPacket(blocked.Id, true, name, 0));
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+        var id = NameManager.Instance.GetCharacterId(name.NormalizeName());
+        lock (_sync)
+        {
+            if (id == 0 || !BlockedList.Remove(id))
+                return;
+            _removedBlocked[id] = ++_changeSequence;
+        }
+        Owner.SendPacket(new SCDeleteBlockedUserPacket(id, true, NameManager.Instance.GetCharacterName(id), 0));
     }
 
     private static Blocked FormatBlocked(Character blocked)

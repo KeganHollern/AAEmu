@@ -18,7 +18,7 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 
 [Collection("GameMySql")]
 [Trait("Category", "GameMySql")]
-public sealed class AuctionMailClaimStoreTests : IAsyncLifetime
+public sealed partial class AuctionMailClaimStoreTests : IAsyncLifetime
 {
     private static readonly DateTime ClaimTime = new(2026, 9, 7, 12, 0, 0, DateTimeKind.Utc);
 

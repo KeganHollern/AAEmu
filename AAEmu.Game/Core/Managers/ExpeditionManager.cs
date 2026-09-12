@@ -25,7 +25,11 @@ public class ExpeditionManager(IExpeditionIdManager expeditionIdManager, ITeamMa
     //private ExpeditionConfig _config;
     private Regex _nameRegex;
 
-    private Dictionary<FactionsEnum, Expedition> _expeditions;
+    private Dictionary<FactionsEnum, Expedition> _expeditions = [];
+    private readonly object _invitationSyncRoot = new();
+    private readonly Dictionary<uint, PendingInvitation> _pendingInvitations = [];
+    internal Func<DateTime> InvitationTime { get; set; } = () => DateTime.UtcNow;
+    private sealed record PendingInvitation(Character Inviter, Character Invited, Expedition Expedition, DateTime Expires);
 
     public IEnumerable<Expedition> Expeditions { get => _expeditions.Values; }
 
@@ -299,47 +303,72 @@ public class ExpeditionManager(IExpeditionIdManager expeditionIdManager, ITeamMa
 
     public void Invite(GameConnection connection, string invitedName)
     {
-        var inviter = connection.ActiveChar;
+        lock (_invitationSyncRoot)
+        {
+            RemoveExpiredInvitations();
+            var inviter = connection.ActiveChar;
+            if (!CurrentCharacter(inviter, connection))
+                return;
+            var expedition = inviter.Expedition;
+            var inviterMember = expedition?.GetMember(inviter);
+            if (inviterMember == null || expedition.GetPolicyByRole(inviterMember.Role)?.Invite != true)
+                return;
 
-        var inviterMember = inviter.Expedition?.GetMember(inviter);
-        if (inviterMember == null || !inviter.Expedition.GetPolicyByRole(inviterMember.Role).Invite)
-            return;
+            var invited = worldManager.GetCharacter(invitedName);
+            if (!CurrentCharacter(invited, invited?.Connection) || invited.Expedition != null ||
+                CharacterBlocked.IsBlockedBy(invited, inviter.Id) || _pendingInvitations.ContainsKey(invited.Id))
+                return;
 
-        var invited = worldManager.GetCharacter(invitedName);
-        if (invited == null) return;
-        if (invited.Expedition != null) return;
+            _pendingInvitations.Add(invited.Id, new PendingInvitation(inviter, invited, expedition,
+                InvitationTime().AddMinutes(1)));
+            invited.SendPacket(new SCExpeditionInvitationPacket(inviter.Id, inviter.Name, (uint)expedition.Id, expedition.Name));
+        }
+    }
 
-        invited.SendPacket(
-            new SCExpeditionInvitationPacket(inviter.Id, inviter.Name, (uint)inviter.Expedition.Id,
-                inviter.Expedition.Name)
-        );
+    private static bool CurrentCharacter(Character character, GameConnection connection) =>
+        character != null && character.IsOnline && connection != null &&
+        ReferenceEquals(character.Connection, connection) && ReferenceEquals(connection.ActiveChar, character);
+
+    private void RemoveExpiredInvitations()
+    {
+        var now = InvitationTime();
+        foreach (var (id, invitation) in _pendingInvitations.ToArray())
+            if (invitation.Expires <= now || !CurrentCharacter(invitation.Invited, invitation.Invited.Connection) ||
+                !CurrentCharacter(invitation.Inviter, invitation.Inviter.Connection))
+                _pendingInvitations.Remove(id);
     }
 
     public void ReplyInvite(GameConnection connection, FactionsEnum id1, uint id2, bool reply)
     {
-        var invited = connection.ActiveChar;
-        if (!reply)
-            return;
-
-        if (invited.Expedition != null ||
-            !_expeditions.TryGetValue(id1, out var expedition) ||
-            expedition.GetMember(invited) != null)
+        lock (_invitationSyncRoot)
         {
-            return;
+            RemoveExpiredInvitations();
+            var invited = connection.ActiveChar;
+            if (!CurrentCharacter(invited, connection) || !_pendingInvitations.TryGetValue(invited.Id, out var invitation) ||
+                !ReferenceEquals(invitation.Invited, invited) || invitation.Expedition.Id != id1 || invitation.Inviter.Id != id2)
+                return;
+            _pendingInvitations.Remove(invited.Id);
+            if (!reply)
+                return;
+
+            var inviter = invitation.Inviter;
+            var expedition = invitation.Expedition;
+            var inviterMember = expedition.GetMember(inviter);
+            if (invited.Expedition != null || !_expeditions.TryGetValue(id1, out var currentExpedition) ||
+                !ReferenceEquals(expedition, currentExpedition) || !ReferenceEquals(inviter.Expedition, expedition) ||
+                inviterMember == null || expedition.GetPolicyByRole(inviterMember.Role)?.Invite != true ||
+                CharacterBlocked.IsBlockedBy(invited, inviter.Id) || expedition.GetMember(invited) != null)
+                return;
+
+            var newMember = GetMemberFromCharacter(expedition, invited, false);
+            invited.Expedition = expedition;
+            expedition.Members.Add(newMember);
+            invited.BroadcastPacket(
+                new SCUnitExpeditionChangedPacket(invited.ObjId, invited.Id, "", invited.Name, 0, (uint)expedition.Id, false), true);
+            SendExpeditionInfo(invited);
+            expedition.OnCharacterLogin(invited);
+            Save(expedition);
         }
-
-        var newMember = GetMemberFromCharacter(expedition, invited, false);
-
-        invited.Expedition = expedition;
-        expedition.Members.Add(newMember);
-
-        invited.BroadcastPacket(
-            new SCUnitExpeditionChangedPacket(invited.ObjId, invited.Id, "", invited.Name, 0, (uint)expedition.Id, false),
-            true);
-        SendExpeditionInfo(invited);
-        expedition.OnCharacterLogin(invited);
-        Save(expedition);
-        // invited.Save(); // Moved to SaveMananger
     }
 
     public void ChangeExpeditionRolePolicy(GameConnection connection, ExpeditionRolePolicy policy)

@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using AAEmu.Commons.IO;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
@@ -304,6 +304,9 @@ public static class Program
 
                 services.AddSingleton<FactionManager>();
                 services.AddSingleton<IFactionManager>(sp => sp.GetRequiredService<FactionManager>());
+
+                services.AddSingleton<DominionManager>();
+                services.AddSingleton<IDominionManager>(sp => sp.GetRequiredService<DominionManager>());
 
                 services.AddSingleton<SpecialtyManager>();
                 services.AddSingleton<ISpecialtyManager>(sp => sp.GetRequiredService<SpecialtyManager>());

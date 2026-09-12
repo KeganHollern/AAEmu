@@ -37,7 +37,7 @@ public class EnterWorldManager(
     /// <summary>
     /// List of connected accounts (connection token, accountId)
     /// </summary>
-    private readonly Dictionary<uint, uint> _accounts = [];
+    private readonly Dictionary<uint, (uint AccountId, AccountPayment Payment)> _accounts = [];
     private readonly Lock _accountsLock = new();
 
     /// <summary>
@@ -47,10 +47,17 @@ public class EnterWorldManager(
     /// <param name="connectionId"></param>
     public void AddAccount(uint accountId, uint connectionId)
     {
-        _ = AddAccountAsync(accountId, connectionId);
+        AddAccount(accountId, connectionId, 0, 0);
     }
 
-    private async Task AddAccountAsync(uint accountId, uint connectionId)
+    public void AddAccount(uint accountId, uint connectionId, ulong patronStart, ulong patronEnd)
+    {
+        if (!AccountPayment.ValidPeriod(patronStart, patronEnd))
+            return;
+        _ = AddAccountAsync(accountId, connectionId, new AccountPayment(patronStart, patronEnd));
+    }
+
+    private async Task AddAccountAsync(uint accountId, uint connectionId, AccountPayment payment)
     {
         var connection = LoginNetwork.Instance.GetConnection();
         var gsId = AppConfiguration.Instance.Id;
@@ -66,7 +73,7 @@ public class EnterWorldManager(
                 return;
             }
 
-            var admitted = moderation.TryAdmit(accountId, () => SetPendingAccount(connectionId, accountId));
+            var admitted = moderation.TryAdmit(accountId, () => SetPendingAccount(connectionId, accountId, payment));
             connection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, admitted ? (byte)0 : (byte)1));
         }
         catch (Exception exception)
@@ -77,12 +84,12 @@ public class EnterWorldManager(
         }
     }
 
-    internal void SetPendingAccount(uint connectionId, uint accountId)
+    internal void SetPendingAccount(uint connectionId, uint accountId, AccountPayment payment = null)
     {
         if (connectionId == 0 || accountId == 0)
             return;
         lock (_accountsLock)
-            _accounts[connectionId] = accountId;
+            _accounts[connectionId] = (accountId, payment ?? new AccountPayment());
     }
 
     internal void RemovePendingAccount(uint connectionId)
@@ -91,19 +98,23 @@ public class EnterWorldManager(
             _accounts.Remove(connectionId);
     }
 
-    internal PendingWorldAccountResult ConsumePendingAccount(uint token, uint accountId)
+    internal PendingWorldAccountResult ConsumePendingAccount(uint token, uint accountId) => ConsumePendingAccount(token, accountId, out _);
+
+    internal PendingWorldAccountResult ConsumePendingAccount(uint token, uint accountId, out AccountPayment payment)
     {
+        payment = null;
         if (accountId == 0 || token == 0)
             return PendingWorldAccountResult.NotFound;
         lock (_accountsLock)
         {
-            if (!_accounts.TryGetValue(token, out var expectedAccountId))
+            if (!_accounts.TryGetValue(token, out var expected))
                 return PendingWorldAccountResult.NotFound;
 
-            if (expectedAccountId != accountId)
+            if (expected.AccountId != accountId)
                 return PendingWorldAccountResult.AccountMismatch;
 
             _accounts.Remove(token);
+            payment = expected.Payment;
             return PendingWorldAccountResult.Consumed;
         }
     }
@@ -122,7 +133,7 @@ public class EnterWorldManager(
             connection.Shutdown();
             return;
         }
-        switch (ConsumePendingAccount(token, accountId))
+        switch (ConsumePendingAccount(token, accountId, out var payment))
         {
             case PendingWorldAccountResult.Consumed:
                 var moderation = moderationManager ?? ModerationManager.Instance;
@@ -130,6 +141,7 @@ public class EnterWorldManager(
                 {
                     if (!connection.TryAuthenticate(accountId))
                         return;
+                    connection.Payment = payment;
                     connection.State = GameState.Lobby;
                     accountManager.Add(connection);
                     streamManager.AddToken(connection.AccountId, connection.Id);

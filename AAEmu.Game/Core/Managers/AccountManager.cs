@@ -46,11 +46,11 @@ public class AccountManager(
             return;
         }
 
-        var lastLogin = UpdateLoginTime(connection.AccountId, loginTime);
+        UpdateLoginTime(connection.AccountId, loginTime);
         var accountDetails = GetAccountDetails(connection.AccountId);
         timedRewardsManager.DoDailyAccountLogin(connection.AccountId, rewardDate);
         // Add offline labor
-        timedRewardsManager.AddOfflineLabor(connection, lastLogin, accountDetails.Labor);
+        timedRewardsManager.AddOfflineLabor(connection, accountDetails.LastLaborTick, accountDetails.Labor);
     }
 
     private void RemoveDeadConnections(TimeSpan delta)
@@ -299,71 +299,35 @@ public class AccountManager(
         }
     }
 
-    public bool AddCredits(uint accountId, int creditsAmount)
+    public bool AddCredits(uint accountId, int creditsAmount) => ChangeAccountCurrency(accountId, creditsAmount, "credits");
+
+    public bool RemoveCredits(uint accountId, int credits) => credits >= 0 && ChangeAccountCurrency(accountId, -(long)credits, "credits");
+
+    public bool AddLoyalty(uint accountId, int loyaltyAmount) => ChangeAccountCurrency(accountId, loyaltyAmount, "loyalty");
+
+    private bool ChangeAccountCurrency(uint accountId, long delta, string column)
     {
         if (accountId == 0)
             return false;
-
-        object accLock;
-        lock (_locks)
-        {
-            if (!_locks.TryGetValue(accountId, out accLock))
-            {
-                accLock = new object();
-                _locks.Add(accountId, accLock);
-            }
-        }
-        lock (accLock)
+        lock (GetAccountSyncRoot(accountId))
         {
             try
             {
                 using var connection = MySQL.CreateConnection();
                 using var command = connection.CreateCommand();
-                command.CommandText = "INSERT INTO accounts (account_id, credits) VALUES(@acc_id, @credits_amount) ON DUPLICATE KEY UPDATE credits = credits + @credits_amount";
-                command.Parameters.AddWithValue("@acc_id", accountId);
-                command.Parameters.AddWithValue("@credits_amount", creditsAmount);
-                command.Prepare();
-                return command.ExecuteNonQuery() > 0;
+                command.Parameters.AddWithValue("@account", accountId);
+                if (delta >= 0)
+                {
+                    command.CommandText = "INSERT IGNORE INTO `accounts` (`account_id`) VALUES (@account)";
+                    command.ExecuteNonQuery();
+                }
+                command.CommandText = $"UPDATE `accounts` SET `{column}` = `{column}` + @delta WHERE `account_id` = @account AND `{column}` + @delta BETWEEN 0 AND 2147483647";
+                command.Parameters.AddWithValue("@delta", delta);
+                return command.ExecuteNonQuery() == 1;
             }
-            catch (Exception e)
+            catch (Exception exception)
             {
-                Logger.Error($"{e.Message}\n{e.StackTrace}");
-                return false;
-            }
-        }
-    }
-
-    public bool RemoveCredits(uint accountId, int credits) => AddCredits(accountId, -credits);
-
-    public bool AddLoyalty(uint accountId, int loyaltyAmount)
-    {
-        if (accountId == 0)
-            return false;
-
-        object accLock;
-        lock (_locks)
-        {
-            if (!_locks.TryGetValue(accountId, out accLock))
-            {
-                accLock = new object();
-                _locks.Add(accountId, accLock);
-            }
-        }
-        lock (accLock)
-        {
-            try
-            {
-                using var connection = MySQL.CreateConnection();
-                using var command = connection.CreateCommand();
-                command.CommandText = "INSERT INTO accounts (account_id, loyalty) VALUES(@acc_id, @loyalty_amount) ON DUPLICATE KEY UPDATE loyalty = loyalty + @loyalty_amount";
-                command.Parameters.AddWithValue("@acc_id", accountId);
-                command.Parameters.AddWithValue("@loyalty_amount", loyaltyAmount);
-                command.Prepare();
-                return command.ExecuteNonQuery() > 0;
-            }
-            catch (Exception e)
-            {
-                Logger.Error($"{e.Message}\n{e.StackTrace}");
+                Logger.Error(exception, "Account currency change failed");
                 return false;
             }
         }

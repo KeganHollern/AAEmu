@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Data;
 using System.Numerics;
 using AAEmu.Commons.Utils;
@@ -80,6 +80,22 @@ public class CrimeManager() : Singleton<CrimeManager>, ICrimeManager
             };
             if (!CrimeEvents.TryAdd(crimeEvent.Id, crimeEvent))
                 Logger.Warn($"Was not able to load Crime Event {crimeEvent.Id}");
+        }
+        reader.Close();
+        LoadBotReports();
+    }
+
+    internal void LoadBotReports()
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var connection = MySQL.CreateConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT reported_id, reporter_id FROM bot_reports ORDER BY reported_id, reporter_id";
+            using var reader = command.ExecuteReader();
+            ReportedSuspects.Clear();
+            while (reader.Read())
+                ReportedSuspects.GetOrAdd(reader.GetUInt32("reported_id"), _ => []).Add(reader.GetUInt32("reporter_id"));
         }
     }
 
@@ -388,60 +404,95 @@ public class CrimeManager() : Singleton<CrimeManager>, ICrimeManager
     /// <returns>True if report was successful</returns>
     public bool ReportBot(Character bot, Character reporter, string message)
     {
-        if (!ReportedSuspects.TryGetValue(bot.Id, out var reportedSuspectList))
+        lock (SaveManager.PersistenceSyncRoot)
+            return ReportBotLocked(bot, reporter, message);
+    }
+
+    private bool ReportBotLocked(Character bot, Character reporter, string message)
+    {
+        var batch = SkillLaborBatch.For(reporter);
+        if (batch == null)
+            return false;
+        var hadList = ReportedSuspects.TryGetValue(bot.Id, out var reportedSuspectList);
+        reportedSuspectList ??= [];
+        if (reportedSuspectList.Contains(reporter.Id) || reporter.BotReportedCount == int.MaxValue ||
+            bot.ReportedAsBotCount == int.MaxValue)
+            return false;
+        var oldReports = reportedSuspectList.ToArray();
+        var oldReporterCount = reporter.BotReportedCount;
+        var oldBotCount = bot.ReportedAsBotCount;
+        batch.EnlistCharacter(bot);
+        batch.Enlist(context =>
         {
-            reportedSuspectList = [];
-            ReportedSuspects.TryAdd(bot.Id, reportedSuspectList);
-        }
-
-        if (reportedSuspectList.Add(reporter.Id))
+            using var command = context.Connection.CreateCommand();
+            command.Transaction = context.Transaction;
+            command.CommandText = "INSERT INTO bot_reports (reported_id, reporter_id) VALUES (@reported, @reporter)";
+            command.Parameters.AddWithValue("@reported", bot.Id);
+            command.Parameters.AddWithValue("@reporter", reporter.Id);
+            if (command.ExecuteNonQuery() != 1)
+                throw new InvalidOperationException("Could not save the distinct bot report.");
+        }, () =>
         {
-            SusManager.Instance.LogActivity(SusManager.CategoryBotReport, bot, $"Possible bot {bot.Name} ({bot.Id}) got reported by {reporter.Name} ({reporter.Id}), Msg: {message}");
+            reporter.BotReportedCount = oldReporterCount;
+            bot.ReportedAsBotCount = oldBotCount;
+            if (hadList)
+                ReportedSuspects[bot.Id] = [.. oldReports];
+            else
+                ReportedSuspects.TryRemove(bot.Id, out _);
+        });
+        reportedSuspectList.Add(reporter.Id);
+        ReportedSuspects[bot.Id] = reportedSuspectList;
 
-            // Add sus buff
-            if (!bot.Buffs.CheckBuff((uint)BuffConstants.SuspectedUser))
-            {
-                bot.Buffs.AddBuff((uint)BuffConstants.SuspectedUser, reporter);
-            }
-
-            // If enough reports, add prime sus buff
-            if (reportedSuspectList.Count >= AppConfiguration.Instance.Justice.BotReportPrimeSuspectCount)
-            {
-                if (!bot.Buffs.CheckBuffTag((uint)BuffConstants.TagSuspects))
-                {
-                    bot.Buffs.AddBuff((uint)BuffConstants.TransformingIntoPrimeSuspect, reporter);
-                }
-
-                if (reportedSuspectList.Count == AppConfiguration.Instance.Justice.BotReportPrimeSuspectCount)
-                {
-                    SusManager.Instance.LogActivity(SusManager.CategoryBot, bot, $"Possible bot {bot.Name} ({bot.Id}) has reached the report threshold of {AppConfiguration.Instance.Justice.BotReportPrimeSuspectCount}");
-                }
-            }
-            reporter.BotReportedCount++;
-            bot.ReportedAsBotCount++;
-            return true;
+        if (!SkillLaborBuffMutation.Read(bot.Buffs).CheckBuff((uint)BuffConstants.SuspectedUser))
+            bot.Buffs.AddBuff((uint)BuffConstants.SuspectedUser, reporter);
+        var threshold = AppConfiguration.Instance.Justice.BotReportPrimeSuspectCount;
+        if (reportedSuspectList.Count >= threshold &&
+            !SkillLaborBuffMutation.Read(bot.Buffs).CheckBuffTag((uint)BuffConstants.TagSuspects))
+            bot.Buffs.AddBuff((uint)BuffConstants.TransformingIntoPrimeSuspect, reporter);
+        reporter.BotReportedCount++;
+        bot.ReportedAsBotCount++;
+        var reachedThreshold = reportedSuspectList.Count == threshold;
+        void Notify()
+        {
+            SusManager.Instance.LogActivity(SusManager.CategoryBotReport, bot,
+                $"Possible bot {bot.Name} ({bot.Id}) got reported by {reporter.Name} ({reporter.Id}), Msg: {message}");
+            if (reachedThreshold)
+                SusManager.Instance.LogActivity(SusManager.CategoryBot, bot,
+                    $"Possible bot {bot.Name} ({bot.Id}) has reached the report threshold of {threshold}");
         }
-
-        return false;
+        batch.AfterCommit(Notify);
+        return true;
     }
 
     public bool ReportBotExpired(Character bot)
     {
-        if (!ReportedSuspects.TryGetValue(bot.Id, out var reportedSuspectList))
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            return true; // Does not have a report list
-        }
-
-        // Check if prime suspect
-        if (bot.Buffs.CheckBuffTag((uint)BuffConstants.TagSuspects))
-        {
+            var batch = SkillLaborBatch.For(bot);
+            if (batch == null)
+                return false;
+            if (!SkillLaborBuffMutation.Read(bot.Buffs).CheckBuffTag((uint)BuffConstants.TagSuspects))
+                return false;
+            var hadList = ReportedSuspects.TryGetValue(bot.Id, out var reportedSuspectList);
+            var oldReports = reportedSuspectList?.ToArray();
+            batch.Enlist(context =>
+            {
+                using var command = context.Connection.CreateCommand();
+                command.Transaction = context.Transaction;
+                command.CommandText = "DELETE FROM bot_reports WHERE reported_id=@reported";
+                command.Parameters.AddWithValue("@reported", bot.Id);
+                command.ExecuteNonQuery();
+            }, () =>
+            {
+                if (hadList)
+                    ReportedSuspects[bot.Id] = [.. oldReports];
+            });
             bot.Buffs.RemoveBuffs(BuffKind.Bad, 10, (uint)BuffConstants.TagSuspects);
-            reportedSuspectList.Clear();
-            SusManager.Instance.LogActivity(SusManager.CategoryBot, bot, $"Possible bot {bot} ({bot.Id}) has cleared their Prime Suspect status by talking to a judge.");
+            reportedSuspectList?.Clear();
+            void Notify() => SusManager.Instance.LogActivity(SusManager.CategoryBot, bot,
+                $"Possible bot {bot} ({bot.Id}) has cleared their Prime Suspect status by talking to a judge.");
+            batch.AfterCommit(Notify);
             return true;
         }
-
-        // No buffs found
-        return false;
     }
 }

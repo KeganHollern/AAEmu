@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Data;
 using System.Drawing;
 
@@ -284,6 +284,24 @@ public partial class Character : Unit, ICharacter
     {
         _laborPower = labor;
         _laborPowerModified = newTime;
+    }
+
+    internal bool TryStageLaborConsumption(short amount)
+    {
+        if (!Monitor.IsEntered(SaveManager.PersistenceSyncRoot) ||
+            !Monitor.IsEntered(AccountManager.Instance.GetAccountSyncRoot(AccountId)))
+            throw new InvalidOperationException("Staged labor needs the persistence and account locks.");
+        if (amount <= 0 || _laborPower < amount)
+            return false;
+        _laborPower -= amount;
+        ConsumedLaborPower = (int)Math.Min((long)Math.Max(ConsumedLaborPower, 0) + amount, int.MaxValue);
+        return true;
+    }
+
+    internal void RestoreStagedLabor(short labor, int consumedLabor)
+    {
+        _laborPower = labor;
+        ConsumedLaborPower = consumedLabor;
     }
 
     internal void ApplyCommittedAuctionSaleState(
@@ -1471,17 +1489,21 @@ public partial class Character : Unit, ICharacter
             AddExpLocked(expDelta, shouldAddAbilityExp);
     }
 
-    private void AddExpLocked(int expDelta, bool shouldAddAbilityExp)
+    private void AddExpLocked(int expDelta, bool shouldAddAbilityExp, bool labor = false, bool applyModifiers = true)
     {
         if (expDelta == 0)
             return;
 
-        if (expDelta > 0)
+        if (applyModifiers)
+            expDelta = CalculateExperienceGain(expDelta, labor);
+
+        if (SkillLaborBatch.For(this) is { } batch)
         {
-            expDelta = (int)(expDelta * AppConfiguration.Instance.World.ExpRate);
+            StageSkillExperience(batch, expDelta, shouldAddAbilityExp);
+            return;
         }
-        
-        var newExperience = Experience + expDelta;
+
+        var newExperience = (int)Math.Clamp((long)Experience + expDelta, 0, int.MaxValue);
         var newLevel = ExperienceManager.Instance.GetLevelFromExp(newExperience, Level, out var overflow);
         var leveledUp = newLevel > Level;
         
@@ -1543,18 +1565,41 @@ public partial class Character : Unit, ICharacter
         }
     }
 
-    public bool ChangeMoney(SlotType moneyLocation, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney) => ChangeMoney(SlotType.None, moneyLocation, amount, itemTaskType);
+    public bool ChangeMoney(SlotType moneyLocation, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney)
+    {
+        if (amount == int.MinValue)
+            return false;
+        return amount < 0
+            ? SubtractMoney(moneyLocation, -amount, itemTaskType)
+            : AddMoney(moneyLocation, amount, itemTaskType);
+    }
 
     public bool ChangeMoney(SlotType typeFrom, SlotType typeTo, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney)
+    {
+        if (amount < 0 || typeFrom == typeTo ||
+            (typeFrom != SlotType.None && typeTo != SlotType.None && amount == 0))
+            return false;
+        return TryMoveMoney(typeFrom, typeTo, amount, itemTaskType);
+    }
+
+    private bool TryMoveMoney(SlotType typeFrom, SlotType typeTo, int amount, ItemTaskType itemTaskType)
     {
         lock (StorePurchaseSyncRoot)
         {
             if (typeFrom is not (SlotType.None or SlotType.Inventory or SlotType.Bank) ||
                 typeTo is not (SlotType.None or SlotType.Inventory or SlotType.Bank) ||
                 (typeFrom == SlotType.None && typeTo == SlotType.None) ||
-                (typeFrom != SlotType.None && amount < 0))
+                amount < 0)
                 return false;
 
+            if (SkillLaborBatch.For(this) is { } batch)
+            {
+                if (typeFrom != SlotType.None && !batch.Inventory.TryChangeMoney(this, -amount, typeFrom))
+                    return batch.Fail();
+                if (typeTo != SlotType.None && !batch.Inventory.TryChangeMoney(this, amount, typeTo))
+                    return batch.Fail();
+                return true;
+            }
             var money = Money;
             var bankMoney = Money2;
             try
@@ -1636,14 +1681,14 @@ public partial class Character : Unit, ICharacter
     {
         if (amount < 0)
             return false;
-        return ChangeMoney(SlotType.None, moneyLocation, amount, itemTaskType);
+        return TryMoveMoney(SlotType.None, moneyLocation, amount, itemTaskType);
     }
 
     public bool SubtractMoney(SlotType moneyLocation, int amount, ItemTaskType itemTaskType = ItemTaskType.DepositMoney)
     {
         if (amount < 0)
             return false;
-        return ChangeMoney(moneyLocation, SlotType.None, amount, itemTaskType);
+        return TryMoveMoney(moneyLocation, SlotType.None, amount, itemTaskType);
     }
 
     public void ChangeLabor(short change, int actabilityId)
@@ -1677,7 +1722,7 @@ public partial class Character : Unit, ICharacter
             };
             var formula = FormulaManager.Instance.GetFormula((uint)FormulaKind.ExpByLaborPower);
             var xpToAdd = (int)(formula.Evaluate(parameters) * expMultiplier);
-            AddExp(xpToAdd, true);
+            AddExpLocked(xpToAdd, true, labor: true);
         }
 
         LaborPower += change;
@@ -1721,9 +1766,21 @@ public partial class Character : Unit, ICharacter
     {
         lock (StorePurchaseSyncRoot)
         {
+            var batch = SkillLaborBatch.For(this);
+            if (batch != null)
+            {
+                var oldHonor = HonorPoint;
+                var oldVocation = VocationPoint;
+                batch.Enlist(null, () => { HonorPoint = oldHonor; VocationPoint = oldVocation; });
+            }
             switch (kind)
             {
                 case GamePointKind.Honor:
+                    if (batch != null && (long)HonorPoint + change is < 0 or > int.MaxValue)
+                    {
+                        batch.Fail();
+                        return;
+                    }
                     HonorPoint += change;
                     break;
                 case GamePointKind.Vocation:
@@ -1734,15 +1791,30 @@ public partial class Character : Unit, ICharacter
                         var vocMul = GetAttribute(UnitAttribute.LivingPointGainMul, 0f) + 100f;
                         change = (int)Math.Round(change * (vocMul / 100f));
                     }
+                    if (batch != null && (long)VocationPoint + change is < 0 or > int.MaxValue)
+                    {
+                        batch.Fail();
+                        return;
+                    }
                     VocationPoint += change;
                     if (change > 0)
-                        Achievements?.Increment(CharRecordKind.GetLifePoint, 0, 0, (uint)change);
+                    {
+                        var gained = (uint)change;
+                        if (batch != null)
+                            batch.AfterCommit(() => Achievements?.Increment(CharRecordKind.GetLifePoint, 0, 0, gained));
+                        else
+                            Achievements?.Increment(CharRecordKind.GetLifePoint, 0, 0, gained);
+                    }
                     break;
                 default:
                     Logger.Error($"ChangeGamePoints - Unknown Game Point Type {kind}");
                     return;
             }
-            SendPacket(new SCGamePointChangedPacket((byte)kind, change));
+            var packet = new SCGamePointChangedPacket((byte)kind, change);
+            if (batch != null)
+                batch.AfterCommit(() => SendPacket(packet));
+            else
+                SendPacket(packet);
         }
     }
 
@@ -2287,73 +2359,51 @@ public partial class Character : Unit, ICharacter
 
     public void DoRepair(List<Item> items)
     {
-        var tasks = new List<ItemTask>();
-        var repairCost = 0;
-
-        foreach (var item in items)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (item == null)
-                continue;
-
-            if (!Inventory.Bag.Items.Contains(item) && !Equipment.Items.Contains(item))
+            if (items == null || !ServiceInteraction.CanUseNpc(this, CurrentInteractionObject as Npc,
+                    template => template.Blacksmith))
             {
-                Logger.Warn($"Attempting to repair an item that isn't in your inventory or equipment, Item: {item.Id}");
-                continue;
+                SendErrorMessage(ErrorMessageType.NoInteractionAvailable);
+                return;
             }
 
-            if (!(item is EquipItem equipItem && item.Template is EquipItemTemplate))
+            var repairs = new List<EquipItem>();
+            long cost = 0;
+            foreach (var item in items.Distinct())
             {
-                Logger.Warn($"Attempting to repair a non-equipment item, Item: {item.Id}");
-                continue;
+                if (item == null || !ReferenceEquals(Inventory.GetItemById(item.Id), item) ||
+                    item.SlotType is not (SlotType.Inventory or SlotType.Equipment))
+                    return;
+                if (item is not EquipItem equipment || item.Template is not EquipItemTemplate ||
+                    equipment.Durability >= equipment.MaxDurability)
+                    continue;
+                var itemCost = equipment.RepairCost;
+                if (itemCost < 0 || TradeReservation.GetReservedCount(item) > 0)
+                    return;
+                cost += itemCost;
+                if (cost > int.MaxValue)
+                    return;
+                repairs.Add(equipment);
             }
 
-            if (equipItem.Durability >= equipItem.MaxDurability)
+            using var mutation = new InventoryMutation(ItemTaskType.Repair);
+            if (!mutation.TryChangeMoney(this, -(int)cost))
             {
-                Logger.Warn($"Attempting to repair an item that has max durability, Item: {item.Id}");
-                continue;
+                SendErrorMessage(ErrorMessageType.NotEnoughMoney);
+                return;
             }
-
-            if (CurrentInteractionObject is not Npc npc)
-                continue;
-
-            if (!npc.Template.Blacksmith)
+            foreach (var item in repairs)
             {
-                Logger.Warn($"Attempting to repair an item while not at a blacksmith, Item: {item.Id}, NPC: {npc}");
-                continue;
+                item.Durability = item.MaxDurability;
+                item.IsDirty = true;
             }
-
-            var dist = MathUtil.CalculateDistance(Transform.World.Position, npc.Transform.World.Position);
-
-            if (dist > 5f)
-            {
-                SendErrorMessage(ErrorMessageType.TooFarAway);
-                continue;
-            }
-
-            var currentRepairCost = equipItem.RepairCost;
-
-            if (Money < currentRepairCost)
-            {
-                Logger.Warn($"Not enough money to repair, Item: {item.Id}, Money: {Money}, RepairCost: {currentRepairCost}");
-                continue;
-            }
-
-            equipItem.Durability = equipItem.MaxDurability;
-            equipItem.IsDirty = true;
-            repairCost += currentRepairCost;
-
-            tasks.Add(new ItemUpdate(item));
+            mutation.Complete();
+            if (repairs.Count > 0)
+                Achievements?.Increment(CharRecordKind.ItemFix, 0, 0, (uint)repairs.Count);
+            SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.Repair,
+                repairs.Select(item => (ItemTask)new ItemUpdate(item)).ToList(), []));
         }
-
-        if (repairCost > 0)
-        {
-            ChangeMoney(SlotType.Inventory, -repairCost);
-        }
-
-        if (tasks.Count > 0)
-            Achievements?.Increment(CharRecordKind.ItemFix, 0, 0, (uint)tasks.Count);
-
-        Connection.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.Repair, tasks, []));
     }
 
     /// <summary>
@@ -2888,7 +2938,7 @@ public partial class Character : Unit, ICharacter
                     "`hostile_faction_kills`,`pvp_honor`,`died_in_pvp`,`died_in_pvp_war_zone`," +
                     "`delete_request_time`,`transfer_request_time`,`delete_time`,`auto_use_aapoint`,`prev_point`,`point`,`gift`," +
                     "`num_inv_slot`,`num_bank_slot`,`expanded_expert`,`slots`,`created_at`,`updated_at`,`return_district`,`online_time`," +
-                    "`arrest_count`, `accept_guilty_count`, `accept_trial_count`, `not_guilty_count`, `guilty_count`, `evidence_reported_count`, `bot_reported_count`," +
+                    "`arrest_count`, `accept_guilty_count`, `accept_trial_count`, `not_guilty_count`, `guilty_count`, `evidence_reported_count`, `bot_reported_count`, `reported_as_bot_count`," +
                     "`offline_guilty_time`,`offline_guilty_region`" +
                     ") VALUES (" +
                     "@id,@account_id,@name,@race,@gender,@unit_model_params,@level,@experience,@recoverable_exp," +
@@ -2899,7 +2949,7 @@ public partial class Character : Unit, ICharacter
                     "@hostile_faction_kills,@pvp_honor,@died_in_pvp,@died_in_pvp_war_zone," +
                     "@delete_request_time,@transfer_request_time,@delete_time,@auto_use_aapoint,@prev_point,@point,@gift," +
                     "@num_inv_slot,@num_bank_slot,@expanded_expert,@slots,@created_at,@updated_at,@return_district,@online_time," +
-                    "@arrest_count, @accept_guilty_count, @accept_trial_count, @not_guilty_count, @guilty_count, @evidence_reported_count, @bot_reported_count," +
+                    "@arrest_count, @accept_guilty_count, @accept_trial_count, @not_guilty_count, @guilty_count, @evidence_reported_count, @bot_reported_count, @reported_as_bot_count," +
                     "@offline_guilty_time,@offline_guilty_region" +
                     ")";
 

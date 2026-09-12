@@ -47,9 +47,10 @@ public class BuffEffect : EffectTemplate
             }
         }
 
-        if (Buff.RequireBuffId > 0 && !target.Buffs.CheckBuff(Buff.RequireBuffId))
+        var targetBuffs = SkillLaborBuffMutation.Read(target.Buffs);
+        if (Buff.RequireBuffId > 0 && !targetBuffs.CheckBuff(Buff.RequireBuffId))
             return; // TODO send error?
-        if (target.Buffs.CheckBuffImmune(Buff.Id))
+        if (targetBuffs.CheckBuffImmune(Buff.Id))
             return; // TODO send error of immune?
 
         uint abLevel = 1;
@@ -98,7 +99,10 @@ public class BuffEffect : EffectTemplate
             relationToTarget == RelationState.Friendly && caster != target &&
             !target.Buffs.CheckBuff((uint)BuffConstants.Retribution))
         {
-            (caster as Unit)?.SetCriminalState(true, target);
+            if (SkillLaborBatch.Current is { } batch)
+                batch.AfterCommit(() => (caster as Unit)?.SetCriminalState(true, target));
+            else
+                (caster as Unit)?.SetCriminalState(true, target);
         }
     }
 }

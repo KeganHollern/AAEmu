@@ -116,6 +116,24 @@ public sealed class QuestRewardDeliveryTests
     }
 
     [Test]
+    public async Task CoinCreditOverflow_RetainsTheRewardUntilTheWalletCanAcceptIt()
+    {
+        var owner = CreateOwner(10);
+        var quest = CreateQuest(owner);
+        owner.Money = long.MaxValue;
+        quest.QuestRewardCoinsPool = 25;
+        await Assert.That(quest.DistributeRewards(false)).IsFalse();
+        await Assert.That(quest.QuestRewardCoinsPool).IsEqualTo(25);
+        await Assert.That(owner.Money).IsEqualTo(long.MaxValue);
+        owner.Money = 100;
+        await Assert.That(quest.DistributeRewards(false)).IsTrue();
+        await Assert.That(quest.QuestRewardCoinsPool).IsEqualTo(0);
+        await Assert.That(owner.Money).IsEqualTo(125L);
+        await Assert.That(quest.DistributeRewards(false)).IsTrue();
+        await Assert.That(owner.Money).IsEqualTo(125L);
+    }
+
+    [Test]
     public async Task DirectGrant_NoCapacity_RetainsItemsCurrencyAndExperience()
     {
         var owner = CreateOwner(1);

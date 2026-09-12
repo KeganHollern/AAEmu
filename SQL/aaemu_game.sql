@@ -670,6 +670,7 @@ CREATE TABLE IF NOT EXISTS `audit_ics_sales` (
     `sale_date` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Time of purchase (in UTC)',
     `shop_item_id` INT(11) UNSIGNED NOT NULL DEFAULT '0' COMMENT 'Shop item entry id of the sold item',
     `sku` INT(11) UNSIGNED NOT NULL DEFAULT '0' COMMENT 'SKU of the sold item',
+    `item_count` INT UNSIGNED NULL COMMENT 'Immutable sold quantity, NULL for legacy sales',
     `sale_cost` INT(11) NOT NULL DEFAULT '0' COMMENT 'Amount this item was sold for',
     `sale_currency` TINYINT(4) UNSIGNED NOT NULL DEFAULT '0' COMMENT 'Which currency was used',
     `description` TEXT NOT NULL COMMENT 'Added description of this transaction' COLLATE 'utf8mb4_general_ci',
@@ -766,3 +767,45 @@ CREATE TABLE IF NOT EXISTS `zone_conflict_states` (
     `next_state_time` DATETIME(6) NULL,
     PRIMARY KEY (`zone_group_id`)
 ) ENGINE=InnoDB DEFAULT COLLATE='utf8mb4_general_ci';
+
+CREATE TABLE IF NOT EXISTS `specialty_demand` (
+  `item_id` int unsigned NOT NULL,
+  `zone_group_id` int unsigned NOT NULL,
+  `ratio` decimal(12,6) NOT NULL,
+  `pending_sales` int unsigned NOT NULL DEFAULT 0,
+  `consume_at` datetime(6) NOT NULL,
+  `regenerate_at` datetime(6) NOT NULL,
+  PRIMARY KEY (`item_id`, `zone_group_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `house_tax_receipts` (
+  `mail_id` bigint NOT NULL,
+  `house_id` int unsigned NOT NULL,
+  `payer_id` int unsigned NOT NULL,
+  `quoted_copper` int unsigned NOT NULL,
+  `late_fee_percent` int unsigned NOT NULL DEFAULT 0,
+  `paid_in_certificates` tinyint(1) NOT NULL,
+  `protection_before` datetime(6) NOT NULL,
+  `protection_after` datetime(6) NOT NULL,
+  `paid_at` datetime(6) NOT NULL,
+  PRIMARY KEY (`mail_id`),
+  KEY `house_tax_receipts_house` (`house_id`, `paid_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `dominion_states` (
+  `zone_group_id` smallint unsigned NOT NULL,
+  `siege_zone_id` int unsigned NOT NULL,
+  `owner_expedition_id` int unsigned NOT NULL DEFAULT 0,
+  `tax_rate` int NOT NULL DEFAULT 0,
+  `house_tax_balance` bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`zone_group_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- Retain distinct paid bot reports across restart. No historical reports are inferred.
+-- Character saves use REPLACE, so these stable IDs must not use cascading foreign keys.
+CREATE TABLE IF NOT EXISTS `bot_reports` (
+  `reported_id` int unsigned NOT NULL,
+  `reporter_id` int unsigned NOT NULL,
+  PRIMARY KEY (`reported_id`, `reporter_id`),
+  KEY `idx_bot_reports_reporter` (`reporter_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;

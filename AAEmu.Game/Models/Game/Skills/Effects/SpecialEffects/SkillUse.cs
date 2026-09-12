@@ -38,8 +38,29 @@ public class SkillUse : SpecialEffectAction
         //target = ((Unit)caster).CurrentTarget;
         var useSkill = new Skill(SkillManager.Instance.GetSkillTemplate((uint)skillId));
         targetObj = new SkillCastUnitTarget(target?.ObjId ?? 0);
-        caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.UseSkill);//Not sure if it belongs here.
-        TaskManager.Instance.Schedule(new UseSkillTask(useSkill, caster, casterObj, target, targetObj, skillObject), TimeSpan.FromMilliseconds(delay));
+        if (SkillLaborBatch.Current is { } batch)
+        {
+            if (!Skill.CanSettleTriggeredEffect(new SpecialEffect
+                { SpecialEffectTypeId = SpecialType.SkillUse, Value1 = skillId, Value2 = delay }))
+            {
+                batch.Fail();
+                return;
+            }
+            if (!Skill.IsTriggeredPresentation(useSkill.Template))
+            {
+                useSkill.ApplyTriggeredLaborEffects(batch, caster, casterObj, target, skillObject);
+                return;
+            }
+            batch.AfterCommit(Publish);
+        }
+        else
+            Publish();
+
+        void Publish()
+        {
+            caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.UseSkill);
+            TaskManager.Instance.Schedule(new UseSkillTask(useSkill, caster, casterObj, target, targetObj, skillObject), TimeSpan.FromMilliseconds(delay));
+        }
         //useSkill.ApplyEffects(caster, casterObj, target, targetObj, skillObject);
     }
 }

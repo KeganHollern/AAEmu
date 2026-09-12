@@ -36,8 +36,8 @@ public class ItemConversion : SpecialEffectAction
             return;
         }
 
-        var targetItem = character.Inventory.Bag.GetItemByItemId(itemTarget.Id);
-        if (targetItem == null)
+        var targetItem = character.Inventory.GetItemById(itemTarget.Id);
+        if (targetItem == null || targetItem.SlotType != AAEmu.Game.Models.Game.Items.SlotType.Inventory)
         {
             skill.Cancelled = true;
             return;
@@ -66,6 +66,14 @@ public class ItemConversion : SpecialEffectAction
             return;
         }
 
+        var batch = SkillLaborBatch.For(character);
+        // A paid batch restores this removal if the output or SQL checkpoint fails.
+        // Free the input slot first so a full bag can accept its conversion output.
+        if (batch != null && !batch.Inventory.TryConsume(character.Inventory.Bag, targetItem, 1))
+        {
+            batch.Fail();
+            return;
+        }
         var productRoll = Random.Shared.Next(0, 10000);
         var productChance = product.ChanceRate;
         if (productRoll < productChance)
@@ -82,6 +90,7 @@ public class ItemConversion : SpecialEffectAction
         }
 
         // consumes target item from stack or if there is only 1, destroy item
-        targetItem._holdingContainer.ConsumeItem(ItemTaskType.Conversion, targetItem.TemplateId, 1, targetItem);
+        if (batch == null && targetItem._holdingContainer.ConsumeItem(ItemTaskType.Conversion, targetItem.TemplateId, 1, targetItem) != 1)
+            skill.Cancelled = true;
     }
 }

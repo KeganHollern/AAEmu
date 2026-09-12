@@ -26,9 +26,7 @@ public class Resurrection : SpecialEffectAction
             // TODO ...
             if (caster is Character) { Logger.Debug("Special effects: Resurrection value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4); }
 
-            character.SendPacket(new SCNotifyResurrectionPacket(casterObj));
-            character.ResurrectHpPercent = (uint)value2;
-            character.ResurrectMpPercent = (uint)value3;
+            character.OfferResurrection(casterObj, value2, value3);
         }
     }
 }

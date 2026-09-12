@@ -619,7 +619,8 @@ public class LootingContainer(IBaseUnit owner)
             // var objId = (uint)(lootDropItem.Id >> 32);
             if (itemEntry.Item.TemplateId == Item.Coins)
             {
-                player.AddMoney(SlotType.Inventory, itemEntry.Item.Count);
+                if (!player.AddMoney(SlotType.Inventory, itemEntry.Item.Count))
+                    return false;
                 grantSucceeded = true;
             }
             else if (ItemManager.Instance.IsAutoEquipTradePack(itemEntry.Item.TemplateId))

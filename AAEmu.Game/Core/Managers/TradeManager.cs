@@ -6,6 +6,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
@@ -121,6 +122,12 @@ public class TradeManager(ITradeIdManager tradeIdManager, IWorldManager worldMan
             if (!TryGetTrade(character, out var trade))
                 return;
             var item = slotType == SlotType.Inventory ? character.Inventory.Bag.GetItemBySlot(slot) : null;
+            if (item?.HasFlag(ItemFlag.SoulBound) == true)
+            {
+                Cancel(trade, character, 0);
+                character.SendErrorMessage(ErrorMessageType.TradeSoulBoundItem);
+                return;
+            }
             if (amount <= 0 || !ValidItem(character, item, slot) || item.Count < amount ||
                 Offers(trade, character).Any(offer => offer.Item.Id == item.Id) ||
                 !trade.Reservation.TryReserve(item, amount))
@@ -301,6 +308,10 @@ public class TradeManager(ITradeIdManager tradeIdManager, IWorldManager worldMan
     private bool Eligible(Character owner, Character target)
     {
         return Current(owner) && Current(target) && !ReferenceEquals(owner, target) && owner.Id != target.Id &&
+               LevelRestrictionConfig.Check(owner, AppConfiguration.Instance.LevelRestrictions.Trade) &&
+               LevelRestrictionConfig.Check(target, AppConfiguration.Instance.LevelRestrictions.Trade) &&
+               !CharacterBlocked.IsBlockedBy(target, owner.Id) &&
+               !CharacterBlocked.IsBlockedBy(owner, target.Id) &&
                ReferenceEquals(owner.ParentWorld, target.ParentWorld) &&
                owner.Transform.WorldId == target.Transform.WorldId &&
                owner.Transform.InstanceId == target.Transform.InstanceId &&

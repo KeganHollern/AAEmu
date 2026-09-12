@@ -11,7 +11,7 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public class CashShopManager(IWorldManager worldManager, IAccountManager accountManager, ILocalizationManager localizationManager) : Singleton<CashShopManager>, ICashShopManager
+public partial class CashShopManager(IWorldManager worldManager, IAccountManager accountManager, ILocalizationManager localizationManager) : Singleton<CashShopManager>, ICashShopManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -272,7 +272,8 @@ public class CashShopManager(IWorldManager worldManager, IAccountManager account
                     TargetChar = reader.GetUInt32("target_char"),
                     SaleDate = reader.IsDBNull(reader.GetOrdinal("sale_date")) ? DateTime.MinValue : reader.GetDateTime("sale_date"),
                     ShopItemId = reader.GetUInt32("shop_item_id"),
-                    Sku = reader.GetUInt32("sku"), // The SKU Id can be used to get the exact amount of items sold
+                    Sku = reader.GetUInt32("sku"),
+                    ItemCount = reader.IsDBNull(reader.GetOrdinal("item_count")) ? null : reader.GetUInt32("item_count"),
                     SaleCost = reader.GetInt32("sale_cost"),
                     SaleCurrency = (CashShopCurrencyType)reader.GetByte("sale_currency"),
                     Description = reader.GetString("description")
@@ -298,83 +299,22 @@ public class CashShopManager(IWorldManager worldManager, IAccountManager account
             shopItem.LimitedType == CashShopLimitType.Character ? characterId : 0,
             shopItem.ShopId);
 
-        var count = 0u;
-        foreach (var oldSale in oldSales)
-        {
-            // Ignore if the SKU no longer exists
-            if (!SKUs.TryGetValue(oldSale.Sku, out var oldSku))
-                continue;
-
-            if (shopItem.LimitedType == CashShopLimitType.Character && oldSale.BuyerChar == characterId)
-                count += oldSku.ItemCount;
-            else if (shopItem.LimitedType == CashShopLimitType.Account && oldSale.BuyerAccount == accountId)
-                count += oldSku.ItemCount;
-        }
-
-        return count;
+        return CountPurchasedUnits(oldSales);
     }
 
-    public bool LogSale(uint buyerAccount, uint buyerChar,
-        uint targetAccount, uint targetChar,
-        DateTime saleDate,
-        uint shopItemId, uint sku,
-        uint saleCost, CashShopCurrencyType saleCurrency,
-        string description)
+    internal static uint CountPurchasedUnits(IEnumerable<AuditIcsSale> sales)
     {
-        try
+        ulong count = 0;
+        foreach (var sale in sales)
         {
-            using var connection = MySQL.CreateConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText =
-                "INSERT INTO audit_ics_sales (buyer_account, buyer_char, target_account, target_char, sale_date, shop_item_id, sku, sale_cost, sale_currency, description) " +
-                "VALUES (@buyer_account, @buyer_char, @target_account, @target_char, @sale_date, @shop_item_id, @sku, @sale_cost, @sale_currency, @description)";
-            command.Parameters.AddWithValue("@buyer_account", buyerAccount);
-            command.Parameters.AddWithValue("@buyer_char", buyerChar);
-            command.Parameters.AddWithValue("@target_account", targetAccount);
-            command.Parameters.AddWithValue("@target_char", targetChar);
-            command.Parameters.AddWithValue("@sale_date", saleDate);
-            command.Parameters.AddWithValue("@shop_item_id", shopItemId);
-            command.Parameters.AddWithValue("@sku", sku);
-            command.Parameters.AddWithValue("@sale_cost", saleCost);
-            command.Parameters.AddWithValue("@sale_currency", (byte)saleCurrency);
-            command.Parameters.AddWithValue("@description", description);
-            command.Prepare();
-            if (command.ExecuteNonQuery() <= 0)
-            {
-                Logger.Error($"Saving sale failed");
-                return false;
-            }
+            // Historical quantities cannot be recovered from a mutable SKU catalog.
+            if (!sale.ItemCount.HasValue)
+                return uint.MaxValue;
+            count += sale.ItemCount.Value;
+            if (count >= uint.MaxValue)
+                return uint.MaxValue;
         }
-        catch (Exception ex)
-        {
-            Logger.Fatal($"Saving sale failed Exception: {ex}");
-            return false;
-        }
-        return true;
+        return (uint)count;
     }
 
-    public bool UpdateRemainingShopItemStock(uint shopItemId, int newRemaining)
-    {
-        try
-        {
-            using var connection = MySQL.CreateConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText =
-                "UPDATE ics_shop_items SET `remaining` = @remaining WHERE `shop_id` = @shop_item";
-            command.Parameters.AddWithValue("@remaining", newRemaining);
-            command.Parameters.AddWithValue("@shop_item", shopItemId);
-            command.Prepare();
-            if (command.ExecuteNonQuery() <= 0)
-            {
-                Logger.Error($"Updating stock failed! ShopItem: {shopItemId} -> {newRemaining}");
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Fatal($"Stock updating failed Exception: {ex}");
-            return false;
-        }
-        return true;
-    }
 }

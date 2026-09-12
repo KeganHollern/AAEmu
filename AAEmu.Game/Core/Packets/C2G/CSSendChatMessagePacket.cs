@@ -3,8 +3,10 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Chat;
+using AAEmu.Game.Models.Game.Char;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -33,6 +35,9 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
             return;
         }
 
+        if (!LevelRestrictionConfig.Check(Connection.ActiveChar, AppConfiguration.Instance.LevelRestrictions.ChatLevel(type),
+                ErrorMessageType.ChatCannotSendSinceLevelLow))
+            return;
         var spamCheck = ChatSpamManager.Instance.CheckMessage(Connection.ActiveChar, type, message);
         if (!spamCheck.IsAllowed)
         {
@@ -44,24 +49,7 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
         switch (type)
         {
             case ChatType.Whisper: //whisper
-                var target = WorldManager.Instance.GetCharacter(targetName);
-                if (target == null || !target.IsOnline)
-                {
-                    Connection.ActiveChar.SendErrorMessage(ErrorMessageType.WhisperNoTarget);
-                }
-                else
-                if (target.Faction.MotherId != Connection.ActiveChar.Faction.MotherId)
-                {
-                    // TODO: proper hostile check
-                    Connection.ActiveChar.SendErrorMessage(ErrorMessageType.ChatCannotWhisperToHostile);
-                }
-                else
-                {
-                    var packet = new SCChatMessagePacket(ChatType.Whisper, Connection.ActiveChar, message, ability, languageType);
-                    target.SendPacket(packet);
-                    var packet_me = new SCChatMessagePacket(ChatType.Whispered, target, message, ability, languageType);
-                    Connection.SendPacket(packet_me);
-                }
+                SendWhisper(Connection.ActiveChar, WorldManager.Instance.GetCharacter(targetName), message, ability, languageType);
                 break;
             case ChatType.White: //say
                 Connection.ActiveChar.BroadcastPacket(
@@ -149,6 +137,21 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
             default:
                 Logger.Warn("Unsupported chat type {0} from {1}", type, Connection.ActiveChar.Name);
                 break;
+        }
+    }
+
+    internal static void SendWhisper(Character sender, Character target, string message, int ability, byte languageType)
+    {
+        if (target == null || !target.IsOnline)
+            sender.SendErrorMessage(ErrorMessageType.WhisperNoTarget);
+        else if (CharacterBlocked.IsBlockedBy(target, sender.Id))
+            sender.SendErrorMessage(ErrorMessageType.BlockUser);
+        else if (target.Faction.MotherId != sender.Faction.MotherId)
+            sender.SendErrorMessage(ErrorMessageType.ChatCannotWhisperToHostile);
+        else
+        {
+            target.SendPacket(new SCChatMessagePacket(ChatType.Whisper, sender, message, ability, languageType));
+            sender.SendPacket(new SCChatMessagePacket(ChatType.Whispered, target, message, ability, languageType));
         }
     }
 }

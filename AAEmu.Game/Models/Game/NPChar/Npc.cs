@@ -832,7 +832,7 @@ public partial class Npc : Unit
             var res = formula.Evaluate(parameters);
             res *= Template.ExpMultiplier;
             res += Template.ExpAdder;
-            return (int)res;
+            return (int)Math.Clamp(res * ExperienceMultiplier, 0, int.MaxValue);
         }
     }
 

@@ -39,7 +39,8 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
 
     public Shipyard Create(Character owner, ShipyardData shipyardData)
     {
-        if (!_shipyardsTemplate.TryGetValue(shipyardData.TemplateId, out var template))
+        if (!_shipyardsTemplate.TryGetValue(shipyardData.TemplateId, out var template) ||
+            !template.ShipyardSteps.ContainsKey(shipyardData.Step))
             return null;
 
         var design = ItemManager.Instance.GetTemplate(template.OriginItemId);
@@ -56,13 +57,10 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
         pos.Z = shipyardData.Z;
         pos.Yaw = shipyardData.zRot;
 
-        var objId = objectIdManager.GetNextId();
-        var shipId = shipyardIdManager.GetNextId();
         var shipyard = new Shipyard
         {
             Transform = { InstanceId = owner.ParentWorld.Id }, TemplateId = shipyardData.TemplateId, // duplicate Id
             Id = shipyardData.TemplateId,
-            ObjId = objId,
             Template = template,
             Faction = owner.Faction,
             Level = 30
@@ -72,7 +70,7 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
         shipyard.ModelId = template.ShipyardSteps[shipyardData.Step].ModelId;
         shipyard.Transform.ApplyWorldSpawnPosition(pos);
 
-        shipyard.ShipyardData = new ShipyardData { Id = shipId, TemplateId = template.Id, X = pos.X, Y = pos.Y,
+        shipyard.ShipyardData = new ShipyardData { TemplateId = template.Id, X = pos.X, Y = pos.Y,
             Z = pos.Z,
             zRot = pos.Yaw,
             MoneyAmount = 0,
@@ -82,95 +80,78 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
             Type2 = owner.Id,
             Type3 = owner.Faction.Id,
             Spawned = DateTime.UtcNow,
-            ObjId = objId,
             Hp = template.ShipyardSteps[shipyardData.Step].MaxHp * 100,
             Step = shipyardData.Step
         };
 
-        // we will make checks for the availability of money and items to create a shipyard
-        // and remove from the inventory items and money necessary for the construction of the shipyard
-        if (!RemoveRequiredItems(shipyard))
+        if (!TryInstallPaidShipyard(owner, shipyard))
         {
             owner.SendErrorMessage(ErrorMessageType.NotEnoughItem);
             return null;
         }
 
-        _shipyard.Add(shipId, shipyard);
         shipyard.Spawn();
 
         return shipyard;
     }
 
-    private bool RemoveRequiredItems(Shipyard shipyard)
+    internal bool TryInstallPaidShipyard(Character character, Shipyard shipyard)
     {
-        var character = worldManager.GetCharacter(shipyard.ShipyardData.OwnerName);
-        var designId = shipyard.Template.OriginItemId;
-        var moneyOwed = taxationsManager.Taxations[(uint)shipyard.Template.TaxationId].Tax;
-
-        if (!character.Inventory.CheckItems(SlotType.Inventory, designId, 1))
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            character.SendErrorMessage(ErrorMessageType.NotEnoughItem);
-            Logger.Error("Not enough item Id={0}", designId);
-            return false;
-        }
-
-        if (character.Money < moneyOwed)
-        {
-            character.SendErrorMessage(ErrorMessageType.NotEnoughMoney);
-            return false;
-        }
-
-        var found = character.Inventory.Bag.GetAllItemsByTemplate(designId, -1, out var foundItems, out _);
-        if (!found)
-        {
-            return false;
-        }
-        var reagents = skillManager.GetSkillReagentsBySkillId(foundItems[0].Template.UseSkillId);
-        var skillProducts = skillManager.GetSkillProductsBySkillId(foundItems[0].Template.UseSkillId);
-        if (reagents != null && skillProducts != null)
-        {
-            if (reagents.Count > 0)
-            {
-                // first check only
-                var enough = true;
-                foreach (var reagent in reagents)
-                {
-                    if (character.Inventory.CheckItems(SlotType.Inventory, reagent.ItemId, reagent.Amount))
-                    {
-                        continue;
-                    }
-
-                    enough = false;
-                    Logger.Error("Not enough reagents Id={0}, Amount={1}", reagent.ItemId, reagent.Amount);
-                }
-                if (!enough)
-                {
+            if (character == null || character.Id != shipyard.ShipyardData.Type2 ||
+                !taxationsManager.Taxations.TryGetValue((uint)shipyard.Template.TaxationId, out var taxation) ||
+                taxation.Tax > int.MaxValue)
+                return false;
+            var designId = shipyard.Template.OriginItemId;
+            var design = character.Inventory.Bag.Items.FirstOrDefault(item => item.TemplateId == designId);
+            if (design == null)
+                return false;
+            var reagents = skillManager.GetSkillReagentsBySkillId(design.Template.UseSkillId);
+            var products = skillManager.GetSkillProductsBySkillId(design.Template.UseSkillId);
+            if (reagents == null || products == null)
+                return false;
+            using var mutation = new InventoryMutation(ItemTaskType.Shipyard);
+            if (!mutation.TryChangeMoney(character, -(int)taxation.Tax) ||
+                !mutation.TryConsume(character.Inventory.Bag, design, 1))
+                return false;
+            foreach (var reagent in reagents)
+                if (!InventoryPayment.TryConsume(mutation, character.Inventory.Bag, reagent.ItemId, reagent.Amount))
                     return false;
-                }
-                foreach (var reagent in reagents)
-                {
-                    character.Inventory.Bag.ConsumeItem(ItemTaskType.SkillReagents, reagent.ItemId, reagent.Amount, null);
-                }
-            }
-            // maybe not needed
-            if (skillProducts.Count > 0)
+            foreach (var product in products)
+                if (!mutation.TryGrant(character.Inventory.Bag, product.ItemId, product.Amount))
+                    return false;
+            // Failed payment must not allocate world or shipyard IDs. Install the
+            // accepted construction before any item or quest observer can run.
+            var objId = objectIdManager.GetNextId();
+            uint shipId = 0;
+            try
             {
-                foreach (var product in skillProducts)
-                {
-                    character.Inventory.Bag.AcquireDefaultItem(ItemTaskType.SkillEffectGainItem, product.ItemId, product.Amount);
-                }
+                shipId = shipyardIdManager.GetNextId();
+                shipyard.ObjId = objId;
+                shipyard.ShipyardData.ObjId = objId;
+                shipyard.ShipyardData.Id = shipId;
+                _shipyard.Add(shipId, shipyard);
             }
+            catch
+            {
+                objectIdManager.ReleaseId(objId);
+                if (shipId != 0)
+                    shipyardIdManager.ReleaseId(shipId);
+                throw;
+            }
+            try
+            {
+                mutation.Complete();
+            }
+            catch (Exception exception)
+            {
+                // Complete accepts the assets before notification. Continue to
+                // spawn the installed construction even when an observer fails.
+                Logger.Error(exception, "Shipyard payment notification failed for shipyard {0}", shipId);
+            }
+            return true;
         }
-        else
-        {
-            Logger.Error("Could not find Reagents/Products for Template[{0}]", foundItems[0].Template.UseSkillId);
-            return false;
-        }
-
-        character.Inventory.Bag.ConsumeItem(ItemTaskType.Shipyard, designId, 1, null);
-        character.SubtractMoney(SlotType.Inventory, (int)moneyOwed, ItemTaskType.Shipyard);
-
-        return true;
     }
 
     public void RemoveShipyard(Shipyard shipyard)

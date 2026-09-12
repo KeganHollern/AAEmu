@@ -37,6 +37,7 @@ public class GameNetwork : Singleton<GameNetwork>
         RegisterPacket(CSOffsets.CSKickFromExpeditionPacket, 1, typeof(CSKickFromExpeditionPacket));
         // 0x10 unk packet
         RegisterPacket(CSOffsets.CSUpdateDominionTaxRatePacket, 1, typeof(CSUpdateDominionTaxRatePacket));
+        RegisterPacket(CSOffsets.CSUpdateNationalTaxRatePacket, 1, typeof(CSUpdateNationalTaxRatePacket));
         RegisterPacket(CSOffsets.CSFactionImmigrationInvitePacket, 1, typeof(CSFactionImmigrationInvitePacket));
         RegisterPacket(CSOffsets.CSFactionImmigrationInviteReplyPacket, 1, typeof(CSFactionImmigrationInviteReplyPacket));
         RegisterPacket(CSOffsets.CSFactionImmigrateToOriginPacket, 1, typeof(CSFactionImmigrateToOriginPacket));
@@ -151,6 +152,7 @@ public class GameNetwork : Singleton<GameNetwork>
         RegisterPacket(CSOffsets.CSSkillControllerStatePacket, 1, typeof(CSSkillControllerStatePacket));
         RegisterPacket(CSOffsets.CSCreateSkillControllerPacket, 1, typeof(CSCreateSkillControllerPacket));
         RegisterPacket(CSOffsets.CSActiveWeaponChangedPacket, 1, typeof(CSActiveWeaponChangedPacket));
+        RegisterPacket(CSOffsets.CSSetCraftingPayPacket, 1, typeof(CSSetCraftingPayPacket));
         //RegisterPacket(0x08d, 1, typeof(CSChangeItemLookPacket)); TODO: this packet is not in the offsets 
         RegisterPacket(CSOffsets.CSLootOpenBagPacket, 1, typeof(CSLootOpenBagPacket));
         RegisterPacket(CSOffsets.CSLootItemPacket, 1, typeof(CSLootItemPacket));

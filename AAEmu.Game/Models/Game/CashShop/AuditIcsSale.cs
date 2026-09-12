@@ -41,6 +41,9 @@ public class AuditIcsSale
     /// </summary>
     public uint Sku { get; set; }
 
+    /// <summary>Immutable sold quantity. Null means an unknown legacy quantity.</summary>
+    public uint? ItemCount { get; set; }
+
     /// <summary>
     /// Amount this item was sold for
     /// </summary>

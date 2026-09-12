@@ -19,7 +19,7 @@ public class DispelEffect : EffectTemplate
     {
         Logger.Trace("DispelEffect {0}", Id);
 
-        if (BuffTagId > 0 && !target.Buffs.CheckBuffs(SkillManager.Instance.GetBuffsByTagId(BuffTagId)))
+        if (BuffTagId > 0 && !SkillLaborBuffMutation.Read(target.Buffs).CheckBuffs(SkillManager.Instance.GetBuffsByTagId(BuffTagId)))
             return;
         if (DispelCount > 0 && caster.CanAttack(target))
             target.Buffs.RemoveBuffs(BuffKind.Good, DispelCount, BuffTagId); //TODO ....

@@ -26,12 +26,18 @@ public class UserMusicSaveNotes : SpecialEffectAction
 
         if (caster is Character player && casterObj is SkillItem si)
         {
-            var item = ItemManager.Instance.GetItemByItemId(si.ItemId);
+            var item = player.Inventory.GetItemById(si.ItemId);
             if (!MusicManager.Instance.CreateSheetMusic(player, item))
+            {
+                skill.Cancelled = true;
+                SkillLaborBatch.Current?.Fail();
                 Logger.Error("Special effects: UserMusicSaveNotes - Error saving music for {0} !", player.Name);
+            }
         }
         else
         {
+            skill.Cancelled = true;
+            SkillLaborBatch.Current?.Fail();
             Logger.Error("Special effects: UserMusicSaveNotes - Invalid Arguments");
         }
     }

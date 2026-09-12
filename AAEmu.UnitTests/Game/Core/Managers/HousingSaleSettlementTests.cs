@@ -209,7 +209,8 @@ public sealed class HousingSaleSettlementTests
         var bill = _mail._allPlayerMails.Values.Single(MailForTax.IsTaxMail);
         await Assert.That(bill.Id).IsNotEqualTo(oldBill.Id);
         await Assert.That(bill.Header.ReceiverId).IsEqualTo(_buyer.Id);
-        await Assert.That(bill.Body.BillingAmount).IsEqualTo(5000);
+        // The buyer inherits the overdue period and its approved one-time 10% fee.
+        await Assert.That(bill.Body.BillingAmount).IsEqualTo(5500);
         await Assert.That((uint)bill.Header.Extra).IsEqualTo(_house.Id);
         await Assert.That(_house.ProtectionEndDate).IsEqualTo(protectedUntil);
     }

@@ -58,6 +58,13 @@ public class CommercialMail : BaseMail
             foreach (var item in Body.Attachments)
                 targetCharacter.Inventory.MailAttachments.AddOrMoveExistingItem(ItemTaskType.Invalid, item);
 
+        PrepareContent();
+    }
+
+    internal void PrepareContent()
+    {
+        Body.Attachments = _items;
+        Body.SendDate = DateTime.UtcNow;
         // Title looks like it should be the item shop entry names (in multiple language?)
         // Title = "title('Rainbow Pumpkin Taffy|Rainbow Pumpkin Taffy|Rainbow Pumpkin Taffy|彩虹南瓜糖|Радужный марципан')";
         Title = "title('" + _purchasedItemTitle.Replace("'", "\\'") + "')";

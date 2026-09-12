@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items;
@@ -35,21 +36,27 @@ public class DoodadFuncBuyFish : DoodadFuncTemplate
             }
 
             var exchanged = false;
-            using (var mutation = new InventoryMutation(ItemTaskType.SkillEffectConsumption))
+            var batch = SkillLaborBatch.For(character);
+            using (var ownMutation = batch == null ? new InventoryMutation(ItemTaskType.SkillEffectConsumption) : null)
             {
+                var mutation = batch?.Inventory ?? ownMutation;
                 if (mutation.TryConsume(character.Equipment, backpack, backpack.Count) &&
                     mutation.TryChangeMoney(character, backpack.Template.Refund))
                 {
                     // Display the sold pack only after both sides of the exchange are ready.
                     owner.ItemTemplateId = backpack.TemplateId;
-                    mutation.Complete();
+                    if (batch == null)
+                        mutation.Complete();
                     exchanged = true;
                 }
             }
 
             // Failed preparation is disposed before publishing a failure to the player.
             if (!exchanged)
+            {
+                batch?.Fail();
                 character.SendErrorMessage(ErrorMessageType.BagInvalidItem);
+            }
         }
     }
 }

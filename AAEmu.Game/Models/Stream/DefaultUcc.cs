@@ -1,4 +1,4 @@
-using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Network;
 using MySql.Data.MySqlClient;
 
 namespace AAEmu.Game.Models.Stream;
@@ -42,7 +42,7 @@ public class DefaultUcc : Ucc
         command.Parameters.AddWithValue("@color3R", Color3R);
         command.Parameters.AddWithValue("@color3G", Color3G);
         command.Parameters.AddWithValue("@color3B", Color3B);
-        command.Parameters.AddWithValue("@modified", DateTime.UtcNow);
+        command.Parameters.AddWithValue("@modified", Modified);
         command.ExecuteNonQuery();
     }
 
@@ -59,7 +59,7 @@ public class DefaultUcc : Ucc
         stream.Write(Color3R);
         stream.Write(Color3G);
         stream.Write(Color3B);
-        stream.Write(Modified.ToBinary());
+        stream.Write(Modified.ToFileTimeUtc());
         return stream;
     }
 
@@ -76,6 +76,6 @@ public class DefaultUcc : Ucc
         Color3R = stream.ReadUInt32();
         Color3G = stream.ReadUInt32();
         Color3B = stream.ReadUInt32();
-        Modified = DateTime.FromBinary(stream.ReadInt64());
+        Modified = DateTime.FromFileTimeUtc(stream.ReadInt64());
     }
 }

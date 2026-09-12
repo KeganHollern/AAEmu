@@ -6,6 +6,7 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Music;
+using AAEmu.Game.Models.Game.Skills;
 using NLog;
 
 namespace AAEmu.Game.Core.Managers;
@@ -14,9 +15,9 @@ public class MusicManager(IMusicIdManager musicIdManager, IItemManager itemManag
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
-    private Dictionary<uint, SongData> _uploadQueue; // playerId, song
-    private Dictionary<uint, SongData> _allSongs; // songId, song
-    private Dictionary<uint, byte[]> _midiCache; // playerId, midi data
+    private Dictionary<uint, SongData> _uploadQueue = []; // playerId, song
+    private Dictionary<uint, SongData> _allSongs = []; // songId, song
+    private Dictionary<uint, byte[]> _midiCache = []; // playerId, midi data
 
     public void Load()
     {
@@ -79,73 +80,74 @@ public class MusicManager(IMusicIdManager musicIdManager, IItemManager itemManag
 
     public void UploadSong(uint charId, string title, string song, ulong itemId)
     {
-        if (!_uploadQueue.TryGetValue(charId, out var q))
-        {
-            q = new SongData();
-            _uploadQueue.Add(charId, q);
-        }
-        q.AuthorId = charId;
-        q.Title = title;
-        q.Song = song;
-        q.SourceItemId = itemId;
+        lock (SaveManager.PersistenceSyncRoot)
+            _uploadQueue[charId] = new SongData
+            {
+                AuthorId = charId, Title = title, Song = song, SourceItemId = itemId
+            };
     }
 
     public bool CreateSheetMusic(Character player, Item sourceItem)
     {
-        // Check if a valid owned item
-        if (sourceItem == null || sourceItem._holdingContainer.OwnerId != player.Id)
-        {
-            Logger.Warn("Player {0} ({1}) does not own the used source item", player.Name, player.Id);
+        var batch = SkillLaborBatch.For(player);
+        if (batch == null)
             return false;
-        }
+        if (sourceItem == null || !ReferenceEquals(player.Inventory.GetItemById(sourceItem.Id), sourceItem) ||
+            !ReferenceEquals(sourceItem._holdingContainer, player.Inventory.Bag) ||
+            TradeReservation.GetReservedCount(sourceItem) != 0 ||
+            !_uploadQueue.TryGetValue(player.Id, out var upload) || upload.SourceItemId != sourceItem.Id ||
+            upload.Title == null || upload.Title.Length > 128 || upload.Song == null)
+            return batch.Fail();
 
-        // Grab the related queued song (if any)
-        if (!_uploadQueue.TryGetValue(player.Id, out var sud))
+        // Consume first: one last sheet of paper can free the output slot in a full bag.
+        if (!batch.Inventory.TryConsume(player.Inventory.Bag, sourceItem, 1))
+            return batch.Fail();
+        var song = new SongData
         {
-            Logger.Warn("Player {0} ({1}) did not upload any music yet.", player.Name, player.Id);
-            return false;
+            Id = musicIdManager.GetNextId(), AuthorId = player.Id,
+            Title = upload.Title, Song = upload.Song, SourceItemId = sourceItem.Id
+        };
+        batch.Enlist(null, () => musicIdManager.ReleaseId(song.Id));
+        var created = itemManager.Create(Item.SheetMusic, 1, 0, true);
+        if (created is not MusicSheetItem sheet)
+        {
+            if (created != null)
+                itemManager.ReleaseId(created.Id);
+            return batch.Fail();
         }
-
-        if (player.Inventory.Bag.FreeSlotCount < 1)
+        sheet.OwnerId = player.Id;
+        sheet.MadeUnitId = player.Id;
+        sheet.SongId = song.Id;
+        if (!batch.Inventory.TryAddCreated(sheet, player.Inventory.Bag))
         {
             player.SendErrorMessage(ErrorMessageType.BagFull);
-            Logger.Warn("Player {0} ({1}) did not have enough space to aquire new music sheet {2} ({3})",
-                player.Name, player.Id, sud.Title, sud.Id);
-            return false;
+            return batch.Fail();
         }
-
-        // Save to DB
-        if (Save(sud))
+        batch.Enlist(context =>
         {
-            var sheet = (MusicSheetItem)itemManager.Create(Item.SheetMusic, 1, 0, true);
-            sheet.OwnerId = player.Id;
-            sheet.MadeUnitId = player.Id;
-            sheet.SongId = sud.Id;
-
-            // Add Sheet Music to inventory
-            if (!player.Inventory.Bag.AddOrMoveExistingItem(ItemTaskType.SaveMusicNotes, sheet))
+            using var command = context.Connection.CreateCommand();
+            command.Transaction = context.Transaction;
+            command.CommandText = "INSERT INTO music (`id`,`author`,`title`,`song`) VALUES (@id,@author,@title,@song)";
+            command.Parameters.AddWithValue("@id", song.Id);
+            command.Parameters.AddWithValue("@author", song.AuthorId);
+            command.Parameters.AddWithValue("@title", song.Title);
+            command.Parameters.AddWithValue("@song", song.Song);
+            if (command.ExecuteNonQuery() != 1)
+                throw new InvalidOperationException("Could not save the prepared sheet music.");
+            context.AfterCommit(() =>
             {
-                Logger.Warn("Player {0} ({1}) had a unknown error when adding Sheet Music to inventory {2} ({3})",
-                    player.Name, player.Id, sud.Title, sud.Id);
-                return false;
-            }
-
-            // Consume Music Paper
-            if (player.Inventory.Bag.ConsumeItem(ItemTaskType.SaveMusicNotes, sourceItem.TemplateId, 1, sourceItem) <= 0)
-            {
-                Logger.Warn("Failed to consume source item while creating music for Player {0} ({1}) item {2} ({3})",
-                    player.Name, player.Id, sourceItem.Id, sourceItem.Template.Name);
-            }
-        }
-
+                _allSongs.Add(song.Id, song);
+                if (_uploadQueue.TryGetValue(player.Id, out var current) && ReferenceEquals(current, upload))
+                    _uploadQueue.Remove(player.Id);
+            });
+        }, null);
         return true;
     }
 
     public SongData GetSongById(uint songId)
     {
-        if (_allSongs.TryGetValue(songId, out var song))
-            return song;
-        return null;
+        lock (SaveManager.PersistenceSyncRoot)
+            return _allSongs.GetValueOrDefault(songId);
     }
 
     public void CacheMidi(uint playerId, byte[] midiData)

@@ -57,7 +57,7 @@ public sealed class SkillExecutionReservationTests
         SetInstance(itemManager);
         var templates = new Dictionary<uint, ItemTemplate>
         {
-            [100] = new() { Id = 100, MaxCount = 100, BindType = ItemBindType.Normal },
+            [100] = new() { Id = 100, MaxCount = 100, BindType = ItemBindType.Normal, UseSkillId = 50 },
             [200] = new() { Id = 200, MaxCount = 100, BindType = ItemBindType.Normal }
         };
         SetField(itemManager, "_allItems", _items);
@@ -408,6 +408,23 @@ public sealed class SkillExecutionReservationTests
         typeof(GameObject).GetField("_parentWorld", BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(_owner, new WorldInstance(template, 0, true, 0));
         _owner.Transform.Local.SetPosition(130, 10, 100);
+    }
+
+    [Test]
+    public async Task DelayedItemSkill_SourceMovedBeforeEffects_DoesNotApplyOrConsume()
+    {
+        EconomicSkill();
+        var skill = NewSkill();
+        var source = new SkillItem(_owner.ObjId, _material.Id, _material.TemplateId);
+        var effects = 0;
+        skill.Template.Effects.Add(Effect(() => effects++));
+        _owner.Inventory.Bag.Items.Remove(_material);
+        _material.OwnerId = 8;
+        skill.ApplyEffects(_owner, source, _owner, new SkillCastUnitTarget(_owner.ObjId), null);
+        await Assert.That(skill.Cancelled).IsTrue();
+        await Assert.That(effects).IsEqualTo(0);
+        await Assert.That(_material.Count).IsEqualTo(3);
+        await Assert.That(_owner.Inventory.Bag.Items).IsEmpty();
     }
 
     private void ApplyFishingDestination(Skill skill, SkillItem source, bool denied)

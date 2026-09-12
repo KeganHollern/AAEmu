@@ -8,12 +8,16 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Features;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Mails;
+using AAEmu.Game.Models.Game.World;
 using AAEmu.UnitTests.Utils.Mocks;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -30,15 +34,19 @@ public sealed class MailTests
     private CharacterMails _senderMails;
     private MailManager _mailManager;
     private Mock<IHousingManager> _housingManager;
+    private Mock<ISaveManager> _saveManager;
     private Mock<IWorldManager> _worldManager;
     private Mock<ISession> _recipientSession;
     private Mock<ISession> _otherRecipientSession;
     private Mock<ISession> _senderSession;
     private ItemManager _previousItems;
+    private WorldConfig _previousWorld;
 
     [Before(Test)]
     public void Setup()
     {
+        _previousWorld = AppConfiguration.Instance.World;
+        AppConfiguration.Instance.World = new WorldConfig();
         _recipientSession = Mock.Of<ISession>();
         _otherRecipientSession = Mock.Of<ISession>();
         _senderSession = Mock.Of<ISession>();
@@ -94,6 +102,8 @@ public sealed class MailTests
         _worldManager.GetCharacter(_otherRecipient.Name).Returns(_otherRecipient);
         _worldManager.GetCharacter(_sender.Name).Returns(_sender);
         _housingManager = Mock.Of<IHousingManager>();
+        _saveManager = Mock.Of<ISaveManager>();
+        _saveManager.TryCommitEconomy(Any<IReadOnlyCollection<Character>>(), Any<Action<PersistenceSaveContext>>()).Returns(true);
 
         var itemField = typeof(Singleton<ItemManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
         _previousItems = (ItemManager)itemField.GetValue(null);
@@ -123,7 +133,8 @@ public sealed class MailTests
             Mock.Of<ITaskManager>().Object,
             _worldManager.Object,
             new Lazy<IHousingManager>(() => _housingManager.Object),
-            Mock.Of<ILocalizationManager>().Object);
+            Mock.Of<ILocalizationManager>().Object,
+            new Lazy<ISaveManager>(() => _saveManager.Object));
 
         new FeaturesManager(Mock.Of<IExperienceManager>().Object).Initialize();
         FeaturesManager.Fsets.Set(Feature.taxItem, false);
@@ -147,6 +158,7 @@ public sealed class MailTests
     [After(Test)]
     public void Teardown()
     {
+        AppConfiguration.Instance.World = _previousWorld;
         typeof(Singleton<ItemManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!
             .SetValue(null, _previousItems);
         _mailManager._allPlayerMails = null;
@@ -220,18 +232,41 @@ public sealed class MailTests
     [Test]
     public async Task TakeAllAttachment_ClaimsThenRemovesMailAndSendsBothReceipts()
     {
-        var mail = AddReceivedMail(copperCoins: 25);
-        var stream = new PacketStream().Write(mail.Id);
-        stream.Rollback();
+        var worldField = typeof(Singleton<WorldManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousWorlds = worldField.GetValue(null);
+        try
+        {
+            var worlds = new WorldManager(Mock.Of<ITickManager>().Object, Mock.Of<IWorldIdManager>().Object,
+                new Lazy<IZoneManager>(() => Mock.Of<IZoneManager>().Object),
+                new Lazy<IIndunManager>(() => Mock.Of<IIndunManager>().Object),
+                new Lazy<IFamilyManager>(() => Mock.Of<IFamilyManager>().Object));
+            worldField.SetValue(null, worlds);
+            var world = new WorldInstance(new WorldTemplate { Id = 1 }, 1, true, 1);
+            var instances = (IDictionary<uint, WorldInstance>)typeof(WorldManager)
+                .GetField("_worlds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(worlds)!;
+            instances.Add(world.Id, world);
+            var mailbox = new Doodad { ObjId = 99, ParentWorld = world };
+            mailbox.CurrentFuncs.Add(new DoodadFunc { FuncType = "DoodadFuncNaviOpenMailbox" });
+            world.AddObject(mailbox);
+            _character.ParentWorld = world;
+            _character.CurrentInteractionObject = mailbox;
+            var mail = AddReceivedMail(copperCoins: 25);
+            var stream = new PacketStream().Write(mail.Id);
+            stream.Rollback();
 
-        var packet = new CSTakeAllAttachmentItemPacket { Connection = _character.Connection };
-        packet.Read(stream);
+            var packet = new CSTakeAllAttachmentItemPacket { Connection = _character.Connection };
+            packet.Read(stream);
 
-        await Assert.That(_mailManager.AllPlayerMails.ContainsKey(mail.Id)).IsFalse();
-        _senderSession.SendPacket(Is<byte[]>(data => IsPacket(data, SCOffsets.SCMailReceiverOpenedPacket, mail.Id)))
-            .WasCalled(Times.Once);
-        _senderSession.SendPacket(Is<byte[]>(data => IsMailRemovedPacket(data, mail.Id)))
-            .WasCalled(Times.Once);
+            await Assert.That(_mailManager.AllPlayerMails.ContainsKey(mail.Id)).IsFalse();
+            _senderSession.SendPacket(Is<byte[]>(data => IsPacket(data, SCOffsets.SCMailReceiverOpenedPacket, mail.Id)))
+                .WasCalled(Times.Once);
+            _senderSession.SendPacket(Is<byte[]>(data => IsMailRemovedPacket(data, mail.Id)))
+                .WasCalled(Times.Once);
+        }
+        finally
+        {
+            worldField.SetValue(null, previousWorlds);
+        }
     }
 
     [Test]
@@ -300,6 +335,25 @@ public sealed class MailTests
         await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
         _senderSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailBodyPacket)))
             .WasCalled(Times.Once);
+    }
+
+    [Test]
+    public async Task GetAttached_WalletOverflow_PreservesMoneyAttachmentAndReportsFailure()
+    {
+        var mail = AddReceivedMail(copperCoins: 25);
+        mail.IsDirty = false;
+        _character.Money = long.MaxValue;
+        var attachments = mail.Header.Attachments;
+        await Assert.That(_mails.GetAttached(mail.Id, true, false, true)).IsFalse();
+        await Assert.That(_character.Money).IsEqualTo(long.MaxValue);
+        await Assert.That(mail.Body.CopperCoins).IsEqualTo(25);
+        await Assert.That(mail.Header.Attachments).IsEqualTo(attachments);
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        await Assert.That(mail.IsDirty).IsFalse();
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCAttachmentTakenPacket)))
+            .WasCalled(Times.Never);
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCErrorMsgPacket) &&
+            BitConverter.ToInt16(packet, 8) == (short)ErrorMessageType.MailTooMuchMoney)).WasCalled(Times.Once);
     }
 
     [Test]
@@ -469,6 +523,29 @@ public sealed class MailTests
         await Assert.That(_mailManager.AllPlayerMails.ContainsKey(successorMail.Id)).IsTrue();
         _housingManager.PayWeeklyTax(house).WasCalled(Times.Once);
         _housingManager.OfferTaxPrepayment(house).WasCalled(Times.Once);
+    }
+
+    [Test]
+    public async Task PayChargeMoney_FailedCheckpoint_RestoresMoneyDateAndBill()
+    {
+        var house = CreateTaxHouse();
+        ConfigureTaxPayment(house, 100);
+        var before = house.ProtectionEndDate;
+        _housingManager.PayWeeklyTax(house).Returns(() =>
+        {
+            house.ProtectionEndDate = before.AddDays(7);
+            return true;
+        });
+        var mail = AddTaxMail(house, 100);
+        _saveManager.TryCommitEconomy(Any<IReadOnlyCollection<Character>>(), Any<Action<PersistenceSaveContext>>()).Returns(false);
+
+        var result = _mailManager.PayChargeMoney(_character, mail.Id, false);
+
+        await Assert.That(result).IsFalse();
+        await Assert.That(_character.Money).IsEqualTo(1000);
+        await Assert.That(house.ProtectionEndDate).IsEqualTo(before);
+        await Assert.That(_mailManager.AllPlayerMails[mail.Id]).IsSameReferenceAs(mail);
+        _housingManager.OfferTaxPrepayment(house).WasCalled(Times.Never);
     }
 
     [Test]

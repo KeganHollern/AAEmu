@@ -1,4 +1,7 @@
 ﻿using AAEmu.Commons.Utils;
+using AAEmu.Commons.Utils.DB;
+using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Achievement.Enums;
@@ -14,7 +17,12 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers.World;
 
-public class SpecialtyManager : Singleton<SpecialtyManager>, ISpecialtyManager
+public partial class SpecialtyManager(
+    IItemManager itemManager,
+    IMailManager mailManager,
+    IZoneManager zoneManager,
+    ITaskManager taskManager,
+    Lazy<ISaveManager> saveManager) : Singleton<SpecialtyManager>, ISpecialtyManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -24,24 +32,23 @@ public class SpecialtyManager : Singleton<SpecialtyManager>, ISpecialtyManager
 
     //                 itemId           bundleId
     private Dictionary<uint, Dictionary<uint, SpecialtyBundleItem>> _specialtyBundleItemsMapped;
-    //                 itemId           zoneGroupId
-    private Dictionary<uint, Dictionary<uint, double>> _priceRatios;
-    //                 itemId           zoneId
-    private Dictionary<uint, Dictionary<uint, int>> _soldPackAmountInTick;
+    private Dictionary<(uint Item, uint Zone), SpecialtyDemand> _demand = [];
+    private Dictionary<(uint Origin, uint Destination), Specialty> _routes = [];
+    private bool _initialized;
 
     public void Load()
     {
         _specialties = [];
         _specialtyBundleItems = [];
         _specialtyNpc = [];
-        _soldPackAmountInTick = [];
+        _routes = [];
 
         _specialtyBundleItemsMapped = [];
-        _priceRatios = [];
+        _demand = [];
 
         Logger.Info("SpecialtyManager is loading...");
 
-        ItemManager.Instance.OnItemsLoaded += OnItemsLoaded;
+        SpecialtyDemand.Validate(AppConfiguration.Instance.Specialty);
 
         using (var connection = SQLite.CreateConnection())
         {
@@ -60,9 +67,10 @@ public class SpecialtyManager : Singleton<SpecialtyManager>, ISpecialtyManager
                             ColZoneGroupId = reader.GetUInt32("col_zone_group_id"),
                             Ratio = reader.GetUInt32("ratio"),
                             Profit = reader.GetUInt32("profit"),
-                            VendorExist = reader.GetBoolean("id", true)
+                            VendorExist = reader.GetBoolean("vendor_exist", true)
                         };
                         _specialties.Add(template.Id, template);
+                        _routes.Add((template.RowZoneGroupId, template.ColZoneGroupId), template);
                     }
                 }
             }
@@ -115,282 +123,133 @@ public class SpecialtyManager : Singleton<SpecialtyManager>, ISpecialtyManager
             }
         }
 
+        using (var connection = MySQL.CreateConnection())
+        {
+            var utcNow = DateTime.UtcNow;
+            foreach (var saved in SpecialtyDemandStore.Load(connection))
+                _demand.Add((saved.ItemId, saved.ZoneGroupId), saved.Advance(utcNow, AppConfiguration.Instance.Specialty));
+        }
         Logger.Info("SpecialtyManager loaded");
     }
 
     public void Initialize()
     {
-        var ratioConsumeTask = new SpecialtyRatioConsumeTask();
-        TaskManager.Instance.Schedule(ratioConsumeTask, TimeSpan.FromMinutes(AppConfiguration.Instance.Specialty.RatioDecreaseTickMinutes), TimeSpan.FromMinutes(AppConfiguration.Instance.Specialty.RatioDecreaseTickMinutes));
-
-        var ratioRegenTask = new SpecialtyRatioRegenTask();
-        TaskManager.Instance.Schedule(ratioRegenTask, TimeSpan.FromMinutes(AppConfiguration.Instance.Specialty.RatioRegenTickMinutes), TimeSpan.FromMinutes(AppConfiguration.Instance.Specialty.RatioRegenTickMinutes));
+        if (_initialized)
+            return;
+        _initialized = true;
+        var interval = TimeSpan.FromMinutes(Math.Min(AppConfiguration.Instance.Specialty.RatioDecreaseTickMinutes,
+            AppConfiguration.Instance.Specialty.RatioRegenTickMinutes));
+        taskManager.Schedule(new SpecialtyRatioConsumeTask(), interval, interval);
     }
 
-    private void OnItemsLoaded(object sender, EventArgs e)
+    public int GetRatioForSpecialty(Character player, uint itemId = 0)
     {
-        foreach (var specialtyBundleItem in _specialtyBundleItems.Values)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            specialtyBundleItem.Item = ItemManager.Instance.GetTemplate(specialtyBundleItem.ItemId);
+            var backpack = player.Inventory.Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack);
+            if (backpack == null || (itemId != 0 && itemId != backpack.TemplateId))
+                return 0;
+            var trader = player.CurrentInteractionObject as Npc;
+            var zoneId = trader?.Template is { Specialty: true } && ServiceInteraction.CanReach(player, trader, 2.5f)
+                ? trader.Transform.ZoneId
+                : player.Transform.ZoneId;
+            var zoneGroupId = zoneManager.GetZoneByKey(zoneId)?.GroupId ?? 0;
+            return GetRatio(backpack.TemplateId, zoneGroupId, DateTime.UtcNow);
         }
     }
 
-    /// <summary>
-    /// Returns the Ration rounded down
-    /// </summary>
-    /// <param name="player"></param>
-    /// <returns></returns>
-    public int GetRatioForSpecialty(Character player)
-    {
-        var backpack = player.Inventory.Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack);
-        if (backpack == null)
-            return 0;
-
-        var zoneGroupId = ZoneManager.Instance.GetZoneByKey(player.Transform.ZoneId)?.GroupId ?? 0;
-
-        InitRatioInZoneForPack(backpack.TemplateId, zoneGroupId);
-
-        return (int)Math.Floor(_priceRatios[backpack.TemplateId][zoneGroupId]);
-    }
-
-    /// <summary>
-    /// Gets a list of items and their current trade-rate for given zones
-    /// </summary>
-    /// <param name="fromZoneGroupId">Zone where the item was made</param>
-    /// <param name="toZoneGroupId">Zone where the item is traded in</param>
-    /// <returns></returns>
     public List<(uint, uint)> GetRatiosForTargetRoute(uint fromZoneGroupId, uint toZoneGroupId)
     {
-        var res = new List<(uint, uint)>();
-
-        // Get list of possible source packs
-        var sourcePacks = ItemManager.Instance.GetAllItems().Where(x => x.SpecialtyZoneId == fromZoneGroupId);
-        foreach (var item in sourcePacks)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            InitRatioInZoneForPack(item.Id, toZoneGroupId);
-            res.Add((item.Id, (uint)Math.Floor(_priceRatios[item.Id][toZoneGroupId])));
+            var utcNow = DateTime.UtcNow;
+            return itemManager.GetAllItems().Where(item => item.SpecialtyZoneId == fromZoneGroupId)
+                .Select(item => (item.Id, (uint)GetRatio(item.Id, toZoneGroupId, utcNow))).ToList();
         }
-
-        return res;
     }
 
-    private int GetBasePriceForSpecialty(Character player, uint npcId)
+    private int GetRatio(uint itemId, uint zoneGroupId, DateTime utcNow) =>
+        (int)decimal.Floor(GetDemand(itemId, zoneGroupId, utcNow).Ratio);
+
+    private SpecialtyDemand GetDemand(uint itemId, uint zoneGroupId, DateTime utcNow)
     {
-        // Sanity checks
-        var backpack = player.Inventory.Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack);
-        if (backpack == null)
-        {
-            player.SendErrorMessage(ErrorMessageType.StoreBackpackNogoods);
-            return 0;
-        }
-
-        var npc = player.ParentWorld.GetNpc(npcId);
-        if (npc == null)
-        {
-            player.SendErrorMessage(ErrorMessageType.InvalidTarget);
-            return 0;
-        }
-
-        Logger.Info($"GetBasePriceForSpecialty - {player.Name} backpack:{backpack.TemplateId}, npcObjId:{npcId}, npc: {npc.TemplateId}");
-
-        if (MathUtil.CalculateDistance(player.Transform.World.Position, npc.Transform.World.Position) > 2.5)
-        {
-            player.SendErrorMessage(ErrorMessageType.TooFarAway);
-            return 0;
-        }
-
-        if (!_specialtyNpc.TryGetValue(npc.TemplateId, out var specialtyNpc))
-        {
-            player.SendErrorMessage(ErrorMessageType.StoreCantSellSameZone);
-            return 0;
-        }
-
-        var bundleIdAtNpc = specialtyNpc.SpecialtyBundleId;
-
-        if (!_specialtyBundleItemsMapped.TryGetValue(backpack.TemplateId, out var bundleMapping))
-        {
-            player.SendErrorMessage(ErrorMessageType.Invalid);
-            return 0;
-        }
-
-        if (!bundleMapping.TryGetValue(bundleIdAtNpc, out var bundleItem))
-        {
-            player.SendErrorMessage(ErrorMessageType.Invalid);
-            return 0;
-        }
-
-        if (bundleItem == null)
-        {
-            player.SendErrorMessage(ErrorMessageType.Invalid);
-            return 0;
-        }
-
-        Logger.Info($"GetBasePriceForSpecialty - bundleIdAtNpc: {bundleIdAtNpc}, bundleMapping: {bundleMapping.Values.Count} items, bundleItem: Id {bundleItem.Id} - ItemId {bundleItem.ItemId} - SpecialtyBundleId {bundleItem.SpecialtyBundleId}");
-        var item = bundleItem.Item ?? ItemManager.Instance.GetTemplate(bundleItem.ItemId);
-        return (int)(Math.Floor(bundleItem.Profit * (bundleItem.Ratio / 1000f)) + (item?.Refund ?? 0));
+        var key = (itemId, zoneGroupId);
+        if (!_demand.TryGetValue(key, out var demand))
+            demand = SpecialtyDemand.Create(itemId, zoneGroupId, utcNow, AppConfiguration.Instance.Specialty);
+        return demand.Advance(utcNow, AppConfiguration.Instance.Specialty);
     }
 
-    public int SellSpecialty(Character player, uint npcObjId)
+    internal ErrorMessageType TryQuote(Character player, uint npcObjId, out Item backpack, out Npc npc,
+        out uint destination, out int basePrice)
     {
-        if (player.LaborPower < 60)
+        backpack = player.Inventory.Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack);
+        npc = player.ParentWorld?.GetNpc(npcObjId);
+        destination = 0;
+        basePrice = 0;
+        if (backpack?.Template is not BackpackTemplate template)
+            return ErrorMessageType.StoreBackpackNogoods;
+        if (npc?.Template is not { Specialty: true })
+            return ErrorMessageType.InvalidTarget;
+        if (!ServiceInteraction.CanReach(player, npc, 2.5f))
+            return ErrorMessageType.TooFarAway;
+        destination = zoneManager.GetZoneByKey(npc.Transform.ZoneId)?.GroupId ?? 0;
+        if (destination == 0 || template.SpecialtyZoneId == 0)
+            return ErrorMessageType.Invalid;
+
+        uint ratio;
+        uint profit;
+        if (_specialtyNpc.TryGetValue(npc.TemplateId, out var trader))
         {
-            player.SendErrorMessage(ErrorMessageType.NotEnoughLaborPower);
-            return 0;
-        }
-
-        var basePrice = GetBasePriceForSpecialty(player, npcObjId);
-
-        if (basePrice == 0) // We had an error, no need to keep going
-            return basePrice;
-
-        var priceRatio = GetRatioForSpecialty(player);
-
-        var backpack = player.Inventory.Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack);
-        if (backpack == null)
-        {
-            player.SendErrorMessage(ErrorMessageType.StoreBackpackNogoods);
-            return basePrice;
-        }
-
-        var npc = player.ParentWorld.GetNpc(npcObjId);
-        if (npc == null)
-            return basePrice;
-
-        // Our backpack isn't null, we have the NPC, time to calculate the profits
-
-        // TODO: Get crafter ID of trade-pack
-        var crafterId = backpack.MadeUnitId != player.Id ? backpack.MadeUnitId : 0;
-        var sellerShare = 0.80f; // 80% default, set this to 1f for packs that don't share profit
-
-        var interestRate = 5;
-
-        var finalPriceNoInterest = basePrice * (priceRatio / 100f);
-        var interest = finalPriceNoInterest * (interestRate / 100f);
-        var amountBonus = 0; // TODO: negotiation bonus
-        var finalPrice = finalPriceNoInterest + interest + amountBonus;
-
-        var itemTypeToDeliver = npc.Template.SpecialtyCoinId;
-        var amountOfItemsTotalPayout = (int)Math.Round(finalPrice);
-        var amountOfItemsSeller = amountOfItemsTotalPayout;
-        var amountOfItemsCrafter = 0;
-        var amountOfItemsBase = basePrice;
-
-        if (npc.Template.SpecialtyCoinId != 0)
-        {
-            // Items are listed in the DB at the same rate as "amounts of gold" so the value needs to be divided by 10000
-            amountOfItemsTotalPayout = (int)Math.Round(amountOfItemsTotalPayout / 10000f);
-            amountOfItemsSeller = (int)Math.Round(amountOfItemsSeller / 10000f);
-            amountOfItemsBase = (int)Math.Round(basePrice / 10000f);
+            if (!_specialtyBundleItemsMapped.TryGetValue(backpack.TemplateId, out var bundles) ||
+                !bundles.TryGetValue(trader.SpecialtyBundleId, out var bundle))
+                return ErrorMessageType.Invalid;
+            ratio = bundle.Ratio;
+            profit = bundle.Profit;
         }
         else
         {
-            itemTypeToDeliver = Item.Coins;
+            if (template.SpecialtyZoneId == destination)
+                return ErrorMessageType.StoreCantSellSameZone;
+            if (!template.NormalSpeciality || !_routes.TryGetValue((template.SpecialtyZoneId, destination), out var route))
+                return ErrorMessageType.Invalid;
+            ratio = route.Ratio;
+            profit = route.Profit;
         }
-
-        // TODO: implement a global fsets
-        var fsets = new Models.Game.Features.FeatureSet();
-
-        // Split up the profit if needed
-        if (crafterId != 0 && crafterId != player.Id && fsets.Check(Models.Game.Features.Feature.backpackProfitShare))
-        {
-            amountOfItemsSeller = (int)Math.Round(amountOfItemsTotalPayout * sellerShare);
-            amountOfItemsCrafter = amountOfItemsTotalPayout - amountOfItemsSeller;
-        }
-
-        // Mail for seller
-        if (amountOfItemsSeller > 0) // This check is here for if you'd create custom packs that give 100% to crafter and 0% for delivery
-        {
-            var sellerMail = new MailForSpeciality(player, crafterId, backpack.TemplateId, priceRatio, itemTypeToDeliver, amountOfItemsBase, amountBonus, amountOfItemsSeller, amountOfItemsCrafter, interestRate);
-            sellerMail.FinalizeForSeller();
-            if (!sellerMail.Send())
-            {
-                player.SendErrorMessage(ErrorMessageType.MailUnknownFailure);
-                return basePrice;
-            }
-        }
-
-        // Mail for crafter. If seller is not crafter, send a crafter mail as well
-        if (amountOfItemsCrafter > 0 && crafterId != 0)
-        {
-            var crafterMail = new MailForSpeciality(player, crafterId, backpack.TemplateId, priceRatio, itemTypeToDeliver, amountOfItemsBase, amountBonus, amountOfItemsSeller, amountOfItemsCrafter, interestRate);
-            crafterMail.FinalizeForCrafter();
-            if (!crafterMail.Send())
-            {
-                player.SendErrorMessage(ErrorMessageType.MailUnknownFailure);
-                // return; // don't cancel here if we fail to send mail to crafter
-            }
-        }
-
-        // Delete the backpack
-        var consumed = player.Inventory.Equipment.ConsumeItem(ItemTaskType.SellBackpack, backpack.TemplateId, 1, backpack);
-        // TODO: Calculate proper labor by skill level
-        player.ChangeLabor(-60, (int)ActabilityType.Commerce);
-
-        if (consumed == 1)
-            player.Achievements.Increment(CharRecordKind.SellItem, backpack.TemplateId, npc.TemplateId);
-
-        // Add one pack sold in this zone during this tick
-        var zoneGroupId = ZoneManager.Instance.GetZoneByKey(player.Transform.ZoneId)?.GroupId ?? 0;
-        if (!_soldPackAmountInTick.ContainsKey(backpack.TemplateId))
-            _soldPackAmountInTick.Add(backpack.TemplateId, []);
-
-        _soldPackAmountInTick[backpack.TemplateId].TryAdd(zoneGroupId, 0);
-        _soldPackAmountInTick[backpack.TemplateId][zoneGroupId] += 1;
-
-        return basePrice;
+        var refundMultiplier = itemManager.GetGradeTemplate(backpack.Grade)?.RefundMultiplier ?? 100;
+        basePrice = SpecialtyPrice.BasePrice(profit, ratio, template.Refund, refundMultiplier);
+        return basePrice > 0 ? ErrorMessageType.NoErrorMessage : ErrorMessageType.Invalid;
     }
 
-    public void ConsumeRatio()
+    public void ConsumeRatio() => AdvanceDemand();
+    public void RegenRatio() => AdvanceDemand();
+
+    private void AdvanceDemand()
     {
-        foreach (var (itemId, zoneInfo) in _soldPackAmountInTick)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            foreach (var (zoneGroupId, count) in zoneInfo)
+            var utcNow = DateTime.UtcNow;
+            var changes = _demand.Values.Select(demand => demand.Advance(utcNow, AppConfiguration.Instance.Specialty))
+                .Where(demand => demand != _demand[(demand.ItemId, demand.ZoneGroupId)]).ToArray();
+            if (changes.Length == 0)
+                return;
+            try
             {
-                if (count <= 0)
-                    continue;
-
-                var ratioDecrease = (int)Math.Ceiling(count * AppConfiguration.Instance.Specialty.RatioDecreasePerPack);
-                InitRatioInZoneForPack(itemId, zoneGroupId);
-                _soldPackAmountInTick[itemId][zoneGroupId] = 0;
-
-                var initialRatio = _priceRatios[itemId][zoneGroupId];
-                _priceRatios[itemId][zoneGroupId] = Math.Max(AppConfiguration.Instance.Specialty.MinSpecialtyRatio, initialRatio - ratioDecrease);
+                using var connection = MySQL.CreateConnection();
+                using var transaction = connection.BeginTransaction();
+                foreach (var demand in changes)
+                    SpecialtyDemandStore.Save(connection, transaction, demand);
+                transaction.Commit();
+                foreach (var demand in changes)
+                    _demand[(demand.ItemId, demand.ZoneGroupId)] = demand;
+            }
+            catch (Exception exception)
+            {
+                // Keep the old deadlines. The next tick calculates the same elapsed change.
+                Logger.Error(exception, "Could not save specialty demand.");
             }
         }
     }
 
-    public void RegenRatio()
-    {
-        foreach (var soldPackItems in _soldPackAmountInTick)
-        {
-            foreach (var soldPacksInZone in soldPackItems.Value)
-            {
-                InitRatioInZoneForPack(soldPackItems.Key, soldPacksInZone.Key);
-                var initialRatio = _priceRatios[soldPackItems.Key][soldPacksInZone.Key];
-                _priceRatios[soldPackItems.Key][soldPacksInZone.Key] = Math.Min(
-                    AppConfiguration.Instance.Specialty.MaxSpecialtyRatio,
-                    initialRatio + AppConfiguration.Instance.Specialty.RatioIncreasePerTick);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Makes sure a base rate exists for the given item and zone combination
-    /// </summary>
-    /// <param name="itemId"></param>
-    /// <param name="zoneGroupId"></param>
-    private void InitRatioInZoneForPack(uint itemId, uint zoneGroupId)
-    {
-        if (!_priceRatios.ContainsKey(itemId))
-            _priceRatios.Add(itemId, []);
-
-        if (!_priceRatios[itemId].ContainsKey(zoneGroupId))
-            _priceRatios[itemId].Add(zoneGroupId, AppConfiguration.Instance.Specialty.MaxSpecialtyRatio);
-    }
-
-    // Dummy for tests
-    public static int GetValueOfOne()
-    {
-        return 1;
-    }
+    // Retained for the existing introductory test.
+    public static int GetValueOfOne() => 1;
 }

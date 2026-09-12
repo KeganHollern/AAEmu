@@ -5,6 +5,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Housing;
+using AAEmu.Game.Models.Tasks.Shipyard;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
@@ -47,40 +48,7 @@ public class CraftEffect : EffectTemplate
                 case WorldInteractionGroup.Craft:
                     if (target is Shipyard.Shipyard shipyard)
                     {
-                        Logger.Trace("[Shipyard] ID {0}, objID {1}", shipyard.ShipyardData.TemplateId, shipyard.ObjId);
-
-                        var shipStep =
-                            shipyard.CurrentAction >= 0 && shipyard.CurrentStep < shipyard.Template.ShipyardSteps.Count
-                                ? shipyard.Template.ShipyardSteps[shipyard.CurrentStep]
-                                : null;
-
-                        // Compare if the used skill (correct pack) is still valid when used
-                        if (shipStep != null && usedSkill != shipStep.SkillId)
-                        {
-                            Logger.Warn("{0} tried to build a ship using the wrong skill, {1} instead of {2}", caster.Name, usedSkill, shipStep.SkillId);
-                            source.Skill.Cancelled = true;
-                        }
-                        else
-                        {
-                            shipyard.AddBuildAction();
-                            //Logger.Trace("[Shipyard] BaseAction {0}, NumAction {1}, CurrentAction {2}", shipyard.BaseAction, shipyard.NumAction, shipyard.CurrentAction);
-                            //Logger.Trace("[Shipyard] AllAction {0}, CurrentStep {1}, ShipyardSteps.Count {2}", shipyard.AllAction, shipyard.CurrentStep, shipyard.Template.ShipyardSteps.Count);
-                            if (shipyard.CurrentStep == -1)
-                            {
-                                shipyard.ShipyardData.Actions = shipyard.AllAction;
-                                shipyard.ShipyardData.Step = shipyard.Template.ShipyardSteps.Count;
-                                Logger.Trace("[Shipyard] Actions {0}, Step {1}", shipyard.AllAction, shipyard.Template.ShipyardSteps.Count);
-                            }
-                            else
-                            {
-                                shipyard.ShipyardData.Actions = shipyard.CurrentAction;
-                                shipyard.ShipyardData.Step = shipyard.CurrentStep;
-                                Logger.Trace("[Shipyard] Actions {0}, Step {1}", shipyard.CurrentAction, shipyard.CurrentStep);
-                            }
-
-                            character.BroadcastPacket(new SCShipyardStatePacket(shipyard.ShipyardData), true);
-                            character.Craft.EndCraft();
-                        }
+                        AdvanceShipyardConstruction(character, shipyard, usedSkill, source.Skill);
                     }
                     else
                     {
@@ -91,67 +59,22 @@ public class CraftEffect : EffectTemplate
                     character.Craft.EndCraft();
                     break;
                 case WorldInteractionGroup.Building when target is House house:
-                    var wasUnderConstruction = house.CurrentStep != -1;
-
-                    // Get the house's current build step
-                    var currentStep =
-                        house.CurrentAction >= 0 && house.CurrentStep < house.Template.BuildSteps.Count
-                            ? house.Template.BuildSteps[house.CurrentStep]
-                            : null;
-
-                    // Compare if the used skill (correct pack) is still valid when used
-                    if (currentStep != null && usedSkill != currentStep.SkillId)
-                    {
-                        Logger.Warn("{0} tried to building using the wrong skill, {1} instead of {2}", caster.Name, usedSkill, currentStep.SkillId);
-                        character.SkillTask.Skill.Cancelled = true;
-                        character.InterruptSkills();
-                    }
-                    else
-                    {
-                        // When done, set step to -1
-                        if (house.Template.BuildSteps.Count == 0)
-                            house.CurrentStep = -1;
-                        else
-                            house.AddBuildAction();
-
-                        // Send build packet
-                        character.BroadcastPacket(
-                            new SCHouseBuildProgressPacket(
-                                house.TlId,
-                                house.ModelId,
-                                house.AllAction,
-                                house.CurrentStep == -1 ? house.AllAction : house.CurrentAction
-                            ),
-                            true
-                        );
-
-                        // When done, spawn all attached doodads like doors and windows
-                        if (house.CurrentStep == -1)
-                        {
-                            var doodads = house.AttachedDoodads.ToArray();
-                            foreach (var doodad in doodads)
-                                doodad.Spawn();
-                        }
-
-                        if (wasUnderConstruction && house.CurrentStep == -1)
-                        {
-                            character.Achievements?.Increment(
-                                CharRecordKind.MakeHousing,
-                                house.TemplateId,
-                                0);
-                        }
-                    }
+                    AdvanceHouseConstruction(character, house, usedSkill, source.Skill);
                     break;
                 default:
                     Logger.Warn($"CraftEffect, {WorldInteraction} does not have a wi group ({wiGroup})");
                     if (target is Shipyard.Shipyard sy)
                     {
-                        if (sy.ShipyardData.OwnerName == caster.Name)
+                        if (sy.ShipyardData.Type2 == character.Id)
                         {
-                            ShipyardManager.Instance.ShipyardCompletedTask(sy);
+                            CompleteShipyardConstruction(character, sy, source.Skill);
                         }
                         else
+                        {
                             character.SendErrorMessage(ErrorMessageType.NoPermissionToLoot);
+                            source.Skill.Cancelled = true;
+                            SkillLaborBatch.Current?.Fail();
+                        }
                     }
                     else
                     {
@@ -163,7 +86,105 @@ public class CraftEffect : EffectTemplate
             //character.Quests.OnInteraction(WorldInteraction, target);
             // инициируем событие
             //Task.Run(() => QuestManager.Instance.DoInteractionEvents((Character)caster, target.TemplateId));
-            QuestManager.Instance.DoDoodadInteractionEvents((Character)caster, (Character)caster, target.TemplateId);
+            if (SkillLaborBatch.Current is { } batch)
+                batch.AfterCommit(() => QuestManager.Instance.DoDoodadInteractionEvents((Character)caster, (Character)caster, target.TemplateId));
+            else
+                QuestManager.Instance.DoDoodadInteractionEvents((Character)caster, (Character)caster, target.TemplateId);
         }
     }
+
+    internal static void AdvanceHouseConstruction(Character character, House house, uint usedSkill, Skill skill)
+    {
+        if (house.CurrentStep < 0 || (house.Template.BuildSteps.Count > 0 &&
+            (!house.Template.BuildSteps.TryGetValue(house.CurrentStep, out var step) || step.SkillId != usedSkill)))
+        {
+            skill.Cancelled = true;
+            SkillLaborBatch.Current?.Fail();
+            return;
+        }
+        var batch = SkillLaborBatch.Current;
+        if (batch != null)
+            batch.Enlist(context =>
+            {
+                if (!house.Save(context))
+                    throw new InvalidOperationException("Paid construction did not save its house row.");
+            }, house.CaptureConstructionState());
+        var previousStep = house.CurrentStep;
+        house.AddBuildAction(batch == null);
+        void PublishProgress()
+        {
+            if (batch != null && previousStep != house.CurrentStep)
+                house.CompleteConstructionStepChange();
+            character.BroadcastPacket(new SCHouseBuildProgressPacket(house.TlId, house.ModelId,
+                house.AllAction, house.CurrentStep == -1 ? house.AllAction : house.CurrentAction), true);
+            if (house.CurrentStep == -1)
+            {
+                foreach (var doodad in house.AttachedDoodads.ToArray())
+                    doodad.Spawn();
+                character.Achievements?.Increment(CharRecordKind.MakeHousing, house.TemplateId, 0);
+            }
+        }
+        if (batch != null)
+            batch.AfterCommit(PublishProgress);
+        else
+            PublishProgress();
+    }
+
+    internal static void AdvanceShipyardConstruction(Character character, Shipyard.Shipyard shipyard,
+        uint usedSkill, Skill skill)
+    {
+        if (shipyard.CurrentStep < 0 ||
+            !shipyard.Template.ShipyardSteps.TryGetValue(shipyard.CurrentStep, out var step) || step.SkillId != usedSkill)
+        {
+            skill.Cancelled = true;
+            SkillLaborBatch.Current?.Fail();
+            return;
+        }
+        var batch = SkillLaborBatch.Current;
+        batch?.Enlist(null, shipyard.CaptureConstructionState());
+        shipyard.AddBuildAction();
+        shipyard.ShipyardData.Actions = shipyard.CurrentStep == -1 ? shipyard.AllAction : shipyard.CurrentAction;
+        shipyard.ShipyardData.Step = shipyard.CurrentStep == -1
+            ? shipyard.Template.ShipyardSteps.Count : shipyard.CurrentStep;
+        void PublishProgress() => character.BroadcastPacket(new SCShipyardStatePacket(shipyard.ShipyardData), true);
+        if (batch != null)
+            batch.AfterCommit(PublishProgress);
+        else
+            PublishProgress();
+        if (batch != null && character.Craft?.HasCurrentCraft != true)
+            batch.AfterCommit(() => character.Craft?.EndCraft());
+        else
+            character.Craft?.EndCraft();
+    }
+
+    internal static void CompleteShipyardConstruction(Character character, Shipyard.Shipyard shipyard, Skill skill)
+    {
+        var batch = SkillLaborBatch.Current;
+        if (shipyard.ShipyardData.Type2 != character.Id || shipyard.CurrentStep != -1 ||
+            shipyard.ShipyardData.Step == 1000)
+        {
+            skill.Cancelled = true;
+            batch?.Fail();
+            return;
+        }
+        if (batch == null)
+        {
+            ShipyardManager.Instance.ShipyardCompletedTask(shipyard);
+            return;
+        }
+        batch.Enlist(null, shipyard.CaptureConstructionState());
+        if (!batch.Inventory.TryGrant(character.Inventory.Bag, shipyard.Template.ItemId, 1, 0))
+        {
+            batch.Fail();
+            return;
+        }
+        shipyard.ShipyardData.Step = 1000;
+        batch.AfterCommit(() =>
+        {
+            character.BroadcastPacket(new SCShipyardStatePacket(shipyard.ShipyardData), true);
+            TaskManager.Instance.Schedule(new ShipyardCompleteTask { _shipyard = shipyard },
+                TimeSpan.FromMilliseconds(shipyard.Template.CeremonyAnimTime));
+        });
+    }
+
 }

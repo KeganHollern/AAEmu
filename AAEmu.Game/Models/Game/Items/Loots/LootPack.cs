@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using AAEmu.Game.Models.Game.Skills;
+using System.Runtime.InteropServices;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.Achievement.Enums;
@@ -514,65 +515,60 @@ public class LootPack
     /// <param name="inheritedGrade">Grade to inherit (Optional)</param>
     public bool GiveLootPack(Character character, ActabilityType actabilityType, ItemTaskType taskType, List<(uint itemId, int count, byte grade, uint originalGroup)> generatedList = null, byte? inheritedGrade = null)
     {
-        // If it is not generated yet, generate loot pack info now
-        generatedList ??= GeneratePack(character, actabilityType, inheritedGrade);
-
-        var canAdd = true;
-        // First check for room
-        foreach (var (itemTemplateId, count, _, _) in generatedList)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (itemTemplateId == Item.Coins)
-                continue;
-            var freeSpace = character.Inventory.Bag.SpaceLeftForItem(itemTemplateId);
-            if (freeSpace < count)
+            var batch = SkillLaborBatch.For(character);
+            bool Fail() { batch?.Fail(); return false; }
+            generatedList ??= GeneratePack(character, actabilityType, inheritedGrade);
+            long coins = 0;
+            foreach (var (itemId, count, _, _) in generatedList)
             {
-                canAdd = false;
-                break;
+                if (count < 0)
+                    return Fail();
+                if (itemId == Item.Coins)
+                    coins += count;
             }
-
-        }
-
-        // Not enough room to give the items, give none
-        if (!canAdd)
-            return false;
-        var coinCount = 0;
-        // Distribute the items (and coins)
-        foreach (var (itemTemplateId, count, grade, _) in generatedList)
-        {
-            if (itemTemplateId == Item.Coins)
+            if (coins > int.MaxValue)
+                return Fail();
+            using var ownMutation = batch == null ? new InventoryMutation(taskType) : null;
+            var mutation = batch?.Inventory ?? ownMutation;
+            if (coins > 0 && !mutation.TryChangeMoney(character, (int)coins))
+                return Fail();
+            foreach (var (itemId, count, grade, _) in generatedList)
             {
-                coinCount += count;
-                //Coins can drop from multiple groups on the same item, collating.
-                continue;
+                if (itemId == Item.Coins || count == 0)
+                    continue;
+                var template = ItemManager.Instance.GetTemplate(itemId);
+                if (template == null)
+                    return Fail();
+                var destination = character.Inventory.Bag;
+                if (ItemManager.Instance.IsAutoEquipTradePack(itemId))
+                {
+                    destination = character.Inventory.Equipment;
+                    var backpack = destination.GetItemBySlot((int)EquipmentItemSlot.Backpack);
+                    if (backpack != null && !mutation.TryMove(backpack, character.Inventory.Bag))
+                        return Fail();
+                }
+                var actualGrade = template.FixedGrade > 0 ? template.FixedGrade : grade > 1 ? grade : -1;
+                if (!mutation.TryGrant(destination, itemId, count, actualGrade))
+                    return Fail();
             }
-
-            // Get actual grade
-            var itemTemplate = ItemManager.Instance.GetTemplate(itemTemplateId);
-            var gradeToAdd = itemTemplate.FixedGrade > 0 ? itemTemplate.FixedGrade : grade > 1 ? grade : -1;
-
-            if (!character.Inventory.TryAddNewItem(taskType, itemTemplateId, count, gradeToAdd))
+            void Notify()
             {
-                Logger.Error($"Unable to give loot to {character.Name} - ItemId: {itemTemplate} x {count} at grade {gradeToAdd} (loot grade {grade})");
-                return false;
+                foreach (var (itemId, count, _, _) in generatedList)
+                    if (itemId != Item.Coins && count > 0)
+                        character.Achievements?.Increment(CharRecordKind.GetLootitem, itemId, 0, (uint)count);
+                character.Achievements?.Increment(CharRecordKind.GetLootpack, Id, 0);
             }
-
-            character.Achievements?.Increment(
-                CharRecordKind.GetLootitem,
-                itemTemplateId,
-                0,
-                (uint)count);
+            if (batch == null)
+            {
+                mutation.Complete();
+                Notify();
+            }
+            else
+                batch.AfterCommit(Notify);
+            return true;
         }
-
-        if (coinCount > 0)
-        {
-            //We have coins to give out.
-            // Logger.Debug("{Category} - {Character} got {Amount} from lootpack {Lootpack}");
-            character.AddMoney(SlotType.Inventory, coinCount, taskType);
-        }
-
-        character.Achievements?.Increment(CharRecordKind.GetLootpack, Id, 0);
-
-        return true;
     }
 
     private static byte GetGradeFromDistribution(uint id)

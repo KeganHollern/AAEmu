@@ -8,9 +8,21 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.DoodadObj.Funcs;
+using AAEmu.Game.Models.Game.Formulas;
+using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Shipyard;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
+using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.Taxations;
+using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Items.Loots;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.UnitTests.Utils.Mocks;
@@ -755,11 +767,494 @@ public sealed class InventoryMutationTests
             await Assert.That(_owner.Money).IsEqualTo(75L);
             await Assert.That(item.Count).IsEqualTo(2);
             await Assert.That(bank ? _owner.Inventory.Warehouse.ContainerSize : _bag.ContainerSize).IsEqualTo(60);
+            // The last authored expansion is terminal, including a replay of the request.
+            _owner.Inventory.ExpandSlot(type);
+            _owner.Inventory.ExpandSlot(SlotType.Equipment);
+            await Assert.That(_owner.Money).IsEqualTo(75L);
+            await Assert.That(item.Count).IsEqualTo(2);
+            await Assert.That(bank ? _owner.Inventory.Warehouse.ContainerSize : _bag.ContainerSize).IsEqualTo(60);
         }
         finally
         {
             managerField.SetValue(null, previous);
         }
+    }
+
+    [Test]
+    public async Task Move_ForeignSourceOrDestination_DoesNotChangeEitherInventory()
+    {
+        var local = AddItem(1, 100, 2);
+        var foreign = AddItem(2, 100, 2, AddOwner(8));
+        await Assert.That(_owner.Inventory.SplitOrMoveItem(ItemTaskType.Invalid,
+            foreign.Id, SlotType.Inventory, 0, local.Id, SlotType.Inventory, 0, 1)).IsFalse();
+        await Assert.That(_owner.Inventory.SplitOrMoveItem(ItemTaskType.Invalid,
+            local.Id, SlotType.Inventory, 0, foreign.Id, SlotType.Inventory, 0, 1)).IsFalse();
+        await Assert.That(local.Count).IsEqualTo(2);
+        await Assert.That(foreign.Count).IsEqualTo(2);
+        await Assert.That(local._holdingContainer).IsSameReferenceAs(_bag);
+        await Assert.That(foreign.OwnerId).IsEqualTo(8U);
+    }
+
+    [Test]
+    [Arguments(SlotType.Mail)]
+    [Arguments(SlotType.Auction)]
+    [Arguments(SlotType.Trade)]
+    [Arguments(SlotType.System)]
+    public async Task Move_NonInventorySlotType_CannotUseAClientItemIdToChooseAContainer(SlotType type)
+    {
+        var item = AddItem(1, 100, 2);
+        await Assert.That(_owner.Inventory.SplitOrMoveItem(ItemTaskType.Invalid,
+            item.Id, type, 0, 0, SlotType.Inventory, 1, 1)).IsFalse();
+        await Assert.That(item.Count).IsEqualTo(2);
+        await Assert.That(item.Slot).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task OwnedLookup_RejectsForeignContainerAndItemMetadata()
+    {
+        var item = AddItem(1, 100, 1);
+        await Assert.That(_owner.Inventory.GetItemById(item.Id)).IsSameReferenceAs(item);
+        item.OwnerId = 8;
+        await Assert.That(_owner.Inventory.GetItemById(item.Id)).IsNull();
+        item.OwnerId = _owner.Id;
+        item.SlotType = SlotType.Mail;
+        await Assert.That(_owner.Inventory.GetItemById(item.Id)).IsNull();
+        item.SlotType = SlotType.Inventory;
+        item._holdingContainer = AddOwner(8).Inventory.Bag;
+        await Assert.That(_owner.Inventory.GetItemById(item.Id)).IsNull();
+    }
+
+    [Test]
+    public async Task Unwrap_ForeignItem_DoesNotChangeItsBindOrOwnership()
+    {
+        var foreign = AddItem(2, 100, 1, AddOwner(8));
+        var flags = foreign.ItemFlags;
+        await Assert.That(ItemManager.Instance.UnwrapItem(_owner, SlotType.Inventory, 0, foreign.Id)).IsFalse();
+        await Assert.That(foreign.OwnerId).IsEqualTo(8U);
+        await Assert.That(foreign.ItemFlags).IsEqualTo(flags);
+    }
+
+    [Test]
+    public async Task Unwrap_RepeatedRequest_PreservesOriginalLifetimeStart()
+    {
+        var item = AddItem(1, 100, 1);
+        item.Template.BindType = ItemBindType.BindOnUnpack;
+        await Assert.That(ItemManager.Instance.UnwrapItem(_owner, SlotType.Inventory, 0, item.Id)).IsTrue();
+        var originalStart = DateTime.UtcNow.AddDays(-1);
+        item.UnpackTime = originalStart;
+        await Assert.That(ItemManager.Instance.UnwrapItem(_owner, SlotType.Inventory, 0, item.Id)).IsFalse();
+        await Assert.That(item.UnpackTime).IsEqualTo(originalStart);
+        await Assert.That(item.HasFlag(ItemFlag.SoulBound)).IsTrue();
+    }
+
+    [Test]
+    public async Task Unwrap_ReservedItem_DoesNotChangeTradeTerms()
+    {
+        var item = AddItem(1, 100, 2);
+        using var reservation = new TradeReservation();
+        await Assert.That(reservation.TryReserve(item, 1)).IsTrue();
+        var flags = item.ItemFlags;
+        var originalStart = item.UnpackTime;
+        await Assert.That(ItemManager.Instance.UnwrapItem(_owner, SlotType.Inventory, 0, item.Id)).IsFalse();
+        await Assert.That(item.UnpackTime).IsEqualTo(originalStart);
+        await Assert.That(item.ItemFlags).IsEqualTo(flags);
+    }
+
+    [Test]
+    public async Task Unwrap_BankItemWithoutService_DoesNotChangeItem()
+    {
+        var item = AddItem(1, 100, 1);
+        _bag.Items.Remove(item);
+        var bank = _owner.Inventory.Warehouse;
+        bank.Items.Add(item);
+        item._holdingContainer = bank;
+        item.SlotType = SlotType.Bank;
+        var flags = item.ItemFlags;
+        var originalStart = item.UnpackTime;
+        await Assert.That(_owner.Inventory.GetItemById(item.Id)).IsSameReferenceAs(item);
+        await Assert.That(ItemManager.Instance.UnwrapItem(_owner, SlotType.Bank, 0, item.Id)).IsFalse();
+        await Assert.That(item.UnpackTime).IsEqualTo(originalStart);
+        await Assert.That(item.ItemFlags).IsEqualTo(flags);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Shipyard_MissingPayment_RestoresAllAssetsWithoutAllocatingIds(bool missingMoney)
+    {
+        var design = AddItem(1, 100, 1);
+        var reagent = AddItem(2, 200, missingMoney ? 3 : 2);
+        _owner.Money = missingMoney ? 49 : 100;
+        var (manager, shipyard, objectIds, shipyardIds) = CreateShipyardPurchase();
+        await Assert.That(manager.TryInstallPaidShipyard(_owner, shipyard)).IsFalse();
+        await Assert.That(_owner.Money).IsEqualTo(missingMoney ? 49L : 100L);
+        await Assert.That(design.Count).IsEqualTo(1);
+        await Assert.That(reagent.Count).IsEqualTo(missingMoney ? 3 : 2);
+        await Assert.That(_bag.Items).Count().IsEqualTo(2);
+        objectIds.GetNextId().WasCalled(Times.Never);
+        shipyardIds.GetNextId().WasCalled(Times.Never);
+    }
+
+    [Test]
+    public async Task Shipyard_ThrowingObserver_SeesInstalledConstructionAndCannotCancelIt()
+    {
+        AddItem(1, 100, 1);
+        AddItem(2, 200, 1);
+        AddItem(3, 200, 2);
+        var (manager, shipyard, _, _) = CreateShipyardPurchase();
+        var installed = (Dictionary<uint, Shipyard>)typeof(ShipyardManager)
+            .GetField("_shipyard", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
+        var observed = false;
+        _owner.Events.OnItemGather += (_, _) =>
+        {
+            observed = installed.TryGetValue(60, out var value) && ReferenceEquals(value, shipyard) &&
+                _owner.Money == 50 && _bag.Items.Single().TemplateId == 300;
+            throw new IOException("Injected shipyard observer failure");
+        };
+        await Assert.That(manager.TryInstallPaidShipyard(_owner, shipyard)).IsTrue();
+        await Assert.That(observed).IsTrue();
+        await Assert.That(installed[60]).IsSameReferenceAs(shipyard);
+        await Assert.That(shipyard.ObjId).IsEqualTo(50U);
+        await Assert.That(shipyard.ShipyardData.Id).IsEqualTo(60UL);
+        await Assert.That(_owner.Money).IsEqualTo(50L);
+        await Assert.That(_bag.Items.Single().TemplateId).IsEqualTo(300U);
+    }
+
+    [Test]
+    public async Task GradeChange_FailedLaterDebit_RestoresGradeAndDirtyState()
+    {
+        var item = AddItem(1, 100, 1);
+        item.Grade = 3;
+        item.IsDirty = false;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.GradeEnchant);
+            if (!mutation.TryChangeGrade(_bag, item, 4))
+                throw new InvalidOperationException("Valid grade change rejected");
+            mutation.TryChangeMoney(_owner, -101);
+        }
+        await Assert.That(item.Grade).IsEqualTo((byte)3);
+        await Assert.That(item.IsDirty).IsFalse();
+        await Assert.That(_owner.Money).IsEqualTo(100L);
+    }
+
+    [Test]
+    public async Task GradeChange_ReservedItem_DoesNotChangeTradeTerms()
+    {
+        var item = AddItem(1, 100, 1);
+        item.Grade = 3;
+        using var reservation = new TradeReservation();
+        reservation.TryReserve(item, 1);
+        bool changed;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.GradeEnchant);
+            changed = mutation.TryChangeGrade(_bag, item, 4);
+        }
+        await Assert.That(changed).IsFalse();
+        await Assert.That(item.Grade).IsEqualTo((byte)3);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task Regrade_Checkpoint_SettlesLaborGoldCharmScrollAndGradeTogether(bool commit, bool broken)
+    {
+        var accountsField = typeof(Singleton<AccountManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var formulasField = typeof(Singleton<FormulaManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousAccounts = accountsField.GetValue(null);
+        var previousFormulas = formulasField.GetValue(null);
+        try
+        {
+            accountsField.SetValue(null, new AccountManager(null, null, TimeProvider.System));
+            var formulas = new FormulaManager();
+            var cost = new Formula();
+            typeof(Formula).GetProperty("Expression", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(cost, (Func<Dictionary<string, double>, double>)(_ => 25));
+            SetField(formulas, "_formulas", new Dictionary<uint, Formula> { [(uint)FormulaKind.GradeEnchantCost] = cost });
+            formulasField.SetValue(null, formulas);
+            _owner.InitializeLaborCache(20, DateTime.UtcNow);
+            var scroll = AddItem(1, 100, 2);
+            _templates[200] = new WeaponTemplate
+            {
+                Id = 200, MaxCount = 1, BindType = ItemBindType.Normal,
+                HoldableTemplate = new Holdable { SlotTypeId = 1 }
+            };
+            var equipment = AddItem(2, 200, 1);
+            equipment.Grade = 3;
+            equipment.IsDirty = false;
+            var charm = AddItem(3, 300, 1);
+            var grade3 = new GradeTemplate
+            {
+                Grade = 3, GradeOrder = 3, EnchantSuccessRatio = broken ? 0 : 10000,
+                EnchantBreakRatio = broken ? 10000 : 0
+            };
+            var grade4 = new GradeTemplate { Grade = 4, GradeOrder = 4 };
+            SetField(ItemManager.Instance, "_grades", new Dictionary<int, GradeTemplate> { [3] = grade3, [4] = grade4 });
+            SetField(ItemManager.Instance, "_gradesOrdered", new Dictionary<int, GradeTemplate> { [3] = grade3, [4] = grade4 });
+            SetField(ItemManager.Instance, "_enchantingCosts", new Dictionary<uint, EquipSlotEnchantingCost> { [1] = new() });
+            SetField(ItemManager.Instance, "_enchantingSupports", new Dictionary<uint, ItemGradeEnchantingSupport>
+                { [300] = new() { RequireGradeMin = -1, RequireGradeMax = -1 } });
+            var skill = new Skill(new SkillTemplate { Id = 22520, ConsumeLaborPower = 10 });
+            var checkpointSawPreparedState = false;
+            skill.CommitLaborBatch = (_, _) =>
+            {
+                checkpointSawPreparedState = _owner.Money == 75 && _owner.LaborPower == 10 &&
+                    scroll.Count == 1 && charm.Count == 0 && (broken ? equipment.Count == 0 : equipment.Grade == 4);
+                return commit;
+            };
+            var result = SkillLaborBatch.Run(_owner, skill, true, () =>
+            {
+                new GradeEnchant().Execute(_owner, new SkillItem { ItemId = scroll.Id, ItemTemplateId = 100 },
+                    _owner, new SkillCastItemTarget { Id = equipment.Id }, null, skill,
+                    new SkillObjectItemGradeEnchantingSupport { SupportItemId = charm.Id }, DateTime.UtcNow, 0, 0, 1, 0);
+                if (!skill.Cancelled)
+                    SkillLaborBatch.Current.Inventory.TryConsume(_bag, scroll, 1);
+            });
+            await Assert.That(checkpointSawPreparedState).IsTrue();
+            await Assert.That(result).IsEqualTo(commit);
+            await Assert.That(_owner.LaborPower).IsEqualTo((short)(commit ? 10 : 20));
+            await Assert.That(_owner.Money).IsEqualTo(commit ? 75L : 100L);
+            await Assert.That(scroll.Count).IsEqualTo(commit ? 1 : 2);
+            await Assert.That(charm.Count).IsEqualTo(commit ? 0 : 1);
+            await Assert.That(equipment.Count).IsEqualTo(commit && broken ? 0 : 1);
+            await Assert.That(equipment.Grade).IsEqualTo((byte)(commit && !broken ? 4 : 3));
+            if (!commit)
+                await Assert.That(equipment.IsDirty).IsFalse();
+        }
+        finally
+        {
+            accountsField.SetValue(null, previousAccounts);
+            formulasField.SetValue(null, previousFormulas);
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Conversion_FullBag_SettlesInputOutputAndLaborTogether(bool commit)
+    {
+        var accountsField = typeof(Singleton<AccountManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var formulasField = typeof(Singleton<FormulaManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var conversionsField = typeof(Singleton<ItemConversionGameData>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousAccounts = accountsField.GetValue(null);
+        var previousFormulas = formulasField.GetValue(null);
+        var previousConversions = conversionsField.GetValue(null);
+        try
+        {
+            accountsField.SetValue(null, new AccountManager(null, null, TimeProvider.System));
+            var formulas = new FormulaManager();
+            SetField(formulas, "_formulas", new Dictionary<uint, Formula>());
+            formulasField.SetValue(null, formulas);
+            var conversions = new ItemConversionGameData();
+            SetField(conversions, "_reagents", new List<ItemConversionReagent>
+                { new() { InputItemId = 100, ConversionId = 1, MaxItemGrade = 12 } });
+            SetField(conversions, "_products", new List<ItemConversionProduct>
+                { new() { ConversionId = 1, ChanceRate = 10000, OuputItemId = 200, MinOutput = 1, MaxOutput = 1 } });
+            conversionsField.SetValue(null, conversions);
+            _owner.InitializeLaborCache(20, DateTime.UtcNow);
+            var input = AddItem(1, 100, 1);
+            input.Template.Disenchantable = true;
+            Template(200);
+            _bag.ContainerSize = 1;
+            var skill = new Skill(new SkillTemplate { Id = 15996, ConsumeLaborPower = 10 });
+            var prepared = false;
+            skill.CommitLaborBatch = (_, _) =>
+            {
+                prepared = _owner.LaborPower == 10 && input.Count == 0 && _bag.Items.Single().TemplateId == 200;
+                return commit;
+            };
+            var result = SkillLaborBatch.Run(_owner, skill, true, () =>
+                new ItemConversion().Execute(_owner, null, _owner, new SkillCastItemTarget { Id = input.Id },
+                    null, skill, null, DateTime.UtcNow, 0, 0, 0, 0));
+            await Assert.That(prepared).IsTrue();
+            await Assert.That(result).IsEqualTo(commit);
+            await Assert.That(_owner.LaborPower).IsEqualTo((short)(commit ? 10 : 20));
+            await Assert.That(_bag.Items.Single().TemplateId).IsEqualTo(commit ? 200U : 100U);
+            await Assert.That(input.Count).IsEqualTo(commit ? 0 : 1);
+        }
+        finally
+        {
+            accountsField.SetValue(null, previousAccounts);
+            formulasField.SetValue(null, previousFormulas);
+            conversionsField.SetValue(null, previousConversions);
+        }
+    }
+
+    private (ShipyardManager Manager, Shipyard Shipyard, Mock<IObjectIdManager> ObjectIds,
+        Mock<IShipyardIdManager> ShipyardIds) CreateShipyardPurchase()
+    {
+        Template(100).UseSkillId = 10;
+        Template(300);
+        var taxations = Mock.Of<ITaxationsManager>();
+        taxations.Taxations.Returns(new Dictionary<uint, Taxation> { [1] = new() { Id = 1, Tax = 50 } });
+        var skills = Mock.Of<ISkillManager>();
+        skills.GetSkillReagentsBySkillId(10).Returns([new SkillReagent { ItemId = 200, Amount = 3 }]);
+        skills.GetSkillProductsBySkillId(10).Returns([new SkillProduct { ItemId = 300, Amount = 1 }]);
+        var objectIds = Mock.Of<IObjectIdManager>();
+        objectIds.GetNextId().Returns(50U);
+        var shipyardIds = Mock.Of<IShipyardIdManager>();
+        shipyardIds.GetNextId().Returns(60U);
+        var manager = new ShipyardManager(Mock.Of<ITaskManager>().Object, objectIds.Object, shipyardIds.Object,
+            Mock.Of<IWorldManager>().Object, taxations.Object, skills.Object);
+        var shipyard = new Shipyard
+        {
+            Template = new ShipyardsTemplate { Id = 1, OriginItemId = 100, TaxationId = 1 },
+            ShipyardData = new ShipyardData { Type2 = _owner.Id, OwnerName = _owner.Name }
+        };
+        return (manager, shipyard, objectIds, shipyardIds);
+    }
+
+    [Test]
+    public async Task DoodadPurchase_PartialCoinStack_DoesNotGrantOrConsume()
+    {
+        var coin = AddItem(1, 100, 2);
+        Template(200);
+        var purchase = new DoodadFuncPurchase { ItemId = 200, Count = 1, CoinItemId = 100, CoinCount = 3 };
+        ErrorMessageType result;
+        lock (SaveManager.PersistenceSyncRoot)
+            result = purchase.TryPurchase(_owner);
+        await Assert.That(result).IsEqualTo(ErrorMessageType.NotEnoughItem);
+        await Assert.That(coin.Count).IsEqualTo(2);
+        await Assert.That(_bag.Items.Single()).IsSameReferenceAs(coin);
+    }
+
+    [Test]
+    public async Task DoodadPurchase_FullCoinCountAcrossStacks_GrantsOnce()
+    {
+        AddItem(1, 100, 2);
+        AddItem(2, 100, 2);
+        Template(200);
+        var purchase = new DoodadFuncPurchase { ItemId = 200, Count = 1, CoinItemId = 100, CoinCount = 3 };
+        ErrorMessageType result;
+        lock (SaveManager.PersistenceSyncRoot)
+            result = purchase.TryPurchase(_owner);
+        await Assert.That(result).IsEqualTo(ErrorMessageType.NoErrorMessage);
+        await Assert.That(_bag.Items.Single(item => item.TemplateId == 100).Count).IsEqualTo(1);
+        await Assert.That(_bag.Items.Single(item => item.TemplateId == 200).Count).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DoodadPurchase_FullBagOrLaterGrantFailure_RestoresPayment(bool laterFailure)
+    {
+        var coin = AddItem(1, 100, 3);
+        var output = Template(200);
+        output.MaxCount = 1;
+        _bag.ContainerSize = laterFailure ? 10 : 1;
+        var purchase = new DoodadFuncPurchase
+            { ItemId = 200, Count = laterFailure ? 2 : 1, CoinItemId = 100, CoinCount = 2 };
+        ErrorMessageType result;
+        lock (SaveManager.PersistenceSyncRoot)
+            result = purchase.TryPurchase(_owner);
+        await Assert.That(result).IsEqualTo(ErrorMessageType.BagFull);
+        await Assert.That(coin.Count).IsEqualTo(3);
+        await Assert.That(_bag.Items.Single()).IsSameReferenceAs(coin);
+    }
+
+    [Test]
+    [Arguments(0u, 0)]
+    [Arguments(0u, 3)]
+    [Arguments(100u, 0)]
+    public async Task DoodadPurchase_GoldPrice_DebitsFullCountAndRejectsInsufficientFunds(uint coinItemId, int coinCount)
+    {
+        var output = Template(200);
+        output.Price = 30;
+        var purchase = new DoodadFuncPurchase { ItemId = 200, Count = 2, CoinItemId = coinItemId, CoinCount = coinCount };
+        ErrorMessageType first;
+        ErrorMessageType second;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            first = purchase.TryPurchase(_owner);
+            second = purchase.TryPurchase(_owner);
+        }
+        await Assert.That(first).IsEqualTo(ErrorMessageType.NoErrorMessage);
+        await Assert.That(second).IsEqualTo(ErrorMessageType.NotEnoughMoney);
+        await Assert.That(_owner.Money).IsEqualTo(40L);
+        await Assert.That(_bag.Items.Single().Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task DoodadPurchase_OccupiedBackpack_DoesNotTakePayment()
+    {
+        var coin = AddItem(1, 100, 3);
+        _templates[200] = new BackpackTemplate { Id = 200, MaxCount = 1, BindType = ItemBindType.Normal };
+        var equipment = _owner.Inventory.Equipment;
+        var pack = new ItemMock(2, _templates[200], 1)
+        {
+            OwnerId = _owner.Id, SlotType = SlotType.Equipment,
+            Slot = (int)EquipmentItemSlot.Backpack, _holdingContainer = equipment
+        };
+        equipment.Items.Add(pack);
+        var purchase = new DoodadFuncPurchase { ItemId = 200, Count = 1, CoinItemId = 100, CoinCount = 2 };
+        ErrorMessageType result;
+        lock (SaveManager.PersistenceSyncRoot)
+            result = purchase.TryPurchase(_owner);
+        await Assert.That(result).IsEqualTo(ErrorMessageType.BackpackOccupied);
+        await Assert.That(coin.Count).IsEqualTo(3);
+        await Assert.That(equipment.Items.Single()).IsSameReferenceAs(pack);
+    }
+
+    [Test]
+    [Arguments(75L, false)]
+    [Arguments(100L, true)]
+    public async Task Repair_FullBatchCostMustFitBeforeDurabilityChanges(long money, bool success)
+    {
+        SetField(ItemManager.Instance, "_config", new ItemConfig { DurabilityRepairCostFactor = 100 });
+        SetField(ItemManager.Instance, "_grades", new Dictionary<int, GradeTemplate>
+            { [0] = new() { Grade = 0, RefundMultiplier = 100 } });
+        var template = new EquipItemTemplate { Id = 200, MaxCount = 1, Price = 100 };
+        var first = new RepairItem { Id = 1, TemplateId = 200, Template = template, Count = 1,
+            OwnerId = _owner.Id, SlotType = SlotType.Inventory, Slot = 0, _holdingContainer = _bag, Durability = 50 };
+        var second = new RepairItem { Id = 2, TemplateId = 200, Template = template, Count = 1,
+            OwnerId = _owner.Id, SlotType = SlotType.Inventory, Slot = 1, _holdingContainer = _bag, Durability = 50 };
+        _bag.Items.AddRange([first, second]);
+        _allItems.Add(1, first);
+        _allItems.Add(2, second);
+        var world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, 1);
+        var blacksmith = new Npc { ObjId = 80, Template = new NpcTemplate { Blacksmith = true } };
+        var parent = typeof(GameObject).GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        parent.SetValue(_owner, world);
+        parent.SetValue(blacksmith, world);
+        world.AddObject(blacksmith);
+        _owner.CurrentInteractionObject = blacksmith;
+        _owner.Money = money;
+        // Repeated IDs must not charge the same repair twice.
+        _owner.DoRepair([first, second, first]);
+        await Assert.That(first.Durability).IsEqualTo(success ? (byte)100 : (byte)50);
+        await Assert.That(second.Durability).IsEqualTo(success ? (byte)100 : (byte)50);
+        await Assert.That(_owner.Money).IsEqualTo(success ? 0L : money);
+    }
+
+    private sealed class RepairItem : EquipItem
+    {
+        public override byte MaxDurability => 100;
+    }
+
+    [Test]
+    public async Task LootPack_CreditOverflow_DoesNotGrantEarlierItems()
+    {
+        Template(200);
+        _owner.Money = long.MaxValue;
+        var pack = new LootPack { Id = 1 };
+        await Assert.That(pack.GiveLootPack(_owner, 0, ItemTaskType.Invalid,
+            [(200, 1, 0, 0), (Item.Coins, 1, 0, 0)])).IsFalse();
+        await Assert.That(_owner.Money).IsEqualTo(long.MaxValue);
+        await Assert.That(_bag.Items).IsEmpty();
+    }
+
+    [Test]
+    public async Task LootPack_LaterGrantFailure_RestoresCoinsAndEarlierItems()
+    {
+        Template(200).MaxCount = 1;
+        var pack = new LootPack { Id = 1 };
+        await Assert.That(pack.GiveLootPack(_owner, 0, ItemTaskType.Invalid,
+            [(Item.Coins, 50, 0, 0), (200, 2, 0, 0)])).IsFalse();
+        await Assert.That(_owner.Money).IsEqualTo(100L);
+        await Assert.That(_bag.Items).IsEmpty();
     }
 
     private static ItemAction TaskAction(ItemTask task) =>

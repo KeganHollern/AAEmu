@@ -7,18 +7,18 @@ public class CSBuyPriestBuffPacket() : GamePacket(CSOffsets.CSBuyPriestBuffPacke
 {
     public override void Read(PacketStream stream)
     {
-        var priestBuffId = stream.ReadUInt32();
-        var npcUnitId = stream.ReadBc();
-
-        Logger.Warn("BuyPriestBuff, PriestBuffId: {0}, NpcUnitId: {1}", priestBuffId, npcUnitId);
+        if (!TryReadRequest(stream, out var offerId, out var npcId) || Connection.ActiveChar is not { } character)
+            return;
+        character.BuyPriestBuff(offerId, character.ParentWorld?.GetNpc(npcId));
     }
 
-    // TODO if i miss
-    /*
-      if ( !a2->Reader->field_14("priestBuffType", 1, v4) )
-        return ReadBc_2(a2, (v2 + 3), "npcUnitId", v2 + 3, 0);
-      a2->Reader->ReadUInt32("type", v2 + 2, 0);
-      a2->Reader->field_18(a2);
-      return ReadBc_2(a2, (v2 + 3), "npcUnitId", v2 + 3, 0);
-     */
+    internal static bool TryReadRequest(PacketStream stream, out uint offerId, out uint npcId)
+    {
+        offerId = npcId = 0;
+        if (stream.Count - stream.Pos != 7)
+            return false;
+        offerId = stream.ReadUInt32();
+        npcId = stream.ReadBc();
+        return true;
+    }
 }

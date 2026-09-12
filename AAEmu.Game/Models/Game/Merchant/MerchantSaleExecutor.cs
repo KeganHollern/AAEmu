@@ -3,7 +3,6 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
-using AAEmu.Game.Utils;
 
 using NLog;
 
@@ -75,8 +74,7 @@ public static class MerchantSaleExecutor
             character.Transform.WorldId != npc.Transform.WorldId)
             return MerchantSaleResult.InvalidMerchant;
 
-        // Match CSBuyItemsPacket's existing three metre horizontal interaction range.
-        if (!(MathUtil.CalculateDistance(character.Transform.World.Position, npc.Transform.World.Position) <= 3f))
+        if (!ServiceInteraction.CanUseNpc(character, npc, template => template.Merchant, 3f))
             return MerchantSaleResult.TooFarAway;
 
         var buyback = character.BuyBackItems;
@@ -94,7 +92,6 @@ public static class MerchantSaleExecutor
             ItemContainer container = request.SlotType switch
             {
                 SlotType.Inventory => character.Inventory.Bag,
-                SlotType.Equipment => character.Inventory.Equipment,
                 _ => null
             };
             if (container == null || container.OwnerId != character.Id || container.ContainerType != request.SlotType ||

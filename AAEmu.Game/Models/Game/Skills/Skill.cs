@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
@@ -39,7 +39,7 @@ using NLog;
 
 namespace AAEmu.Game.Models.Game.Skills;
 
-public class Skill
+public partial class Skill
 {
     private static readonly Dictionary<Character, int> s_executingCharacters = [];
 
@@ -104,6 +104,7 @@ public class Skill
     /// Multiplier that can be added as an additional modifier to casting times
     /// </summary>
     public float CastTimeMultiplier { get; set; } = 1f;
+    internal int? BaseCastingTime { get; set; }
 
     /// <summary>Counter for auto-attack animation cycling (incremented each attack)</summary>
     public int AutoAttackIndex { get; set; }
@@ -158,6 +159,12 @@ public class Skill
         }
 
         Cancelled = false;
+        LaborSettled = false;
+        LaborVocationSettled = false;
+        _normalLaborEffectsCompleted = false;
+        _laborCaster = casterCaster;
+        _laborTarget = targetCaster;
+        _laborObject = skillObject;
         OriginalCaster = caster;
         var sourceItem = ZoneSkillRestrictions.GetSourceItem(caster, casterCaster);
         SourceItemTemplateId = sourceItem?.TemplateId ?? 0;
@@ -166,6 +173,11 @@ public class Skill
         {
             Cancelled = true;
             return SkillResult.InvalidSource;
+        }
+        if (caster is Character laborOwner && laborOwner.LaborPower < GetLaborCost(laborOwner))
+        {
+            Cancelled = true;
+            return SkillResult.NeedLaborPower;
         }
         Interlocked.Exchange(ref _achievementUseRecorded, 0);
 
@@ -200,6 +212,9 @@ public class Skill
                 npc.Ai?.OnNoAggroTarget();
             return SkillResult.NoTarget;
         }
+
+        if (!CanSettleLaborEffects(caster, target))
+            return SkillResult.InvalidSkill;
 
         var failedRequirement = SkillRequirementsGameData.Instance.GetFailedRequirement(Template, caster, target);
         if (failedRequirement != 0)
@@ -397,8 +412,9 @@ public class Skill
 
         // Calculate casting time if needed
         var castTime = 0;
-        if (Template.CastingTime > 0)
-            castTime = (int)(unit.CastTimeMul * unit.SkillModifiersCache.ApplyModifiers(this, SkillAttribute.CastTime, Template.CastingTime));
+        var baseCastTime = BaseCastingTime ?? Template.CastingTime;
+        if (baseCastTime > 0)
+            castTime = (int)(unit.CastTimeMul * unit.SkillModifiersCache.ApplyModifiers(this, SkillAttribute.CastTime, baseCastTime));
         castTime = (int)Math.Round(castTime * CastTimeMultiplier);
 
         /*
@@ -878,9 +894,9 @@ public class Skill
         if (caster is Character player && casterCaster is SkillItem castItem)
         {
             var castItemTemplate = ItemManager.Instance.GetTemplate(castItem.ItemTemplateId);
-            if (castItemTemplate.UseSkillAsReagent)
+            if (castItemTemplate?.UseSkillAsReagent == true)
             {
-                var useItem = ItemManager.Instance.GetItemByItemId(castItem.ItemId);
+                var useItem = player.Inventory.GetItemById(castItem.ItemId);
                 if (useItem == null)
                 {
                     Logger.Warn("SkillItem does not exists {0} (templateId: {1})", castItem.ItemId, castItem.ItemTemplateId);
@@ -1102,10 +1118,27 @@ public class Skill
         // The execution lease excludes new trade offers through final material consumption.
         using (execution)
         {
-            if (ItemSocketing.IsSocketingSkill(this))
+            if (_triggeredLaborBatch != null && ReferenceEquals(_triggeredLaborBatch, SkillLaborBatch.Current))
+                ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
+            else if (caster is Character laborOwner && (Template.ConsumeLaborPower > 0 ||
+                     Template.Effects.Any(effect => effect.Template is RecoverExpEffect)))
             {
-                // Keep the final socket check, roll, item mutation and source consumption
-                // together with respect to inventory movement and persistence snapshots.
+                lock (SaveManager.PersistenceSyncRoot)
+                {
+                    if (_normalLaborEffectsCompleted)
+                        return;
+                    _laborCaster = casterCaster;
+                    _laborTarget = targetCaster;
+                    _laborObject = skillObject;
+                    _normalLaborEffectsCompleted = true;
+                    SkillLaborBatch.Run(laborOwner, this, true,
+                        () => ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject));
+                }
+            }
+            else if (casterCaster is SkillItem || ItemSocketing.IsSocketingSkill(this))
+            {
+                // Keep item-source validation, effects and consumption together with
+                // respect to inventory movement and persistence snapshots.
                 lock (SaveManager.PersistenceSyncRoot)
                     ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
             }
@@ -1118,7 +1151,7 @@ public class Skill
     {
         if (caster is not Unit unit)
             return;
-        if (!ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
+        if (!CanSettleLaborEffects(caster, targetSelf) || !ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
             return;
         if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
         {
@@ -1126,6 +1159,16 @@ public class Skill
             return;
         }
         var player = caster as Character;
+        var usedItemTemplateId = casterCaster is SkillItem usedItemSource
+            ? player?.Inventory.GetItemById(usedItemSource.ItemId)?.TemplateId ?? 0
+            : 0;
+        if (_triggeredLaborBatch == null && casterCaster is SkillItem itemSource &&
+            !SkillItemSource.CanUse(ZoneSkillRestrictions.GetSourceItem(caster, casterCaster), caster.ObjId,
+                itemSource, Template, targetCaster, skillObject))
+        {
+            Cancelled = true;
+            return;
+        }
         var possibleTargets = new List<BaseUnit>(); // TODO crutches
         // Get a list of all possible targets
         if (Template.TargetSiege && Template.TargetSelection == SkillTargetSelection.Source && caster is Slave)
@@ -1375,15 +1418,15 @@ public class Skill
         if (lastAppliedEffect != null)
         {
             // Consume the item
-            if (casterCaster is SkillItem castItem && player != null)
+            if (_triggeredLaborBatch == null && casterCaster is SkillItem castItem && player != null)
             {
-                var useItem = ItemManager.Instance.GetItemByItemId(castItem.ItemId);
+                var useItem = player.Inventory.GetItemById(castItem.ItemId);
                 if (lastAppliedEffect.ConsumeSourceItem)
                     consumedItems.Add((useItem, lastAppliedEffect.ConsumeItemCount));
                 else
                 {
                     var castItemTemplate = ItemManager.Instance.GetTemplate(castItem.ItemTemplateId);
-                    if (castItemTemplate.UseSkillAsReagent)
+                    if (castItemTemplate?.UseSkillAsReagent == true)
                         consumedItems.Add((useItem, lastAppliedEffect.ConsumeItemCount));
                 }
             }
@@ -1489,7 +1532,13 @@ public class Skill
                     ? targetCaster
                     : new SkillCastUnitTarget(target.ObjId);
 
-                if (effect.Template is KillNpcWithoutCorpseEffect nsse)
+                if (SkillLaborBatch.Current is { } worldBatch && effect.Template is SpawnEffect or SpawnFishEffect or
+                    NpcSpawnerSpawnEffect or NpcSpawnerDespawnEffect or KillNpcWithoutCorpseEffect)
+                {
+                    worldBatch.AfterCommit(() => effect.Template.Apply(caster, casterCaster, target, thisTargetCaster,
+                        new CastSkill(Template.Id, TlId), new EffectSource(this), skillObject, DateTime.UtcNow));
+                }
+                else if (effect.Template is KillNpcWithoutCorpseEffect nsse)
                 {
                     // для квеста 3478, требуется чтобы caster был Npc
                     // для квеста 3993 должен выполняться эффект, а он прерывался из-за неправильного сравнения!
@@ -1547,11 +1596,14 @@ public class Skill
 
         // TODO Call OnItemUse() moved to the ApplyEffects() method from the effects and add trigger ConditionChance;
         // If the probability of passing the effect is greater than the chance, then run the check on the use of the item for the quest
-        if (!Cancelled && casterCaster is SkillItem skillItem && unit.ConditionChance)
+        if (!Cancelled && _triggeredLaborBatch == null && casterCaster is SkillItem skillItem && unit.ConditionChance)
         {
             if (player == null)
                 return;
-            player.ItemUse(skillItem.ItemId);
+            if (SkillLaborBatch.For(player) is { } batch)
+                batch.AfterCommit(() => player.ItemUseByTemplate(usedItemTemplateId));
+            else
+                player.ItemUse(skillItem.ItemId);
 
             // This fixes the issue where "dropping" a Portable Harpoon Cannon (item 23836) would not consume the cannon
             // Related skill Discard Portable Harpoon Cannon (skill 17735) has no reagents attached
@@ -1559,7 +1611,7 @@ public class Skill
             // but has none attached, consume 1 of the source item instead
             // 2026-07-15 - Added an additional check if the skill has no effects of it's own. This fixed the bug with Wrapped Sugerplum Fairy Music Box (27627) unwrapping
             // TODO: Check if this is intended behaviour, or if this is a bug in the compact.sqlite3 file
-            var item = ItemManager.Instance.GetItemByItemId(skillItem.ItemId);
+            var item = player.Inventory.GetItemById(skillItem.ItemId);
             if (item?.Template.UseSkillAsReagent == true && reagents.Count <= 0 && skillProducts.Count <= 0 && consumedItems.Count <= 0 && Template.Effects.Count == 0)
             {
                 consumedItems.Add((item, 1));
@@ -1616,25 +1668,12 @@ public class Skill
 
         if (caster is Character character)
         {
-            var laborCost = Template.ConsumeLaborPower;
-            // Adjust labor cost if needed
-            if (character.Actability.Actabilities.TryGetValue((byte)Template.ActabilityGroupId, out var actAbility))
-            {
-                laborCost = (int)Math.Round(laborCost * actAbility.GetLaborCostMultiplier());
-            }
-
-            // Lower cap at 1
-            if (Template.ConsumeLaborPower > 0 && laborCost < 1)
-                laborCost = 1;
-
-            if (laborCost > 0 && !Cancelled && character.LaborPower >= laborCost)
-            {
-                // Consume labor only if there is enough of it
-                character.ChangeLabor((short)-laborCost, Template.ActabilityGroupId);
-            }
+            if (Template.ConsumeLaborPower > 0 && !Cancelled && !LaborSettled &&
+                !SkillLaborBatch.Run(character, this, true, () => { }))
+                Cancelled = true;
 
             // Add vocation where needed
-            if (Template.GainLifePoint > 0 && !Cancelled)
+            if (Template.GainLifePoint > 0 && !Cancelled && !LaborVocationSettled)
             {
                 // We multiply the BASE value for server settings, not the total (although I don't think this would affect anything since we don't really have a +1 badge/action buff)
                 character.ChangeGamePoints(GamePointKind.Vocation, (int)Math.Ceiling(AppConfiguration.Instance.World.VocationRate * Template.GainLifePoint));

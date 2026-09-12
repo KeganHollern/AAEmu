@@ -1,4 +1,5 @@
-﻿using AAEmu.Commons.Utils;
+﻿using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Packets.G2C;
@@ -294,14 +295,24 @@ public class Inventory
     private bool SplitOrMoveItemLocked(ItemTaskType taskType, ulong fromItemId, SlotType fromType, byte fromSlot,
         ulong toItemId, SlotType toType, byte toSlot, int count)
     {
-        var fromItem = ItemManager.Instance.GetItemByItemId(fromItemId);
+        if (fromType is not (SlotType.Inventory or SlotType.Equipment or SlotType.Bank) ||
+            toType is not (SlotType.Inventory or SlotType.Equipment or SlotType.Bank))
+            return false;
+
+        if ((fromType == SlotType.Bank || toType == SlotType.Bank) && !ServiceInteraction.CanUseBank(Owner as Character))
+        {
+            Owner.SendErrorMessage(ErrorMessageType.NoInteractionAvailable);
+            return false;
+        }
+
+        var fromItem = GetItemById(fromItemId);
         if (fromItem == null && fromItemId != 0)
         {
             Logger.Error($"SplitOrMoveItem - ItemId {fromItemId} no longer exists, possibly a phantom item.");
             return false;
         }
 
-        var toItem = ItemManager.Instance.GetItemByItemId(toItemId);
+        var toItem = GetItemById(toItemId);
         if (toItem == null && toItemId != 0)
         {
             Logger.Error($"SplitOrMoveItem - ItemId {toItemId} no longer exists, possibly a phantom item.");
@@ -327,9 +338,13 @@ public class Inventory
     {
         Logger.Trace($"SplitOrMoveItem({fromItemId} {fromType}:{fromSlot} => {toItemId} {toType}:{toSlot} - {count})");
 
+        if (sourceContainer == null || targetContainer == null ||
+            sourceContainer.ContainerType != fromType || targetContainer.ContainerType != toType)
+            return false;
+
         // Try to grab the actual source item
-        var fromItem = ItemManager.Instance.GetItemByItemId(fromItemId);
-        if (fromItem == null && fromItemId != 0)
+        var fromItem = sourceContainer.Items.FirstOrDefault(item => item.Id == fromItemId);
+        if (fromItemId != 0 && !IsHeldInContainer(fromItem, sourceContainer))
         {
             Logger.Error($"SplitOrMoveItem - ItemId {fromItemId} no longer exists, possibly a phantom item.");
             return false;
@@ -338,14 +353,14 @@ public class Inventory
         var action = SwapAction.doNothing;
 
         // Try to grab the target item by its itemId
-        var itemInTargetSlot = ItemManager.Instance.GetItemByItemId(toItemId);
+        var itemInTargetSlot = toItemId == 0
+            ? targetContainer.GetItemBySlot(toSlot)
+            : targetContainer.Items.FirstOrDefault(item => item.Id == toItemId);
+        if ((toItemId != 0 || itemInTargetSlot != null) && !IsHeldInContainer(itemInTargetSlot, targetContainer))
+            return false;
         // If no count provided, and we have a source item, use that item's total count instead
         if (count <= 0 && fromItem != null)
             count = fromItem.Count;
-
-        // If target item is not provided (itemId was not found), grab the item in the target slot instead
-        if (itemInTargetSlot == null)
-            itemInTargetSlot = targetContainer.GetItemBySlot(toSlot);
 
         if (TradeReservation.GetReservedCount(fromItem) != 0 ||
             TradeReservation.GetReservedCount(itemInTargetSlot) != 0)
@@ -573,9 +588,15 @@ public class Inventory
                 }
                 break;
             case SwapAction.doSplit:
+                var splitId = ItemManager.Instance.ReserveItemId();
+                if (splitId == 0)
+                    return false;
+                var ni = fromItem.CopyForSplit(splitId, count);
+                ni.OwnerId = targetContainer.OwnerId;
+                if (!ItemManager.Instance.AddItem(ni))
+                    return false;
                 fromItem.Count -= count;
                 itemTasks.Add(new ItemCountUpdate(fromItem, -count));
-                var ni = ItemManager.Instance.Create(fromItem.TemplateId, count, fromItem.Grade, true);
                 ni.SlotType = toType;
                 ni.Slot = toSlot;
                 ni._holdingContainer = targetContainer;
@@ -650,9 +671,9 @@ public class Inventory
 
         // Force-assign item owners for safety
         if (fromItem != null)
-            fromItem.OwnerId = sourceContainer?.OwnerId ?? 0;
+            fromItem.OwnerId = fromItem._holdingContainer?.OwnerId ?? 0;
         if (itemInTargetSlot != null)
-            itemInTargetSlot.OwnerId = targetContainer?.OwnerId ?? 0;
+            itemInTargetSlot.OwnerId = itemInTargetSlot._holdingContainer?.OwnerId ?? 0;
 
         // Send Item manipulation packet 
         if (taskType != ItemTaskType.Invalid && itemTasks.Count > 0)
@@ -680,6 +701,11 @@ public class Inventory
 
         return itemTasks.Count > 0;
     }
+
+    private static bool IsHeldInContainer(Item item, ItemContainer container) =>
+        item != null && item.Id != 0 && item.Count > 0 && ReferenceEquals(item._holdingContainer, container) &&
+        item.OwnerId == container.OwnerId && item.SlotType == container.ContainerType &&
+        container.Items.Count(candidate => candidate.Id == item.Id) == 1;
 
     /// <summary>
     /// Check if player should be able to un-equip their currently equipped glider
@@ -738,6 +764,17 @@ public class Inventory
     /// <returns></returns>
     public bool TryEquipNewBackPack(ItemTaskType taskType, uint itemId, int itemCount, int gradeToAdd = -1, uint crafterId = 0)
     {
+        if (SkillLaborBatch.For(Owner) is { } batch)
+        {
+            var backpack = Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack);
+            if (backpack != null && !batch.Inventory.TryMove(backpack, Bag))
+                return batch.Fail();
+            if (!batch.Inventory.TryGrant(Equipment, itemId, itemCount, out var items, gradeToAdd))
+                return batch.Fail();
+            foreach (var item in items)
+                item.MadeUnitId = crafterId;
+            return true;
+        }
         // Remove player backpack
         if (Owner.Inventory.TakeoffBackpack(taskType, true))
         {
@@ -771,13 +808,17 @@ public class Inventory
     /// <returns></returns>
     public Item GetItemById(ulong id)
     {
+        if (id == 0)
+            return null;
         foreach (var c in _itemContainers)
         {
-            if (c.Key == SlotType.Equipment || c.Key == SlotType.Inventory || c.Key == SlotType.Bank)
+            if ((c.Key == SlotType.Equipment || c.Key == SlotType.Inventory || c.Key == SlotType.Bank) &&
+                c.Value.OwnerId == Owner.Id && ReferenceEquals(c.Value.Owner, Owner))
             {
                 foreach (var i in c.Value.Items)
                 {
-                    if (i != null && i.Id == id)
+                    if (i != null && i.Id == id && i.OwnerId == Owner.Id && i.SlotType == c.Key &&
+                        ReferenceEquals(i._holdingContainer, c.Value))
                         return i;
                 }
             }
@@ -892,6 +933,8 @@ public class Inventory
 
     private void ExpandSlotLocked(SlotType slotType)
     {
+        if (slotType is not (SlotType.Inventory or SlotType.Bank))
+            return;
         var isBank = slotType == SlotType.Bank;
         var step = ((isBank ? Owner.NumBankSlots : Owner.NumInventorySlots) - 50) / 10;
         var expands = CharacterManager.Instance.GetExpands(step);
@@ -1010,6 +1053,8 @@ public class Inventory
 
     private bool SwapCofferItemsLocked(ulong fromItemId, ulong toItemId, SlotType fromSlotType, byte fromSlot, SlotType toSlotType, byte toSlot, ulong dbId)
     {
+        if (!IsCofferEndpointPair(fromSlotType, toSlotType))
+            return false;
         var relatedCoffer = ItemManager.Instance.GetItemContainerByDbId(dbId);
         if (!CanUseCoffer(relatedCoffer))
             return false;
@@ -1047,6 +1092,8 @@ public class Inventory
 
     private bool SplitCofferItemsLocked(int count, ulong fromItemId, ulong toItemId, SlotType fromSlotType, byte fromSlot, SlotType toSlotType, byte toSlot, ulong dbId)
     {
+        if (!IsCofferEndpointPair(fromSlotType, toSlotType))
+            return false;
         var relatedCoffer = ItemManager.Instance.GetItemContainerByDbId(dbId);
         if (!CanUseCoffer(relatedCoffer))
             return false;
@@ -1082,5 +1129,8 @@ public class Inventory
             ReferenceEquals(coffer.ItemContainer, container) && ReferenceEquals(coffer.OpenedBy, character) &&
             coffer.Despawn == DateTime.MinValue && coffer.AllowedToInteract(character));
     }
+
+    private static bool IsCofferEndpointPair(SlotType source, SlotType target) =>
+        source is SlotType.Inventory or SlotType.Trade && target is SlotType.Inventory or SlotType.Trade;
 
 }

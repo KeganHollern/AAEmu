@@ -5,7 +5,6 @@ using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items;
-using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Units;
 
@@ -37,141 +36,98 @@ public class GradeEnchant : SpecialEffectAction
         int value3,
         int value4)
     {
-        if (caster is Character) { Logger.Debug("Special effects: GradeEnchant value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4); }
+        lock (SaveManager.PersistenceSyncRoot)
+            ExecuteLocked(caster, casterObj, targetObj, skill, skillObject, value1, value3);
+    }
 
-        // Get Player
-        if (caster is not Character character || character is null)
+    private static void ExecuteLocked(BaseUnit caster, SkillCaster casterObj, SkillCastTarget targetObj,
+        Skill skill, SkillObject skillObject, int value1, int value3)
+    {
+
+        if (caster is not Character character)
+            return;
+        var batch = SkillLaborBatch.For(character);
+        if (batch == null)
+            return;
+        if (casterObj is not SkillItem scroll || targetObj is not SkillCastItemTarget itemTarget)
         {
+            batch.Fail();
             return;
         }
 
-        // Get Regrade Scroll Item
-        if (casterObj is not SkillItem scroll || scroll is null)
-        {
-            return;
-        }
-
-        // Get Item to regrade
-        if (targetObj is not SkillCastItemTarget itemTarget || itemTarget is null)
-        {
-            return;
-        }
-
-        // Check Charm
-        var useCharm = false;
-        SkillObjectItemGradeEnchantingSupport charm = null;
-        if (skillObject is SkillObjectItemGradeEnchantingSupport)
-        {
-            charm = (SkillObjectItemGradeEnchantingSupport)skillObject;
-            if (charm != null && charm.SupportItemId != 0)
-            {
-                useCharm = true;
-            }
-        }
-
-        var isLucky = value1 != 0;
         var item = character.Inventory.GetItemById(itemTarget.Id);
-        if (item == null)
+        var scrollItem = character.Inventory.GetItemById(scroll.ItemId);
+        if (item == null || item.SlotType is not (SlotType.Inventory or SlotType.Equipment) ||
+            scrollItem == null || scrollItem.SlotType != SlotType.Inventory ||
+            TradeReservation.GetReservedCount(item) != 0 || TradeReservation.GetReservedCount(scrollItem) != 0)
         {
-            // Invalid item
+            batch.Fail();
             return;
         }
         var initialGrade = item.Grade;
-        var gradeTemplate = ItemManager.Instance.GetGradeTemplate(item.Grade);
-
-        var tasks = new List<ItemTask>();
-
-        var cost = GoldCost(gradeTemplate, item, value3);
-        if (cost == -1)
+        var gradeTemplate = ItemManager.Instance.GetGradeTemplate(initialGrade);
+        var cost = gradeTemplate == null ? -1 : GoldCost(gradeTemplate, item, value3);
+        if (cost < 0)
         {
-            // No gold on template, invalid ?
-            return;
-        }
-
-        if (character.Money < cost)
-        {
-            character.SendErrorMessage(ErrorMessageType.NotEnoughMoney);
-            return;
-        }
-
-        if (!character.Inventory.CheckItems(SlotType.Inventory, scroll.ItemTemplateId, 1))
-        {
-            // No scroll
-            character.SendErrorMessage(ErrorMessageType.NotEnoughRequiredItem);
+            batch.Fail();
             return;
         }
 
         ItemGradeEnchantingSupport charmInfo = null;
         Item charmItem = null;
-        if (useCharm)
+        if (skillObject is SkillObjectItemGradeEnchantingSupport { SupportItemId: not 0 } charm)
         {
             charmItem = character.Inventory.GetItemById(charm.SupportItemId);
-            if (charmItem == null)
+            charmInfo = charmItem == null ? null : ItemManager.Instance.GetItemGradEnchantingSupportByItemId(charmItem.TemplateId);
+            if (charmInfo == null || charmItem.SlotType != SlotType.Inventory ||
+                TradeReservation.GetReservedCount(charmItem) != 0 ||
+                (charmInfo.RequireGradeMin != -1 && initialGrade < charmInfo.RequireGradeMin) ||
+                (charmInfo.RequireGradeMax != -1 && initialGrade > charmInfo.RequireGradeMax))
             {
-                return;
-            }
-
-            charmInfo = ItemManager.Instance.GetItemGradEnchantingSupportByItemId(charmItem.TemplateId);
-            if (charmInfo.RequireGradeMin != -1 && item.Grade < charmInfo.RequireGradeMin)
-            {
+                batch.Fail();
                 character.SendErrorMessage(ErrorMessageType.NotEnoughRequiredItem);
                 return;
             }
-
-            if (charmInfo.RequireGradeMax != -1 && item.Grade > charmInfo.RequireGradeMax)
-            {
-                character.SendErrorMessage(ErrorMessageType.GradeEnchantMax);
-                return;
-            }
-
-            // tasksRemove.Add(InventoryHelper.GetTaskAndRemoveItem(character, charmItem, 1));
+        }
+        if (!batch.Inventory.TryChangeMoney(character, -cost))
+        {
+            batch.Fail();
+            character.SendErrorMessage(ErrorMessageType.NotEnoughMoney);
+            return;
+        }
+        if (charmItem != null && !batch.Inventory.TryConsume(character.Inventory.Bag, charmItem, 1))
+        {
+            batch.Fail();
+            return;
         }
 
-        // All seems to be in order, roll item, consume items and send the results
-        var result = RollRegrade(gradeTemplate, item, isLucky, useCharm, charmInfo);
-        if (result == GradeEnchantResult.Break)
+        var (result, grade) = RollRegrade(gradeTemplate, initialGrade, value1 != 0, charmInfo != null, charmInfo);
+        var changed = result == GradeEnchantResult.Break
+            ? batch.Inventory.TryConsume(item._holdingContainer, item, item.Count)
+            : batch.Inventory.TryChangeGrade(item._holdingContainer, item, grade);
+        if (!changed)
         {
-            // Poof
-            item._holdingContainer.RemoveItem(ItemTaskType.GradeEnchant, item, true);
-        }
-        else
-        {
-            // No Poof
-            character.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.GradeEnchant, [new ItemGradeChange(item, item.Grade)], []));
+            batch.Fail();
+            return;
         }
 
-        // Consume
-        character.SubtractMoney(SlotType.Inventory, cost);
-        // TODO: Handled by skill already, do more tests
-        // character.Inventory.PlayerInventory.ConsumeItem(ItemTaskType.GradeEnchant, scroll.ItemTemplateId, 1, character.Inventory.GetItemById(scroll.ItemId));
-        if (useCharm)
-            character.Inventory.Bag.ConsumeItem(ItemTaskType.GradeEnchant, charmItem.TemplateId, 1, charmItem);
-
-        switch (result)
+        // Skill.Apply consumes the authored scroll in the same batch. Publish
+        // the roll only after labor, gold, charm, scroll and item state commit.
+        batch.AfterCommit(() =>
         {
-            case GradeEnchantResult.Success:
-            case GradeEnchantResult.GreatSuccess:
-                character.Achievements?.Increment(CharRecordKind.EnchantItem, item.Grade, 0);
-                break;
-            case GradeEnchantResult.Break:
-            case GradeEnchantResult.Downgrade:
-            case GradeEnchantResult.Fail:
+            if (result is GradeEnchantResult.Success or GradeEnchantResult.GreatSuccess)
+                character.Achievements?.Increment(CharRecordKind.EnchantItem, grade, 0);
+            else
                 character.Achievements?.Increment(CharRecordKind.EnchantFailure, 0, 0);
-                break;
-        }
-
-        character.SendPacket(new SCGradeEnchantResultPacket((byte)result, item, initialGrade, item.Grade));
-        character.BroadcastPacket(new SCSkillEndedPacket(skill.TlId), true);
-
-        // Let the world know if we got lucky enough
-        if (item.Grade >= 8 && (result == GradeEnchantResult.Success || result == GradeEnchantResult.GreatSuccess))
-        {
-            WorldManager.Instance.BroadcastPacketToServer(
-                new SCGradeEnchantBroadcastPacket(character.Name, (byte)result, item, initialGrade, item.Grade));
-        }
+            character.SendPacket(new SCGradeEnchantResultPacket((byte)result, item, initialGrade, grade));
+            character.BroadcastPacket(new SCSkillEndedPacket(skill.TlId), true);
+            if (grade >= 8 && result is GradeEnchantResult.Success or GradeEnchantResult.GreatSuccess)
+                WorldManager.Instance.BroadcastPacketToServer(
+                    new SCGradeEnchantBroadcastPacket(character.Name, (byte)result, item, initialGrade, grade));
+        });
     }
 
-    private static GradeEnchantResult RollRegrade(GradeTemplate gradeTemplate, Item item, bool isLucky, bool useCharm,
+    private static (GradeEnchantResult Result, byte Grade) RollRegrade(GradeTemplate gradeTemplate, byte initialGrade, bool isLucky, bool useCharm,
         ItemGradeEnchantingSupport charmInfo)
     {
         var successRoll = Random.Shared.Next(0, 10000);
@@ -201,59 +157,44 @@ public class GradeEnchant : SpecialEffectAction
             {
                 // TODO : Refactor
                 var increase = useCharm ? 2 + charmInfo.AddGreatSuccessGrade : 2;
-                item.Grade = (byte)GetNextGrade(gradeTemplate, increase).Grade;
-                return GradeEnchantResult.GreatSuccess;
+                var next = GetNextGrade(gradeTemplate, increase);
+                return next == null ? (GradeEnchantResult.Fail, initialGrade) : (GradeEnchantResult.GreatSuccess, (byte)next.Grade);
             }
 
-            item.Grade = (byte)GetNextGrade(gradeTemplate, 1).Grade;
-            return GradeEnchantResult.Success;
+            var nextGrade = GetNextGrade(gradeTemplate, 1);
+            return nextGrade == null ? (GradeEnchantResult.Fail, initialGrade) : (GradeEnchantResult.Success, (byte)nextGrade.Grade);
         }
 
         if (breakRoll < breakChance)
         {
-            return GradeEnchantResult.Break;
+            return (GradeEnchantResult.Break, initialGrade);
         }
 
         if (downgradeRoll < downgradeChance)
         {
+            if (gradeTemplate.EnchantDowngradeMin < 0 || gradeTemplate.EnchantDowngradeMax <= gradeTemplate.EnchantDowngradeMin)
+                return (GradeEnchantResult.Fail, initialGrade);
             var newGrade = (byte)Random.Shared.Next(gradeTemplate.EnchantDowngradeMin, gradeTemplate.EnchantDowngradeMax);
-            if (newGrade < 0)
-            {
-                return GradeEnchantResult.Fail;
-            }
-
-            item.Grade = newGrade;
-            return GradeEnchantResult.Downgrade;
+            return (GradeEnchantResult.Downgrade, newGrade);
         }
 
-        return GradeEnchantResult.Fail;
+        return (GradeEnchantResult.Fail, initialGrade);
     }
 
     private static int GoldCost(GradeTemplate gradeTemplate, Item item, int ItemType)
     {
-        uint slotTypeId = 0;
-        switch (ItemType)
+        uint slotTypeId = (ItemType, item.Template) switch
         {
-            case 1:
-                var weaponTemplate = (WeaponTemplate)item.Template;
-                slotTypeId = weaponTemplate.HoldableTemplate.SlotTypeId;
-                break;
-            case 2:
-                var armorTemplate = (ArmorTemplate)item.Template;
-                slotTypeId = armorTemplate.SlotTemplate.SlotTypeId;
-                break;
-            case 24:
-                var accessoryTemplate = (AccessoryTemplate)item.Template;
-                slotTypeId = accessoryTemplate.SlotTemplate.SlotTypeId;
-                break;
-        }
-
+            (1, WeaponTemplate weapon) => weapon.HoldableTemplate?.SlotTypeId ?? 0,
+            (2, ArmorTemplate armor) => armor.SlotTemplate?.SlotTypeId ?? 0,
+            (24, AccessoryTemplate accessory) => accessory.SlotTemplate?.SlotTypeId ?? 0,
+            _ => 0
+        };
         if (slotTypeId == 0)
-        {
             return -1;
-        }
-
         var enchantingCost = ItemManager.Instance.GetEquipSlotEnchantingCost(slotTypeId);
+        if (enchantingCost == null)
+            return -1;
 
         var itemGrade = gradeTemplate.EnchantCost;
         var itemLevel = item.Template.Level;
@@ -267,9 +208,10 @@ public class GradeEnchant : SpecialEffectAction
         };
         var formula = FormulaManager.Instance.GetFormula((uint)FormulaKind.GradeEnchantCost);
 
-        var cost = (int)formula.Evaluate(parameters);
-
-        return cost;
+        if (formula == null)
+            return -1;
+        var cost = formula.Evaluate(parameters);
+        return double.IsFinite(cost) && cost >= 0 && cost <= int.MaxValue ? (int)cost : -1;
     }
 
     private static GradeTemplate GetNextGrade(GradeTemplate currentGrade, int gradeChange)

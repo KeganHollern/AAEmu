@@ -6,6 +6,43 @@ namespace AAEmu.UnitTests.Game.Models.Game.Char;
 public class CharacterMoneyTests
 {
     [Test]
+    public async Task Transfer_AllSlotPairsAndBoundaryAmounts_PreserveDirectionAndBalances()
+    {
+        foreach (var source in Enum.GetValues<SlotType>())
+        foreach (var destination in Enum.GetValues<SlotType>())
+        foreach (var amount in new[] { int.MinValue, -1, 0, 1, 100, int.MaxValue })
+        foreach (var balance in new[] { 0L, 100L, (long)int.MaxValue, long.MaxValue })
+        {
+            var character = new CharacterMock { Money = balance, Money2 = balance };
+            var validSource = source is SlotType.None or SlotType.Inventory or SlotType.Bank;
+            var validDestination = destination is SlotType.None or SlotType.Inventory or SlotType.Bank;
+            var expected = validSource && validDestination && source != destination && amount >= 0 &&
+                (amount > 0 || source == SlotType.None || destination == SlotType.None) &&
+                (source == SlotType.None || balance >= amount) &&
+                (destination == SlotType.None || balance <= long.MaxValue - amount);
+            var result = character.ChangeMoney(source, destination, amount);
+            await Assert.That(result).IsEqualTo(expected);
+            var moneyDelta = (destination == SlotType.Inventory ? (long)amount : 0) -
+                (source == SlotType.Inventory ? (long)amount : 0);
+            var bankDelta = (destination == SlotType.Bank ? (long)amount : 0) -
+                (source == SlotType.Bank ? (long)amount : 0);
+            await Assert.That(character.Money).IsEqualTo(expected ? balance + moneyDelta : balance);
+            await Assert.That(character.Money2).IsEqualTo(expected ? balance + bankDelta : balance);
+        }
+    }
+
+    [Test]
+    [Arguments(SlotType.Inventory)]
+    [Arguments(SlotType.Bank)]
+    public async Task SignedChangeMoney_MinimumInteger_DoesNotOverflowOrCredit(SlotType wallet)
+    {
+        var character = new CharacterMock { Money = long.MaxValue, Money2 = long.MaxValue };
+        await Assert.That(character.ChangeMoney(wallet, int.MinValue)).IsFalse();
+        await Assert.That(character.Money).IsEqualTo(long.MaxValue);
+        await Assert.That(character.Money2).IsEqualTo(long.MaxValue);
+    }
+
+    [Test]
     [Arguments(SlotType.Inventory)]
     [Arguments(SlotType.Bank)]
     public async Task SubtractMoney_InsufficientFunds_RejectsWithoutChangingEitherWallet(SlotType wallet)

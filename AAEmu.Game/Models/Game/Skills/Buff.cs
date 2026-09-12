@@ -158,37 +158,24 @@ public class Buff
             StopEffectTask(replace);
         }
     }
+    internal void ApplyRefreshState(Buff newBuff, DateTime now)
+    {
+        var remaining = GetTimeLeft();
+        Charge = newBuff.Charge;
+        AbLevel = newBuff.AbLevel;
+        Caster = newBuff.Caster;
+        SkillCaster = newBuff.SkillCaster;
+        StartTime = now;
+        Duration = Template.StackRule == BuffStackRule.Extend
+            ? newBuff.Duration + (int)remaining : newBuff.Duration;
+        EndTime = StartTime.AddMilliseconds(Duration);
+    }
+
     public void OverwriteWith(Buff newBuff)
     {
         lock (_lock)
         {
-            // Capture the remaining time before we update the StartTime.
-            var remaining = GetTimeLeft();
-
-            // Update buff properties from the new buff.
-            this.Charge = newBuff.Charge;
-            this.AbLevel = newBuff.AbLevel;
-            this.Caster = newBuff.Caster;
-            this.SkillCaster = newBuff.SkillCaster;
-
-            // Set StartTime to now.
-            var now = DateTime.UtcNow;
-            StartTime = now;
-
-            // Update Duration based on the stack rule:
-            if (Template.StackRule == BuffStackRule.Extend)
-            {
-                // Extend: new Duration = remaining time (from old timer) + newBuff.Duration.
-                Duration = newBuff.Duration + (int)remaining;
-            }
-            else
-            {
-                // Refresh: new Duration = newBuff.Duration.
-                Duration = newBuff.Duration;
-            }
-
-            // Recalculate EndTime based on the new StartTime and Duration.
-            EndTime = StartTime.AddMilliseconds(Duration);
+            ApplyRefreshState(newBuff, DateTime.UtcNow);
 
             // Remove any tasks associated with this buff using a predicate.
             TaskManager.Instance.RemoveTasks(task =>

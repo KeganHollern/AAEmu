@@ -6,6 +6,8 @@ using AAEmu.Game.Core.Managers.Stream;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Housing;
@@ -206,6 +208,34 @@ public sealed class HousingSaleAuthorizationTests
         await Assert.That(house.OwnerId).IsEqualTo(1u);
         await Assert.That(house.ProtectionEndDate).IsEqualTo(protectionEnd);
         await Assert.That(GetField<List<uint>>(manager, "_removedHousings")).IsEmpty();
+    }
+
+    [Test]
+    public async Task Demolish_OverdueOwner_PreservesHouseAndDeposit()
+    {
+        var previous = AppConfiguration.Instance.World;
+        AppConfiguration.Instance.World = new WorldConfig();
+        try
+        {
+            var manager = CreateManager();
+            var house = CreateHouse();
+            house.ProtectionEndDate = DateTime.UtcNow.AddDays(6);
+            RegisterHouse(manager, house);
+            var owner = CreateCharacter(house.OwnerId);
+            var connection = new GameConnection(null) { ActiveChar = owner };
+            var protectionEnd = house.ProtectionEndDate;
+
+            manager.Demolish(connection, house, false, false);
+
+            await Assert.That(house.OwnerId).IsEqualTo(owner.Id);
+            await Assert.That(house.ProtectionEndDate).IsEqualTo(protectionEnd);
+            await Assert.That(owner.Money).IsEqualTo(1000L);
+            await Assert.That(GetField<List<uint>>(manager, "_removedHousings")).IsEmpty();
+        }
+        finally
+        {
+            AppConfiguration.Instance.World = previous;
+        }
     }
 
     private static House CreateHouse()

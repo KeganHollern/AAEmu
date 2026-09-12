@@ -1,6 +1,4 @@
 ﻿using AAEmu.Commons.Network;
-using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Models.Game.Items;
 
 namespace AAEmu.Game.Models.Game.Skills;
 
@@ -87,27 +85,11 @@ public class SkillCasterUnk1 : SkillCaster
 
 public class SkillItem : SkillCaster
 {
-    private ulong _itemId;
-    public ulong ItemId
-    {
-        get => _itemId;
-        set
-        {
-            if (_itemId == value)
-                return;
-            _itemId = value;
-            if (_itemId > 0)
-            {
-                SkillSourceItem = ItemManager.Instance.GetItemByItemId(value);
-                ItemTemplateId = SkillSourceItem?.TemplateId ?? 0;
-            }
-        }
-    }
-
+    // Packet data only. Resolve the item through the authenticated character at use time.
+    public ulong ItemId { get; set; }
     public uint ItemTemplateId { get; set; }
     public byte Type1 { get; set; }
     public uint Type2 { get; set; }
-    public Item SkillSourceItem { get; private set; }
 
     public SkillItem()
     {

@@ -92,6 +92,7 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
             FactionManager.Instance.SendFactions(Connection.ActiveChar);
             FactionManager.Instance.SendRelations(Connection.ActiveChar);
             ExpeditionManager.Instance.SendExpeditions(Connection.ActiveChar);
+            DominionManager.Instance.SendStates(Connection.ActiveChar);
 
             if (Connection.ActiveChar.Expedition != null)
             {

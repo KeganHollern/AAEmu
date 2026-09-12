@@ -8,8 +8,13 @@ public class CTEmblemStreamUploadStatusPacket() : StreamPacket(CTOffsets.CTEmble
 {
     public override void Read(PacketStream stream)
     {
+        if (stream.LeftBytes != 1)
+        {
+            UccManager.Instance.FailUpload(Connection, AAEmu.Game.Models.Game.ErrorMessageType.UccInvalidData);
+            return;
+        }
         var status = stream.ReadByte();
 
-        UccManager.Instance.ConfirmDefaultUcc(Connection);
+        UccManager.Instance.ConfirmDefaultUcc(Connection, status);
     }
 }

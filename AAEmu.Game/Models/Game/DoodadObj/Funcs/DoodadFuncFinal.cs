@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -44,7 +45,11 @@ public class DoodadFuncFinal : DoodadPhaseFuncTemplate
             {
                 try
                 {
-                    TaskManager.Instance.Cancel(owner.FuncTask);
+                    var oldTask = owner.FuncTask;
+                    if (SkillLaborBatch.Current is { } cancelBatch)
+                        cancelBatch.AfterCommit(() => TaskManager.Instance.Cancel(oldTask));
+                    else
+                        TaskManager.Instance.Cancel(oldTask);
                 }
                 catch (Exception ex)
                 {
@@ -55,7 +60,11 @@ public class DoodadFuncFinal : DoodadPhaseFuncTemplate
             // Создаем и назначаем новую задачу
             // Create and assign a new task
             owner.FuncTask = new DoodadFuncFinalTask(caster, owner, 0, Respawn, delay);
-            TaskManager.Instance.Schedule(owner.FuncTask, TimeSpan.FromMilliseconds(afterTimerDelay)); // After ms remove the object from visibility
+            var task = owner.FuncTask;
+            if (SkillLaborBatch.Current is { } batch)
+                batch.AfterCommit(() => TaskManager.Instance.Schedule(task, TimeSpan.FromMilliseconds(afterTimerDelay)));
+            else
+                TaskManager.Instance.Schedule(task, TimeSpan.FromMilliseconds(afterTimerDelay)); // After ms remove the object from visibility
         }
         else
         {
@@ -68,7 +77,11 @@ public class DoodadFuncFinal : DoodadPhaseFuncTemplate
             {
                 try
                 {
-                    TaskManager.Instance.Cancel(owner.FuncTask);
+                    var oldTask = owner.FuncTask;
+                    if (SkillLaborBatch.Current is { } cancelBatch)
+                        cancelBatch.AfterCommit(() => TaskManager.Instance.Cancel(oldTask));
+                    else
+                        TaskManager.Instance.Cancel(oldTask);
                 }
                 catch (Exception ex)
                 {
@@ -79,7 +92,11 @@ public class DoodadFuncFinal : DoodadPhaseFuncTemplate
             // Создаем и назначаем новую задачу
             // Create and assign a new task
             owner.FuncTask = new DoodadFuncFinalTask(caster, owner, 0, Respawn, delay);
-            TaskManager.Instance.Schedule(owner.FuncTask, TimeSpan.FromMilliseconds(delay));
+            var task = owner.FuncTask;
+            if (SkillLaborBatch.Current is { } batch)
+                batch.AfterCommit(() => TaskManager.Instance.Schedule(task, TimeSpan.FromMilliseconds(delay)));
+            else
+                TaskManager.Instance.Schedule(task, TimeSpan.FromMilliseconds(delay));
         }
 
         return true;

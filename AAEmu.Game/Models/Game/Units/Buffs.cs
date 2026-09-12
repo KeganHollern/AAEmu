@@ -14,7 +14,7 @@ using NLog;
 
 namespace AAEmu.Game.Models.Game.Units;
 
-public class Buffs : IBuffs
+public partial class Buffs : IBuffs
 {
     // ReSharper disable once InconsistentNaming
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
@@ -339,6 +339,13 @@ public class Buffs : IBuffs
 
     public void AddBuff(Buff buff, uint index = 0, int forcedDuration = 0)
     {
+        if (!_laborPreview && SkillLaborBatch.Current is { } batch)
+        {
+            SkillLaborBuffMutation.Stage(batch, this, buff, index, forcedDuration);
+            return;
+        }
+        if (_laborPreview)
+            _laborChangedBuffIds.Add(buff.Template.Id);
         var finalToleranceBuffId = 0u;
         lock (_lock)
         {
@@ -449,53 +456,64 @@ public class Buffs : IBuffs
             }
             if (last != null)
             {
-                last.OverwriteWith(buff);
+                if (_laborPreview)
+                    last.ApplyRefreshState(buff, DateTime.UtcNow);
+                else
+                    last.OverwriteWith(buff);
             }
             else
             {
                 _effects.Add(buff);
-                buff.Triggers.SubscribeEvents();
-                buff.Events.OnBuffStarted(buff, new OnBuffStartedArgs());
-
-                if (buff.Template.BuffId > 0)
-                {
-                    var buffTemplate = SkillManager.Instance.GetBuffTemplate(buff.Template.BuffId);
-                    owner.SkillModifiersCache.AddModifiers(buff.Template.BuffId);
-                    owner.BuffModifiersCache.AddModifiers(buff.Template.BuffId);
-                    owner.CombatBuffs.AddCombatBuffs(buff.Template.BuffId);
-
-                    if (owner is Character { IsRiding: true } character && (buffTemplate.Stun || buffTemplate.Sleep || buffTemplate.Root))
-                    {
-                        var mateList = character.ParentWorld.MateManager.GetActiveMates(character.Id);
-                        foreach (var mate in mateList)
-                        {
-                            // TODO: handle passengers
-                            character.ParentWorld.MateManager.UnMountMate(character, mate.TlId, AttachPointKind.Driver, AttachUnitReason.None);
-                        }
-                    }
-
-                    if (buffTemplate.Stun || buffTemplate.Silence || buffTemplate.Sleep)
-                        owner.InterruptSkills();
-                }
-
-                //if (buff.Duration > 0)
-                if (buff.Duration > 0 || buff.Template.TickEffects.Count > 0)
-                    buff.SetInUse(true, false);
-                else
+                if (_laborPreview)
                 {
                     buff.InUse = true;
                     buff.State = EffectState.Acting;
-                    buff.Template.Start(buff.Caster, owner, buff); // TODO поменять на target
                 }
-
-                // If Owner has buffs that prevent it from doing combat, then remove the aggro for it
-                if (buffIds.Contains((uint)TagsEnum.NoFight) || buffIds.Contains((uint)TagsEnum.Returning))
+                else
                 {
-                    // Unit entered a "safe zone"
-                    if (owner is Unit unit)
+                    buff.Triggers.SubscribeEvents();
+                    buff.Events.OnBuffStarted(buff, new OnBuffStartedArgs());
+
+                    if (buff.Template.BuffId > 0)
                     {
-                        unit.ClearAllAggro();
-                        unit.IsInBattle = false;
+                        var buffTemplate = SkillManager.Instance.GetBuffTemplate(buff.Template.BuffId);
+                        owner.SkillModifiersCache.AddModifiers(buff.Template.BuffId);
+                        owner.BuffModifiersCache.AddModifiers(buff.Template.BuffId);
+                        owner.CombatBuffs.AddCombatBuffs(buff.Template.BuffId);
+
+                        if (owner is Character { IsRiding: true } character && (buffTemplate.Stun || buffTemplate.Sleep || buffTemplate.Root))
+                        {
+                            var mateList = character.ParentWorld.MateManager.GetActiveMates(character.Id);
+                            foreach (var mate in mateList)
+                            {
+                                // TODO: handle passengers
+                                character.ParentWorld.MateManager.UnMountMate(character, mate.TlId, AttachPointKind.Driver, AttachUnitReason.None);
+                            }
+                        }
+
+                        if (buffTemplate.Stun || buffTemplate.Silence || buffTemplate.Sleep)
+                            owner.InterruptSkills();
+                    }
+
+                    //if (buff.Duration > 0)
+                    if (buff.Duration > 0 || buff.Template.TickEffects.Count > 0)
+                        buff.SetInUse(true, false);
+                    else
+                    {
+                        buff.InUse = true;
+                        buff.State = EffectState.Acting;
+                        buff.Template.Start(buff.Caster, owner, buff); // TODO поменять на target
+                    }
+
+                    // If Owner has buffs that prevent it from doing combat, then remove the aggro for it
+                    if (buffIds.Contains((uint)TagsEnum.NoFight) || buffIds.Contains((uint)TagsEnum.Returning))
+                    {
+                        // Unit entered a "safe zone"
+                        if (owner is Unit unit)
+                        {
+                            unit.ClearAllAggro();
+                            unit.IsInBattle = false;
+                        }
                     }
                 }
             }
@@ -617,6 +635,11 @@ public class Buffs : IBuffs
 
     public void RemoveBuffs(BuffKind kind, int count, uint buffTagId = 0)
     {
+        if (!_laborPreview && SkillLaborBatch.Current is { } batch)
+        {
+            SkillLaborBuffMutation.StageRemoval(batch, this, GetOwner(), kind, count, buffTagId);
+            return;
+        }
         var own = GetOwner();
         if (own == null)
             return;
@@ -648,7 +671,13 @@ public class Buffs : IBuffs
                 if (buffTagId > 0 && !taggedBuffs.Contains(buffTemplate.Id))
                     continue;
 
-                buff.Exit();
+                if (_laborPreview)
+                {
+                    _laborChangedBuffIds.Add(buff.Template.Id);
+                    _effects.Remove(buff);
+                }
+                else
+                    buff.Exit();
                 count--;
                 if (count == 0)
                     return;
@@ -886,6 +915,15 @@ public class Buffs : IBuffs
     }
 
     #region Buff Persistence
+    private static bool IsPaidBuff(uint id) => SkillManager.Instance.IsPaidSkillBuff(id) ||
+        PriestBuffGameData.Instance.Offers.Any(offer => offer.BuffId == id && offer.CostPerLevel > 0);
+
+    private static bool IsBotReportBuff(uint id) => id is (uint)BuffConstants.SuspectedUser or
+        (uint)BuffConstants.TransformingIntoPrimeSuspect or (uint)BuffConstants.PrimeSuspect;
+
+    private static bool IsPermanentBotReportBuff(uint id, int duration) =>
+        id == (uint)BuffConstants.SuspectedUser && duration == 0;
+
     /// <summary>
     /// Determines whether a buff should be saved to the database on logout.
     /// </summary>
@@ -901,6 +939,10 @@ public class Buffs : IBuffs
         // Passive buffs are restored via the skill system
         if (buff.Passive)
             return false;
+
+        // The authored report marker is permanent. Other permanent buffs come from race/template data.
+        if (IsPermanentBotReportBuff(buff.Template.Id, buff.Duration))
+            return buff.State != EffectState.Finishing && buff.State != EffectState.Finished;
 
         // Permanent buffs (Duration=0) are race/template buffs
         if (buff.Duration <= 0)
@@ -925,12 +967,17 @@ public class Buffs : IBuffs
         // Filters out short combat debuffs (stuns, bleeds, knockdowns).
         if (buff.Template.SaveRuleId == BuffSaveRuleType.Normal)
         {
-            // Don't save debuffs (combat effects should not persist through logout)
-            if (buff.Template.Kind == BuffKind.Bad)
+            // Authored paid cooldowns can be Bad buffs, such as the four-hour language cooldown.
+            // Keep ordinary combat debuffs excluded. The authored save rule and duration still apply.
+            if (buff.Template.Kind == BuffKind.Bad && !IsBotReportBuff(buff.Template.Id) &&
+                !IsPaidBuff(buff.Template.Id))
                 return false;
 
-            // Very short buffs (< 60s) are combat abilities, not consumables
-            if (buff.Duration < MinimumBuffDurationToSave)
+            // A restored paid cooldown can have less than one minute left.
+            // Use its authored duration to distinguish it from a short combat buff.
+            var paidLongBuff = IsPaidBuff(buff.Template.Id) &&
+                buff.Template.GetDuration(buff.AbLevel) >= MinimumBuffDurationToSave;
+            if (buff.Duration < MinimumBuffDurationToSave && !IsBotReportBuff(buff.Template.Id) && !paidLongBuff)
                 return false;
 
             return true;
@@ -943,7 +990,11 @@ public class Buffs : IBuffs
     /// Saves all persistable active buffs to the database.
     /// Called during Character.Save().
     /// </summary>
-    public void SaveActiveBuffs(MySqlConnection connection, MySqlTransaction transaction, uint characterId)
+    public void SaveActiveBuffs(MySqlConnection connection, MySqlTransaction transaction, uint characterId) =>
+        SaveActiveBuffs(connection, transaction, characterId, null);
+
+    internal void SaveActiveBuffs(MySqlConnection connection, MySqlTransaction transaction, uint characterId,
+        IReadOnlySet<uint> changedBuffIds)
     {
         try
         {
@@ -954,6 +1005,13 @@ public class Buffs : IBuffs
                 deleteCmd.Transaction = transaction;
                 deleteCmd.CommandText = "DELETE FROM `character_active_buffs` WHERE `character_id` = @characterId";
                 deleteCmd.Parameters.AddWithValue("@characterId", characterId);
+                if (changedBuffIds != null)
+                {
+                    var parameters = changedBuffIds.Select((id, index) => (id, name: "@buffId" + index)).ToArray();
+                    deleteCmd.CommandText += " AND `buff_id` IN (" + string.Join(",", parameters.Select(value => value.name)) + ")";
+                    foreach (var (id, name) in parameters)
+                        deleteCmd.Parameters.AddWithValue(name, id);
+                }
                 deleteCmd.ExecuteNonQuery();
             }
 
@@ -967,11 +1025,12 @@ public class Buffs : IBuffs
             var savedCount = 0;
             foreach (var buff in effects)
             {
-                if (!ShouldPersistBuff(buff))
+                if (!ShouldPersistBuff(buff) || (changedBuffIds != null && !changedBuffIds.Contains(buff.Template.Id)))
                     continue;
 
-                var timeLeft = (int)buff.GetTimeLeft();
-                if (timeLeft <= 0)
+                var permanent = IsPermanentBotReportBuff(buff.Template.Id, buff.Duration);
+                var timeLeft = permanent ? 0 : (int)buff.GetTimeLeft();
+                if (timeLeft <= 0 && !permanent)
                     continue;
 
                 using var cmd = connection.CreateCommand();
@@ -1009,6 +1068,7 @@ public class Buffs : IBuffs
         catch (Exception ex)
         {
             Logger.Error(ex, $"Failed to save active buffs for character {characterId}");
+            throw;
         }
     }
 
@@ -1022,6 +1082,12 @@ public class Buffs : IBuffs
         try
         {
             var restoredCount = 0;
+            var retainedBuffIds = new HashSet<uint>
+            {
+                (uint)BuffConstants.SuspectedUser,
+                (uint)BuffConstants.TransformingIntoPrimeSuspect,
+                (uint)BuffConstants.PrimeSuspect
+            };
 
             using var connection = MySQL.CreateConnection();
             using (var cmd = connection.CreateCommand())
@@ -1061,9 +1127,16 @@ public class Buffs : IBuffs
                         continue;
                     }
 
-                    // Calculate remaining time
+                    if (buffTemplate.SaveRuleId != BuffSaveRuleType.DontSave &&
+                        IsPaidBuff(row.buffId))
+                        retainedBuffIds.Add(row.buffId);
+
+                    // The permanent report marker has no countdown.
+                    var permanent = IsPermanentBotReportBuff(row.buffId, row.duration) && buffTemplate.Duration == 0;
                     int remainingMs;
-                    if (row.realTime)
+                    if (permanent)
+                        remainingMs = 0;
+                    else if (row.realTime)
                     {
                         // RealTime: subtract offline time
                         var offlineMs = (int)(DateTime.UtcNow - row.savedAt).TotalMilliseconds;
@@ -1081,7 +1154,7 @@ public class Buffs : IBuffs
                         remainingMs = row.timeLeft;
                     }
 
-                    if (remainingMs <= 0)
+                    if (remainingMs <= 0 && !permanent)
                         continue;
 
                     // Check if buff is already active (e.g. from passive skills)
@@ -1108,12 +1181,17 @@ public class Buffs : IBuffs
                 }
             }
 
-            // Delete saved buffs — they are now active again
+            // Restore does not consume a paid buff. Keep its last durable checkpoint if the
+            // process stops again before autosave. Later character/skill checkpoints replace it.
             using (var deleteCmd = connection.CreateCommand())
             {
+                var retained = retainedBuffIds.Order().Select((id, index) => (id, name: "@retained" + index)).ToArray();
                 deleteCmd.CommandText =
-                    "DELETE FROM `character_active_buffs` WHERE `character_id` = @characterId";
+                    "DELETE FROM `character_active_buffs` WHERE `character_id` = @characterId " +
+                    "AND `buff_id` NOT IN (" + string.Join(",", retained.Select(value => value.name)) + ")";
                 deleteCmd.Parameters.AddWithValue("@characterId", character.Id);
+                foreach (var (id, name) in retained)
+                    deleteCmd.Parameters.AddWithValue(name, id);
                 deleteCmd.ExecuteNonQuery();
             }
 

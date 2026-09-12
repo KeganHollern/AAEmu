@@ -66,6 +66,7 @@ public sealed class MerchantSaleTests
             NumBankSlots = 10, ParentWorld = _world, Connection = new GameConnection(_session)
         };
         _character.Connection.ActiveChar = _character;
+        _character.CurrentInteractionObject = _merchant;
         _allItems = [];
         _deleted = [];
         _grades = new Dictionary<int, GradeTemplate> { [0] = new() { Grade = 0, RefundMultiplier = 100 } };
@@ -129,7 +130,7 @@ public sealed class MerchantSaleTests
     public async Task Packet_ValidMixedStacks_PaysTruncatedPerUnitRefundOnceAndKeepsExactItems()
     {
         var first = AddItem(1, _bag, 0, count: 2, refund: 3);
-        var second = AddItem(2, _equipment, 0, refund: 7);
+        var second = AddItem(2, _bag, 1, refund: 7);
         first.Detail = [3, 4];
         _grades[0].RefundMultiplier = 150;
         var observations = new List<(long Money, int Bag, int Equipment, int Buyback, int Deleted)>();
@@ -154,7 +155,7 @@ public sealed class MerchantSaleTests
         await Assert.That(body.ReadByte()).IsEqualTo((byte)ItemTaskType.StoreSell);
         await Assert.That(body.ReadByte()).IsEqualTo((byte)3);
         ReadRemove(body, first.Id, SlotType.Inventory, 0);
-        ReadRemove(body, second.Id, SlotType.Equipment, 0);
+        ReadRemove(body, second.Id, SlotType.Inventory, 1);
         await Assert.That(body.ReadByte()).IsEqualTo((byte)ItemAction.ChangeMoneyAmount);
         await Assert.That(body.ReadInt32()).IsEqualTo(18);
     }
@@ -450,6 +451,39 @@ public sealed class MerchantSaleTests
         await Assert.That(_session.Packets.Count).IsEqualTo(9);
         await Assert.That(_session.Packets.Sum(packet => (int)packet[9])).IsEqualTo(256);
         await Assert.That(_session.Packets.All(packet => packet[9] <= 30)).IsTrue();
+    }
+
+    [Test]
+    public async Task Sale_NoOpenInteraction_LeavesItemAndMoneyUntouched()
+    {
+        var item = AddItem(1, _bag, 0);
+        _character.CurrentInteractionObject = null;
+        SendPacket([Request(item)]);
+        await AssertSingleError(ErrorMessageType.TooFarAway);
+        await Assert.That(_character.Money).IsEqualTo(100L);
+        await Assert.That(_bag.Items.Single()).IsSameReferenceAs(item);
+    }
+
+    [Test]
+    public async Task Sale_EquippedItem_RejectsTheEntireBatch()
+    {
+        var bag = AddItem(1, _bag, 0);
+        var equipped = AddItem(2, _equipment, 0);
+        SendPacket([Request(bag), Request(equipped)]);
+        await AssertSingleError(ErrorMessageType.StoreInvalidItem);
+        await Assert.That(_character.Money).IsEqualTo(100L);
+        await Assert.That(_bag.Items.Single()).IsSameReferenceAs(bag);
+        await Assert.That(_equipment.Items.Single()).IsSameReferenceAs(equipped);
+    }
+
+    [Test]
+    public async Task Sale_MerchantOnAnotherFloor_RejectsOutsideThreeDimensionalRange()
+    {
+        var item = AddItem(1, _bag, 0);
+        _merchant.Transform.Local.SetPosition(0, 0, 3.01f);
+        SendPacket([Request(item)]);
+        await AssertSingleError(ErrorMessageType.TooFarAway);
+        await Assert.That(_character.Money).IsEqualTo(100L);
     }
 
     private MerchantSaleResult Sell(Item item) =>

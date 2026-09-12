@@ -461,4 +461,28 @@ public sealed class Shipyard : Unit
             }
         }
     }
+
+    internal Action CaptureConstructionState()
+    {
+        var step = _currentStep;
+        var baseAction = _baseAction;
+        var numAction = _numAction;
+        var modelId = ModelId;
+        var dirty = _isDirty;
+        var dataStep = ShipyardData.Step;
+        var dataActions = ShipyardData.Actions;
+        return () =>
+        {
+            lock (_lock)
+            {
+                _currentStep = step;
+                _baseAction = baseAction;
+                _numAction = numAction;
+                ModelId = modelId;
+                _isDirty = dirty;
+                ShipyardData.Step = dataStep;
+                ShipyardData.Actions = dataActions;
+            }
+        };
+    }
 }

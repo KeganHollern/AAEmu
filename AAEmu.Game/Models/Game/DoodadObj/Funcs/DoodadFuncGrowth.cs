@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
@@ -17,7 +18,7 @@ public class DoodadFuncGrowth : DoodadPhaseFuncTemplate
     public override bool Use(BaseUnit caster, Doodad owner)
     {
         // TODO: Add doodad scaling transformation
-        owner.Scale = StartScale / 1000f;
+        owner.SetScale(StartScale / 1000f);
         var customDelay = Delay / AppConfiguration.Instance.World.GrowthRate; // decrease delay
         if (ZoneManager.Instance.DoodadHasMatchingClimate(owner))
             customDelay = customDelay * 0.73f;
@@ -49,7 +50,11 @@ public class DoodadFuncGrowth : DoodadPhaseFuncTemplate
         {
             try
             {
-                TaskManager.Instance.Cancel(owner.FuncTask);
+                var oldTask = owner.FuncTask;
+                if (SkillLaborBatch.Current is { } cancelBatch)
+                    cancelBatch.AfterCommit(() => TaskManager.Instance.Cancel(oldTask));
+                else
+                    TaskManager.Instance.Cancel(oldTask);
             }
             catch (Exception ex)
             {
@@ -60,7 +65,11 @@ public class DoodadFuncGrowth : DoodadPhaseFuncTemplate
         // Создаем и назначаем новую задачу
         // Create and assign a new task
         owner.FuncTask = new DoodadFuncGrowthTask(caster, owner, 0, NextPhase, EndScale / 1000f);
-        TaskManager.Instance.Schedule(owner.FuncTask, TimeSpan.FromMilliseconds(timeLeft));
+        var task = owner.FuncTask;
+        if (SkillLaborBatch.Current is { } batch)
+            batch.AfterCommit(() => TaskManager.Instance.Schedule(task, TimeSpan.FromMilliseconds(timeLeft)));
+        else
+            TaskManager.Instance.Schedule(task, TimeSpan.FromMilliseconds(timeLeft));
 
         return false;
     }

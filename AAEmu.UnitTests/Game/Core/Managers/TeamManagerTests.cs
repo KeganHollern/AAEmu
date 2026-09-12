@@ -36,6 +36,26 @@ public class TeamManagerTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RecipientBlock_PreventsDirectAndPendingInvitation(bool alreadyInvited)
+    {
+        var manager = CreateManager();
+        var owner = CreateCharacter(1, "Owner");
+        var target = CreateCharacter(2, "Target");
+        if (alreadyInvited)
+            manager.AskToJoin(owner, target.Name, 0, true, target);
+        target.Blocked = new CharacterBlocked(target);
+        target.Blocked.BlockedList[owner.Id] = new BlockedTemplate { Owner = target.Id, BlockedId = owner.Id };
+        if (alreadyInvited)
+            manager.ReplyToJoinTeam(target, 0, true, owner.Id, false, target.Name, false);
+        else
+            manager.AskToJoin(owner, target.Name, 0, true, target);
+        await Assert.That(GetActiveInvitations(manager)).IsEmpty();
+        await Assert.That(GetActiveTeams(manager)).IsEmpty();
+    }
+
+    [Test]
     public async Task AskToJoin_TargetInActiveTeam_DoesNotCreateInvitation()
     {
         var manager = CreateManager();

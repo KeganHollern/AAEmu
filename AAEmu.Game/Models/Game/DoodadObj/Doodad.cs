@@ -1,4 +1,6 @@
-﻿using AAEmu.Commons.Network;
+﻿using MySql.Data.MySqlClient;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
@@ -131,6 +133,7 @@ public class Doodad : BaseUnit
             {
                 if (value != _funcGroupId)
                 {
+                    SkillLaborBatch.Current?.TrackDoodad(this);
                     _funcGroupId = value;
                     PhaseTime = DateTime.UtcNow; // Save PhaseTime at start of new phase (group)
                     if (IsPersistent)
@@ -409,6 +412,7 @@ public class Doodad : BaseUnit
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            SkillLaborBatch.For(caster as Character)?.TrackDoodad(this);
             UseLocked(caster, startedSkillId, funcGroupId);
         }
     }
@@ -548,6 +552,7 @@ public class Doodad : BaseUnit
         {
             if (_deleted || Despawn > DateTime.MinValue)
                 return true;
+            SkillLaborBatch.For(caster as Character)?.TrackDoodad(this);
             return DoFuncLocked(caster, skillId, func);
         }
     }
@@ -580,7 +585,11 @@ public class Doodad : BaseUnit
                 {
                     if (FuncTask != null)
                     {
-                        FuncTask.Cancel();
+                        var oldTask = FuncTask;
+                        if (SkillLaborBatch.Current is { } batch)
+                            batch.AfterCommit(() => oldTask.Cancel());
+                        else
+                            oldTask.Cancel();
                         FuncTask = null;
                         if (Logger.IsTraceEnabled)
                             Logger.Trace($"DoFunc::DoodadFuncTimer: The current timer has been canceled. TemplateId {TemplateId}, ObjId {ObjId}, nextPhase {func.NextPhase}");
@@ -658,7 +667,11 @@ public class Doodad : BaseUnit
 
             if (FuncTask != null)
             {
-                FuncTask.Cancel();
+                var oldTask = FuncTask;
+                if (SkillLaborBatch.Current is { } batch)
+                    batch.AfterCommit(() => oldTask.Cancel());
+                else
+                    oldTask.Cancel();
                 FuncTask = null;
                 if (Logger.IsTraceEnabled)
                     Logger.Trace("DoPhaseFuncs:DoodadFuncTimer: The current timer has been canceled.");
@@ -730,6 +743,7 @@ public class Doodad : BaseUnit
         {
             if (_deleted || Despawn > DateTime.MinValue)
                 return true;
+            SkillLaborBatch.For(caster as Character)?.TrackDoodad(this);
             return DoChangePhaseLocked(caster, nextPhase, suppressTodPhaseOverride);
         }
     }
@@ -757,6 +771,8 @@ public class Doodad : BaseUnit
         // Post-phase work must use a live doodad. RatioRespawn can replace and delete this instance.
         if (!_deleted)
         {
+            void NotifyPhase()
+            {
             BroadcastPacket(new SCDoodadPhaseChangedPacket(this), true); // change the phase to display doodad
 
             // aaemu-cluster#92 / #95: re-arm the per-instance DoodadFuncAreaTrigger sensors for the phase
@@ -764,6 +780,11 @@ public class Doodad : BaseUnit
             // Null-conditional because the initial InitDoodad settle can run before ParentWorld is assigned.
             ParentWorld?.DoodadAreaTriggers.OnDoodadPhaseChanged(this);
             ParentWorld?.RaiseDoodadPhaseChanged(this, FuncGroupId);
+            }
+            if (SkillLaborBatch.Current is { } batch)
+                batch.AfterCommit(NotifyPhase);
+            else
+                NotifyPhase();
         }
 
         return stop; // if true, it did not pass the check for the quest (it must be aborted)
@@ -826,14 +847,7 @@ public class Doodad : BaseUnit
     /// </summary>
     public void InitDoodad()
     {
-        // Apply Climate settings
-        var growTime = Template.TotalDoodadGrowthTime / AppConfiguration.Instance.World.GrowthRate;
-        if (Template.TotalDoodadGrowthTime > 0 && ZoneManager.Instance.DoodadHasMatchingClimate(this))
-        {
-            growTime = (int)Math.Round(growTime * 0.73f);
-        }
-
-        GrowthTime = PlantTime.AddMilliseconds(growTime);
+        InitializeGrowthTime();
 
         // Actually do the phase change
         var unit = ParentWorld.GetUnit(OwnerObjId);
@@ -842,6 +856,18 @@ public class Doodad : BaseUnit
             settledPhase = ResolveTodPhase(FuncGroupId, TimeManager.Instance.GetTime);
 
         ApplyTodPhase(unit, (int)settledPhase);
+    }
+
+    internal void InitializeGrowthTime()
+    {
+        // Apply Climate settings
+        var growTime = Template.TotalDoodadGrowthTime / AppConfiguration.Instance.World.GrowthRate;
+        if (Template.TotalDoodadGrowthTime > 0 && ZoneManager.Instance.DoodadHasMatchingClimate(this))
+        {
+            growTime = (int)Math.Round(growTime * 0.73f);
+        }
+
+        GrowthTime = PlantTime.AddMilliseconds(growTime);
     }
 
     /// <summary>
@@ -1050,6 +1076,11 @@ public class Doodad : BaseUnit
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            if (SkillLaborBatch.Current is { } batch)
+            {
+                batch.DeleteDoodad(this, DeleteLocked);
+                return;
+            }
             DeleteLocked();
         }
     }
@@ -1111,6 +1142,11 @@ public class Doodad : BaseUnit
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            if (SkillLaborBatch.Current is { } batch)
+            {
+                batch.TrackDoodad(this);
+                return;
+            }
             SaveLocked();
         }
     }
@@ -1125,6 +1161,78 @@ public class Doodad : BaseUnit
         DbId = DbId > 0 ? DbId : DoodadIdManager.Instance.GetNextId();
         using var connection = MySQL.CreateConnection();
         using var command = connection.CreateCommand();
+        WriteDoodad(command);
+    }
+
+    internal void MarkLaborDeletion(bool deleted) => _deleted = deleted;
+
+    internal Action CaptureLaborState()
+    {
+        var phase = _funcGroupId;
+        var phaseTime = PhaseTime;
+        var growthTime = GrowthTime;
+        var funcs = CurrentFuncs;
+        var phaseFuncs = CurrentPhaseFuncs;
+        var triggers = CurrentToDTriggers.ToArray();
+        var task = FuncTask;
+        var next = ToNextPhase;
+        var overridePhase = OverridePhase;
+        var overrideTime = OverridePhaseTime;
+        var deleted = _deleted;
+        var data = Data;
+        var cumulative = CumulativePhaseRatio;
+        var itemId = ItemId;
+        var itemTemplateId = ItemTemplateId;
+        var ownerId = OwnerId;
+        var ownerDbId = OwnerDbId;
+        var scale = _scale;
+        return () =>
+        {
+            if (FuncTask != null && !ReferenceEquals(FuncTask, task))
+                FuncTask.Cancel();
+            _funcGroupId = phase;
+            PhaseTime = phaseTime;
+            GrowthTime = growthTime;
+            CurrentFuncs = funcs;
+            CurrentPhaseFuncs = phaseFuncs;
+            CurrentToDTriggers.Clear();
+            foreach (var (time, destination) in triggers)
+                CurrentToDTriggers.TryAdd(time, destination);
+            FuncTask = task;
+            ToNextPhase = next;
+            OverridePhase = overridePhase;
+            OverridePhaseTime = overrideTime;
+            _deleted = deleted;
+            Data = data;
+            CumulativePhaseRatio = cumulative;
+            ItemId = itemId;
+            ItemTemplateId = itemTemplateId;
+            OwnerId = ownerId;
+            OwnerDbId = ownerDbId;
+            _scale = scale;
+        };
+    }
+
+    internal void SaveLaborState(PersistenceSaveContext context, bool deleted)
+    {
+        if (!IsPersistent)
+            return;
+        if (DbId == 0)
+            throw new InvalidOperationException("A labor skill cannot persist a new doodad implicitly.");
+        using var command = context.Connection.CreateCommand();
+        command.Transaction = context.Transaction;
+        if (deleted)
+        {
+            command.CommandText = "DELETE FROM doodads WHERE id=@id";
+            command.Parameters.AddWithValue("@id", DbId);
+            command.ExecuteNonQuery();
+        }
+        else
+            WriteDoodad(command);
+    }
+
+    private void WriteDoodad(MySqlCommand command)
+    {
         // Lookup Parent
         var parentDoodadId = 0u;
         if (Transform?.Parent?.GameObject is Doodad { DbId: > 0 } pDoodad)

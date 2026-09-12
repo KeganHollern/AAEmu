@@ -364,7 +364,7 @@ public sealed class TradePersistenceTests
             _sessions.Add(id, session);
             var character = new TestCharacter
             {
-                Id = id, ObjId = id, AccountId = id, Name = $"Trade{id}", Money = 100, Hp = 100,
+                Id = id, ObjId = id, AccountId = id, Name = $"Trade{id}", Money = 100, Hp = 100, Level = 50,
                 NumInventorySlots = 10, NumBankSlots = 10, ParentWorld = _world,
                 Faction = new SystemFaction { Id = FactionsEnum.NuiaAlliance, MotherId = FactionsEnum.NuiaAlliance },
                 FactionName = "", Slots = [], Created = DateTime.UtcNow,

@@ -6,6 +6,7 @@ using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.Skills;
 
 namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
 
@@ -25,7 +26,10 @@ public class DoodadFuncConvertFish : DoodadFuncTemplate
         }
         // Failed exchanges have already restored the pack and released the prepared trophy.
         if (error != ErrorMessageType.NoErrorMessage)
+        {
+            SkillLaborBatch.For(character)?.Fail();
             character.SendErrorMessage(error);
+        }
     }
 
     private ErrorMessageType ValidateInteraction(Character character, Doodad owner, uint skillId)
@@ -54,7 +58,9 @@ public class DoodadFuncConvertFish : DoodadFuncTemplate
             !ItemManager.Instance.TryGetFishConversion(Id, backpack.TemplateId, out var output))
             return ErrorMessageType.StoreBackpackNogoods;
 
-        using var mutation = new InventoryMutation(ItemTaskType.Fishing);
+        var batch = SkillLaborBatch.For(character);
+        using var localMutation = batch == null ? new InventoryMutation(ItemTaskType.Fishing) : null;
+        var mutation = batch?.Inventory ?? localMutation;
         var trophy = FishDetailsGameData.Instance.CreateTrophy(backpack.TemplateId, output.ItemId);
         if (trophy == null)
             return ErrorMessageType.StoreBackpackNogoods;
@@ -62,6 +68,6 @@ public class DoodadFuncConvertFish : DoodadFuncTemplate
             return ErrorMessageType.BagFull;
         if (!mutation.TryConsume(character.Equipment, backpack, 1))
             return ErrorMessageType.StoreBackpackNogoods;
-        return mutation.Complete() ? ErrorMessageType.NoErrorMessage : ErrorMessageType.StoreBackpackNogoods;
+        return batch != null || mutation.Complete() ? ErrorMessageType.NoErrorMessage : ErrorMessageType.StoreBackpackNogoods;
     }
 }
