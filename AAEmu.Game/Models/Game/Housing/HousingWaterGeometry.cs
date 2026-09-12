@@ -2,6 +2,7 @@ using System.Numerics;
 
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.CryEngine.Objects;
+using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.Game.Models.Game.Housing;
@@ -71,6 +72,13 @@ public sealed class HousingWaterGeometry
 
     /// <summary>Native3012b2e0 returns the greater of ocean and the selected physics-plane projection.</summary>
     public float GetWaterLevel(Vector3 point, float oceanLevel)
+        => GetWaterLevel(point, oceanLevel, []);
+
+    /// <summary>
+    /// Adds active prefab water after static world registration, in caller-supplied oldest-to-newest order.
+    /// Both sources share the native four-result limit. Dynamic records never change the static cache.
+    /// </summary>
+    public float GetWaterLevel(Vector3 point, float oceanLevel, IReadOnlyList<CryWaterVolumeInstance> dynamicInstances)
     {
         if (!Finite(point) || !float.IsFinite(oceanLevel))
             return float.NaN;
@@ -78,6 +86,34 @@ public sealed class HousingWaterGeometry
         // buoyancy and clears its medium marker. Later matches append, up to 4 result slots.
         var level = oceanLevel;
         var count = 0;
+        for (var instanceIndex = dynamicInstances.Count - 1; instanceIndex >= 0 && count < 4; instanceIndex--)
+        {
+            var instance = dynamicInstances[instanceIndex];
+            for (var child = instance.Volumes.Count - 1; child >= 0 && count < 4; child--)
+            {
+                var water = instance.Volumes[child];
+                var points = water.GetPhysicsContour(instance.Transform, instance.HeightOffset, out var normal);
+                if (points.Length == 0)
+                    continue;
+                // Area setters orient the projected contour counter-clockwise before CreateArea.
+                var area = 0d;
+                for (var i = 0; i < points.Length; i++)
+                {
+                    var next = points[(i + 1) % points.Length];
+                    area += (double)points[i].X * next.Y - (double)next.X * points[i].Y;
+                }
+                if (area == 0)
+                    continue;
+                if (area < 0)
+                    Array.Reverse(points);
+                var volume = new Volume(points, normal, MathF.Min(0, -water.Depth - instance.HeightOffset), false);
+                if (volume.TryGetSurface(point, out var surface))
+                {
+                    level = MathF.Max(level, surface);
+                    count++;
+                }
+            }
+        }
         for (var i = _volumes.Count - 1; i >= 0 && count < 4; i--)
             if (_volumes[i].TryGetSurface(point, out var surface))
             {

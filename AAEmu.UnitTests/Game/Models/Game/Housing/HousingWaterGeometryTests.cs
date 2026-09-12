@@ -154,7 +154,7 @@ public sealed class HousingWaterGeometryTests
         await Assert.That(geometry.GetWaterLevel(new(21000, 32800, 297), 0)).IsEqualTo(298f);
     }
 
-    private static ObjectDataType11Water Water(ulong id = 1, float surface = 10, float size = 4,
+    internal static ObjectDataType11Water Water(ulong id = 1, float surface = 10, float size = 4,
         WaterObjectVolumeType type = WaterObjectVolumeType.Area, Vector3? normal = null, bool rawPhysics = false,
         float depth = 5)
     {

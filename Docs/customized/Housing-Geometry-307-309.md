@@ -109,6 +109,11 @@ It does not need extracted assets in the source repository.
 It reads CGF versions `0x744` and `0x745`, node version `0x823`, and compiled mesh version `0x800`.
 The node hierarchy supplies transforms. CGF node translations use centimeters.
 Prefab XML supplies local position, scale, and quaternions in `w,x,y,z` order.
+Native `390ff370` reads the Comment named origin. Native `39110b40` subtracts
+the final origin position from every child's translation after the complete
+object list loads. This rebase applies to model bounds, physical parts,
+animation poses, helpers, and WaterVolume children. The origin comment does
+not become a helper object.
 The resolver preserves prefab comments such as the house connector metadata.
 
 The exact `cry3dengine.dll` has SHA-256
@@ -281,7 +286,9 @@ That getter returns a reset box, so these objects do not extend the model bounds
 Comments and sounds do not supply solid geometry.
 
 The world fixture includes 46 prefab paths without a solid model.
-The resolver returns their empty part list and sets `HasModelBounds` to false.
+The resolver returns their empty part list. Effects without native bounds set
+`HasModelBounds` to false. WaterVolume children supply native model bounds,
+even though they do not supply a solid collision part.
 It also excludes a missing animation child from the bounds of other valid children.
 Placement candidates still need model bounds.
 An empty effect in another part of the world does not cause a model-read failure for all housing queries.

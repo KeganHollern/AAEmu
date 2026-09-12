@@ -101,9 +101,11 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
             string.Equals((string)x.Attribute("Name"), name, StringComparison.OrdinalIgnoreCase));
         if (prefab == null)
             return EmptyModel();
+        var origin = ReadPrefabOrigin(prefab);
         var parts = new List<CryGeometryPart>();
         var helpers = new List<CryGeometryHelper>();
         var poses = new List<CryGeometryPoseRequirement>();
+        var waterVolumes = LoadWater("prefab://" + path);
         var animatedCollision = false;
         CryBounds? bounds = null;
         var objects = prefab.Element("Objects")?.Elements("Object") ?? [];
@@ -112,10 +114,19 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
         {
             objectIndex++;
             var kind = (string)obj.Attribute("Type");
+            if (kind == "WaterVolume")
+            {
+                var waterBounds = ReadWaterVolume(obj, origin)?.GetModelBounds(Matrix4x4.Identity);
+                if (waterBounds.HasValue)
+                    bounds = bounds?.Union(waterBounds.Value) ?? waterBounds;
+                continue;
+            }
             if (kind == "Comment")
             {
+                if ((string)obj.Attribute("Name") == "origin")
+                    continue;
                 helpers.Add(new CryGeometryHelper((string)obj.Attribute("Name") ?? "",
-                    (string)obj.Attribute("Comment") ?? "", ReadPrefabTransform(obj)));
+                    (string)obj.Attribute("Comment") ?? "", ReadPrefabTransform(obj, origin)));
                 continue;
             }
             var childPath = kind switch
@@ -147,7 +158,7 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
                 else if (child.CharacterBones.Count > 0)
                     child = LoadCharacterPose(childPath, (string)animation.Attribute("Animation") ?? "Default", time, loop);
             }
-            var transform = ReadPrefabTransform(obj);
+            var transform = ReadPrefabTransform(obj, origin);
             if (child.HasModelBounds)
             {
                 var childBounds = child.Bounds.Transform(transform);
@@ -174,6 +185,7 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
         return new CryGeometryAsset(bounds ?? new CryBounds(Vector3.Zero, Vector3.Zero), parts)
         {
             HasModelBounds = bounds.HasValue,
+            WaterVolumes = waterVolumes,
             Helpers = helpers,
             PoseRequirements = poses,
             HasAnimatedCollision = animatedCollision

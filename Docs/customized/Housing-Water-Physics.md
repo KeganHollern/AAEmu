@@ -30,6 +30,54 @@ with object data before big-object data. A client's prior cell load history
 can give it different selected volumes when more than 4 overlap. The server does not keep
 per-client cell streaming history.
 
+## Dynamic prefab water
+
+`CryGeometryResolver.LoadWater(path)` reads WaterVolume metadata without meshes
+or animation poses. It keeps XML object order and child transforms.
+`CryGeometryAsset.WaterVolumes` exposes the same authored records to geometry callers.
+The caller selects the current doodad phase model, with the base-model fallback,
+or the current house construction model before it reads this metadata.
+
+| Native function | Dynamic contract |
+| --- | --- |
+| `3910f570`, `3910cd10` | The prefab loader creates WaterVolume children in object order. It needs at least 4 points. It reads VolumeDepth and creates a water render node. |
+| `39104ec0`, `39101300` | Child scale, rotation, and position compose with the prefab instance transform. |
+| `390ff370`, `39110b40` | The final Comment named origin supplies a position offset. Post-process subtracts it from every child's translation, then rebuilds every child in object order. The origin comment itself is not a child object. |
+| `3910b600`, `3910bb90` | The update transforms raw points, adds the height offset, and forms a plane from transformed +Z through the first point. It calls Area setup, contour setup, and Physicalize. |
+| `300e85a0`, `300ea010`, `300e73b0` | Render and physics vertices project vertically to that plane. Plane normal Z must exceed `0.0001`. Depth is the authored depth plus the height offset, without scale multiplication. |
+| `39103020`, `3001af60`, `300e6650`, `300eca50` | A WaterVolume supplies model bounds. The render node subtracts its AABB center from its world bounds. The prefab getter then applies the child transform. |
+
+The water load does not read `bVisible` or `HiddenInGame`. Its physical
+registration has no visibility condition. These XML flags must not remove
+the water area from the housing query.
+
+`CryWaterVolumeInstance` holds an ordered set of water children, a parent
+world transform, and a height offset. The housing caller keeps the offset at
+zero for phase-start physics. A visual rise from `DoodadFuncWaterVolume` does
+not change this input without a native area rebuild.
+
+The query overload accepts active instances in oldest-to-newest server order.
+It checks newest instances and children first, followed by the static cache.
+Dynamic and static water share the 4-result limit. The caller builds this
+list once per construction request. A phase change or removed instance
+changes the next list and leaves no stale area in the static cache.
+This server order does not claim to reproduce each client's cell load history.
+
+`CryPrefabWaterVolume.GetModelBounds(parentTransform)` also supports the native
+water bounds calculation for a supplied parent pose. Cached asset bounds use
+the identity parent pose. Physical water queries always use the supplied
+instance pose directly.
+
+The exact fixture is `game/prefabs/e_falcony_plateau.xml`, SHA-256
+`c7a4bfdef4debff144c4b25f5b0667958865fadd06eb77695e64173176513530`.
+Prefab `e_falcony_plateau.water_b` has 8 points and depth 30.
+At the main-world doodad position `(22922.07,9493.238,527.0209)`, its surface
+is `547.9945` with an identity parent rotation. The fixture's comment object
+has `Name="Comment220"` and `Comment="origin"`. Native `3910f87d` reads the
+Name attribute, so this object does not rebase the prefab.
+Set `AAEMU_PREFAB_WATER_CLIENT_ROOT` to the extracted root above `game/`
+and run `CryPrefabWaterTests` for this fixture and the pure dynamic checks.
+
 ## Client scan and fixture
 
 The complete main-world scan found 5758 object-file water records with 455 IDs.

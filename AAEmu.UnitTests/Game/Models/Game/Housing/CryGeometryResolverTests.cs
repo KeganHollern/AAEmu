@@ -193,6 +193,27 @@ public sealed class CryGeometryResolverTests
         await Assert.That(resolver.Load("cgf://objects/irongate.cgf").HasModelBounds).IsTrue();
     }
 
+    [Test]
+    public async Task LoadPrefab_FinalOriginRebasesModelPhysicsAndHelpers()
+    {
+        var xml = Encoding.UTF8.GetBytes("""
+            <PrefabsLibrary><Prefab Name="house"><Objects>
+              <Object Type="Comment" Name="connector" Pos="1,2,3" />
+              <Object Type="Brush" Prefab="objects/house.cgf" Pos="100,200,300" Scale="2,2,2" />
+              <Object Type="Comment" Name="origin" Pos="5,10,20" />
+            </Objects></Prefab></PrefabsLibrary>
+            """);
+        var resolver = new CryGeometryResolver(path => new MemoryStream(path.EndsWith(".xml", StringComparison.Ordinal) ? xml : Model(false, true)));
+        var child = resolver.Load("objects/house.cgf");
+        var asset = resolver.Load("prefab://prefabs/housing.xml/house");
+        var expectedTransform = Matrix4x4.CreateScale(2) * Matrix4x4.CreateTranslation(95, 190, 280);
+        await Assert.That(asset.Bounds).IsEqualTo(child.Bounds.Transform(expectedTransform));
+        await Assert.That(asset.Parts.Count).IsGreaterThan(0);
+        await Assert.That(asset.Parts[0].Transform).IsEqualTo(child.Parts[0].Transform * expectedTransform);
+        await Assert.That(asset.Helpers.Count).IsEqualTo(1);
+        await Assert.That(asset.Helpers[0].Transform.Translation).IsEqualTo(new Vector3(-4, -8, -17));
+    }
+
     private static byte[] Model(bool merge, bool physics = false, bool animatedParent = false)
     {
         var chunks = new List<(uint Kind, int Version, int Id, byte[] Data)>();
