@@ -8,11 +8,24 @@ public class CSSwapAbilityPacket() : GamePacket(CSOffsets.CSSwapAbilityPacket, 1
 {
     public override void Read(PacketStream stream)
     {
-        var objId = stream.ReadBc();
-        var oldAbilityId = stream.ReadByte();
-        var abilityId = stream.ReadByte();
-        var auap = stream.ReadBoolean();
+        if (Connection.ActiveChar != null && TryReadRequest(stream, out var npcObjectId,
+                out var oldAbility, out var newAbility, out _))
+            Connection.ActiveChar.Abilities.Swap(oldAbility, newAbility, npcObjectId);
+    }
 
-        Connection.ActiveChar.Abilities.Swap((AbilityType)oldAbilityId, (AbilityType)abilityId);
+    internal static bool TryReadRequest(PacketStream stream, out uint npcObjectId,
+        out AbilityType oldAbility, out AbilityType newAbility, out bool autoUseAaPoints)
+    {
+        npcObjectId = 0;
+        oldAbility = newAbility = AbilityType.None;
+        autoUseAaPoints = false;
+        if (stream.Count - stream.Pos != 6)
+            return false;
+        npcObjectId = stream.ReadBc();
+        oldAbility = (AbilityType)stream.ReadByte();
+        newAbility = (AbilityType)stream.ReadByte();
+        var flag = stream.ReadByte();
+        autoUseAaPoints = flag == 1;
+        return flag <= 1;
     }
 }

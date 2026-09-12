@@ -1,5 +1,8 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using MySql.Data.MySqlClient;
@@ -25,6 +28,12 @@ public class CharacterSkills(Character owner)
     /// Persisted or server-granted skills continue to use AddSkill directly.
     /// </summary>
     public void LearnSkill(uint skillId)
+    {
+        lock (Owner.StorePurchaseSyncRoot)
+            LearnSkillLocked(skillId);
+    }
+
+    private void LearnSkillLocked(uint skillId)
     {
         var template = SkillManager.Instance.GetSkillTemplate(skillId);
         if (template is null ||
@@ -79,6 +88,12 @@ public class CharacterSkills(Character owner)
     /// <param name="skillId"></param>
     public void AddSkill(uint skillId)
     {
+        lock (Owner.StorePurchaseSyncRoot)
+            AddSkillLocked(skillId);
+    }
+
+    private void AddSkillLocked(uint skillId)
+    {
         // Check if what we want to learn is part of an active skill tree (or not part of one)
         var template = SkillManager.Instance.GetSkillTemplate(skillId);
         if (template is null)
@@ -114,6 +129,12 @@ public class CharacterSkills(Character owner)
     /// <param name="packet"></param>
     public void AddSkill(SkillTemplate template, byte level, bool packet)
     {
+        lock (Owner.StorePurchaseSyncRoot)
+            AddSkillLocked(template, level, packet);
+    }
+
+    private void AddSkillLocked(SkillTemplate template, byte level, bool packet)
+    {
         var skill = new Skill
         {
             Id = template.Id,
@@ -131,6 +152,12 @@ public class CharacterSkills(Character owner)
     /// </summary>
     /// <param name="buffId"></param>
     public void AddBuff(uint buffId)
+    {
+        lock (Owner.StorePurchaseSyncRoot)
+            AddBuffLocked(buffId);
+    }
+
+    private void AddBuffLocked(uint buffId)
     {
         // Check if what we want to learn is part of an active skill tree (or not part of one)
         var template = SkillManager.Instance.GetPassiveBuffTemplate(buffId);
@@ -169,9 +196,40 @@ public class CharacterSkills(Character owner)
     /// Resets all skills from a specific ability Skill Tree
     /// </summary>
     /// <param name="abilityId"></param>
-    public void Reset(AbilityType abilityId)
+    public bool Reset(AbilityType abilityId)
     {
-        // TODO: with price...
+        lock (Owner.StorePurchaseSyncRoot)
+        {
+            if (Owner.Hp <= 0 || Owner.IsInBattle ||
+                abilityId is < AbilityType.Fight or > AbilityType.Love ||
+                !IsSelectedPlayerAbility(abilityId, Owner.Ability1, Owner.Ability2, Owner.Ability3))
+            {
+                Owner.SendErrorMessage(ErrorMessageType.InvalidTarget);
+                return false;
+            }
+
+            var cost = GetResetCost(abilityId);
+            if (cost > 0 && !Owner.SubtractMoney(SlotType.Inventory, cost, ItemTaskType.AbilityReset))
+            {
+                Owner.SendErrorMessage(ErrorMessageType.NotEnoughCoin);
+                return false;
+            }
+
+            ResetWithoutCharge(abilityId);
+            return true;
+        }
+    }
+
+    internal int GetResetCost(AbilityType abilityId)
+    {
+        // r208022 counts learned entries, not their skill-point weights.
+        var entries = Skills.Values.Count(skill => skill.Template.AbilityId == abilityId) +
+            PassiveBuffs.Values.Count(buff => buff.Template.AbilityId == abilityId);
+        return checked(entries * 1000);
+    }
+
+    internal void ResetWithoutCharge(AbilityType abilityId)
+    {
         foreach (var skill in new List<Skill>(Skills.Values))
         {
             if (skill.Template.AbilityId != abilityId)

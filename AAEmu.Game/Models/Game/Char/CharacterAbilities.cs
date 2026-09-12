@@ -1,6 +1,9 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Achievement.Enums;
+using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Skills;
 using MySql.Data.MySqlClient;
 
@@ -84,15 +87,64 @@ public class CharacterAbilities
         }
     }
 
-    public void Swap(AbilityType oldAbilityId, AbilityType abilityId)
+    public bool Swap(AbilityType oldAbilityId, AbilityType abilityId, uint npcObjectId = 0)
     {
         lock (Owner.StorePurchaseSyncRoot)
+        {
+            if (!TryGetSwapCost(Owner.Level, Owner.IsInBattle, Owner.Hp > 0,
+                    Owner.Ability1, Owner.Ability2, Owner.Ability3, oldAbilityId, abilityId, out var cost))
+            {
+                Owner.SendErrorMessage(ErrorMessageType.InvalidTarget);
+                return false;
+            }
+
+            // Initial slot choices are free and do not use an NPC service.
+            if (oldAbilityId != AbilityType.None &&
+                !ServiceInteraction.CanUseNpc(Owner, Owner.ParentWorld?.GetNpc(npcObjectId), template => template.AbilityChanger))
+            {
+                Owner.SendErrorMessage(ErrorMessageType.InvalidTarget);
+                return false;
+            }
+
+            if (cost > 0 && !Owner.SubtractMoney(SlotType.Inventory, cost, ItemTaskType.AbilityChange))
+            {
+                Owner.SendErrorMessage(ErrorMessageType.NotEnoughCoin);
+                return false;
+            }
+
             SwapLocked(oldAbilityId, abilityId);
+            return true;
+        }
+    }
+
+    internal static bool TryGetSwapCost(byte level, bool inCombat, bool alive,
+        AbilityType first, AbilityType second, AbilityType third,
+        AbilityType oldAbility, AbilityType newAbility, out int cost)
+    {
+        cost = 0;
+        if (!alive || inCombat || newAbility is < AbilityType.Fight or > AbilityType.Love ||
+            newAbility == first || newAbility == second || newAbility == third ||
+            first is < AbilityType.Fight or > AbilityType.Love)
+            return false;
+
+        if (oldAbility == AbilityType.None)
+            return second == AbilityType.None ? level >= 5 : third == AbilityType.None && level >= 10;
+
+        if (level < 10 || oldAbility is < AbilityType.Fight or > AbilityType.Love ||
+            (oldAbility != first && oldAbility != second && oldAbility != third) ||
+            second is < AbilityType.Fight or > AbilityType.Love ||
+            third is < AbilityType.Fight or > AbilityType.Love)
+            return false;
+
+        // r208022 GetAbilityChangeCost: native constant 0x27 (200 copper) times player level.
+        cost = checked(level * 200);
+        return true;
     }
 
     private void SwapLocked(AbilityType oldAbilityId, AbilityType abilityId)
     {
-        Owner.Skills.Reset(oldAbilityId);
+        if (oldAbilityId != AbilityType.None)
+            Owner.Skills.ResetWithoutCharge(oldAbilityId);
         var changed = false;
         if (Owner.Ability1 == oldAbilityId)
         {
@@ -124,7 +176,7 @@ public class CharacterAbilities
 
                 //every unchosen ability is default level 10 besides are selected ones since spillover exp can unsync character exp with skill exp
                 var c = GetActiveAbilities();
-                for (var i = 1; i < Abilities.Count; i++)
+                for (var i = 1; i <= Abilities.Count; i++)
                 {
                     var id = (AbilityType)i;
                     if (!c.Contains(Abilities[id].Id))
