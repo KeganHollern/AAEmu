@@ -24,7 +24,7 @@ public class CSChangeMateEquipmentPacket() : GamePacket(CSOffsets.CSChangeMateEq
 
         Logger.Debug($"CSChangeMateEquipmentPacket - TlId: {mateTl}, Owner: {owningPlayerId}, Id2: {passengerPlayerId}, BTS: {bts}, Count: {itemCount}");
 
-        var mate = Connection.ActiveChar.ParentWorld.MateManager.GetActiveMateByTlId(mateTl);
+        var mate = Connection.ActiveChar.ParentWorld.MateManager.GetActiveMateByTlId(Connection.ActiveChar.Id, mateTl);
         if (mate == null)
         {
             Logger.Warn($"ChangeMateEquipment, Unable to find mate with tlId {mateTl}!");
