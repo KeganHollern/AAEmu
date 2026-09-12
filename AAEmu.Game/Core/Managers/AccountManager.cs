@@ -46,11 +46,11 @@ public class AccountManager(
             return;
         }
 
-        var lastLogin = UpdateLoginTime(connection.AccountId, loginTime);
+        UpdateLoginTime(connection.AccountId, loginTime);
         var accountDetails = GetAccountDetails(connection.AccountId);
         timedRewardsManager.DoDailyAccountLogin(connection.AccountId, rewardDate);
         // Add offline labor
-        timedRewardsManager.AddOfflineLabor(connection, lastLogin, accountDetails.Labor);
+        timedRewardsManager.AddOfflineLabor(connection, accountDetails.LastLaborTick, accountDetails.Labor);
     }
 
     private void RemoveDeadConnections(TimeSpan delta)

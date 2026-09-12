@@ -333,10 +333,7 @@ public class SCUnitStatePacket : GamePacket
         // TODO: Fix the patron and auction house license buff issue
         if (character is not null)
         {
-            if (!_unit.Buffs.CheckBuff(8000011)) //TODO Wrong place
-            {
-                _unit.Buffs.AddBuff(new Buff(_unit, _unit, SkillCaster.GetByType(SkillCasterType.Unit), SkillManager.Instance.GetBuffTemplate(8000011), null, DateTime.UtcNow));
-            }
+            character.RefreshPatronBuff();
 
             if (!_unit.Buffs.CheckBuff(8000012)) //TODO Wrong place
             {

@@ -2,6 +2,7 @@
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Account;
 using AAEmu.Game.Models.Tasks.TimedRewards;
 
@@ -17,9 +18,6 @@ public class TimedRewardsManager(
     Lazy<IAccountManager> accountManager,
     IOptions<AppConfiguration> options) : Singleton<TimedRewardsManager>, ITimedRewardsManager
 {
-    private const short MaxLabor = 2000;
-    private const short MaxLaborPremium = 5000;
-
     public void Initialize()
     {
         taskManager.Schedule(new TimedRewardsTask(), TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
@@ -27,7 +25,7 @@ public class TimedRewardsManager(
 
     public static short GetMaxLabor(bool isPremium)
     {
-        return isPremium ? MaxLaborPremium : MaxLabor;
+        return checked((short)PremiumGameData.Instance.Get(isPremium).MaxLabor);
     }
 
     /// <summary>
@@ -63,6 +61,7 @@ public class TimedRewardsManager(
         var connections = GameConnectionTable.Instance.GetConnections();
         foreach (var connection in connections)
         {
+            connection.ActiveChar?.RefreshPatronBuff();
             AccountDetails accountDetails;
             lock (AccountManager.Instance.GetAccountSyncRoot(connection.AccountId))
             {
@@ -73,7 +72,8 @@ public class TimedRewardsManager(
                 // Distribute Labor if needed (only for online labor)
                 if (AppConfiguration.Instance.Labor.TickMinutes > 0 && accountDetails.LastLaborTick.AddMinutes(AppConfiguration.Instance.Labor.TickMinutes) <= DateTime.UtcNow)
                 {
-                    var addLabor = AppConfiguration.Instance.Labor.GetTickAmount(connection.Payment.PremiumState);
+                    var addLabor = CalculateLabor(connection.Payment, accountDetails.LastLaborTick, DateTime.UtcNow,
+                        true, AppConfiguration.Instance.Labor.TickMinutes);
                     DoAddLabor(connection, accountDetails.Labor, addLabor);
                 }
             }
@@ -107,13 +107,27 @@ public class TimedRewardsManager(
             options.Value.Loyalty.DailyLogin);
     }
 
-    public void AddOfflineLabor(GameConnection connection, DateTime lastLoginTime, short currentLabor)
+    public void AddOfflineLabor(GameConnection connection, DateTime lastLaborTick, short currentLabor)
     {
-        var delta = DateTime.UtcNow - lastLoginTime;
-        var ticksToAdd = (int)Math.Floor(delta.TotalMinutes / AppConfiguration.Instance.LaborOffline.TickMinutes);
-        if (ticksToAdd <= 0)
-            return;
-        var addLabor = AppConfiguration.Instance.LaborOffline.GetTickAmount(connection.Payment.PremiumState) * ticksToAdd;
+        var addLabor = CalculateLabor(connection.Payment, lastLaborTick, DateTime.UtcNow,
+            false, AppConfiguration.Instance.LaborOffline.TickMinutes);
         DoAddLabor(connection, currentLabor, addLabor);
+    }
+
+    internal static int CalculateLabor(AccountPayment payment, DateTime from, DateTime to, bool online, int tickMinutes)
+    {
+        if (tickMinutes <= 0 || to <= from)
+            return 0;
+        var normal = PremiumGameData.Instance.Get(false);
+        var patron = PremiumGameData.Instance.Get(true);
+        var baseRate = online ? normal.OnlineLabor : normal.OfflineLabor;
+        var patronRate = online ? patron.OnlineLabor : patron.OfflineLabor;
+        var secondsPerTick = tickMinutes * 60.0;
+        var ticks = Math.Floor((to - from).TotalSeconds / secondsPerTick);
+        var activeFrom = from > payment.StartTime ? from : payment.StartTime;
+        var activeTo = to < payment.EndTime ? to : payment.EndTime;
+        var patronTicks = activeTo <= activeFrom ? 0 : Math.Floor((activeTo - activeFrom).TotalSeconds / secondsPerTick);
+        var amount = ticks * baseRate + patronTicks * (patronRate - baseRate);
+        return (int)Math.Clamp(amount, 0, int.MaxValue);
     }
 }

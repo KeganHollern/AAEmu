@@ -1,32 +1,29 @@
-﻿using AAEmu.Game.Core.Network.Connections;
+﻿namespace AAEmu.Game.Models;
 
-namespace AAEmu.Game.Models;
-
-#pragma warning disable IDE0052 // Remove unread private members
-
-public class AccountPayment(GameConnection connection)
+public class AccountPayment
 {
-    private GameConnection _connection = connection;
+    private readonly TimeProvider _timeProvider;
+    public PaymentMethodType Method => PremiumState ? PaymentMethodType.Premium : PaymentMethodType.None;
+    public int Location => 1;
+    public DateTime StartTime { get; }
+    public DateTime EndTime { get; }
+    public bool PremiumState => IsPremiumAt(_timeProvider.GetUtcNow().UtcDateTime);
 
-    public PaymentMethodType Method { get; set; } = PaymentMethodType.Premium;
-    public int Location { get; set; } = 1;
-
-    public DateTime StartTime { get; set; } = DateTime.MinValue;
-    public DateTime EndTime { get; set; } = new(2030, 1, 1);
-
-    /// <summary>
-    /// Checks if Premium is currently active
-    /// </summary>
-    public bool PremiumState
+    public AccountPayment(ulong start = 0, ulong end = 0, TimeProvider timeProvider = null)
     {
-        get => Method == PaymentMethodType.Premium && DateTime.UtcNow >= StartTime && DateTime.UtcNow <= EndTime;
+        if (!ValidPeriod(start, end))
+            throw new ArgumentOutOfRangeException(nameof(end), "Invalid patron period");
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        StartTime = DateTimeOffset.FromUnixTimeSeconds((long)start).UtcDateTime;
+        EndTime = DateTimeOffset.FromUnixTimeSeconds((long)end).UtcDateTime;
     }
+
+    internal static bool ValidPeriod(ulong start, ulong end) =>
+        (start == 0 && end == 0) || (start < end && end <= 253402300799UL);
+
+    public bool IsPremiumAt(DateTime now) => StartTime < EndTime && now >= StartTime && now < EndTime;
 }
 
-/// <summary>
-/// Registered payment type.
-/// Scripts seem to reference the following types related to labor info: person, person_time, pcbang, trial, event (siege_event)
-/// </summary>
 public enum PaymentMethodType
 {
     Premium = 1,
