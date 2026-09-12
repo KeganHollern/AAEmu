@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Items.Actions;
@@ -175,9 +175,11 @@ public sealed partial class PlayerMailSendPersistenceTests
     }
 
     [Theory]
-    [InlineData(4646u, 16166u)]
-    [InlineData(5743u, 21710u)]
-    public void SkillLabor_AuthoredPaidCooldownSurvivesRestartAndLaterSave(uint buffId, uint skillId)
+    [InlineData(4646u, 16166u, 14400000)]
+    [InlineData(5743u, 21710u, 14400000)]
+    [InlineData(4646u, 16166u, 30000)]
+    [InlineData(5743u, 21710u, 30000)]
+    public void SkillLabor_AuthoredPaidCooldownSurvivesRestartAndLaterSave(uint buffId, uint skillId, int timeLeft)
     {
         using var graph = new SendGraph();
         using var buffs = new LaborBuffServices();
@@ -195,19 +197,25 @@ public sealed partial class PlayerMailSendPersistenceTests
         buffs.AddSkill(template);
         Assert.True(SkillLaborBatch.Run(player, new Skill(template), true, () =>
         {
-            player.Buffs.AddBuff(NewLaborBuff(player, cooldown, 1));
+            player.Buffs.AddBuff(NewLaborBuff(player, cooldown, 1), forcedDuration: timeLeft);
             player.Buffs.AddBuff(NewLaborBuff(player, combat, 1));
         }));
         Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM character_active_buffs WHERE character_id={player.Id} AND buff_id={buffId}"));
         Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM character_active_buffs WHERE character_id={player.Id} AND buff_id={combat.Id}"));
         var reloaded = new Character(new UnitCustomModelParams()) { Id = player.Id, ObjId = player.ObjId, Name = "Reloaded" };
         ((Buffs)reloaded.Buffs).LoadActiveBuffs(reloaded);
-        Assert.InRange(reloaded.Buffs.GetEffectFromBuffId(buffId).GetTimeLeft(), 14370000, 14400000);
+        Assert.InRange(reloaded.Buffs.GetEffectFromBuffId(buffId).GetTimeLeft(), timeLeft - 10000, timeLeft);
         Assert.Null(reloaded.Buffs.GetEffectFromBuffId(combat.Id));
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM character_active_buffs WHERE character_id={player.Id} AND buff_id={buffId}"));
+        // A second process starts before the first restored character reaches autosave.
+        var secondRestart = new Character(new UnitCustomModelParams()) { Id = player.Id, ObjId = player.ObjId, Name = "Reloaded again" };
+        ((Buffs)secondRestart.Buffs).LoadActiveBuffs(secondRestart);
+        Assert.InRange(secondRestart.Buffs.GetEffectFromBuffId(buffId).GetTimeLeft(), timeLeft - 10000, timeLeft);
+        Assert.Equal(10, Scalar($"SELECT labor FROM accounts WHERE account_id={player.AccountId}"));
         // The loader does not restore Skill. The data-derived policy must also work on the next save.
         using var connection = MySQL.CreateConnection();
         using var transaction = connection.BeginTransaction();
-        ((Buffs)reloaded.Buffs).SaveActiveBuffs(connection, transaction, player.Id);
+        ((Buffs)secondRestart.Buffs).SaveActiveBuffs(connection, transaction, player.Id);
         transaction.Commit();
         Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM character_active_buffs WHERE character_id={player.Id} AND buff_id={buffId}"));
     }

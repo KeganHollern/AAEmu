@@ -970,8 +970,11 @@ public partial class Buffs : IBuffs
                 !SkillManager.Instance.IsPaidSkillBuff(buff.Template.Id))
                 return false;
 
-            // Very short buffs (< 60s) are combat abilities, not consumables
-            if (buff.Duration < MinimumBuffDurationToSave && !IsBotReportBuff(buff.Template.Id))
+            // A restored paid cooldown can have less than one minute left.
+            // Use its authored duration to distinguish it from a short combat buff.
+            var paidLongBuff = SkillManager.Instance.IsPaidSkillBuff(buff.Template.Id) &&
+                buff.Template.GetDuration(buff.AbLevel) >= MinimumBuffDurationToSave;
+            if (buff.Duration < MinimumBuffDurationToSave && !IsBotReportBuff(buff.Template.Id) && !paidLongBuff)
                 return false;
 
             return true;
@@ -1076,6 +1079,12 @@ public partial class Buffs : IBuffs
         try
         {
             var restoredCount = 0;
+            var retainedBuffIds = new HashSet<uint>
+            {
+                (uint)BuffConstants.SuspectedUser,
+                (uint)BuffConstants.TransformingIntoPrimeSuspect,
+                (uint)BuffConstants.PrimeSuspect
+            };
 
             using var connection = MySQL.CreateConnection();
             using (var cmd = connection.CreateCommand())
@@ -1114,6 +1123,10 @@ public partial class Buffs : IBuffs
                         Logger.Warn($"LoadActiveBuffs: BuffTemplate {row.buffId} not found, skipping");
                         continue;
                     }
+
+                    if (buffTemplate.SaveRuleId != BuffSaveRuleType.DontSave &&
+                        SkillManager.Instance.IsPaidSkillBuff(row.buffId))
+                        retainedBuffIds.Add(row.buffId);
 
                     // The permanent report marker has no countdown.
                     var permanent = IsPermanentBotReportBuff(row.buffId, row.duration) && buffTemplate.Duration == 0;
@@ -1165,17 +1178,17 @@ public partial class Buffs : IBuffs
                 }
             }
 
-            // Keep paid report statuses durable if the process stops before the next character save.
-            // Appeal and the next character checkpoint replace these rows in their own transaction.
+            // Restore does not consume a paid buff. Keep its last durable checkpoint if the
+            // process stops again before autosave. Later character/skill checkpoints replace it.
             using (var deleteCmd = connection.CreateCommand())
             {
+                var retained = retainedBuffIds.Order().Select((id, index) => (id, name: "@retained" + index)).ToArray();
                 deleteCmd.CommandText =
                     "DELETE FROM `character_active_buffs` WHERE `character_id` = @characterId " +
-                    "AND `buff_id` NOT IN (@suspected, @transforming, @prime)";
+                    "AND `buff_id` NOT IN (" + string.Join(",", retained.Select(value => value.name)) + ")";
                 deleteCmd.Parameters.AddWithValue("@characterId", character.Id);
-                deleteCmd.Parameters.AddWithValue("@suspected", (uint)BuffConstants.SuspectedUser);
-                deleteCmd.Parameters.AddWithValue("@transforming", (uint)BuffConstants.TransformingIntoPrimeSuspect);
-                deleteCmd.Parameters.AddWithValue("@prime", (uint)BuffConstants.PrimeSuspect);
+                foreach (var (id, name) in retained)
+                    deleteCmd.Parameters.AddWithValue(name, id);
                 deleteCmd.ExecuteNonQuery();
             }
 
