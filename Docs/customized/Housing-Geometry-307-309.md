@@ -101,3 +101,91 @@ The footprint helper does not complete issues #307 or #309 by itself.
 Exact support, interior, and overlap checks need the client model bounds and relevant world physics geometry.
 House-only meshes cannot replace the world ray and primitive intersection inputs.
 The server must not call a radius approximation an exact model collision check.
+
+## Authored collision data
+
+`CryGeometryResolver` reads the client assets through a supplied file reader.
+It does not need extracted assets in the source repository.
+It reads CGF versions `0x744` and `0x745`, node version `0x823`, and compiled mesh version `0x800`.
+The node hierarchy supplies transforms. CGF node translations use centimeters.
+Prefab XML supplies local position, scale, and quaternions in `w,x,y,z` order.
+The resolver preserves prefab comments such as the house connector metadata.
+
+The exact `cry3dengine.dll` has SHA-256
+`34d6b73690d1a9d8d0ea0f5eb743fd0624107cfda28c1302826b19a3bc9546de`.
+Its image base is `0x30000000`.
+Native `30026370` defines the merged and compound model bounds.
+An ordinary mesh node contributes bounds even when its vertex count is zero.
+For a merged model, the native code uses the first mesh without its node transform.
+For a compound model, it unions the normal mesh bounds with their node transforms.
+Export flag bit 0 selects the merged path.
+Native `301b9660` identifies helper nodes by their names.
+
+The compiled mesh references up to 4 native physics chunks.
+Chunk `0xCCCC0018`, version `0x800`, contains serialized collision geometry.
+The resolver reads those proxies instead of the render triangles.
+The source `cryphysics.dll` has SHA-256
+`f9c52c405c60c3bb8da9ebf9a45c34bae8149c9e0b31a7e9260f2eb11822f6e2`.
+Its image base is `0x34ff0000`.
+An offline memory emulator restored the packed code for analysis.
+No server connection or game session supplied that data.
+
+Native `351540a0` reads the physical header and calls the shape loader.
+Native `35153dd0` selects these shape formats:
+
+| Type | Shape | Native reader |
+| --- | --- | --- |
+| 0 | Box | `351468f0` |
+| 1 | Triangle mesh | `351ed480` |
+| 4 | Sphere | `351c6fb0` |
+| 5 | Cylinder | `3514f930` |
+| 6 | Capsule | `3514f930` |
+
+Mesh proxies can reference the compiled render vertex and triangle arrays.
+The reader applies the authored vertex map and foreign triangle map in that case.
+It preserves per-triangle material IDs and the primitive surface ID.
+The collision queries use analytic primitives, triangle intersections, SAT, and support-map convex intersection.
+An uncertain convex result returns `Indeterminate`.
+
+Each part preserves its native physics type and original statobject group.
+Foliage spine counts come from chunk `0xAAFC0005`.
+Native `30030f20` uses these values to select the physical part flags.
+Native `300343d0` also reads numeric `$picking` helper suffixes.
+Native `39428ba0` returns this index, and `3903da00` refuses positive indices.
+The nearest ray hit must retain this index. It must not disappear from the query.
+
+## Doodad model and collision flags
+
+Native `3932c120` loads the base doodad model for a decoration preview.
+Native `393b0940` selects the current phase model for a placed doodad.
+Native `393b03b0` uses the base model when the supplied phase model is empty.
+An empty base model cannot create the preview.
+For an unknown nonempty model scheme, the normal client uses `objects/box_nodraw.cgf`.
+This rule includes the authored `a://invalid` value.
+The resolver retains missing-file failures for recognized asset paths.
+
+Native `393aa540` applies the template collision flags to all doodad physical parts.
+The `no_collision` field sets `flagsAND=0` and `flagsOR=0x8000`.
+This keeps ray collision and removes solid collision.
+Otherwise, `collide_ship` controls bit `0x80`, and `collide_vehicle` controls bit `8`.
+
+The material surface table contains `no_collide` values for some plants and cloth.
+Native `301ac000` reads these values into material metadata.
+Native `30030f20` uses compiled geometry layers when it creates physical parts.
+It does not remove individual triangles with that material flag.
+The query must not invent such a triangle filter.
+
+## Animation limits
+
+`HasAnimatedCollision` records whether a collision node or one of its ancestors has a controller.
+An animated visual child does not make a static root proxy move.
+The resolver retains separate pose requirements for the model bounds.
+Skeletal CHR geometry still needs its compiled bone proxies and active bone transforms.
+Native `3910b080` requests the `Default` animation for a direct CGA model.
+The `cga_loop` flag controls looping, not whether the animation starts.
+Native `3903c2e0` reads model bounds each time it builds the placement box.
+An initial render box alone does not prove the bounds of an active model.
+
+The local asset fixture parsed 612 distinct housing CGF, CGA, and CHR containers without format errors.
+This count covers container parsing, not unresolved skeletal collision or active poses.
+The retained tests cover binary formats, transforms, intersection queries, and animation ancestry.
