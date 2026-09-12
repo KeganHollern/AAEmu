@@ -110,15 +110,39 @@ public sealed class HousingConstructionGeometryTests
     }
 
     [Test]
+    public async Task AutoZ_GridVerticesUseRawHeightInsteadOfPerimeterElevation()
+    {
+        var elevationQueries = new List<Vector2>();
+        var rawQueries = new List<Vector2>();
+        var pose = HousingConstructionGeometry.Resolve(new HousingTemplate { CategoryId = 1, AutoZ = true },
+            new(20, 20, 15), 0, new(20, 20, 10), new(-4, -2, -6), new(4, 2, 10),
+            (x, y) =>
+            {
+                elevationQueries.Add(new(x, y));
+                return x == 20 && y == 20 ? float.NaN : 10;
+            },
+            (x, y) =>
+            {
+                rawQueries.Add(new(x, y));
+                return x == 20 && y == 20 ? 16 : 10;
+            }, 2);
+        await Assert.That(pose.IsValid).IsTrue();
+        await Assert.That(pose.Position.Z).IsEqualTo(16f);
+        await Assert.That(elevationQueries.Count).IsEqualTo(8);
+        await Assert.That(elevationQueries.Contains(new(20, 20))).IsFalse();
+        await Assert.That(rawQueries.Contains(new(20, 20))).IsTrue();
+    }
+
+    [Test]
     public async Task Stronghold_UsesExplicitGridPhaseAndQuantizedHeightAndRotation()
     {
         var pose = HousingConstructionGeometry.Resolve(new HousingTemplate { CategoryId = 5 },
-            new(25, 26, 3000), 0.8f, new(30, 30, 6), -Vector3.One, Vector3.One, (_, _) => 4, 2, new(10, 10));
+            new(25, 26, 3000), 0.8f, new(30, 30, 6), -Vector3.One, Vector3.One, (_, _) => 4, (_, _) => 4, 2, new(10, 10));
         await Assert.That(pose.IsValid).IsTrue();
         await Assert.That(pose.Position).IsEqualTo(new Vector3(30, 30, 6));
         await Assert.That(pose.Yaw).IsEqualTo(MathF.PI / 2);
         var absentPhase = HousingConstructionGeometry.Resolve(new HousingTemplate { CategoryId = 5 },
-            new(25, 26, 3000), 0.8f, new(30, 30, 6), -Vector3.One, Vector3.One, (_, _) => 4, 2);
+            new(25, 26, 3000), 0.8f, new(30, 30, 6), -Vector3.One, Vector3.One, (_, _) => 4, (_, _) => 4, 2);
         await Assert.That(absentPhase.IsValid).IsFalse();
     }
 
@@ -126,7 +150,7 @@ public sealed class HousingConstructionGeometryTests
     public async Task OrdinaryPlot_SnapsBeforeTerrainAndRangeCheck()
     {
         var pose = HousingConstructionGeometry.Resolve(new HousingTemplate { CategoryId = 1, GardenRadius = 4 },
-            new(11.9f, 15.9f, 999), 0.23f, new(12, 16, 10), -Vector3.One, Vector3.One, (_, _) => 10, 2);
+            new(11.9f, 15.9f, 999), 0.23f, new(12, 16, 10), -Vector3.One, Vector3.One, (_, _) => 10, (_, _) => 10, 2);
         await Assert.That(pose.IsValid).IsTrue();
         await Assert.That(pose.Position).IsEqualTo(new Vector3(12, 16, 10));
         await Assert.That(pose.Yaw).IsEqualTo(0.23f);
@@ -144,5 +168,5 @@ public sealed class HousingConstructionGeometryTests
     private static HousingConstructionPose Resolve(bool autoZ, Vector3 min, Vector3 max,
         Func<float, float, float> terrain, float yaw = 0) =>
         HousingConstructionGeometry.Resolve(new HousingTemplate { CategoryId = 1, AutoZ = autoZ },
-            new(20, 20, 15), yaw, new(20, 20, 10), min, max, terrain, 2);
+            new(20, 20, 15), yaw, new(20, 20, 10), min, max, terrain, (x, y) => terrain(x, y), 2);
 }

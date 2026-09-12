@@ -117,7 +117,7 @@ public partial class HousingManager
             var (_, _, encodedYaw) = PositionAndRotation.ToRollPitchYawSBytes(new Vector3(0, 0, yaw));
             yaw = PositionAndRotation.FromRollPitchYawSBytes(0, 0, encodedYaw).Z;
             var pose = HousingConstructionGeometry.Resolve(template, position, yaw, player.Transform.World.Position,
-                asset.Bounds.Min, asset.Bounds.Max, scene.SampleHeight, scene.GetTerrainUnitSize(position));
+                asset.Bounds.Min, asset.Bounds.Max, scene.SampleElevation, scene.SampleRawHeight, scene.GetTerrainUnitSize(position));
             if (!pose.IsValid)
                 return pose;
             var transform = Matrix4x4.CreateRotationZ(pose.Yaw) * Matrix4x4.CreateTranslation(pose.Position);

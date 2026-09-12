@@ -64,6 +64,9 @@ public sealed class HousingGeometryWorld(HousingGeometryAssets assets, WorldInst
     public float SampleHeight(float x, float y) =>
         GetTerrain(Cell(x), Cell(y))?.SampleHeight(x, y) ?? float.NaN;
 
+    public float SampleElevation(float x, float y) =>
+        GetTerrain(Cell(x), Cell(y))?.SampleElevation(x, y) ?? float.NaN;
+
     public float SampleRawHeight(int x, int y) =>
         GetTerrain(Cell(x), Cell(y))?.SampleRawHeight(x, y) ?? float.NaN;
 

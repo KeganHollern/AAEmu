@@ -20,6 +20,7 @@ Addresses below use its preferred image base `0x30000000`.
 | `300ca620`, `300cda10` | The physics callback maps surface 31 to hole sentinel `0x7FF`. The heightfield uses float height callbacks. |
 | `300c9520` | `CHeightMap::RayTrace` skips both triangles when the lower corner surface is 31. It uses the fixed diagonal between `(1,0)` and `(0,1)` and upward-facing triangles. |
 | `300c91b0` | The height query uses the same fixed diagonal. It does not interpolate across the complete square as one bilinear surface. |
+| `30121a70`, `300c91b0`, `300c8b60` | `I3DEngine` slot `+0x1fc` reads the four stored heights without a surface or hole test. Any zero corner returns zero. A negative interpolated result also returns zero. |
 | `301234e0`, `300cabc0`, `300ca1f0`, `300c88f0` | `I3DEngine` slot `+0x204` shifts integer metre coordinates by `log2(UnitSize)`, then reads that full-resolution vertex. It ignores holes. Lower-resolution nodes interpolate packed heights before the range and offset conversion. |
 
 The old `NodeCell` mask `0xFFF0` keeps one surface bit in the height.
@@ -38,11 +39,18 @@ has 513 vertices per side at a `UnitSize` of 2 m. `Bounds` keeps the native
 root height bounds. `SampleHeight(worldX, worldY)` returns the triangle
 height, or `NaN` for a hole or unavailable data.
 
+`SampleElevation(worldX, worldY)` is the separate construction height query.
+It matches `I3DEngine +0x1fc`, including stored heights under terrain holes,
+zero vertices, and negative-height clamping. Missing data still returns `NaN`.
+This query does not add a physical surface to a terrain hole.
+
 `SampleRawHeight(int worldX, int worldY)` matches the vertex query at
 `I3DEngine +0x204`. It floors integer metre coordinates to the unit grid.
 It returns the height under holes. Missing data returns `NaN` so the server
 can deny placement. The native wrapper returns zero for unavailable data.
 The housing water check at `x2game!39331d20` uses this vertex query.
+The interior terrain grid in `x2game!39337fb0` uses it too. The 8 perimeter
+samples in that function use `SampleElevation` instead.
 
 `Raycast(origin, direction, maxDistance, out hit)` normalizes the direction.
 It returns distance in metres, the upward terrain normal, the cell surface

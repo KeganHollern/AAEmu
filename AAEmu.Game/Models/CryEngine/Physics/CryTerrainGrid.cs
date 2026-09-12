@@ -127,6 +127,28 @@ public sealed class CryTerrainGrid
     }
 
     /// <summary>
+    /// Matches I3DEngine +0x1fc: sample the stored triangle elevation, including holes.
+    /// Native zero vertices or negative results return zero. Unavailable data returns NaN.
+    /// </summary>
+    public float SampleElevation(float x, float y)
+    {
+        if (!TryLocate(x, y, out var cellX, out var cellY, out var fractionX, out var fractionY))
+            return float.NaN;
+        var h00 = Height(cellX, cellY);
+        var h10 = Height(cellX + 1, cellY);
+        var h01 = Height(cellX, cellY + 1);
+        var h11 = Height(cellX + 1, cellY + 1);
+        if (!Finite(h00) || !Finite(h10) || !Finite(h01) || !Finite(h11))
+            return float.NaN;
+        if (h00 == 0 || h10 == 0 || h01 == 0 || h11 == 0)
+            return 0;
+        var height = fractionX + fractionY <= 1
+            ? (1 - fractionX - fractionY) * h00 + fractionX * h10 + fractionY * h01
+            : (1 - fractionY) * h10 + (fractionX + fractionY - 1) * h11 + (1 - fractionX) * h01;
+        return MathF.Max(0, height);
+    }
+
+    /// <summary>
     /// Matches I3DEngine +0x204: floor integer metre coordinates to the unit grid and read that
     /// vertex, including heights under holes. Unavailable data returns NaN instead of native zero.
     /// </summary>

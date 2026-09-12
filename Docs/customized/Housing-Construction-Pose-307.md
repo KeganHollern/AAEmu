@@ -24,8 +24,10 @@ separately before it accepts the pose.
 | Category 5 uses a 20-meter XY grid, 3-meter height steps, and 90-degree yaw steps. | `393323c0`, `39337320`, `393373a0` |
 
 The model bounds are local bounds before the house yaw and translation.
-The terrain callback returns decoded client terrain heights. The caller also
-supplies the authored terrain grid size. Missing terrain or nonfinite geometry
+The perimeter terrain callback returns decoded client terrain elevations through
+`I3DEngine +0x1fc`. AutoZ grid vertices use a separate `+0x204` raw-height callback.
+Both callbacks read stored heights under holes. The caller also supplies the
+authored terrain grid size. Missing terrain or nonfinite geometry
 rejects the pose. This prevents an absent height sample from becoming ground
 at Z=0.
 

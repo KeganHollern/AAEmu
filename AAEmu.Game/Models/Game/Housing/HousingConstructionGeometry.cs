@@ -86,10 +86,11 @@ public static class HousingConstructionGeometry
 
     public static HousingConstructionPose Resolve(HousingTemplate template, Vector3 requestedPosition, float yaw,
         Vector3 playerPosition, Vector3 modelMin, Vector3 modelMax, Func<float, float, float> sampleHeight,
+        Func<int, int, float> sampleRawHeight,
         float terrainGridSize, Vector2? strongholdGridPhase = null)
     {
         var invalid = ErrorMessageType.HouseCannotLocateInvalidArea;
-        if (template == null || sampleHeight == null || !IsFinite(requestedPosition) || !IsFinite(playerPosition) ||
+        if (template == null || sampleHeight == null || sampleRawHeight == null || !IsFinite(requestedPosition) || !IsFinite(playerPosition) ||
             !IsFinite(modelMin) || !IsFinite(modelMax) || modelMin.X > modelMax.X || modelMin.Y > modelMax.Y ||
             modelMin.Z > modelMax.Z || !float.IsFinite(yaw) || !float.IsFinite(template.GardenRadius) ||
             template.GardenRadius < 0 || requestedPosition.X < 0 || requestedPosition.Y < 0)
@@ -154,7 +155,8 @@ public static class HousingConstructionGeometry
                 {
                     var local = Vector3.Transform(new Vector3(x - position.X, y - position.Y, center.Z), inverseRotation);
                     if (local.X >= modelMin.X && local.X <= modelMax.X && local.Y >= modelMin.Y && local.Y <= modelMax.Y)
-                        heights.Add(sampleHeight(x, y));
+                        // Native39337fb0 uses +0x204 for grid vertices, not the +0x1fc perimeter query.
+                        heights.Add(sampleRawHeight(checked((int)x), checked((int)y)));
                 }
             }
             else

@@ -115,6 +115,41 @@ public sealed class CryTerrainGridTests
     }
 
     [Test]
+    [Arguments(0.5f, 0.5f, 2.5f)]
+    [Arguments(1.5f, 1.5f, 7.5f)]
+    public async Task SampleElevation_UsesStoredTrianglesUnderHoles(float x, float y, float expected)
+    {
+        using var stream = Map(2, Node(2, [Pack(1, 31), Pack(5), Pack(3), Pack(11)]));
+        var grid = CryTerrainGrid.Read(stream, new Vector2(100, 200));
+        await Assert.That(grid.SampleElevation(100 + x, 200 + y)).IsEqualTo(expected);
+        await Assert.That(float.IsNaN(grid.SampleHeight(100 + x, 200 + y))).IsTrue();
+        await Assert.That(grid.Raycast(new Vector3(100 + x, 200 + y, 20), -Vector3.UnitZ, 30, out _))
+            .IsEqualTo(CryIntersection.Clear);
+    }
+
+    [Test]
+    public async Task SampleElevation_ZeroVerticesAndNegativeHeightsUseNativeZero()
+    {
+        using var zeroStream = Map(2, Node(2, [Pack(0), Pack(4), Pack(2), Pack(10)]));
+        var zero = CryTerrainGrid.Read(zeroStream, new Vector2(100, 200));
+        await Assert.That(zero.SampleHeight(101, 201)).IsEqualTo(3f);
+        await Assert.That(zero.SampleElevation(101, 201)).IsEqualTo(0f);
+        using var negativeStream = Map(2, Node(2, Enumerable.Repeat(Pack(1), 4).ToArray(), offset: -10));
+        var negative = CryTerrainGrid.Read(negativeStream, new Vector2(100, 200));
+        await Assert.That(negative.SampleHeight(101, 201)).IsEqualTo(-9f);
+        await Assert.That(negative.SampleElevation(101, 201)).IsEqualTo(0f);
+    }
+
+    [Test]
+    public async Task SampleElevation_UnavailableDataStillRejectsConstruction()
+    {
+        using var stream = Map(2, Node(0, []));
+        var grid = CryTerrainGrid.Read(stream, new Vector2(100, 200));
+        await Assert.That(float.IsNaN(grid.SampleElevation(101, 201))).IsTrue();
+        await Assert.That(float.IsNaN(grid.SampleElevation(99, 201))).IsTrue();
+    }
+
+    [Test]
     public async Task Raycast_FindsFirstObliqueHitAndUsesWorldDistance()
     {
         using var stream = Map(4, Node(3, Enumerable.Repeat(Pack(2), 9).ToArray()));
