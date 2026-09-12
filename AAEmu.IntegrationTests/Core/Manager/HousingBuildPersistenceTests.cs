@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Reflection;
+using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.Stream;
@@ -33,6 +34,8 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 public sealed partial class PlayerMailSendPersistenceTests
 {
     [Theory]
+    [InlineData(false, "success")]
+    [InlineData(true, "success")]
     [InlineData(false, "empty")]
     [InlineData(true, "empty")]
     [InlineData(false, "player")]
@@ -40,7 +43,7 @@ public sealed partial class PlayerMailSendPersistenceTests
     [InlineData(false, "world_doodad")]
     [InlineData(false, "bound_doodad")]
     [InlineData(false, "crop")]
-    public void HouseBuild_GeometryAndSqlFailure_PreserveHousePaymentAndCrops(bool certificates, string collision)
+    public void HouseBuild_CheckpointsPaymentAndCrops_OrRestoresRejectedPlacement(bool certificates, string collision)
     {
         using var graph = new SendGraph();
         using var services = new LaborBuffServices();
@@ -98,6 +101,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             SetField(farms, "_doodadGroups", new Dictionary<uint, DoodadGroups>
                 { [6] = new() { Id = 6, RemovedByHouse = true } });
             var world = HousingPlacementWorld();
+            world.Regions = new Region[WorldManager.SECTORS_PER_CELL, WorldManager.SECTORS_PER_CELL];
             world.Template.HousingZones = new()
             {
                 [10] = [new HousingAreaPolygon { Id = 11,
@@ -149,7 +153,8 @@ public sealed partial class PlayerMailSendPersistenceTests
             var trigger = $"house_build_fail_{player.Id}";
             // House writes follow crop deletion in this transaction. The trigger fails only after
             // the removed crop disappears, while the untouched crops still exist.
-            Execute($"CREATE TRIGGER {trigger} AFTER INSERT ON housings FOR EACH ROW BEGIN " +
+            if (collision != "success")
+                Execute($"CREATE TRIGGER {trigger} AFTER INSERT ON housings FOR EACH ROW BEGIN " +
                 $"IF NEW.id={houseId} AND NOT EXISTS(SELECT 1 FROM doodads WHERE id={crop.DbId}) " +
                 $"AND EXISTS(SELECT 1 FROM doodads WHERE id={outsideCrop.DbId}) " +
                 $"AND EXISTS(SELECT 1 FROM doodads WHERE id={permanent.DbId}) " +
@@ -158,6 +163,100 @@ public sealed partial class PlayerMailSendPersistenceTests
             {
                 var connection = new GameConnection(null) { ActiveChar = player, AccountId = player.AccountId };
                 housing.Build(connection, 100, 100, 200, 300, 0.5f, design.Id, 0, 0, false);
+
+                if (collision == "success")
+                {
+                    var house = Assert.IsType<House>(housing.GetHouseById(houseId));
+                    Assert.Same(house, world.GetBaseUnit(house.ObjId));
+                    Assert.True(house.IsVisible);
+                    Assert.False(house.IsDirty);
+                    Assert.Equal(new Vector3(100, 200, 300), house.Transform.World.Position);
+                    Assert.Equal(0.5f, house.Transform.World.Rotation.Z);
+                    Assert.Equal(0, house.CurrentStep);
+                    Assert.Equal(player.Id, house.OwnerId);
+                    Assert.Equal(player.AccountId, house.AccountId);
+                    Assert.Equal(HousingPermission.Private, house.Permission);
+                    Assert.True(house.ProtectionEndDate > DateTime.UtcNow);
+                    Assert.Equal(certificates ? 10000L : 9700L, player.Money);
+                    Assert.Equal(player.Money, Scalar($"SELECT money FROM characters WHERE id={player.Id}"));
+                    Assert.Equal(20, player.LaborPower);
+                    Assert.Equal(20, Scalar($"SELECT labor FROM accounts WHERE account_id={player.AccountId}"));
+                    Assert.Null(graph.Items.GetItemByItemId(design.Id));
+                    Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM items WHERE id={design.Id}"));
+                    Assert.Equal(3, player.Inventory.Bag.Items.Count);
+                    Assert.Equal(5, alternativeDesign.Count);
+                    Assert.Equal(20, normalCertificates.Count);
+                    Assert.Equal(certificates ? 19 : 20, boundCertificates.Count);
+                    Assert.Null(world.GetDoodad(crop.ObjId));
+                    Assert.False(crop.IsPersistent);
+                    Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM doodads WHERE id={crop.DbId}"));
+                    foreach (var kept in new[] { outsideCrop, permanent })
+                    {
+                        Assert.Same(kept, world.GetDoodad(kept.ObjId));
+                        Assert.True(kept.IsPersistent);
+                        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM doodads WHERE id={kept.DbId}"));
+                    }
+                    // A replay of the consumed source cannot buy another house or consume more tax.
+                    housing.Build(connection, 100, 100, 200, 300, 0.5f, design.Id, 0, 0, false);
+                    Assert.Same(house, housing.GetHouseById(houseId));
+                    Assert.Equal(certificates ? 10000L : 9700L, player.Money);
+                    Assert.Equal(certificates ? 19 : 20, boundCertificates.Count);
+                    objects.Verify(ids => ids.GetNextId(), Times.Once());
+                    houseIds.Verify(ids => ids.GetNextId(), Times.Once());
+                    houseTlds.Verify(ids => ids.GetNextId(), Times.Once());
+                    objects.Verify(ids => ids.ReleaseId(It.IsAny<uint>()), Times.Never());
+                    houseIds.Verify(ids => ids.ReleaseId(It.IsAny<uint>()), Times.Never());
+                    houseTlds.Verify(ids => ids.ReleaseId(It.IsAny<uint>()), Times.Never());
+
+                    var itemsAfterRestart = graph.ReloadLifecycle().Items;
+                    Assert.Null(itemsAfterRestart.GetItemByItemId(design.Id));
+                    Assert.Equal(5, itemsAfterRestart.GetItemByItemId(alternativeDesign.Id).Count);
+                    Assert.Equal(20, itemsAfterRestart.GetItemByItemId(normalCertificates.Id).Count);
+                    Assert.Equal(certificates ? 19 : 20, itemsAfterRestart.GetItemByItemId(boundCertificates.Id).Count);
+                    var expectedPosition = house.Transform.World.Position;
+                    var expectedRotation = house.Transform.World.Rotation;
+                    var expectedPlaceDate = house.PlaceDate;
+                    var expectedProtection = house.ProtectionEndDate;
+                    // Supply templates for other houses in the shared test schema, then discard the live house maps.
+                    var templates = new Dictionary<uint, HousingTemplate>();
+                    using (var database = MySQL.CreateConnection())
+                    using (var command = database.CreateCommand())
+                    {
+                        command.CommandText = "SELECT DISTINCT template_id FROM housings";
+                        using var reader = command.ExecuteReader();
+                        while (reader.Read())
+                        {
+                            var id = reader.GetUInt32(0);
+                            templates[id] = new HousingTemplate
+                            {
+                                Id = id, HousingBindingDoodad = [], Taxation = new Taxation { Tax = 100 },
+                                BuildSteps = { [0] = new HousingBuildStep { HousingId = id, Step = 0, NumActions = 1 } }
+                            };
+                        }
+                    }
+                    templates[houseTemplate.Id] = houseTemplate;
+                    SetField(housingData, "_housingTemplates", templates);
+                    var nextObject = 1000u;
+                    var nextTld = 100u;
+                    objects.Setup(ids => ids.GetNextId()).Returns(() => ++nextObject);
+                    houseTlds.Setup(ids => ids.GetNextId()).Returns(() => ++nextTld);
+                    housing.LoadPlayerHousing(world);
+                    var restoredHouse = Assert.IsType<House>(housing.GetHouseById(houseId));
+                    Assert.NotSame(house, restoredHouse);
+                    Assert.Equal(player.Id, restoredHouse.OwnerId);
+                    Assert.Equal(player.AccountId, restoredHouse.AccountId);
+                    Assert.Equal(100u, restoredHouse.TemplateId);
+                    Assert.Equal(0, restoredHouse.CurrentStep);
+                    Assert.Equal(HousingPermission.Private, restoredHouse.Permission);
+                    Assert.Equal(expectedPosition, restoredHouse.Transform.World.Position);
+                    Assert.Equal(expectedRotation, restoredHouse.Transform.World.Rotation);
+                    Assert.Equal(expectedPlaceDate.Ticks / TimeSpan.TicksPerSecond,
+                        restoredHouse.PlaceDate.Ticks / TimeSpan.TicksPerSecond);
+                    Assert.Equal(expectedProtection.Ticks / TimeSpan.TicksPerSecond,
+                        restoredHouse.ProtectionEndDate.Ticks / TimeSpan.TicksPerSecond);
+                    Assert.False(restoredHouse.IsDirty);
+                    return;
+                }
 
                 Assert.Null(housing.GetHouseById(houseId));
                 Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM housings WHERE id={houseId}"));
@@ -199,7 +298,8 @@ public sealed partial class PlayerMailSendPersistenceTests
             }
             finally
             {
-                Execute($"DROP TRIGGER {trigger}");
+                if (collision != "success")
+                    Execute($"DROP TRIGGER {trigger}");
                 SwapSingleton(oldHousing);
             }
         }
