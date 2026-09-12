@@ -44,7 +44,16 @@ public sealed record CryTriangleMesh(Vector3[] Vertices, ushort[] Indices, byte[
 public sealed record CryGeometryPart(CryPhysicsShape Shape, Matrix4x4 Transform, int PhysicsType,
     string MaterialPath, string NodeName);
 
-public sealed record CryGeometryAsset(CryBounds Bounds, IReadOnlyList<CryGeometryPart> Parts);
+public sealed record CryGeometryAsset(CryBounds Bounds, IReadOnlyList<CryGeometryPart> Parts)
+{
+    public IReadOnlyList<CryGeometryHelper> Helpers { get; init; } = [];
+    public IReadOnlyList<CryGeometryPoseRequirement> PoseRequirements { get; init; } = [];
+}
+
+public sealed record CryGeometryHelper(string Name, string Text, Matrix4x4 Transform);
+
+public sealed record CryGeometryPoseRequirement(string ModelUri, string Name, Matrix4x4 Transform,
+    string Animation, bool Playing, bool Physicalized);
 
 public readonly record struct CryRayHit(float Distance, Vector3 Position, Vector3 Normal, int MaterialId,
     int TriangleIndex);
