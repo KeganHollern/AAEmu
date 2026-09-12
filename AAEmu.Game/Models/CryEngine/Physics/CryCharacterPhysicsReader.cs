@@ -46,8 +46,9 @@ public static class CryCharacterPhysicsReader
                 values[1], values[5], values[9], 0, values[2], values[6], values[10], 0,
                 values[3], values[7], values[11], 1);
             CryPhysicsShape shape = null;
-            if (proxy > 0 && !proxies.TryGetValue(proxy, out shape))
-                throw new InvalidDataException("Missing compiled bone physics proxy.");
+            // Native3161c640 clears the pointer before lookup and keeps it null for an absent ID.
+            if (proxy > 0)
+                proxies.Remove(proxy, out shape);
             bones.Add(new CryCharacterBone(bones.Count, controller, name, parent, transform, shape, flags));
         }
         return bones;

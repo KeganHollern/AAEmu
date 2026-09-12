@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Text;
 
+using AAEmu.Game.IO;
 using AAEmu.Game.Models.CryEngine.Physics;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Housing;
@@ -25,10 +26,22 @@ public sealed class CryCharacterPhysicsTests
     }
 
     [Test]
-    public async Task Read_MissingReferencedProxy_DoesNotInventEmptyCollision()
+    public async Task Read_MissingReferencedProxy_LeavesBoneWithoutGeometry()
     {
-        await Assert.That(() => CryCharacterPhysicsReader.Read(Bones(0x801), 0x801, new byte[4], 0x801))
-            .Throws<InvalidDataException>();
+        var bones = CryCharacterPhysicsReader.Read(Bones(0x801), 0x801, new byte[4], 0x801);
+        await Assert.That(bones.Count).IsEqualTo(2);
+        await Assert.That(bones[1].Name).IsEqualTo("neck");
+        await Assert.That(bones[1].Shape).IsNull();
+    }
+
+    [Test]
+    public async Task Read_RepeatedProxyId_TransfersGeometryToFirstBoneOnly()
+    {
+        var bytes = Bones(0x801);
+        BitConverter.GetBytes(23).CopyTo(bytes, 32);
+        var bones = CryCharacterPhysicsReader.Read(bytes, 0x801, Capsule(), 0x801);
+        await Assert.That(bones[0].Shape).IsNotNull();
+        await Assert.That(bones[1].Shape).IsNull();
     }
 
     [Test]
@@ -36,6 +49,23 @@ public sealed class CryCharacterPhysicsTests
     {
         await Assert.That(() => CryCharacterPhysicsReader.Read(Bones(0x801), 0x801, Capsule()[..^1], 0x801))
             .Throws<EndOfStreamException>();
+    }
+
+    [Test]
+    public async Task ExactClient_MissingBoneReferencesPreserveOtherAuthoredProxies()
+    {
+        var path = Environment.GetEnvironmentVariable("AAEMU_HOUSING_GAME_PAK");
+        Skip.Unless(!string.IsNullOrEmpty(path), "Set AAEMU_HOUSING_GAME_PAK for the r208022 bone reference check.");
+        var source = new ClientSource { PathName = path, SourceType = ClientSourceType.GamePak };
+        await Assert.That(source.Open()).IsTrue();
+        try
+        {
+            var resolver = new CryGeometryResolver(name => source.FileExists(name) ? source.GetFileStream(name) : null);
+            await Assert.That(resolver.Load("objects/characters/monster/mermaid/mermaid.chr").Parts.Count).IsEqualTo(12);
+            await Assert.That(resolver.Load("prefab://prefabs/interaction_b.xml/quest.ferre_skeleton").Parts.Count).IsEqualTo(6);
+            await Assert.That(resolver.Load("prefab://prefabs/quest_h2co3.xml/14east.skeleton").Parts.Count).IsEqualTo(7);
+        }
+        finally { source.Close(); }
     }
 
     private static byte[] Bones(int version)

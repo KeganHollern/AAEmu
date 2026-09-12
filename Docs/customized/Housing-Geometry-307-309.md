@@ -207,7 +207,13 @@ An initial render box alone does not prove the bounds of an active model.
 
 The local asset fixture parsed 612 distinct housing CGF, CGA, and CHR containers without format errors.
 It also sampled all 4 authored cat and worn machine clips with their exact physical proxies.
-The wider fixture retains an unresolved mermaid asset with missing referenced bone proxies.
+Native `3161c640` clears a bone geometry pointer before it finds the authored proxy ID.
+An absent ID keeps that pointer null, so the bone has no collision geometry.
+A successful lookup transfers the proxy to the bone and erases its map entry through `31665910`.
+The CHR reader uses the same transfer and missing-ID rules.
+The wider fixture reads all 12 authored Mermaid proxies despite its 17 positive bone references.
+The two world skeleton prefabs also retain their 6 and 7 valid physical parts.
+The tests cover missing and repeated IDs without discarding other authored geometry.
 The retained tests cover binary formats, transforms, intersection queries, and animation ancestry.
 
 ## Server animation clock
