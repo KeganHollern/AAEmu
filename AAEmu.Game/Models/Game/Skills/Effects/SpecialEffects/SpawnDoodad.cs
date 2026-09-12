@@ -70,6 +70,7 @@ public class SpawnDoodad : SpecialEffectAction
                 rpy.Z, placementPolicy, out var placementPosition))
         {
             Logger.Warn($"Special effects: SpawnDoodad cannot place doodadId {doodadId} at {placementSource.Transform.World.Position}");
+            SkillLaborBatch.Current?.Fail();
             return;
         }
 
@@ -80,15 +81,13 @@ public class SpawnDoodad : SpecialEffectAction
         if (doodad == null)
         {
             Logger.Warn($"Special effects: SpawnDoodad could not create doodadId {doodadId}");
+            SkillLaborBatch.Current?.Fail();
             return;
         }
 
         doodad.Transform = placementSource.Transform.CloneDetached(doodad);
-        doodad.SetPosition(placementPosition.X, placementPosition.Y, placementPosition.Z, rpy.X, rpy.Y, rpy.Z);
-        doodad.InitDoodad();
-        if (delay > 0)
-            Thread.Sleep(delay);
-        doodad.Spawn();
+        doodad.Transform.Local.SetPosition(placementPosition.X, placementPosition.Y, placementPosition.Z, rpy.X, rpy.Y, rpy.Z);
+        DoodadCreation.InitializeAndSpawnTemporary(doodad, delay);
     }
 
     internal static bool TryResolvePlacement(AiGeoDataManager geoData, Vector3 sourcePosition, float yawDegrees,

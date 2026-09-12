@@ -57,7 +57,7 @@ public partial class Skill
             var template = SkillManager.Instance.GetEffectTemplate(effect.ActualId, effect.ActualType);
             return template is GainLootPackItemEffect or CraftEffect or InteractionEffect or SpawnFishEffect or BuffEffect or DispelEffect or
                 SpawnEffect or NpcSpawnerSpawnEffect or NpcSpawnerDespawnEffect or KillNpcWithoutCorpseEffect ||
-                template is SpecialEffect { SpecialEffectTypeId: SpecialType.ConsumeLaborPower or SpecialType.FishingLoot or SpecialType.GainItem or SpecialType.GiveLivingPoint or SpecialType.AddExp };
+                template is SpecialEffect { SpecialEffectTypeId: SpecialType.ConsumeLaborPower or SpecialType.FishingLoot or SpecialType.GainItem or SpecialType.GiveLivingPoint or SpecialType.AddExp or SpecialType.SpawnDoodad };
         });
         // Plots without an explicit labor marker still pay at the first node after casting.
         if (!charge && !PlotHasLaborMarker() && (node.ParentNextEvent is { Casting: true } ||
@@ -100,7 +100,7 @@ public partial class Skill
             SpawnEffect or NpcSpawnerSpawnEffect or NpcSpawnerDespawnEffect or KillNpcWithoutCorpseEffect => true,
         SpecialEffect special => special.SpecialEffectTypeId is SpecialType.GainItem or SpecialType.ApplyReagents or
             SpecialType.ConsumeLaborPower or SpecialType.GiveLivingPoint or SpecialType.FishingLoot or
-            SpecialType.GradeEnchant or SpecialType.ItemConversion or SpecialType.AddExp or
+            SpecialType.GradeEnchant or SpecialType.ItemConversion or SpecialType.AddExp or SpecialType.SpawnDoodad or
             SpecialType.Anim or SpecialType.FxGroup or SpecialType.FxGroupAnim or SpecialType.Projectile or
             SpecialType.ProjectileAnim or SpecialType.ManaCost or SpecialType.Cooldown or SpecialType.GlobalCooldown or
             SpecialType.CancelStealth or SpecialType.CancelOngoingBuff or SpecialType.CombatDice or

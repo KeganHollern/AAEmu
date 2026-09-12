@@ -1,5 +1,6 @@
 ﻿using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units;
 
@@ -13,10 +14,10 @@ public class SummonDoodad : IWorldInteraction
         var doodad = DoodadManager.Instance.Create(caster.ParentWorld, 0, doodadId, caster, true);
         if (doodad == null)
         {
+            SkillLaborBatch.Current?.Fail();
             return;
         }
         doodad.Transform = target.Transform.CloneDetached(doodad);
-        doodad.InitDoodad();
-        doodad.Spawn();
+        DoodadCreation.InitializeAndSpawnTemporary(doodad);
     }
 }

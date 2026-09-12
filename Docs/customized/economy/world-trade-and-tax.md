@@ -207,3 +207,14 @@ A foreign owner, full bag, or failed checkpoint cannot spend labor for the launc
 The construction tests cover intermediate progress, completion, insufficient labor, failed checkpoints, and ship launch payment.
 The MySQL cases check house progress, labor, and material in one transaction.
 No schema or compact change is needed for construction progress.
+
+### Temporary doodad creation in issue 463
+
+Paid `SummonDoodad` interactions and `SpecialType.SpawnDoodad` effects keep their temporary lifetime.
+Their initial phases and world spawn start after the labor and material transaction commits.
+A known failed commit releases the unused object ID.
+A missing doodad template or invalid placement cancels the paid batch.
+These changes add no persistent doodad rows, schema changes, or compact changes.
+
+The MySQL tests check successful creation, insufficient labor, and a failed checkpoint.
+They check account labor, material rows, initial phase timing, world publication, and object ID reuse.
