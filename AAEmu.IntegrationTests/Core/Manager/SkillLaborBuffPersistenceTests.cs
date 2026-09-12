@@ -1,4 +1,7 @@
 using System.Reflection;
+using AAEmu.Commons.Utils.DB;
+using AAEmu.Game.Models.Game.Skills.Effects;
+using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
@@ -171,6 +174,73 @@ public sealed partial class PlayerMailSendPersistenceTests
         Assert.Equal(7, reloaded.Buffs.GetEffectFromBuffId(template.Id).Charge);
     }
 
+    [Theory]
+    [InlineData(4646u, 16166u)]
+    [InlineData(5743u, 21710u)]
+    public void SkillLabor_AuthoredPaidCooldownSurvivesRestartAndLaterSave(uint buffId, uint skillId)
+    {
+        using var graph = new SendGraph();
+        using var buffs = new LaborBuffServices();
+        var player = graph.Sender;
+        player.InitializeLaborCache(20, DateTime.UtcNow);
+        Execute($"INSERT INTO accounts(account_id,labor) VALUES({player.AccountId},20) ON DUPLICATE KEY UPDATE labor=20");
+        var cooldown = new BuffTemplate { Id = buffId, Kind = BuffKind.Bad,
+            SaveRuleId = BuffSaveRuleType.Normal, Duration = 14400000, StackRule = BuffStackRule.Refresh };
+        buffs.AddTemplate(cooldown);
+        var combat = new BuffTemplate { Id = player.Id + 10, Kind = BuffKind.Bad,
+            SaveRuleId = BuffSaveRuleType.Normal, Duration = 14400000, StackRule = BuffStackRule.Refresh };
+        buffs.AddTemplate(combat);
+        var template = new SkillTemplate { Id = skillId, ConsumeLaborPower = 10 };
+        template.Effects.Add(new SkillEffect { Template = new BuffEffect { Buff = cooldown } });
+        buffs.AddSkill(template);
+        Assert.True(SkillLaborBatch.Run(player, new Skill(template), true, () =>
+        {
+            player.Buffs.AddBuff(NewLaborBuff(player, cooldown, 1));
+            player.Buffs.AddBuff(NewLaborBuff(player, combat, 1));
+        }));
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM character_active_buffs WHERE character_id={player.Id} AND buff_id={buffId}"));
+        Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM character_active_buffs WHERE character_id={player.Id} AND buff_id={combat.Id}"));
+        var reloaded = new Character(new UnitCustomModelParams()) { Id = player.Id, ObjId = player.ObjId, Name = "Reloaded" };
+        ((Buffs)reloaded.Buffs).LoadActiveBuffs(reloaded);
+        Assert.InRange(reloaded.Buffs.GetEffectFromBuffId(buffId).GetTimeLeft(), 14370000, 14400000);
+        Assert.Null(reloaded.Buffs.GetEffectFromBuffId(combat.Id));
+        // The loader does not restore Skill. The data-derived policy must also work on the next save.
+        using var connection = MySQL.CreateConnection();
+        using var transaction = connection.BeginTransaction();
+        ((Buffs)reloaded.Buffs).SaveActiveBuffs(connection, transaction, player.Id);
+        transaction.Commit();
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM character_active_buffs WHERE character_id={player.Id} AND buff_id={buffId}"));
+    }
+
+    [Fact]
+    public void SkillLabor_ItemObserverFailureKeepsPaidBuffAndStopsLaterSaves()
+    {
+        using var graph = new SendGraph();
+        using var buffs = new LaborBuffServices();
+        var player = graph.Sender;
+        player.InitializeLaborCache(20, DateTime.UtcNow);
+        Execute($"INSERT INTO accounts(account_id,labor) VALUES({player.AccountId},20) ON DUPLICATE KEY UPDATE labor=20");
+        var material = graph.AddItem(0);
+        material.Count = 1;
+        Assert.True(graph.Save.TryCommitEconomy([player]));
+        var template = buffs.AddTemplate(player.Id + 10);
+        var skill = new Skill(new SkillTemplate { Id = 50, ConsumeLaborPower = 10 });
+        var stopped = false;
+        graph.Save.StopForConsistencyFailure = (_, _) => stopped = true;
+        player.Events.OnItemGather += (_, _) => throw new InvalidOperationException("Forced committed item observer failure");
+        Assert.Throws<InvalidOperationException>(() => SkillLaborBatch.Run(player, skill, true, () =>
+        {
+            player.Buffs.AddBuff(NewLaborBuff(player, template, 7));
+            Assert.Equal(1, player.Inventory.Bag.ConsumeItem(ItemTaskType.SkillReagents, material.TemplateId, 1, material));
+        }));
+        Assert.True(stopped);
+        Assert.Null(player.Buffs.GetEffectFromBuffId(template.Id));
+        Assert.Equal(10, Scalar($"SELECT labor FROM accounts WHERE account_id={player.AccountId}"));
+        Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM items WHERE id={material.Id}"));
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM character_active_buffs WHERE character_id={player.Id} AND buff_id={template.Id}"));
+        Assert.Throws<InvalidOperationException>(() => graph.Save.TryCommitEconomy([player]));
+    }
+
     private static Buff NewLaborBuff(Character owner, BuffTemplate template, int charge) =>
         new(owner, owner, new SkillCasterUnit(owner.ObjId), template, null, DateTime.UtcNow) { Charge = charge };
 
@@ -201,10 +271,15 @@ public sealed partial class PlayerMailSendPersistenceTests
             var template = new BuffTemplate { Id = id, Duration = 600000, Kind = BuffKind.Good,
                 SaveRuleId = BuffSaveRuleType.Normal, StackRule = BuffStackRule.Refresh, MaxStack = 1,
                 InitMinCharge = 1, InitMaxCharge = 2 };
-            ((Dictionary<uint, BuffTemplate>)typeof(SkillManager)
-                .GetField("_buffs", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_skills)!)[id] = template;
+            AddTemplate(template);
             return template;
         }
+        public void AddTemplate(BuffTemplate template) =>
+            ((Dictionary<uint, BuffTemplate>)typeof(SkillManager)
+                .GetField("_buffs", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_skills)!)[template.Id] = template;
+        public void AddSkill(SkillTemplate template) =>
+            ((Dictionary<uint, SkillTemplate>)typeof(SkillManager)
+                .GetField("_skills", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_skills)!)[template.Id] = template;
         private void Replace<T>(T manager) where T : class
         {
             var previous = SwapSingleton(manager);

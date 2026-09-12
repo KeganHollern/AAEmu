@@ -19,7 +19,7 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public class SkillManager(IAnimationManager animationManager, IPlotManager plotManager) : Singleton<SkillManager>, ISkillManager
+public partial class SkillManager(IAnimationManager animationManager, IPlotManager plotManager) : Singleton<SkillManager>, ISkillManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private bool _loaded;
@@ -1836,6 +1836,7 @@ public class SkillManager(IAnimationManager animationManager, IPlotManager plotM
             _startAbilitySkills[ability].Add(skillTemplate);
         }
 
+        _paidSkillBuffs = null;
         _loaded = true;
     }
 

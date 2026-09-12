@@ -954,8 +954,9 @@ public partial class Buffs : IBuffs
         // Filters out short combat debuffs (stuns, bleeds, knockdowns).
         if (buff.Template.SaveRuleId == BuffSaveRuleType.Normal)
         {
-            // Don't save debuffs (combat effects should not persist through logout)
-            if (buff.Template.Kind == BuffKind.Bad)
+            // Authored paid cooldowns can be Bad buffs, such as the four-hour language cooldown.
+            // Keep ordinary combat debuffs excluded. The authored save rule and duration still apply.
+            if (buff.Template.Kind == BuffKind.Bad && !SkillManager.Instance.IsPaidSkillBuff(buff.Template.Id))
                 return false;
 
             // Very short buffs (< 60s) are combat abilities, not consumables
