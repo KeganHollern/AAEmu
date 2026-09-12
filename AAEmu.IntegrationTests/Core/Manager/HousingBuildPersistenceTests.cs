@@ -18,7 +18,10 @@ using AAEmu.Game.Models.Game.Features;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Models;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Taxations;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
@@ -30,9 +33,14 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 public sealed partial class PlayerMailSendPersistenceTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void HouseBuild_SqlFailureAfterCropDeletion_RestoresHousePaymentAndCrops(bool certificates)
+    [InlineData(false, "empty")]
+    [InlineData(true, "empty")]
+    [InlineData(false, "player")]
+    [InlineData(false, "npc")]
+    [InlineData(false, "world_doodad")]
+    [InlineData(false, "bound_doodad")]
+    [InlineData(false, "crop")]
+    public void HouseBuild_GeometryAndSqlFailure_PreserveHousePaymentAndCrops(bool certificates, string collision)
     {
         using var graph = new SendGraph();
         using var services = new LaborBuffServices();
@@ -46,6 +54,15 @@ public sealed partial class PlayerMailSendPersistenceTests
         var oldAreas = SwapSingleton(areas);
         var oldFarms = SwapSingleton(farms);
         var oldZones = SwapSingleton(zones);
+        var actor = new ActorModel { Id = 2 };
+        foreach (var stance in Enum.GetValues<GameStanceType>())
+            actor.Stances[stance] = new GameStance { HeightCollider = 1, Size = new Vector3(0.5f), UseCapsule = true };
+        var models = new ModelManager();
+        SetField(models, "_modelTypes", new Dictionary<uint, ModelType>
+            { [2] = new() { Id = 2, SubId = 2, SubType = "ActorModel" } });
+        SetField(models, "_models", new Dictionary<string, Dictionary<uint, Model>>
+            { ["ActorModel"] = new() { [2] = actor } });
+        var oldModels = SwapSingleton(models);
         var oldWorldConfig = AppConfiguration.Instance.World;
         AppConfiguration.Instance.World = new WorldConfig { GrowthRate = 1, ExpRate = 1 };
         var featuresProperty = typeof(FeaturesManager).GetProperty(nameof(FeaturesManager.Fsets))!;
@@ -56,6 +73,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         try
         {
             var player = graph.Sender;
+            player.ObjId = player.Id;
             player.InitializeLaborCache(20, DateTime.UtcNow);
             Execute($"INSERT INTO accounts(account_id,labor) VALUES({player.AccountId},20) ON DUPLICATE KEY UPDATE labor=20");
             var design = graph.AddItem(0);
@@ -91,6 +109,25 @@ public sealed partial class PlayerMailSendPersistenceTests
             var crop = AddHousingCrop(world, player.Id + 40, new Vector3(100, 200, 300), 6);
             var outsideCrop = AddHousingCrop(world, player.Id + 41, new Vector3(110, 200, 300), 6);
             var permanent = AddHousingCrop(world, player.Id + 42, new Vector3(100, 200, 300), 7);
+            if (collision == "player")
+            {
+                player.ModelId = 2;
+                HousingField<ConcurrentDictionary<uint, BaseUnit>>(world, "_baseUnits")[player.ObjId] = player;
+            }
+            if (collision == "npc")
+            {
+                var npc = new Npc { ObjId = player.Id + 43, ModelId = 2, Template = new NpcTemplate { ModelId = 2, Scale = 1 } };
+                SetParentWorld(npc, world);
+                npc.Transform.Local.Position = player.Transform.World.Position;
+                world.AddObject(npc);
+            }
+            if (collision is "world_doodad" or "bound_doodad")
+            {
+                permanent.Template.Model = "cgf://housing-test-decoration.cgf";
+                permanent.ParentObjId = collision == "bound_doodad" ? player.ObjId : 0;
+            }
+            if (collision == "crop")
+                crop.Template.Model = "cgf://housing-test-decoration.cgf";
             var houseId = player.Id + 70;
             var objects = new Mock<IObjectIdManager>();
             objects.Setup(ids => ids.GetNextId()).Returns(900);
@@ -146,12 +183,15 @@ public sealed partial class PlayerMailSendPersistenceTests
                     Assert.False((bool)typeof(Doodad).GetField("_deleted", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(doodad)!);
                     Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM doodads WHERE id={doodad.DbId}"));
                 }
-                objects.Verify(ids => ids.GetNextId(), Times.Once());
-                objects.Verify(ids => ids.ReleaseId(900), Times.Once());
-                houseIds.Verify(ids => ids.GetNextId(), Times.Once());
-                houseIds.Verify(ids => ids.ReleaseId(houseId), Times.Once());
-                houseTlds.Verify(ids => ids.GetNextId(), Times.Once());
-                houseTlds.Verify(ids => ids.ReleaseId(7), Times.Once());
+                // Rejected geometry must stop before allocation. Accepted geometry reaches the
+                // SQL trigger after crop deletion, then restores all state and releases each ID.
+                var allocations = collision is "npc" or "world_doodad" ? Times.Never() : Times.Once();
+                objects.Verify(ids => ids.GetNextId(), allocations);
+                objects.Verify(ids => ids.ReleaseId(900), allocations);
+                houseIds.Verify(ids => ids.GetNextId(), allocations);
+                houseIds.Verify(ids => ids.ReleaseId(houseId), allocations);
+                houseTlds.Verify(ids => ids.GetNextId(), allocations);
+                houseTlds.Verify(ids => ids.ReleaseId(7), allocations);
                 var restored = graph.ReloadLifecycle().Items;
                 Assert.Equal(1, restored.GetItemByItemId(design.Id).Count);
                 Assert.Equal(20, restored.GetItemByItemId(normalCertificates.Id).Count);
@@ -169,6 +209,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             SwapSingleton(oldAreas);
             SwapSingleton(oldFarms);
             SwapSingleton(oldZones);
+            SwapSingleton(oldModels);
             AppConfiguration.Instance.World = oldWorldConfig;
             featuresProperty.SetValue(null, oldFeatures);
         }
