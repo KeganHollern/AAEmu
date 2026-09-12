@@ -11,6 +11,7 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Trading;
+using AAEmu.Game.Models.Game.Dominions;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
@@ -78,12 +79,38 @@ public sealed class EconomyPersistenceTests
     [Theory]
     [InlineData("specialty_demand")]
     [InlineData("house_tax_receipts")]
+    [InlineData("dominion_states")]
     public void WorldEconomyMigration_CanRepeatWithoutChangingRows(string suffix)
     {
         var update = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "SQL", "updates",
             $"2026-09-12_aaemu_game_{suffix}.sql"));
         Execute(update);
         Execute(update);
+    }
+
+    [Fact]
+    public void DominionBalance_ReloadsCommittedStateAndIgnoresRolledBackUpdate()
+    {
+        var state = DominionState.Unclaimed(33, 1);
+        using var connection = MySQL.CreateConnection();
+        using (var transaction = connection.BeginTransaction())
+        {
+            DominionStateStore.Save(connection, transaction, state);
+            transaction.Commit();
+        }
+        using (var transaction = connection.BeginTransaction())
+        {
+            DominionStateStore.Save(connection, transaction, state with { HouseTaxBalance = 500 });
+            transaction.Rollback();
+        }
+        Assert.Equal(state, DominionStateStore.Load(connection)[33]);
+        using (var transaction = connection.BeginTransaction())
+        {
+            DominionStateStore.Save(connection, transaction, state with { HouseTaxBalance = 250 });
+            transaction.Commit();
+        }
+        using var reload = MySQL.CreateConnection();
+        Assert.Equal(state with { HouseTaxBalance = 250 }, DominionStateStore.Load(reload)[33]);
     }
 
     [Fact]

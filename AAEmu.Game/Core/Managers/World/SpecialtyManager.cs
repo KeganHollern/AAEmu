@@ -189,8 +189,8 @@ public partial class SpecialtyManager(
         if (MathUtil.CalculateDistance(player.Transform.World.Position, npc.Transform.World.Position) > 2.5)
             return ErrorMessageType.TooFarAway;
         destination = zoneManager.GetZoneByKey(npc.Transform.ZoneId)?.GroupId ?? 0;
-        if (destination == 0 || template.SpecialtyZoneId == destination)
-            return ErrorMessageType.StoreCantSellSameZone;
+        if (destination == 0 || template.SpecialtyZoneId == 0)
+            return ErrorMessageType.Invalid;
 
         uint ratio;
         uint profit;
@@ -204,6 +204,8 @@ public partial class SpecialtyManager(
         }
         else
         {
+            if (template.SpecialtyZoneId == destination)
+                return ErrorMessageType.StoreCantSellSameZone;
             if (!template.NormalSpeciality || !_routes.TryGetValue((template.SpecialtyZoneId, destination), out var route))
                 return ErrorMessageType.Invalid;
             ratio = route.Ratio;

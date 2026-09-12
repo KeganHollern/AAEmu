@@ -17,7 +17,7 @@ The server checks that ID against the equipped pack and uses the player's zone f
 
 An authored NPC bundle takes precedence over the route matrix.
 A mapped bundle must contain the pack. An unmapped trader accepts only normal specialty packs with a matrix route.
-A sale in the pack's origin zone is invalid.
+The matrix fallback rejects a sale in the pack's origin zone. An explicit bundle keeps its authored rule.
 The loader reads `vendor_exist` from its own column.
 
 The server rounds the grade refund first, then the route price.
@@ -108,3 +108,19 @@ They also check demand reload, receipt replay rejection, and repeated additive u
 6. Pay one tax bill, repeat the same request, and check one debit and one date extension.
 7. Try owner demolition after the due date and check error 567.
 8. If a custom late fee is enabled, compare the displayed quote, debit, and receipt.
+
+## Doodad purchase evidence for issue 311
+
+The exact r208022 native path confirms the gold fallback.
+`FUN_393b80d0` reads the purchase descriptor in this order:
+`coin_count`, `coin_item_id`, `count`, `currency_id`, and `item_id`.
+It selects the gold dialog when `coin_item_id == 0 OR coin_count < 1`.
+It selects the item-coin dialog only when both the coin item and coin count are positive.
+The static coin sentinel at `0x3a17e6a8` equals 0.
+
+`FUN_393b9080` writes `moneyString` from the output item's price at descriptor offset `0x84`, multiplied by the output count.
+`FUN_393bc4e0` uses the same multiplication for its affordability check before the request.
+Both functions use the count copied from the purchase descriptor.
+The currency ID passes through the gold dialog unchanged.
+`FUN_393b92a0` displays the coin item name and exact coin count for the item-coin branch.
+The loader `FUN_3966f260` confirms the descriptor field order against the compact table query.

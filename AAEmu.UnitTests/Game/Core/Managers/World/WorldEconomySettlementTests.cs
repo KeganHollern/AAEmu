@@ -185,6 +185,9 @@ public sealed class WorldEconomySettlementTests
     public async Task Quote_SameOriginOrRemoteTrader_RejectsBeforePayment()
     {
         _pack.Template.SpecialtyZoneId = 2;
+        await Assert.That(_specialty.TryQuote(_seller, 20, out _, out _, out _, out var bundlePrice)).IsEqualTo(ErrorMessageType.NoErrorMessage);
+        await Assert.That(bundlePrice).IsEqualTo(1100);
+        _traders.Clear();
         await Assert.That(_specialty.TryQuote(_seller, 20, out _, out _, out _, out _)).IsEqualTo(ErrorMessageType.StoreCantSellSameZone);
         _pack.Template.SpecialtyZoneId = 1;
         _trader.Transform.Local.SetPosition(10, 0, 0);

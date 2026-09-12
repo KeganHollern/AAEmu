@@ -20,6 +20,7 @@ public static class CSOffsets
     public const ushort CSKickFromExpeditionPacket = 0x00f;
     // 0x10 unk packet
     public const ushort CSUpdateDominionTaxRatePacket = 0x012;
+    public const ushort CSUpdateNationalTaxRatePacket = 0x013;
     public const ushort CSFactionImmigrationInvitePacket = 0x015;
     public const ushort CSFactionImmigrationInviteReplyPacket = 0x016;
     public const ushort CSFactionImmigrateToOriginPacket = 0x017;
@@ -134,6 +135,7 @@ public static class CSOffsets
     public const ushort CSSkillControllerStatePacket = 0x08a;
     public const ushort CSCreateSkillControllerPacket = 0x08b;
     public const ushort CSActiveWeaponChangedPacket = 0x08c;
+    public const ushort CSSetCraftingPayPacket = 0x08d;
     public const ushort CSChangeItemLookPacket = 0xfff; // TODO: this packet is not in the offsets 
     public const ushort CSLootOpenBagPacket = 0x08e;
     public const ushort CSLootItemPacket = 0x08f;
@@ -283,7 +285,4 @@ public static class CSOffsets
     // 0x141 unk packet
     // 0x142 unk packet
 
-    // no such packets
-    public const ushort CSUpdateNationalTaxRatePacket = 0xfff;
-    public const ushort CSSetCraftingPayPacket = 0xfff;
 }

@@ -10,6 +10,7 @@ public class CSUpdateNationalTaxRatePacket() : GamePacket(CSOffsets.CSUpdateNati
         var id = stream.ReadUInt16();
         var taxRate = stream.ReadInt32();
 
-        Logger.Debug("UpdateNationalTaxRate, Id: {0}, TaxRate: {1}", id, taxRate);
+        Connection?.ActiveChar?.SendMessage("National tax changes are not available. Territories are unclaimed.");
+
     }
 }
