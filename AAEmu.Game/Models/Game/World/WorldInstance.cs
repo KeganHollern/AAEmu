@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Numerics;
 using AAEmu.Commons.IO;
 using AAEmu.Game.Core.Managers;
@@ -663,6 +663,8 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
     /// Gets list of all NPCs in this instance
     /// </summary>
     /// <returns></returns>
+    public IReadOnlyList<Unit> GetAllUnits() => _baseUnits.Values.OfType<Unit>().ToArray();
+
     public List<Npc> GetAllNpcs()
     {
         return _npcs.Values.ToList();

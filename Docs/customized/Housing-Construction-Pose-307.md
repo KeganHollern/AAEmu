@@ -65,3 +65,23 @@ The Release build passed with 0 errors.
 The tests use independent terrain cases that make the native rules observable.
 The parent housing release record covers scene integration and deployment.
 No manual r208022 client test is claimed here.
+
+## Plot area, water, and neighboring plots
+
+The native validator `393363b0` calls the area, water, and collision predicates.
+`393312a0` splits a plot into 4 m cells. It applies the alley only on outer edges.
+`39331ba0` finds an area from each cell's first corner. It checks the other 3 corners against that same area.
+All 4 points use Z=0 because the native housing area predicate ignores height.
+
+`398970b0` selects categories 7 and 15 for underwater construction.
+`39331d20` gets the terrain vertex under each cell corner through `I3DEngine+0x204`.
+It compares that height with the water surface from `I3DEngine+0x110`.
+Water must be strictly above the terrain for an underwater plot.
+Equality counts as land. A house with no garden uses its pivot for this test in `39334380`.
+
+`393349e0` selects plot or model intersection from the garden radius.
+Two plots use strict XY overlap in `39331f30`, without a Z test.
+The candidate reserves its alley. The neighboring plot uses its full footprint.
+A plot and a house without a garden use the full separating-axis box test from `39332c10`.
+Two houses without gardens use the oriented-box test from `390318f0`.
+These box tests count touching faces as overlap.

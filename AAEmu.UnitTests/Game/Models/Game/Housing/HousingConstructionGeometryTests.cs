@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using AAEmu.Game.Models.CryEngine.Physics;
 
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Housing;
@@ -7,6 +8,43 @@ namespace AAEmu.UnitTests.Game.Models.Game.Housing;
 
 public sealed class HousingConstructionGeometryTests
 {
+    [Test]
+    public async Task OverlapsHouse_TwoPlotsIgnoreVerticalSeparation()
+    {
+        var template = new HousingTemplate { GardenRadius = 8, Alley = 1 };
+        var bounds = new CryBounds(new Vector3(-2), new Vector3(2));
+        await Assert.That(HousingConstructionGeometry.OverlapsHouse(template, bounds,
+            Matrix4x4.CreateTranslation(100, 100, 0), template, bounds,
+            Matrix4x4.CreateTranslation(100, 100, 1000))).IsTrue();
+        await Assert.That(HousingConstructionGeometry.OverlapsHouse(template, bounds,
+            Matrix4x4.CreateTranslation(100, 100, 0), template, bounds,
+            Matrix4x4.CreateTranslation(116, 100, 0))).IsFalse();
+    }
+
+    [Test]
+    public async Task OverlapsHouse_ZeroRadiusUsesOrientedModelAndVerticalSeparation()
+    {
+        var template = new HousingTemplate();
+        var bounds = new CryBounds(new Vector3(-2, -0.1f, -1), new Vector3(2, 0.1f, 1));
+        var diagonal = Matrix4x4.CreateRotationZ(MathF.PI / 4);
+        await Assert.That(HousingConstructionGeometry.OverlapsHouse(template, bounds, diagonal,
+            template, bounds, diagonal * Matrix4x4.CreateTranslation(0, 0, 3))).IsFalse();
+        await Assert.That(HousingConstructionGeometry.OverlapsHouse(template, bounds, diagonal,
+            template, bounds, diagonal * Matrix4x4.CreateTranslation(0, 0, 2))).IsTrue();
+    }
+
+    [Test]
+    [Arguments(1u, 99f, ErrorMessageType.HouseLandOnly)]
+    [Arguments(1u, 100f, ErrorMessageType.NoErrorMessage)]
+    [Arguments(7u, 99f, ErrorMessageType.NoErrorMessage)]
+    [Arguments(7u, 100f, ErrorMessageType.HouseUnderWaterOnly)]
+    [Arguments(15u, 99f, ErrorMessageType.NoErrorMessage)]
+    [Arguments(15u, 101f, ErrorMessageType.HouseUnderWaterOnly)]
+    public async Task CheckWater_UsesNativeCategoriesAndStrictSurfaceTest(uint category, float height, ErrorMessageType expected)
+    {
+        await Assert.That(HousingConstructionGeometry.CheckWater(category, height, 100f)).IsEqualTo(expected);
+    }
+
     [Test]
     public async Task Range_UsesTruncatedThreeDimensionalDistanceAndGardenRadius()
     {

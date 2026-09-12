@@ -1,5 +1,7 @@
 ﻿using System.Numerics;
 
+using AAEmu.Game.Models.CryEngine.Physics;
+
 namespace AAEmu.Game.Models.Game.Housing;
 
 public readonly record struct HousingConstructionPose(Vector3 Position, float Yaw, ErrorMessageType Error)
@@ -10,6 +12,62 @@ public readonly record struct HousingConstructionPose(Vector3 Position, float Ya
 /// <summary>Pure r208022 placement pose rules. World collision and area rules run separately.</summary>
 public static class HousingConstructionGeometry
 {
+    public static bool IsPlotInsideAreas(HousingTemplate template, Vector3 position,
+        Func<Vector3, HousingAreaPolygon> findArea)
+    {
+        if (template.GardenRadius <= 0)
+            return true;
+        var cells = HousingFootprint.GetCells(new Vector2(position.X, position.Y), template.GardenRadius, template.Alley);
+        if (cells.Count == 0)
+            return false;
+        foreach (var cell in cells)
+        {
+            // Native39331ba0 selects the first corner's area and checks the other three against that same area.
+            var corners = cell.Corners(0);
+            var area = findArea(corners[0]);
+            if (area == null || corners.Skip(1).Any(corner => !area.Contains(corner)))
+                return false;
+        }
+        return true;
+    }
+
+    public static bool OverlapsHouse(HousingTemplate candidate, CryBounds candidateBounds,
+        Matrix4x4 candidateTransform, HousingTemplate neighbor, CryBounds neighborBounds, Matrix4x4 neighborTransform)
+    {
+        var candidateHasGarden = candidate.GardenRadius > 0;
+        var neighborHasGarden = neighbor.GardenRadius > 0;
+        var candidateGarden = HousingGeometryAssets.GardenBounds(candidate, candidateBounds, candidateTransform);
+        // Native393349e0 compares the candidate's alley-adjusted cells with the neighbor's full plot.
+        var neighborGarden = HousingGeometryAssets.GardenBounds(neighbor, neighborBounds, neighborTransform, false);
+        if (candidateHasGarden && neighborHasGarden)
+        {
+            // 39331f30 uses strict XY overlap and deliberately ignores the height of two plots.
+            return candidateGarden.Min.X < neighborGarden.Max.X && candidateGarden.Min.Y < neighborGarden.Max.Y &&
+                neighborGarden.Min.X < candidateGarden.Max.X && neighborGarden.Min.Y < candidateGarden.Max.Y;
+        }
+        var candidateBox = candidateHasGarden
+            ? new CryBox(candidateGarden.Center, candidateGarden.HalfSize, Matrix4x4.Identity)
+            : HousingGeometryAssets.HouseBounds(candidateBounds, candidateTransform);
+        var neighborBox = neighborHasGarden
+            ? new CryBox(neighborGarden.Center, neighborGarden.HalfSize, Matrix4x4.Identity)
+            : HousingGeometryAssets.HouseBounds(neighborBounds, neighborTransform);
+        // 39332c10 and 390318f0 use the complete separating-axis box test, including touching faces.
+        return CryGeometryQueries.IntersectBox(new CryGeometryPart(neighborBox, Matrix4x4.Identity,
+                CryGeometryLayerRules.Solid, "", "house"), Matrix4x4.Identity, candidateBox, Matrix4x4.Identity)
+            != CryIntersection.Clear;
+    }
+
+    public static ErrorMessageType CheckWater(uint categoryId, float positionZ, float waterSurfaceZ)
+    {
+        if (!float.IsFinite(positionZ) || !float.IsFinite(waterSurfaceZ))
+            return ErrorMessageType.HouseCannotLocateInvalidArea;
+        // 39334380 tests the pivot, with equality on the land side. 398970b0 selects categories 7 and 15.
+        var underwater = waterSurfaceZ > positionZ;
+        return categoryId is 7 or 15
+            ? underwater ? ErrorMessageType.NoErrorMessage : ErrorMessageType.HouseUnderWaterOnly
+            : underwater ? ErrorMessageType.HouseLandOnly : ErrorMessageType.NoErrorMessage;
+    }
+
     public static bool IsWithinRange(Vector3 player, Vector3 house, float gardenRadius) =>
         IsFinite(player) && IsFinite(house) && float.IsFinite(gardenRadius) && gardenRadius >= 0 &&
         MathF.Floor(Vector3.Distance(player, house)) <= gardenRadius + 30f;

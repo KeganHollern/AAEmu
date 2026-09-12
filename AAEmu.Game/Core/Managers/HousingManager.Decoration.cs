@@ -70,6 +70,13 @@ public partial class HousingManager
             return false;
         }
 
+        var geometryError = CheckDecorationGeometry(player, house, design, pos, quat, parentObjId);
+        if (geometryError != ErrorMessageType.NoErrorMessage)
+        {
+            player.SendErrorMessage(geometryError);
+            return false;
+        }
+
         var skill = new Skill(new SkillTemplate())
         {
             CommitLaborBatch = (owner, write) =>

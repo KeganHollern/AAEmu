@@ -11,6 +11,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.CommonFarm;
@@ -82,7 +83,7 @@ public sealed class HousingBuildEligibilityTests
                 new Lazy<ISaveManager>(() => saves.Object));
             var template = new HousingTemplate
             {
-                Id = 100, CategoryId = 16, GardenRadius = 4, HousingBindingDoodad = [],
+                Id = 100, MainModelId = 1, CategoryId = 16, GardenRadius = 4, Alley = 1, HousingBindingDoodad = [],
                 Taxation = new Taxation { Tax = 100 }
             };
             Field<Dictionary<uint, HousingTemplate>>(housing, "_housingTemplates").Add(100, template);
@@ -107,7 +108,14 @@ public sealed class HousingBuildEligibilityTests
                 }]
                 }
             };
+            world.Cells = new WorldCell[1, 1];
+            world.OceanLevel = -100;
+            manager.GeometryAssets = new HousingGeometryAssets(path => path.EndsWith("heightmap.dat", StringComparison.Ordinal)
+                ? FlatTerrain() : null, (_, _) => []);
+            Field<ConcurrentDictionary<uint, CryGeometryAsset>>(manager.GeometryAssets, "_models")[1] =
+                new CryGeometryAsset(new CryBounds(new Vector3(-1, -1, 0), new Vector3(1, 1, 2)), []);
             var instance = new WorldInstance(world, 0, true, 0);
+            instance.Water.OceanLevel = -100;
             Field<ConcurrentDictionary<uint, WorldInstance>>(worlds, "_worlds").TryAdd(0, instance);
             var character = new CharacterMock
             {
@@ -181,6 +189,23 @@ public sealed class HousingBuildEligibilityTests
             fsets.SetValue(null, previousFeatures);
             AppConfiguration.Instance.World = previousWorldConfig;
         }
+    }
+
+    private static MemoryStream FlatTerrain()
+    {
+        var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, true);
+        writer.Write(24); writer.Write(0); writer.Write(4096); writer.Write(2);
+        writer.Write(64); writer.Write(128); writer.Write(0.0625f); writer.Write(100f);
+        writer.Write(new byte[128]);
+        writer.Write(5);
+        foreach (var value in new[] { 0f, 0f, 0f, 1024f, 1024f, 0f }) writer.Write(value);
+        writer.Write(false); writer.Write(0f); writer.Write(1f / 32); writer.Write(2); writer.Write(0);
+        writer.Write(new byte[8 + 20 + 36]);
+        stream.Position = 4;
+        writer.Write((int)stream.Length);
+        stream.Position = 0;
+        return stream;
     }
 
     private static Item Add(CharacterMock owner, ulong id, uint templateId, int count)

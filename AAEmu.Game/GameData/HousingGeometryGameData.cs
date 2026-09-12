@@ -16,7 +16,9 @@ public sealed class HousingGeometryGameData : Singleton<HousingGeometryGameData>
         var paths = new Dictionary<(uint, uint), List<string>>();
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT m.id AS model_id, p.state_id, p.file_path FROM models m " +
-            "JOIN prefab_elements p ON p.prefab_model_id=m.sub_id WHERE m.sub_type='PrefabModel' ORDER BY m.id,p.state_id,p.id";
+            "JOIN prefab_elements p ON p.prefab_model_id=m.sub_id WHERE m.sub_type='PrefabModel' " +
+            "UNION ALL SELECT m.id,1,v.normal FROM models m JOIN vehicle_models v ON v.id=m.sub_id WHERE m.sub_type='VehicleModel' " +
+            "UNION ALL SELECT m.id,1,s.normal FROM models m JOIN ship_models s ON s.id=m.sub_id WHERE m.sub_type='ShipModel'";
         using var reader = new SQLiteWrapperReader(command.ExecuteReader());
         while (reader.Read())
         {

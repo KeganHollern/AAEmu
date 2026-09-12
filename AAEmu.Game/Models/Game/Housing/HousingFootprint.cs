@@ -44,6 +44,27 @@ public readonly record struct HousingFootprint(float MinX, float MinY, float Max
         return true;
     }
 
+    public static IReadOnlyList<HousingFootprint> GetCells(Vector2 position, float gardenRadius, float alley)
+    {
+        if (!TryCreateGarden(position, gardenRadius, 0, out var full) ||
+            !float.IsFinite(alley) || alley < 0 || alley >= 4)
+            return [];
+        var result = new List<HousingFootprint>();
+        for (var x = full.MinX; x < full.MaxX; x += 4)
+        for (var y = full.MinY; y < full.MaxY; y += 4)
+        {
+            result.Add(new HousingFootprint(x == full.MinX ? x + alley : x,
+                y == full.MinY ? y + alley : y, x + 4 == full.MaxX ? x + 4 - alley : x + 4,
+                y + 4 == full.MaxY ? y + 4 - alley : y + 4));
+        }
+        return result;
+    }
+
+    public Vector3[] Corners(float z) =>
+    [
+        new(MinX, MinY, z), new(MaxX, MinY, z), new(MinX, MaxY, z), new(MaxX, MaxY, z)
+    ];
+
     public bool Contains(float x, float y)
     {
         // 39326b40 includes the minimum edges and excludes the maximum edges.

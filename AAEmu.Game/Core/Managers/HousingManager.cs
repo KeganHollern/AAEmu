@@ -501,6 +501,23 @@ public partial class HousingManager(
             connection.ActiveChar.SendErrorMessage(placementError);
             return;
         }
+        var geometry = ResolveConstructionGeometry(connection.ActiveChar, houseTemplate, new Vector3(posX, posY, posZ), zRot);
+        if (!geometry.IsValid)
+        {
+            connection.ActiveChar.SendErrorMessage(geometry.Error);
+            return;
+        }
+        posX = geometry.Position.X;
+        posY = geometry.Position.Y;
+        posZ = geometry.Position.Z;
+        zRot = geometry.Yaw;
+        placementError = HousingPlacementRules.Check(HousingAreaGameData.Instance, connection.ActiveChar.ParentWorld.Template,
+            geometry.Position, houseTemplate.CategoryId, connection.ActiveChar.AccountId, _houses.Values);
+        if (placementError != ErrorMessageType.NoErrorMessage)
+        {
+            connection.ActiveChar.SendErrorMessage(placementError);
+            return;
+        }
         if (!CalculateBuildingTaxInfo(connection.ActiveChar.AccountId, houseTemplate, true,
                 out var totalTaxAmountDue, out _, out _, out _, out _))
         {
@@ -544,11 +561,7 @@ public partial class HousingManager(
             }
 
             house.Transform.Local.SetPosition(posX, posY, posZ);
-            // SCUnitStatePacket represents housing yaw with a signed byte in r208022.
-            // Use the same quantized rotation for server geometry and client placement.
-            var (_, _, yaw) = PositionAndRotation.ToRollPitchYawSBytes(new Vector3(0, 0, zRot));
-            var placedYaw = PositionAndRotation.FromRollPitchYawSBytes(0, 0, yaw).Z;
-            house.Transform.Local.SetRotation(0, 0, placedYaw);
+            house.Transform.Local.SetRotation(0, 0, zRot);
             house.SetInitialConstructionStep();
             house.OwnerId = player.Id;
             house.CoOwnerId = player.Id;
@@ -1717,11 +1730,22 @@ public partial class HousingManager(
             {
                 if (!ReferenceEquals(house.ParentWorld, world) || house.Template == null)
                     continue;
-                var origin = house.Transform.World.Position;
-                if (HousingFootprint.TryCreateGarden(new Vector2(origin.X, origin.Y),
-                        house.Template.GardenRadius, house.Template.Alley, out var footprint) &&
-                    footprint.Contains(position.X, position.Y))
-                    return house;
+                // Native39326b40 has no garden when the radius is zero. Its volume is half-open on all axes.
+                if (house.Template.GardenRadius <= 0)
+                    continue;
+                try
+                {
+                    var asset = GeometryAssets.LoadHouse(house.Template, house.CurrentStep);
+                    var bounds = HousingGeometryAssets.GardenBounds(house.Template, asset.Bounds, HousingGeometryAssets.Transform(house));
+                    if (position.X >= bounds.Min.X && position.X < bounds.Max.X &&
+                        position.Y >= bounds.Min.Y && position.Y < bounds.Max.Y &&
+                        position.Z >= bounds.Min.Z && position.Z < bounds.Max.Z)
+                        return house;
+                }
+                catch (Exception exception) when (exception is IOException or NotSupportedException or ArgumentException or OverflowException)
+                {
+                    Logger.Warn(exception, "Cannot resolve garden geometry for house {0}", house.Id);
+                }
             }
         }
         return null;
