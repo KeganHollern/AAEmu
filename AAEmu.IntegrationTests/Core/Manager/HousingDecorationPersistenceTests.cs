@@ -36,6 +36,8 @@ public sealed partial class PlayerMailSendPersistenceTests
     [InlineData(false, false, "reserved")]
     [InlineData(false, false, "bank")]
     [InlineData(false, false, "cross_world")]
+    [InlineData(false, false, "cap_full")]
+    [InlineData(false, false, "unfinished")]
     public void HouseDecoration_OnlyCommitsExactItemAndDoodadTogether(bool stackable, bool coffer, string outcome)
     {
         using var graph = new SendGraph();
@@ -87,13 +89,27 @@ public sealed partial class PlayerMailSendPersistenceTests
                 Id = player.Id + 30, TlId = 7, ObjId = player.Id + 31,
                 OwnerId = outcome is "family" or "guild" ? graph.Receiver.Id : player.Id,
                 AccountId = outcome is "family" or "guild" ? graph.Receiver.AccountId : player.AccountId,
-                Template = new HousingTemplate { HousingBindingDoodad = [] }, CurrentStep = -1,
+                Template = new HousingTemplate { HousingBindingDoodad = [], DecoLimit = 10,
+                    AbsoluteDecoLimit = outcome == "cap_full" ? 1u : 10u }, CurrentStep = -1,
                 Permission = outcome == "family" ? HousingPermission.Family :
                     outcome == "guild" ? HousingPermission.Guild : HousingPermission.Private
             };
+            if (outcome == "unfinished")
+            {
+                house.Template.BuildSteps[0] = new HousingBuildStep();
+                house.CurrentStep = 0;
+            }
             SetParentWorld(house, outcome == "cross_world" ? HousingPlacementWorld(2) : world);
             house.Transform.Local.Position = new Vector3(100, 200, 300);
             house.Transform.ZoneId = 10;
+            if (outcome == "cap_full")
+            {
+                var existing = new Doodad { ObjId = 255, TemplateId = 999, OwnerDbId = house.Id,
+                    OwnerType = DoodadOwnerType.Housing };
+                ((ConcurrentDictionary<uint, Doodad>)typeof(WorldInstance)
+                    .GetField("_doodads", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(world)!)
+                    [existing.ObjId] = existing;
+            }
             var objectIds = new Mock<IObjectIdManager>();
             objectIds.Setup(ids => ids.GetNextId()).Returns(256);
             var doodadIds = new Mock<IDoodadIdManager>();
