@@ -11,9 +11,12 @@ using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
+using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Shipyard;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
+using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Taxations;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.Items;
@@ -914,6 +917,117 @@ public sealed class InventoryMutationTests
         await Assert.That(shipyard.ShipyardData.Id).IsEqualTo(60UL);
         await Assert.That(_owner.Money).IsEqualTo(50L);
         await Assert.That(_bag.Items.Single().TemplateId).IsEqualTo(300U);
+    }
+
+    [Test]
+    public async Task GradeChange_FailedLaterDebit_RestoresGradeAndDirtyState()
+    {
+        var item = AddItem(1, 100, 1);
+        item.Grade = 3;
+        item.IsDirty = false;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.GradeEnchant);
+            if (!mutation.TryChangeGrade(_bag, item, 4))
+                throw new InvalidOperationException("Valid grade change rejected");
+            mutation.TryChangeMoney(_owner, -101);
+        }
+        await Assert.That(item.Grade).IsEqualTo((byte)3);
+        await Assert.That(item.IsDirty).IsFalse();
+        await Assert.That(_owner.Money).IsEqualTo(100L);
+    }
+
+    [Test]
+    public async Task GradeChange_ReservedItem_DoesNotChangeTradeTerms()
+    {
+        var item = AddItem(1, 100, 1);
+        item.Grade = 3;
+        using var reservation = new TradeReservation();
+        reservation.TryReserve(item, 1);
+        bool changed;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.GradeEnchant);
+            changed = mutation.TryChangeGrade(_bag, item, 4);
+        }
+        await Assert.That(changed).IsFalse();
+        await Assert.That(item.Grade).IsEqualTo((byte)3);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task Regrade_Checkpoint_SettlesLaborGoldCharmScrollAndGradeTogether(bool commit, bool broken)
+    {
+        var accountsField = typeof(Singleton<AccountManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var formulasField = typeof(Singleton<FormulaManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousAccounts = accountsField.GetValue(null);
+        var previousFormulas = formulasField.GetValue(null);
+        try
+        {
+            accountsField.SetValue(null, new AccountManager(null, null, TimeProvider.System));
+            var formulas = new FormulaManager();
+            var cost = new Formula();
+            typeof(Formula).GetProperty("Expression", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(cost, (Func<Dictionary<string, double>, double>)(_ => 25));
+            SetField(formulas, "_formulas", new Dictionary<uint, Formula> { [(uint)FormulaKind.GradeEnchantCost] = cost });
+            formulasField.SetValue(null, formulas);
+            _owner.InitializeLaborCache(20, DateTime.UtcNow);
+            var scroll = AddItem(1, 100, 2);
+            _templates[200] = new WeaponTemplate
+            {
+                Id = 200, MaxCount = 1, BindType = ItemBindType.Normal,
+                HoldableTemplate = new Holdable { SlotTypeId = 1 }
+            };
+            var equipment = AddItem(2, 200, 1);
+            equipment.Grade = 3;
+            equipment.IsDirty = false;
+            var charm = AddItem(3, 300, 1);
+            var grade3 = new GradeTemplate
+            {
+                Grade = 3, GradeOrder = 3, EnchantSuccessRatio = broken ? 0 : 10000,
+                EnchantBreakRatio = broken ? 10000 : 0
+            };
+            var grade4 = new GradeTemplate { Grade = 4, GradeOrder = 4 };
+            SetField(ItemManager.Instance, "_grades", new Dictionary<int, GradeTemplate> { [3] = grade3, [4] = grade4 });
+            SetField(ItemManager.Instance, "_gradesOrdered", new Dictionary<int, GradeTemplate> { [3] = grade3, [4] = grade4 });
+            SetField(ItemManager.Instance, "_enchantingCosts", new Dictionary<uint, EquipSlotEnchantingCost> { [1] = new() });
+            SetField(ItemManager.Instance, "_enchantingSupports", new Dictionary<uint, ItemGradeEnchantingSupport>
+                { [300] = new() { RequireGradeMin = -1, RequireGradeMax = -1 } });
+            var skill = new Skill(new SkillTemplate { Id = 22520, ConsumeLaborPower = 10 });
+            var checkpointSawPreparedState = false;
+            skill.CommitLaborBatch = (_, _) =>
+            {
+                checkpointSawPreparedState = _owner.Money == 75 && _owner.LaborPower == 10 &&
+                    scroll.Count == 1 && charm.Count == 0 && (broken ? equipment.Count == 0 : equipment.Grade == 4);
+                return commit;
+            };
+            var result = SkillLaborBatch.Run(_owner, skill, true, () =>
+            {
+                new GradeEnchant().Execute(_owner, new SkillItem { ItemId = scroll.Id, ItemTemplateId = 100 },
+                    _owner, new SkillCastItemTarget { Id = equipment.Id }, null, skill,
+                    new SkillObjectItemGradeEnchantingSupport { SupportItemId = charm.Id }, DateTime.UtcNow, 0, 0, 1, 0);
+                if (!skill.Cancelled)
+                    SkillLaborBatch.Current.Inventory.TryConsume(_bag, scroll, 1);
+            });
+            await Assert.That(checkpointSawPreparedState).IsTrue();
+            await Assert.That(result).IsEqualTo(commit);
+            await Assert.That(_owner.LaborPower).IsEqualTo((short)(commit ? 10 : 20));
+            await Assert.That(_owner.Money).IsEqualTo(commit ? 75L : 100L);
+            await Assert.That(scroll.Count).IsEqualTo(commit ? 1 : 2);
+            await Assert.That(charm.Count).IsEqualTo(commit ? 0 : 1);
+            await Assert.That(equipment.Count).IsEqualTo(commit && broken ? 0 : 1);
+            await Assert.That(equipment.Grade).IsEqualTo((byte)(commit && !broken ? 4 : 3));
+            if (!commit)
+                await Assert.That(equipment.IsDirty).IsFalse();
+        }
+        finally
+        {
+            accountsField.SetValue(null, previousAccounts);
+            formulasField.SetValue(null, previousFormulas);
+        }
     }
 
     private (ShipyardManager Manager, Shipyard Shipyard, Mock<IObjectIdManager> ObjectIds,

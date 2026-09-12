@@ -70,6 +70,18 @@ public sealed class InventoryMutation : IDisposable
         return true;
     }
 
+    public bool TryChangeGrade(ItemContainer source, Item item, byte grade)
+    {
+        RequireActive();
+        if (_failed || !IsHeldBy(item, source) || TradeReservation.GetReservedCount(item) != 0)
+            return Fail();
+        Capture(source);
+        Capture(item);
+        item.Grade = grade;
+        AddTask(source.Owner, new ItemGradeChange(item, grade));
+        return true;
+    }
+
     public bool TryConsume(ItemContainer source, Item item, int count)
     {
         RequireActive();
@@ -451,6 +463,7 @@ public sealed class InventoryMutation : IDisposable
         private readonly int _slot = item.Slot;
         private readonly int _count = item.Count;
         private readonly ItemFlag _flags = item.ItemFlags;
+        private readonly byte _grade = item.Grade;
         private readonly bool _dirty = item.IsDirty;
 
         public void Restore()
@@ -461,6 +474,7 @@ public sealed class InventoryMutation : IDisposable
             item.Slot = _slot;
             item.Count = _count;
             item.ItemFlags = _flags;
+            item.Grade = _grade;
             item.IsDirty = _dirty;
         }
     }
