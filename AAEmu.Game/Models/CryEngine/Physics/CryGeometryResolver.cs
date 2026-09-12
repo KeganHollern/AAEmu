@@ -47,6 +47,7 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         var parts = new List<CryGeometryPart>();
         var helpers = new List<CryGeometryHelper>();
         var poses = new List<CryGeometryPoseRequirement>();
+        var animatedCollision = false;
         CryBounds? bounds = null;
         var objects = prefab.Element("Objects")?.Elements("Object") ?? [];
         var objectIndex = 0;
@@ -78,6 +79,7 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
             var material = (string)obj.Attribute("Material");
             var physics = obj.Element("Properties")?.Element("Physics");
             var physicalized = (string)physics?.Attribute("bPhysicalize") != "0";
+            animatedCollision |= physicalized && child.HasAnimatedCollision;
             var animation = obj.Element("Properties")?.Element("Animation");
             if (animation != null && (string)animation.Attribute("bPlaying") == "1")
                 poses.Add(new CryGeometryPoseRequirement(childPath, (string)obj.Attribute("Name") ?? "", transform,
@@ -95,7 +97,8 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         return new CryGeometryAsset(bounds ?? throw new InvalidDataException("Prefab contains no supported model bounds."), parts)
         {
             Helpers = helpers,
-            PoseRequirements = poses
+            PoseRequirements = poses,
+            HasAnimatedCollision = animatedCollision
         };
     }
 
@@ -166,7 +169,14 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
                 values[i] = CryPhysicsDataReader.ReadFloat(reader);
             var matrix = new Matrix4x4(values[0], values[1], values[2], 0, values[4], values[5], values[6], 0,
                 values[8], values[9], values[10], 0, values[12] * 0.01f, values[13] * 0.01f, values[14] * 0.01f, 1);
-            nodes.Add(id, new Node(name, mesh, parent, material, matrix));
+            Seek(reader, chunk.Body + 188, 12);
+            var hasController = false;
+            for (var i = 0; i < 3; i++)
+            {
+                var controller = reader.ReadInt32();
+                hasController |= controller >= 0 && chunks.ContainsKey(controller);
+            }
+            nodes.Add(id, new Node(name, mesh, parent, material, matrix, hasController));
         }
 
         Matrix4x4 Transform(int id, HashSet<int> chain)
@@ -176,6 +186,13 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
             return node.Parent == -1 ? node.Transform : node.Transform * Transform(node.Parent, chain);
         }
 
+        bool HasController(int id, HashSet<int> chain)
+        {
+            if (!chain.Add(id) || !nodes.TryGetValue(id, out var node))
+                throw new InvalidDataException("Invalid CGF node hierarchy.");
+            return node.HasController || (node.Parent != -1 && HasController(node.Parent, chain));
+        }
+
         var modelNodes = nodes.Where(pair => chunks.TryGetValue(pair.Value.Mesh, out var chunk) &&
             chunk.Kind == 0xcccc0000 && !pair.Value.Name.StartsWith('$') &&
             !pair.Value.Name.Contains("PhysicsProxy", StringComparison.OrdinalIgnoreCase)).Select(pair => pair.Key).ToArray();
@@ -183,6 +200,8 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
             node.Name.StartsWith("$joint", StringComparison.Ordinal) || node.Name.StartsWith("$cutdown", StringComparison.Ordinal)));
         CryBounds? bounds = null;
         var parts = new List<CryGeometryPart>();
+        // A skeletal model needs bone transforms until its compiled character physics is resolved.
+        var animatedCollision = chunks.Values.Any(chunk => chunk.Kind == 0xacdc0000);
         foreach (var (id, node) in nodes)
         {
             if (!chunks.TryGetValue(node.Mesh, out var mesh) || mesh.Kind != 0xcccc0000)
@@ -252,6 +271,7 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
                 var size = reader.ReadInt32();
                 Seek(reader, chunk.Body + 24, size);
                 var shape = CryPhysicsDataReader.Read(CryPhysicsDataReader.ReadExactly(reader, size), vertices, indices, materials);
+                animatedCollision |= HasController(id, []);
                 parts.Add(new CryGeometryPart(shape, transform, 0x1000 + slot, materialPath, node.Name)
                 {
                     PhysicsGroup = $"{path}#{(merged ? 0 : id)}",
@@ -262,7 +282,7 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         }
         if (bounds == null)
             throw new InvalidDataException("CGF contains no supported model bounds.");
-        return new CryGeometryAsset(bounds.Value, parts);
+        return new CryGeometryAsset(bounds.Value, parts) { HasAnimatedCollision = animatedCollision };
     }
 
     private static byte[] ReadMaterials(BinaryReader reader, Dictionary<int, Chunk> chunks, int id, int indexCount)
@@ -355,5 +375,5 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         ? Normalize(path) : "game/" + Normalize(path);
 
     private sealed record Chunk(uint Kind, int Version, int Body, int Size);
-    private sealed record Node(string Name, int Mesh, int Parent, int Material, Matrix4x4 Transform);
+    private sealed record Node(string Name, int Mesh, int Parent, int Material, Matrix4x4 Transform, bool HasController);
 }

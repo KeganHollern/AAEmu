@@ -72,14 +72,39 @@ public sealed class CryGeometryResolverTests
         await Assert.That(() => resolver.Load(path)).Throws<FileNotFoundException>();
     }
 
-    private static byte[] Model(bool merge)
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, true)]
+    public async Task ReadCgf_AnimationOnlyAffectsCollisionThroughItsAncestors(bool animatedParent, bool expected)
+    {
+        var model = CryGeometryResolver.ReadCgf(Model(false, true, animatedParent));
+        await Assert.That(model.Parts.Count).IsEqualTo(1);
+        await Assert.That(model.HasAnimatedCollision).IsEqualTo(expected);
+    }
+
+    private static byte[] Model(bool merge, bool physics = false, bool animatedParent = false)
     {
         var chunks = new List<(uint Kind, int Version, int Id, byte[] Data)>();
         chunks.Add((0xcccc0015, 1, 1, BitConverter.GetBytes(merge ? 1 : 0)));
         chunks.Add((0xcccc0000, 0x800, 2, Mesh(Vector3.One, 3)));
-        chunks.Add((0xcccc0000, 0x800, 3, Mesh(new Vector3(2), 0)));
-        chunks.Add((0xcccc000b, 0x823, 4, Node("house", 2, -1, 1000)));
+        var proxyMesh = Mesh(new Vector3(2), 0);
+        if (physics)
+        {
+            BitConverter.GetBytes(7).CopyTo(proxyMesh, 92);
+            // Serialized native sphere, including the physical header and box tree.
+            var proxy = new byte[24 + 156];
+            BitConverter.GetBytes(156).CopyTo(proxy, 0);
+            BitConverter.GetBytes(1).CopyTo(proxy, 24);
+            BitConverter.GetBytes(4).CopyTo(proxy, 24 + 68);
+            BitConverter.GetBytes(1f).CopyTo(proxy, 24 + 84);
+            chunks.Add((0xcccc0018, 0x800, 7, proxy));
+        }
+        chunks.Add((0xcccc0000, 0x800, 3, proxyMesh));
+        chunks.Add((0xcccc000b, 0x823, 4, Node("house", 2, -1, 1000, animatedParent ? 6 : -1)));
         chunks.Add((0xcccc000b, 0x823, 5, Node("proxy", 3, 4, 1000)));
+        chunks.Add((0xcccc000d, 0x827, 6, []));
+        // This animated visual node has no collision and is not a parent of the proxy.
+        chunks.Add((0xcccc000b, 0x823, 8, Node("visual", -1, 4, 0, 6)));
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
         writer.Write(Encoding.ASCII.GetBytes("CryTek\0\0"));
@@ -122,7 +147,7 @@ public sealed class CryGeometryResolverTests
         return stream.ToArray();
     }
 
-    private static byte[] Node(string name, int mesh, int parent, float x)
+    private static byte[] Node(string name, int mesh, int parent, float x, int controller = -1)
     {
         using var stream = new MemoryStream(new byte[204], true);
         using var writer = new BinaryWriter(stream);
@@ -133,6 +158,10 @@ public sealed class CryGeometryResolverTests
         stream.Position = 84;
         foreach (var value in new[] { 1f, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 0 })
             writer.Write(value);
+        stream.Position = 188;
+        writer.Write(controller);
+        writer.Write(-1);
+        writer.Write(-1);
         return stream.ToArray();
     }
 }
