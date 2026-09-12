@@ -209,3 +209,17 @@ The local asset fixture parsed 612 distinct housing CGF, CGA, and CHR containers
 It also sampled all 4 authored cat and worn machine clips with their exact physical proxies.
 The wider fixture retains an unresolved mermaid asset with missing referenced bone proxies.
 The retained tests cover binary formats, transforms, intersection queries, and animation ancestry.
+
+## Server animation clock
+
+The server samples placed CHR geometry from the persisted doodad phase time.
+`DoodadFuncAnimate.play_once` selects the last key or a repeated clip.
+Native `393a4210` selects a random animation when a phase supplies several entries.
+The server selects the entry with the lowest authored ID for repeatable collision checks.
+
+The placement packet contains no animation time or random animation selection.
+Native `393a4530` starts the client animation when the client loads the doodad model.
+Native `393a4360` supplies a 0.5 second transition to that animation.
+A client can thus show another animation time or selected clip.
+The server uses the authored physical proxies at its own phase time.
+It does not claim to reproduce each client's visual frame or transition.

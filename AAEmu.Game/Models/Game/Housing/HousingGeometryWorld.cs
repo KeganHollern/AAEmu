@@ -48,7 +48,7 @@ public sealed class HousingGeometryWorld(HousingGeometryAssets assets, WorldInst
         {
             if (doodad.Template == null || ignored?.Invoke(doodad) == true)
                 continue;
-            var asset = geometry.LoadDoodad(doodad.Template, doodad.FuncGroupId);
+            var asset = geometry.LoadDoodad(doodad);
             if (asset == null)
                 continue;
             var transform = HousingGeometryAssets.Transform(doodad);

@@ -1,12 +1,15 @@
 using System.Collections.Concurrent;
 using System.Numerics;
 
-using AAEmu.Game.GameData;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.GameData;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models.CryEngine.Physics;
-using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.Game.Models.Game.Housing;
@@ -63,6 +66,27 @@ public sealed class HousingGeometryAssets
             path = template.Model;
         // Native393b03b0 returns no model when both the requested path and base path are empty.
         return string.IsNullOrEmpty(path) ? null : Load(path);
+    }
+
+    public CryGeometryAsset LoadDoodad(Doodad doodad)
+    {
+        var asset = LoadDoodad(doodad.Template, doodad.FuncGroupId);
+        if (asset?.CharacterBones.Count is not > 0)
+            return asset;
+        var animations = doodad.CurrentPhaseFuncs
+            .Where(func => func.FuncType == nameof(DoodadFuncAnimate))
+            .Select(func => DoodadManager.Instance.GetPhaseFuncTemplate(func.FuncId, func.FuncType))
+            .OfType<DoodadFuncAnimate>().OrderBy(animation => animation.Id).ToArray();
+        if (animations.Length == 0)
+            return asset;
+        var path = doodad.Template.FuncGroups.FirstOrDefault(group => group.Id == doodad.FuncGroupId)?.Model;
+        if (string.IsNullOrEmpty(path))
+            path = doodad.Template.Model;
+        // The client picks one phase clip at random. Server collision uses the first authored ID.
+        var animation = animations[0];
+        // Native393a4360 uses CA_LOOP_ANIMATION (2) or CA_REPEAT_LAST_KEY (4).
+        return _resolver.LoadCharacterPose(path, animation.Name,
+            Math.Max(0, (DateTime.UtcNow - doodad.PhaseTime).TotalSeconds), !animation.PlayOnce);
     }
 
     public CryWorldObjectIndex GetWorld(WorldTemplate world) => _worlds.GetOrAdd(world,
