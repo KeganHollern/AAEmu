@@ -93,7 +93,7 @@ internal sealed class SkillLaborBatch
                 return;
             }
             doodad.MarkLaborDeletion(true);
-            AfterCommit(() => { doodad.MarkLaborDeletion(false); delete(); });
+            AfterCommit(() => doodad.PublishCommittedDeletion(delete));
         }
     }
 
@@ -139,9 +139,10 @@ internal sealed class SkillLaborBatch
     }
 
     public static bool Run(Character owner, Skill skill, bool chargeLabor, Action effects) =>
-        RunCore(owner, skill, chargeLabor, effects, null);
+        RunCore(owner, skill, chargeLabor, effects, null, ItemTaskType.SkillEffectGainItem);
 
-    internal static bool RunPlacement(Character owner, Skill skill, int laborCost, Action effects)
+    internal static bool RunPlacement(Character owner, Skill skill, int laborCost, Action effects,
+        ItemTaskType itemTaskType = ItemTaskType.DoodadCreate)
     {
         if (laborCost < 0 || laborCost > short.MaxValue)
             return false;
@@ -153,7 +154,7 @@ internal sealed class SkillLaborBatch
             owner.SkillCancelled = false;
             try
             {
-                return RunCore(owner, skill, true, effects, laborCost);
+                return RunCore(owner, skill, true, effects, laborCost, itemTaskType);
             }
             finally
             {
@@ -162,7 +163,8 @@ internal sealed class SkillLaborBatch
         }
     }
 
-    private static bool RunCore(Character owner, Skill skill, bool chargeLabor, Action effects, int? placementLaborCost)
+    private static bool RunCore(Character owner, Skill skill, bool chargeLabor, Action effects, int? placementLaborCost,
+        ItemTaskType itemTaskType)
     {
         lock (SaveManager.PersistenceSyncRoot)
         lock (AccountManager.Instance.GetAccountSyncRoot(owner.AccountId))
@@ -189,8 +191,7 @@ internal sealed class SkillLaborBatch
             if (!skill.LaborSettled && (cost > short.MaxValue || owner.LaborPower < cost))
                 return RejectLabor();
 
-            using var inventory = new InventoryMutation(placementLaborCost.HasValue
-                ? ItemTaskType.DoodadCreate : ItemTaskType.SkillEffectGainItem);
+            using var inventory = new InventoryMutation(itemTaskType);
             using var labor = new CharacterLaborMutation(owner);
             var charged = chargeLabor && !skill.LaborSettled && cost > 0;
             if (charged && !labor.TryConsume((short)cost, placementLaborCost.HasValue ? 0U : (uint)skill.Template.ActabilityGroupId))

@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Core.Managers.UnitManagers;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
@@ -13,6 +14,14 @@ public class RecoverItem : IWorldInteraction
     public void Execute(BaseUnit caster, SkillCaster casterType, BaseUnit target, SkillCastTarget targetType,
         uint skillId, uint doodadId, DoodadFuncTemplate objectFunc = null)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            ExecuteLocked(caster, target, skillId);
+        }
+    }
+
+    private static void ExecuteLocked(BaseUnit caster, BaseUnit target, uint skillId)
+    {
         // check if you are equipped with a backpack or glider
         var hasBackPack = !((Character)caster).Inventory.CanReplaceGliderInBackpackSlot();
 
@@ -26,11 +35,13 @@ public class RecoverItem : IWorldInteraction
                 var template = DoodadManager.Instance.GetFuncTemplate(func.FuncId, func.FuncType);
                 if (template is DoodadFuncRecoverItem doodadFuncRecoverItemTemplate)
                 {
-                    // Execute DoodadFuncRecoverItem
-                    doodadFuncRecoverItemTemplate.Use(caster, doodad, skillId);
-                    // Move to next phase to remove the doodad
-                    //doodad.DoPhaseFuncs(caster, -1);
-                    doodad.Delete();
+                    if (!DoodadPermissionRules.Demand(caster, doodad, func.PermId))
+                    {
+                        return;
+                    }
+                    // Delete only after the item transfer succeeds.
+                    if (doodadFuncRecoverItemTemplate.TryRecover((Character)caster, doodad))
+                        doodad.Delete();
                     return;
                 }
             }

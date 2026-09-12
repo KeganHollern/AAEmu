@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Numerics;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
@@ -13,6 +14,7 @@ using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Zones;
 using Moq;
 using Xunit;
 
@@ -26,6 +28,10 @@ public sealed partial class PlayerMailSendPersistenceTests
     [InlineData(true, false, "no_labor")]
     [InlineData(true, false, "reserved")]
     [InlineData(true, false, "bank")]
+    [InlineData(true, false, "remote")]
+    [InlineData(true, false, "wrong_zone")]
+    [InlineData(true, false, "wrong_player_zone")]
+    [InlineData(true, false, "restricted_success")]
     [InlineData(false, false, "success")]
     [InlineData(false, false, "failed_commit")]
     [InlineData(false, false, "no_labor")]
@@ -36,7 +42,14 @@ public sealed partial class PlayerMailSendPersistenceTests
         using var graph = new SendGraph();
         using var services = new LaborBuffServices();
         using var reservation = new TradeReservation();
-        var oldZones = SwapSingleton(new ZoneManager(null, null));
+        var zones = new ZoneManager(null, null);
+        SetField(zones, "_zones", new Dictionary<uint, Zone>
+        {
+            [10] = new() { ZoneKey = 10, GroupId = 50 },
+            [11] = new() { ZoneKey = 11, GroupId = 51 }
+        });
+        SetField(zones, "_groups", new Dictionary<uint, ZoneGroup>());
+        var oldZones = SwapSingleton(zones);
         var oldWorldConfig = AppConfiguration.Instance.World;
         AppConfiguration.Instance.World = new WorldConfig { GrowthRate = 1, ExpRate = 1 };
         var containerIdField = typeof(ContainerIdManager).GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -69,8 +82,10 @@ public sealed partial class PlayerMailSendPersistenceTests
             if (outcome == "reserved")
                 Assert.True(reservation.TryReserve(item, item.Count));
             Assert.True(graph.Save.TryCommitEconomy([player]));
-            var world = new WorldInstance(new WorldTemplate { Id = 0, Name = "placement" }, 0, true, uint.MaxValue);
-            typeof(GameObject).GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(player, world);
+            var world = HousingPlacementWorld();
+            SetParentWorld(player, world);
+            player.Transform.Local.Position = new Vector3(100, 200, 300);
+            player.Transform.ZoneId = outcome == "wrong_player_zone" ? 11u : 10u;
             var objectIds = new Mock<IObjectIdManager>();
             objectIds.Setup(ids => ids.GetNextId()).Returns(256);
             var doodadIds = new Mock<IDoodadIdManager>();
@@ -79,6 +94,12 @@ public sealed partial class PlayerMailSendPersistenceTests
             var manager = new DoodadManager(objectIds.Object, doodadIds.Object, graph.Items,
                 new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>()), null);
             DoodadTemplate template = coffer ? new DoodadCofferTemplate { Id = 1, Capacity = 10 } : new DoodadTemplate { Id = 1 };
+            template.RestrictZoneId = outcome switch
+            {
+                "wrong_zone" => 51,
+                "wrong_player_zone" or "restricted_success" => 50,
+                _ => 0
+            };
             SetField(manager, "_templates", new Dictionary<uint, DoodadTemplate> { [1] = template });
             var oldManager = SwapSingleton(manager);
             Doodad published = null;
@@ -103,8 +124,8 @@ public sealed partial class PlayerMailSendPersistenceTests
             });
             try
             {
-                var result = manager.CreatePlayerDoodad(player, 1, 100, 200, 300, 0.5f, 1, item.Id, laborCost: 10);
-                var success = outcome == "success";
+                var result = manager.CreatePlayerDoodad(player, 1, outcome == "remote" ? 131 : 100, 200, 300, 0.5f, 1, item.Id, laborCost: 10);
+                var success = outcome is "success" or "restricted_success";
                 Assert.Equal(success, result != null);
                 Assert.Same(result, published);
                 Assert.Equal(success ? 10 : labor, player.LaborPower);
@@ -129,6 +150,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                 {
                     Assert.Equal(stackable ? 0 : (long)item.Id, Scalar($"SELECT item_id FROM doodads WHERE id={dbId}"));
                     Assert.Equal(item.TemplateId, result.ItemTemplateId);
+                    Assert.Same(world, result.ParentWorld);
                     Assert.Equal(100f, result.Transform.Local.Position.X);
                     Assert.Equal(300f, result.Transform.Local.Position.Z);
                 }

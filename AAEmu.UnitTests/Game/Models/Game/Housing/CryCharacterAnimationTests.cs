@@ -1,0 +1,198 @@
+using System.Numerics;
+using System.Text;
+
+using AAEmu.Game.Models.CryEngine.Physics;
+
+namespace AAEmu.UnitTests.Game.Models.Game.Housing;
+
+public sealed class CryCharacterAnimationTests
+{
+    [Test]
+    public async Task Sample_LocalTracks_ApplyParentPoseAndClipStartFrame()
+    {
+        var clip = CryCharacterAnimation.Read(Clip());
+        var pose = clip.Sample(BindAsset(), 0.5, false);
+        await Assert.That(Vector3.Distance(pose.Parts[0].Transform.Translation, new Vector3(1, 1, 0))).IsLessThan(0.00001f);
+        await Assert.That(pose.PoseRequirements.Any(requirement => requirement.AffectsCollision)).IsFalse();
+    }
+
+    [Test]
+    public async Task Sample_CurrentBounds_UseSkinPaletteAndNativeAxisPadding()
+    {
+        var pose = CryCharacterAnimation.Read(Clip()).Sample(BindAsset(), 0.5, false);
+        await Assert.That(Vector3.Distance(pose.Bounds.Min, new Vector3(0.8f, 0.8f, -0.2f))).IsLessThan(0.00001f);
+        await Assert.That(Vector3.Distance(pose.Bounds.Max, new Vector3(1.2f, 1.2f, 0.2f))).IsLessThan(0.00001f);
+        await Assert.That(pose.PoseRequirements.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Sample_LoopingAndLastKey_UseClipDuration()
+    {
+        var clip = CryCharacterAnimation.Read(Clip());
+        var bind = BindAsset();
+        var repeat = clip.Sample(bind, clip.DurationSeconds + 0.5, true);
+        var initial = clip.Sample(bind, 0.5, true);
+        var end = clip.Sample(bind, clip.DurationSeconds + 10, false);
+        await Assert.That(Vector3.Distance(repeat.Parts[0].Transform.Translation, initial.Parts[0].Transform.Translation)).IsLessThan(0.00001f);
+        await Assert.That(Vector3.Distance(end.Parts[0].Transform.Translation, Vector3.UnitX)).IsLessThan(0.00001f);
+    }
+
+    [Test]
+    [Arguments(5)]
+    [Arguments(8)]
+    public async Task Read_AuthoredSmallTreeIdentity_UsesCorrectComponentPacking(int format)
+    {
+        var clip = CryCharacterAnimation.Read(Clip(format));
+        var pose = clip.Sample(BindAsset(), 0, false);
+        await Assert.That(Vector3.Distance(pose.Parts[0].Transform.Translation, Vector3.UnitX)).IsLessThan(0.0001f);
+    }
+
+    [Test]
+    public async Task Read_NonmonotonicTimes_RejectsInvalidTrack()
+    {
+        await Assert.That(() => CryCharacterAnimation.Read(Clip(1, true))).Throws<InvalidDataException>();
+    }
+
+    [Test]
+    public async Task Read_MixedOldAndCompressedControllers_UsesNativeCompressedSelection()
+    {
+        var normal = CryCharacterAnimation.Read(Clip()).Sample(BindAsset(), 0.5, false);
+        var mixed = CryCharacterAnimation.Read(Clip(includeOldController: true)).Sample(BindAsset(), 0.5, false);
+        await Assert.That(mixed.Parts[0].Transform).IsEqualTo(normal.Parts[0].Transform);
+        await Assert.That(mixed.Bounds).IsEqualTo(normal.Bounds);
+    }
+
+    [Test]
+    [Arguments(0x827)]
+    [Arguments(0x828)]
+    public async Task Read_LegacyLogQuaternion_UsesHeaderLayoutUnitsAndConjugation(int version)
+    {
+        var clip = CryCharacterAnimation.Read(LegacyClip(version));
+        var pose = clip.Sample(BindAsset(), 0.5, false);
+        await Assert.That(Vector3.Distance(pose.Parts[0].Transform.Translation, new Vector3(1 + MathF.Sqrt(0.5f), -MathF.Sqrt(0.5f), 0))).IsLessThan(0.00001f);
+        await Assert.That(clip.DurationSeconds).IsEqualTo((double)(30 * (1f / 4800 * 160)));
+    }
+
+    private static byte[] LegacyClip(int version)
+    {
+        var original = Clip();
+        var timingOffset = BitConverter.ToInt32(original, 32);
+        var timingSize = BitConverter.ToInt32(original, 40);
+        using var payload = new MemoryStream();
+        using (var writer = new BinaryWriter(payload, Encoding.UTF8, true))
+        {
+            if (version == 0x828)
+                writer.Write(new byte[16]);
+            writer.Write(2);
+            writer.Write(23u);
+            for (var key = 0; key < 2; key++)
+            {
+                writer.Write((100 + key * 30) * 160);
+                foreach (var value in new[] { key * 200f, 0, 0, 0, 0, key * MathF.PI / 4 })
+                    writer.Write(value);
+            }
+        }
+        using var result = new MemoryStream();
+        using var output = new BinaryWriter(result);
+        output.Write(original, 0, 24);
+        output.Write(0xcccc000eu);
+        output.Write(0x918);
+        output.Write(64);
+        output.Write(1);
+        output.Write(timingSize);
+        output.Write(0xcccc000du);
+        output.Write(version);
+        output.Write(64 + timingSize);
+        output.Write(2);
+        output.Write((int)payload.Length);
+        output.Write(original, timingOffset, timingSize);
+        output.Write(payload.ToArray());
+        return result.ToArray();
+    }
+
+    private static CryGeometryAsset BindAsset()
+    {
+        var sphere = new CrySphere(Vector3.Zero, 0.1f);
+        return new CryGeometryAsset(new CryBounds(-Vector3.One, Vector3.One),
+            [new CryGeometryPart(sphere, Matrix4x4.CreateTranslation(Vector3.UnitX), 0x1000, "", "child") { BoneIndex = 1 }])
+        {
+            CharacterBones =
+            [
+                new CryCharacterBone(0, 23, "root", -1, Matrix4x4.Identity, null, 0),
+                new CryCharacterBone(1, 24, "child", 0, Matrix4x4.CreateTranslation(Vector3.UnitX), sphere, 0)
+            ],
+            CharacterBoundsBones = [1],
+            HasAnimatedCollision = true,
+            PoseRequirements = [new CryGeometryPoseRequirement("model.chr", "Default", Matrix4x4.Identity, "Default", true, true)]
+        };
+    }
+
+    private static byte[] Clip(int rotationFormat = 1, bool badTimes = false, bool includeOldController = false)
+    {
+        using var timingStream = new MemoryStream();
+        using (var writer = new BinaryWriter(timingStream, Encoding.UTF8, true))
+        {
+            writer.Write(1f / 4800);
+            writer.Write(160);
+            writer.Write(new byte[32]);
+            writer.Write(100);
+            writer.Write(130);
+        }
+        using var trackStream = new MemoryStream();
+        using (var writer = new BinaryWriter(trackStream, Encoding.UTF8, true))
+        {
+            writer.Write(23u);
+            writer.Write((ushort)2);
+            writer.Write((ushort)2);
+            writer.Write((byte)rotationFormat);
+            writer.Write((byte)1);
+            writer.Write((byte)2);
+            writer.Write((byte)0);
+            writer.Write((byte)0);
+            writer.Write((byte)0);
+            writer.Write((ushort)0);
+            for (var i = 0; i < 2; i++)
+            {
+                if (rotationFormat == 1)
+                    foreach (var value in new[] { 0f, 0, (float)i, 1 - i })
+                        writer.Write(value);
+                else
+                    writer.Write(Convert.FromHexString(rotationFormat == 5 ? "0040002000D0" : "FFFFEFFFFFFDFFDF"));
+            }
+            writer.Write((ushort)100);
+            writer.Write((ushort)(badTimes ? 100 : 130));
+            foreach (var value in new[] { 0f, 0, 0, 2, 0, 0 })
+                writer.Write(value);
+        }
+        var chunks = new List<(uint Kind, int Version, byte[] Data)>
+        {
+            (0xcccc000e, 0x918, timingStream.ToArray()),
+            (0xcccc000d, 0x829, trackStream.ToArray())
+        };
+        if (includeOldController)
+            chunks.Add((0xcccc000d, 0x828, new byte[16]));
+        using var stream = new MemoryStream();
+        using var output = new BinaryWriter(stream);
+        output.Write(Encoding.ASCII.GetBytes("CryTek\0\0"));
+        output.Write(0xffff0000);
+        output.Write(0x745);
+        output.Write(20);
+        output.Write(chunks.Count);
+        var offset = 24 + chunks.Count * 20;
+        for (var i = 0; i < chunks.Count; i++)
+        {
+            output.Write(chunks[i].Kind);
+            output.Write(chunks[i].Version);
+            output.Write(offset);
+            output.Write(i + 1);
+            output.Write(chunks[i].Data.Length + 16);
+            offset += chunks[i].Data.Length + 16;
+        }
+        foreach (var chunk in chunks)
+        {
+            output.Write(new byte[16]);
+            output.Write(chunk.Data);
+        }
+        return stream.ToArray();
+    }
+}

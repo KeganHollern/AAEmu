@@ -1,3 +1,7 @@
+using System.Collections.Concurrent;
+using System.Numerics;
+using System.Reflection;
+
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
@@ -5,10 +9,12 @@ using AAEmu.Game.Core.Managers.Stream;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Mails;
 using AAEmu.Game.Models.Game.Taxations;
+using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
@@ -195,6 +201,58 @@ public class HousingManagerTests
         finally
         {
             AppConfiguration.Instance.World = originalWorldConfig;
+        }
+    }
+
+    [Test]
+    public async Task GetHouseAtLocation_UsesInstanceAlleyAndCurrentModelHeight()
+    {
+        var worlds = new WorldManager(Mock.Of<ITickManager>().Object, Mock.Of<IWorldIdManager>().Object,
+            new Lazy<IZoneManager>(() => Mock.Of<IZoneManager>().Object),
+            new Lazy<IIndunManager>(() => Mock.Of<IIndunManager>().Object),
+            new Lazy<IFamilyManager>(() => Mock.Of<IFamilyManager>().Object));
+        var singleton = typeof(Singleton<WorldManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previous = singleton.GetValue(null);
+        singleton.SetValue(null, worlds);
+        try
+        {
+            var manager = CreateManager();
+            var worldTemplate = new WorldTemplate();
+            var world = new WorldInstance(worldTemplate, 0, true, 0);
+            var otherInstance = new WorldInstance(worldTemplate, 1, false, 0);
+            var template = new HousingTemplate
+            {
+                MainModelId = 1, GardenRadius = 4, Alley = 1, ExtraHeightBelow = 2, ExtraHeightAbove = 3
+            };
+            var instances = (ConcurrentDictionary<uint, WorldInstance>)typeof(WorldManager)
+                .GetField("_worlds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(worlds)!;
+            instances.TryAdd(world.Id, world);
+            instances.TryAdd(otherInstance.Id, otherInstance);
+            var house = new House { Id = 7, Template = template, ParentWorld = world };
+            house.Transform.Local.SetPosition(100, 100, 50);
+            manager.GeometryAssets = new HousingGeometryAssets(_ => null, (_, _) => []);
+            var models = (ConcurrentDictionary<uint, CryGeometryAsset>)typeof(HousingGeometryAssets)
+                .GetField("_models", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager.GeometryAssets)!;
+            models[1] = new CryGeometryAsset(new CryBounds(new Vector3(-2, -2, 0), new Vector3(2, 2, 10)), []);
+            var houses = (Dictionary<uint, House>)typeof(HousingManager)
+                .GetField("_houses", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
+            houses.Add(house.Id, house);
+
+            await Assert.That(manager.GetHouseAtLocation(world, new Vector3(97, 97, 48))).IsSameReferenceAs(house);
+            await Assert.That(manager.GetHouseAtLocation(world, new Vector3(102, 102, 62))).IsSameReferenceAs(house);
+            await Assert.That(manager.GetHouseAtLocation(world, new Vector3(103, 100, 50))).IsNull();
+            await Assert.That(manager.GetHouseAtLocation(world, new Vector3(100, 103, 50))).IsNull();
+            await Assert.That(manager.GetHouseAtLocation(world, new Vector3(100, 100, 63))).IsNull();
+            await Assert.That(manager.GetHouseAtLocation(world, new Vector3(96, 100, 50))).IsNull();
+            await Assert.That(manager.GetHouseAtLocation(world, new Vector3(100, 100, 47))).IsNull();
+            await Assert.That(manager.GetHouseAtLocation(otherInstance, new Vector3(100, 100, 50))).IsNull();
+
+            house.Template = new HousingTemplate { MainModelId = 1, GardenRadius = 0 };
+            await Assert.That(manager.GetHouseAtLocation(world, new Vector3(100, 100, 50))).IsNull();
+        }
+        finally
+        {
+            singleton.SetValue(null, previous);
         }
     }
 

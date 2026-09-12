@@ -73,6 +73,11 @@ public sealed class House : Unit
         set => SetConstructionStep(value, true);
     }
 
+    internal void SetInitialConstructionStep()
+    {
+        SetConstructionStep(Template.BuildSteps.Count > 0 ? 0 : -1, false);
+    }
+
     private void SetConstructionStep(int value, bool updateDoodads)
     {
         _currentStep = value;
@@ -425,25 +430,24 @@ public sealed class House : Unit
 
     public override bool AllowedToInteract(Character player)
     {
-        if (Template.AlwaysPublic)
-            return base.AllowedToInteract(player);
-        if (CurrentStep != -1) // unfinished houses can't be used to private store, so always true
-            return base.AllowedToInteract(player);
-        switch (Permission)
+        if (player == null || !base.AllowedToInteract(player))
+            return false;
+        if (Template.AlwaysPublic || CurrentStep != -1)
+            return true;
+        if (player.Id == OwnerId || (AccountId != 0 && player.AccountId == AccountId))
+            return true;
+
+        // Family and expedition managers keep membership for offline owners too.
+        return Permission switch
         {
-            case HousingPermission.Private:
-                if (player.Id == OwnerId)
-                    return base.AllowedToInteract(player);
-                var ownerAccount = NameManager.Instance.GetCharacterAccount(OwnerId);
-                return player.AccountId == ownerAccount && base.AllowedToInteract(player);
-            case HousingPermission.Family when player.Family > 0:
-                return FamilyManager.Instance.GetFamily(player.Family).Members.Any(x => x.Id == OwnerId);
-            case HousingPermission.Guild when (player.Expedition?.Id > 0):
-                return player.Expedition.Members.Any(x => x.CharacterId == OwnerId);
-            case HousingPermission.Public:
-            default:
-                return base.AllowedToInteract(player);
-        }
+            HousingPermission.Private => false,
+            HousingPermission.Family => player.Family != 0 &&
+                FamilyManager.Instance.GetFamilyOfCharacter(OwnerId) == player.Family,
+            HousingPermission.Guild => player.Expedition?.Id > 0 &&
+                ExpeditionManager.Instance.GetExpeditionOfCharacter(OwnerId) == player.Expedition.Id,
+            HousingPermission.Public => true,
+            _ => false
+        };
     }
 
     public override Character GetOwnerCharacter()

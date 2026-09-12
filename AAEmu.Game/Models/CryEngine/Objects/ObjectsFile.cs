@@ -12,15 +12,22 @@ public class ObjectsFile(string fileName)
 
     public string FileName { get; init; } = fileName;
     public List<AssetPath> AssetPathsList { get; set; } = [];
+    public List<AssetPath> MaterialPathsList { get; set; } = [];
     public List<ObjectDataBase> PrefabsList { get; set; } = [];
+    public bool HasUnparsedObjects { get; private set; }
 
-    public bool ReadFile()
+    public bool ReadFile() => ReadFile(ClientFileManager.GetFileStream(FileName));
+
+    /// <summary>Reads and closes the supplied object.dat stream.</summary>
+    public bool ReadFile(System.IO.Stream source)
     {
         AssetPathsList.Clear();
+        MaterialPathsList.Clear();
         PrefabsList.Clear();
+        HasUnparsedObjects = false;
         try
         {
-            using var sourceFs = ClientFileManager.GetFileStream(FileName);
+            using var sourceFs = source;
             using var fs = new MemoryStream();
             sourceFs.CopyTo(fs);
             if (fs.Length <= 8)
@@ -81,10 +88,21 @@ public class ObjectsFile(string fileName)
                 AssetPathsList.Add(assetPath);
             }
 
-            // Prefabs
-            var prefabCount = br.ReadUInt32();
-            br.BaseStream.Seek(prefabCount * 260, SeekOrigin.Current);
-            for (var i = 0u; i < prefabCount; i++)
+            // The second path table contains material overrides, not prefab names.
+            var materialCount = br.ReadUInt32();
+            for (var i = 0u; i < materialCount; i++)
+            {
+                var unknown = br.ReadUInt32();
+                var bytes = br.ReadBytes(256);
+                if (bytes.Length != 256)
+                    return false;
+                MaterialPathsList.Add(new AssetPath
+                {
+                    Unknown = unknown,
+                    Name = Encoding.UTF8.GetString(bytes).Split('\0')[0]
+                });
+            }
+            while (br.BaseStream.Position < br.BaseStream.Length)
             {
                 if (br.BaseStream.Position >= br.BaseStream.Length)
                     return true;
@@ -156,11 +174,12 @@ public class ObjectsFile(string fileName)
     /// </summary>
     /// <param name="objectType"></param>
     /// <returns></returns>
-    private ObjectDataBase GetPrefabReader(ObjectDataType objectType)
+    public static ObjectDataBase CreateReader(ObjectDataType objectType)
     {
         switch (objectType)
         {
             case ObjectDataType.Brush: return new ObjectDataType1Brush();
+            case ObjectDataType.Vegetation: return new ObjectDataType2Vegetation();
             case ObjectDataType.Voxel: return new ObjectDataType6Voxel();
             case ObjectDataType.WaterVolume: return new ObjectDataType11Water();
             case ObjectDataType.Road: return new ObjectDataType13Road();
@@ -183,9 +202,12 @@ public class ObjectsFile(string fileName)
         {
             var startOfObjectOffset = offset;
             if (offset + 4 > blockSize)
+            {
+                HasUnparsedObjects = true;
                 break;
+            }
             var objectType = (ObjectDataType)BitConverter.ToInt32(blockData, offset);
-            var prefab = GetPrefabReader(objectType);
+            var prefab = CreateReader(objectType);
             prefab.Name = $"{objectType}-{PrefabsList.Count}@{FileName}";
             var totalObjectSize = prefab.ReadData(blockData, startOfObjectOffset);
             if (totalObjectSize > 0)
@@ -194,6 +216,7 @@ public class ObjectsFile(string fileName)
             }
             else
             {
+                HasUnparsedObjects = true;
                 Logger.Warn($"Unknown/unreadable type {objectType} @ 0x{br.BaseStream.Position:X}, DataOffset: 0x{startOfObjectOffset:X} in {FileName} — stopping block parse");
                 break;
             }

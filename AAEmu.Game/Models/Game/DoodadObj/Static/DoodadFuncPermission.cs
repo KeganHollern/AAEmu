@@ -1,14 +1,15 @@
-﻿namespace AAEmu.Game.Models.Game.DoodadObj.Static;
+namespace AAEmu.Game.Models.Game.DoodadObj.Static;
 
+// Exact r208022 client: x2game.dll FUN_393b3300. See Docs/customized/doodad-function-permissions.md.
 public enum DoodadFuncPermission : byte
 {
-    // TODO: complete and verify enums
     Any = 0,
-    Permission1 = 1,
-    Permission2 = 2, // seems to be used for one type of uproot only, maybe family permission?
-    OwnerOnly = 3, // for recover furniture?
-    Permission4 = 4, // seems to be event related only
+    OwnerOnly = 1,
+    OwnerFamily = 2,
+    SiegeMaster = 3,
+    OwnerParty = 4,
     OwnerRaidMembers = 5,
     SameAccount = 6,
-    ZoneResidents = 8,
+    DominionNation = 7,
+    ZoneResidents = 8
 }

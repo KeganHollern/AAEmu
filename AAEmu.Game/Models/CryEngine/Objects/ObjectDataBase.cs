@@ -19,7 +19,7 @@ public class ObjectDataBase(ObjectDataType prefabType)
                    // Water (type 11) is variable size
                    // 12?
                    // Roads (type 13) is variable size
-        {ObjectDataType.AutoCubeMap, 83},  // Distance Clouds
+        {ObjectDataType.DistanceCloud, 83},
                    // 15 ... 26?
         {ObjectDataType.Type27, 652}, // 
     };

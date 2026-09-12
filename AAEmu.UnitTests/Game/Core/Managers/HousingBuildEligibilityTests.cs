@@ -10,7 +10,16 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models;
+using AAEmu.Game.Models.CryEngine.Physics;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.CommonFarm;
+using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Templates;
+using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.Features;
+using AAEmu.Game.Models.Game.Taxations;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
@@ -31,6 +40,7 @@ public sealed class HousingBuildEligibilityTests
     [Arguments("maximum")]
     [Arguments("design")]
     [Arguments("nan")]
+    [Arguments("failed_commit")]
     public async Task Build_RejectedEligibility_PreservesDesignCertificatesAndMoney(string rejection)
     {
         var items = new ItemManager(Mock.Of<ISkillManager>().Object, Mock.Of<IItemIdManager>().Object,
@@ -41,6 +51,16 @@ public sealed class HousingBuildEligibilityTests
         var previousItems = Swap(items);
         var previousHousing = Swap(housing);
         var previousAreas = Swap(areas);
+        var previousWorldConfig = AppConfiguration.Instance.World;
+        AppConfiguration.Instance.World = new WorldConfig { DaysForTaxPayment = 7 };
+        var farms = new CommonFarmGameData();
+        var previousFarms = Swap(farms);
+        var previousAccounts = Swap(new AccountManager(null, null, TimeProvider.System));
+        var fsets = typeof(FeaturesManager).GetProperty(nameof(FeaturesManager.Fsets))!;
+        var previousFeatures = fsets.GetValue(null);
+        var features = new FeatureSet();
+        features.Set(Feature.taxItem, false);
+        fsets.SetValue(null, features);
         var worlds = new WorldManager(Mock.Of<ITickManager>().Object, Mock.Of<IWorldIdManager>().Object,
             new Lazy<IZoneManager>(() => Mock.Of<IZoneManager>().Object),
             new Lazy<IIndunManager>(() => Mock.Of<IIndunManager>().Object),
@@ -48,12 +68,24 @@ public sealed class HousingBuildEligibilityTests
         var previousWorlds = Swap(worlds);
         try
         {
+            var saves = Mock.Of<ISaveManager>();
+            var ids = Mock.Of<IHousingIdManager>();
+            ids.GetNextId().Returns(50u);
+            var tldIds = Mock.Of<IHousingTldManager>();
+            tldIds.GetNextId().Returns(60u);
+            var locales = Mock.Of<ILocalizationManager>();
+            locales.Get("housings", "name", 100, "").Returns("Test house");
             var manager = new HousingManager(Mock.Of<IObjectIdManager>().Object, Mock.Of<IFactionManager>().Object,
-                Mock.Of<ILocalizationManager>().Object, Mock.Of<IWorldManager>().Object, Mock.Of<ITaskManager>().Object,
-                Mock.Of<ISkillManager>().Object, Mock.Of<IHousingIdManager>().Object, Mock.Of<IHousingTldManager>().Object,
+                locales.Object, Mock.Of<IWorldManager>().Object, Mock.Of<ITaskManager>().Object,
+                Mock.Of<ISkillManager>().Object, ids.Object, tldIds.Object,
                 items, Mock.Of<IMailManager>().Object, Mock.Of<INameManager>().Object, Mock.Of<IZoneManager>().Object,
-                Mock.Of<IDoodadManager>().Object, Mock.Of<IUccManager>().Object);
-            var template = new HousingTemplate { Id = 100, CategoryId = 16 };
+                Mock.Of<IDoodadManager>().Object, Mock.Of<IUccManager>().Object,
+                new Lazy<ISaveManager>(() => saves.Object));
+            var template = new HousingTemplate
+            {
+                Id = 100, MainModelId = 1, CategoryId = 16, GardenRadius = 4, Alley = 1, HousingBindingDoodad = [],
+                Taxation = new Taxation { Tax = 100 }
+            };
             Field<Dictionary<uint, HousingTemplate>>(housing, "_housingTemplates").Add(100, template);
             Field<List<HousingItemHousings>>(housing, "_housingItemHousings")
                 .Add(new HousingItemHousings { Design_Id = 100, Item_Id = rejection == "design" ? 999u : 200u });
@@ -76,12 +108,20 @@ public sealed class HousingBuildEligibilityTests
                 }]
                 }
             };
+            world.Cells = new WorldCell[1, 1];
+            world.OceanLevel = -100;
+            manager.GeometryAssets = new HousingGeometryAssets(path => path.EndsWith("heightmap.dat", StringComparison.Ordinal)
+                ? FlatTerrain() : null, (_, _) => []);
+            Field<ConcurrentDictionary<uint, CryGeometryAsset>>(manager.GeometryAssets, "_models")[1] =
+                new CryGeometryAsset(new CryBounds(new Vector3(-1, -1, 0), new Vector3(1, 1, 2)), []);
             var instance = new WorldInstance(world, 0, true, 0);
+            instance.Water.OceanLevel = -100;
             Field<ConcurrentDictionary<uint, WorldInstance>>(worlds, "_worlds").TryAdd(0, instance);
             var character = new CharacterMock
             {
                 Id = 7,
                 AccountId = 42,
+                Faction = new SystemFaction(),
                 Money = 1000000,
                 NumInventorySlots = 10,
                 NumBankSlots = 10,
@@ -109,6 +149,22 @@ public sealed class HousingBuildEligibilityTests
                 AccountId = 42,
                 Template = new HousingTemplate { CategoryId = rejection == "existing" ? 17u : 16u }
             });
+            var crop = new Doodad
+            {
+                ObjId = 900, Template = new DoodadTemplate { GroupId = 6 }, ParentWorld = instance
+            };
+            crop.Transform.Local.SetPosition(5, 5, 0);
+            Field<ConcurrentDictionary<uint, Doodad>>(instance, "_doodads").TryAdd(crop.ObjId, crop);
+            Field<Dictionary<uint, DoodadGroups>>(farms, "_doodadGroups")[6] = new() { Id = 6, RemovedByHouse = true };
+            var observations = 0;
+            saves.TryCommitEconomy(Any<IReadOnlyCollection<Character>>(), Any<Action<PersistenceSaveContext>>())
+                .Returns(() =>
+                {
+                    if (houses.ContainsKey(50) && design.Count == 0 && character.Money == 999700 &&
+                        Field<bool>(crop, "_deleted"))
+                        observations++;
+                    return false;
+                });
             var connection = new GameConnection(null) { ActiveChar = character, AccountId = 42 };
             var x = rejection == "outside" ? -1 : rejection == "nan" ? float.NaN : 5;
             manager.Build(connection, 100, x, 5, 0, 0, design.Id, 0, 0, false);
@@ -118,6 +174,9 @@ public sealed class HousingBuildEligibilityTests
             await Assert.That(boundCertificates.Count).IsEqualTo(20);
             await Assert.That(character.Inventory.Bag.Items.Count).IsEqualTo(3);
             await Assert.That(houses.Count).IsEqualTo(1);
+            await Assert.That(Field<bool>(crop, "_deleted")).IsFalse();
+            await Assert.That(instance.GetDoodad(crop.ObjId)).IsSameReferenceAs(crop);
+            await Assert.That(observations).IsEqualTo(rejection == "failed_commit" ? 1 : 0);
         }
         finally
         {
@@ -125,7 +184,28 @@ public sealed class HousingBuildEligibilityTests
             Swap(previousHousing);
             Swap(previousAreas);
             Swap(previousWorlds);
+            Swap(previousFarms);
+            Swap(previousAccounts);
+            fsets.SetValue(null, previousFeatures);
+            AppConfiguration.Instance.World = previousWorldConfig;
         }
+    }
+
+    private static MemoryStream FlatTerrain()
+    {
+        var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, true);
+        writer.Write(24); writer.Write(0); writer.Write(4096); writer.Write(2);
+        writer.Write(64); writer.Write(128); writer.Write(0.0625f); writer.Write(100f);
+        writer.Write(new byte[128]);
+        writer.Write(5);
+        foreach (var value in new[] { 0f, 0f, 0f, 1024f, 1024f, 0f }) writer.Write(value);
+        writer.Write(false); writer.Write(0f); writer.Write(1f / 32); writer.Write(2); writer.Write(0);
+        writer.Write(new byte[8 + 20 + 36]);
+        stream.Position = 4;
+        writer.Write((int)stream.Length);
+        stream.Position = 0;
+        return stream;
     }
 
     private static Item Add(CharacterMock owner, ulong id, uint templateId, int count)

@@ -301,6 +301,9 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
         return _housingItemHousingDecorations.Find(x => x.DesignId == decoDesignId);
     }
 
+    public ItemHousingDecoration GetItemHousingDecorationByItem(uint itemTemplateId) =>
+        _housingItemHousingDecorations.Find(item => item.ItemId == itemTemplateId);
+
     /// <summary>
     /// Get original item template based on house design
     /// </summary>
@@ -315,6 +318,18 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
                 return design.Item_Id;
         }
         return 0;
+    }
+
+    public HousingTemplate GetTemplateForItem(uint itemTemplateId)
+    {
+        var design = _housingItemHousings.Find(item => item.Item_Id == itemTemplateId);
+        return design == null ? null : GetTemplate(design.Design_Id);
+    }
+
+    public HousingDecoration GetDecorationDesignForItem(uint itemTemplateId)
+    {
+        var design = _housingItemHousingDecorations.Find(item => item.ItemId == itemTemplateId);
+        return design == null ? null : GetDecorationDesignFromId(design.DesignId);
     }
 
     public bool IsDesignItem(uint designId, uint itemTemplateId) =>

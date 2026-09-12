@@ -1,5 +1,4 @@
-﻿using System.Drawing;
-using System.Numerics;
+﻿using System.Numerics;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
@@ -21,6 +20,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Mails;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.StaticValues;
@@ -33,7 +33,7 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public class HousingManager(
+public partial class HousingManager(
     IObjectIdManager objectIdManager,
     IFactionManager factionManager,
     ILocalizationManager localizationManager,
@@ -48,7 +48,8 @@ public class HousingManager(
     IZoneManager zoneManager,
     IDoodadManager doodadManager,
     IUccManager uccManager,
-    Lazy<ISaveManager> saveManager = null) : Singleton<HousingManager>, IHousingManager
+    Lazy<ISaveManager> saveManager = null,
+    IDoodadIdManager decorationIdManager = null) : Singleton<HousingManager>, IHousingManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -479,21 +480,39 @@ public class HousingManager(
         if (connection?.ActiveChar == null)
             return;
 
-        var sourceDesignItem = connection.ActiveChar.Inventory.GetItemById(itemId);
+        var sourceDesignItem = connection.ActiveChar.Inventory.Bag.GetItemByItemId(itemId);
+        var houseTemplate = sourceDesignItem == null
+            ? null : HousingGameData.Instance.GetTemplateForItem(sourceDesignItem.TemplateId);
         if (sourceDesignItem == null || sourceDesignItem.OwnerId != connection.ActiveChar.Id ||
             sourceDesignItem.SlotType != SlotType.Inventory || sourceDesignItem.Count < 1 ||
-            !HousingGameData.Instance.IsDesignItem(designId, sourceDesignItem.TemplateId))
+            houseTemplate == null || houseTemplate.Id != designId)
         {
             // Invalid itemId supplied or the id is not owned by the user
             connection.ActiveChar.SendErrorMessage(ErrorMessageType.BagInvalidItem);
             return;
         }
 
-        var houseTemplate = HousingGameData.Instance.GetTemplate(designId);
-        var placementError = houseTemplate == null || !float.IsFinite(zRot)
+        var placementError = !float.IsFinite(zRot)
             ? ErrorMessageType.HouseCannotLoacateInvalidCategoryArea
             : HousingPlacementRules.Check(HousingAreaGameData.Instance, connection.ActiveChar.ParentWorld?.Template,
                 new Vector3(posX, posY, posZ), houseTemplate.CategoryId, connection.ActiveChar.AccountId, _houses.Values);
+        if (placementError != ErrorMessageType.NoErrorMessage)
+        {
+            connection.ActiveChar.SendErrorMessage(placementError);
+            return;
+        }
+        var geometry = ResolveConstructionGeometry(connection.ActiveChar, houseTemplate, new Vector3(posX, posY, posZ), zRot);
+        if (!geometry.IsValid)
+        {
+            connection.ActiveChar.SendErrorMessage(geometry.Error);
+            return;
+        }
+        posX = geometry.Position.X;
+        posY = geometry.Position.Y;
+        posZ = geometry.Position.Z;
+        zRot = geometry.Yaw;
+        placementError = HousingPlacementRules.Check(HousingAreaGameData.Instance, connection.ActiveChar.ParentWorld.Template,
+            geometry.Position, houseTemplate.CategoryId, connection.ActiveChar.AccountId, _houses.Values);
         if (placementError != ErrorMessageType.NoErrorMessage)
         {
             connection.ActiveChar.SendErrorMessage(placementError);
@@ -506,88 +525,84 @@ public class HousingManager(
             return;
         }
 
-        using var inventory = new InventoryMutation(ItemTaskType.HouseCreation);
-        if (!TryStageCreationPayment(inventory, connection.ActiveChar, sourceDesignItem, totalTaxAmountDue,
-                FeaturesManager.Fsets.Check(Models.Game.Features.Feature.taxItem)))
+        var player = connection.ActiveChar;
+        var skill = new Skill(new SkillTemplate())
         {
-            connection.ActiveChar.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
-            return;
-        }
-
-        // Spawn the actual house
-        var house = Create(designId, connection.ActiveChar.Faction.Id, connection.ActiveChar.ParentWorld);
-
-        // Fallback for un-translated buildings (en_us)
-        if (house.Name == string.Empty)
+            CommitLaborBatch = (owner, write) =>
+                (saveManager?.Value ?? SaveManager.Instance).TryCommitEconomy([owner], write)
+        };
+        SkillLaborBatch.RunPlacement(player, skill, 0, () =>
         {
-            var fakeLocalizedName = localizationManager.Get("items", "name", sourceDesignItem.Template.Id, houseTemplate.Name);
-            if (fakeLocalizedName.EndsWith(" Design"))
-                fakeLocalizedName = fakeLocalizedName.Replace(" Design", "");
-            house.Name = fakeLocalizedName;
-        }
+            var batch = SkillLaborBatch.Current;
+            if (!TryStageCreationPayment(batch.Inventory, player, sourceDesignItem, totalTaxAmountDue,
+                    FeaturesManager.Fsets.Check(Models.Game.Features.Feature.taxItem)))
+            {
+                player.SendErrorMessage(ErrorMessageType.MailNotEnoughMoneyToPayTaxes);
+                batch.Fail();
+                return;
+            }
 
-        house.Id = housingIdManager.GetNextId();
-        house.Transform.Local.SetPosition(posX, posY, posZ);
-        // In 1.2 the rotation in SCUnitStatePacket is sent as X, Y, Z using 1 byte each.
-        // This limits us to 256 unique rotations around Z (up) that can be represented.
-        // When placing the house with the preview and then finalizing it, this causes the actual rotation to be different from the preview.
-        // 3.0 sends a full 32-bit float for the Z-rotation for BaseUnitType.Housing, so this seems to have been fixed in later versions.
-        // The fact the server has a more accurate view of the rotation than the client means positions of objects (doodads) placed in the house
-        // can be offset.
-        // To make the server and client agree on the rotation, we convert the float zRot to a sbyte, then back to a float.
-        // The server then knows the rotation as one of the 256 unique rotations that the client can be sent.
-        var (_, _, yaw) = PositionAndRotation.ToRollPitchYawSBytes(new Vector3(0, 0, zRot));
-        zRot = PositionAndRotation.FromRollPitchYawSBytes(0, 0, yaw).Z;
-        house.Transform.Local.SetRotation(0, 0, zRot);
+            var house = Create(designId, player.Faction.Id, player.ParentWorld);
+            house.ParentWorld = player.ParentWorld;
+            batch.Enlist(null, () =>
+            {
+                _houses.Remove(house.Id);
+                _housesTl.Remove(house.TlId);
+                housingIdManager.ReleaseId(house.Id);
+                housingTldManager.ReleaseId(house.TlId);
+                objectIdManager.ReleaseId(house.ObjId);
+            });
+            house.Id = housingIdManager.GetNextId();
+            if (string.IsNullOrEmpty(house.Name))
+            {
+                var localizedName = localizationManager.Get("items", "name", sourceDesignItem.Template.Id, houseTemplate.Name);
+                house.Name = localizedName.EndsWith(" Design", StringComparison.Ordinal)
+                    ? localizedName[..^7] : localizedName;
+            }
 
-        if (house.Template.BuildSteps.Count > 0)
-            house.CurrentStep = 0;
-        else
-            house.CurrentStep = -1;
-        house.OwnerId = connection.ActiveChar.Id;
-        house.CoOwnerId = connection.ActiveChar.Id;
-        house.AccountId = connection.AccountId;
-        house.Permission = HousingPermission.Private;
-        house.AllowRecover = true;
-        SetInitialTaxDates(house, DateTime.UtcNow);
-        _houses.Add(house.Id, house);
-        _housesTl.Add(house.TlId, house);
-        bool committed;
-        try
-        {
-            committed = (saveManager?.Value ?? SaveManager.Instance).TryCommitEconomy([connection.ActiveChar], context =>
+            house.Transform.Local.SetPosition(posX, posY, posZ);
+            house.Transform.Local.SetRotation(0, 0, zRot);
+            house.SetInitialConstructionStep();
+            house.OwnerId = player.Id;
+            house.CoOwnerId = player.Id;
+            house.AccountId = player.AccountId;
+            house.Permission = house.Template.AlwaysPublic ? HousingPermission.Public : HousingPermission.Private;
+            house.AllowRecover = true;
+            SetInitialTaxDates(house, DateTime.UtcNow);
+            _houses.Add(house.Id, house);
+            _housesTl.Add(house.TlId, house);
+            batch.Enlist(context =>
             {
                 if (!house.Save(context))
                     throw new InvalidOperationException("The new house could not be saved.");
+            }, null);
+            RemoveCropsForNewHouse(house);
+            batch.AfterCommit(() =>
+            {
+                house.CompleteConstructionStepChange();
+                player.SendPacket(new SCMyHousePacket(house));
+                house.Spawn();
+                UpdateTaxInfo(house);
+                if (house.CurrentStep == -1)
+                    player.Achievements?.Increment(CharRecordKind.MakeHousing, house.TemplateId, 0);
             });
-        }
-        catch
-        {
-            // A commit exception has an unknown SQL result. Keep house and payment together.
-            inventory.PreservePreparedState();
-            throw;
-        }
-        if (!committed)
-        {
-            _houses.Remove(house.Id);
-            _housesTl.Remove(house.TlId);
-            housingIdManager.ReleaseId(house.Id);
-            housingTldManager.ReleaseId(house.TlId);
-            objectIdManager.ReleaseId(house.ObjId);
-            connection.ActiveChar.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
-            return;
-        }
-        inventory.Complete();
-        connection.ActiveChar.SendPacket(new SCMyHousePacket(house));
-        house.Spawn();
-        UpdateTaxInfo(house);
+        }, ItemTaskType.HouseCreation);
+    }
 
-        if (house.CurrentStep == -1)
+    private static void RemoveCropsForNewHouse(House house)
+    {
+        var position = house.Transform.World.Position;
+        if (!HousingFootprint.TryCreateGarden(new Vector2(position.X, position.Y),
+                house.Template.GardenRadius, 0, out var footprint))
+            return;
+        foreach (var doodad in house.ParentWorld.GetAllDoodads())
         {
-            connection.ActiveChar.Achievements?.Increment(
-                CharRecordKind.MakeHousing,
-                house.TemplateId,
-                0);
+            if (doodad.Template == null ||
+                !CommonFarmGameData.Instance.IsRemovedByHouse(doodad.Template.GroupId))
+                continue;
+            var point = doodad.Transform.World.Position;
+            if (footprint.Contains(point.X, point.Y))
+                doodad.Delete();
         }
     }
 
@@ -642,6 +657,15 @@ public class HousingManager(
             var house = GetHouseByTlId(tlId);
             if (!IsActiveSaleHouse(house) || connection?.ActiveChar == null || house.OwnerId != connection.ActiveChar.Id)
                 return; // not the owner
+
+            var owner = connection.ActiveChar;
+            if (!Enum.IsDefined(permission) ||
+                (permission == HousingPermission.Family && owner.Family == 0) ||
+                (permission == HousingPermission.Guild && !(owner.Expedition?.Id > 0)))
+            {
+                owner.SendErrorMessage(ErrorMessageType.InteractionPermissionDeny);
+                return;
+            }
 
             house.Permission = permission;
             house.BroadcastPacket(new SCHousePermissionChangedPacket(tlId, (byte)permission), false);
@@ -1667,116 +1691,6 @@ public class HousingManager(
     }
 
     /// <summary>
-    /// Places a piece of furniture at a given location, using item and design
-    /// </summary>
-    /// <param name="player"></param>
-    /// <param name="houseTlId"></param>
-    /// <param name="designId"></param>
-    /// <param name="pos"></param>
-    /// <param name="quat"></param>
-    /// <param name="parentObjId"></param>
-    /// <param name="itemId"></param>
-    /// <returns></returns>
-    public bool DecorateHouse(Character player, ushort houseTlId, uint designId, Vector3 pos, Quaternion quat, uint parentObjId, ulong itemId)
-    {
-        lock (SaveManager.PersistenceSyncRoot)
-        {
-            return DecorateHouseLocked(player, houseTlId, designId, pos, quat, parentObjId, itemId);
-        }
-    }
-
-    private bool DecorateHouseLocked(Character player, ushort houseTlId, uint designId, Vector3 pos, Quaternion quat, uint parentObjId, ulong itemId)
-    {
-        // Check Player
-        if (player == null)
-            return false;
-
-        // Check Item
-        var item = itemManager.GetItemByItemId(itemId);
-        if (item == null || item.OwnerId != player.Id)
-        {
-            // Invalid Item
-            return false;
-        }
-
-        // Check House
-        var house = GetHouseByTlId(houseTlId);
-        if (!IsActiveSaleHouse(house))
-        {
-            // Invalid House
-            player.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
-            return false;
-        }
-
-        if (!house.AllowedToInteract(player))
-        {
-            player.SendErrorMessage(ErrorMessageType.InteractionPermissionDeny);
-            return false;
-        }
-
-        var itemUcc = uccManager.GetUccFromItem(item);
-
-        // Create decoration doodad
-        var decorationDesign = HousingGameData.Instance.GetDecorationDesignFromId(designId);
-
-        // TODO: Validate if designId is correct for the given item
-        /*
-        if (item.TemplateId != decorationDesign.ItemTemplateId)
-        {
-            player.SendErrorMessage(ErrorMessageType.FailedToUseItem);
-            return false;
-        }
-        */
-
-        var doodad = doodadManager.Create(house.ParentWorld, 0, decorationDesign.DoodadId, house, true);
-        doodad.Transform.Parent = house.Transform;
-        doodad.Transform.Local.SetPosition(pos.X, pos.Y, pos.Z);
-        doodad.Transform.Local.ApplyFromQuaternion(quat);
-        doodad.ItemTemplateId = item.TemplateId; // designId;
-        doodad.ItemId = item.Template.MaxCount <= 1 ? itemId : 0;
-        doodad.OwnerDbId = house.Id;
-
-        if (house.Id > 0 && item is BigFish fish)
-        {
-            var weight = (short)fish.Weight;
-            var length = (short)fish.Length;
-            doodad.Data = (length << 16) + weight;
-        }
-
-        doodad.OwnerId = player.Id;
-        doodad.ParentObjId = house.ObjId;
-        doodad.ParentObj = house;
-        doodad.AttachPoint = AttachPointKind.None;
-        doodad.OwnerType = DoodadOwnerType.Housing;
-        doodad.UccId = itemUcc?.Id ?? 0;
-        doodad.IsPersistent = true;
-
-        if (doodad is DoodadCoffer coffer)
-        {
-            coffer.InitializeCoffer(player.Id);
-        }
-
-        doodad.InitDoodad();
-        doodad.Spawn();
-        doodad.Save();
-
-        bool res;
-        if (item.Template.MaxCount > 1)
-        {
-            // Stackable items are simply consumed
-            res = player.Inventory.Bag.ConsumeItem(ItemTaskType.DoodadCreate, item.TemplateId, 1, item) == 1;
-        }
-        else
-        {
-            // Non-stackable items are stored in the owner's system container as to retain crafter information and such 
-            res = player.Inventory.SystemContainer.AddOrMoveExistingItem(ItemTaskType.DoodadCreate, item);
-        }
-
-        // Logger.Debug($"DecorateHouse => DoodadTemplate: {doodad.TemplateId} , DoodadId {doodad.ObjId}, Pos: {doodad.Transform}");
-        return res;
-    }
-
-    /// <summary>
     /// Toggles the allow furniture recovery flag
     /// </summary>
     /// <param name="character"></param>
@@ -1803,57 +1717,55 @@ public class HousingManager(
     /// <summary>
     /// Returns a house where the given position falls within boundaries of the house 
     /// </summary>
-    /// <param name="x"></param>
-    /// <param name="y"></param>
+    /// <param name="world"></param>
+    /// <param name="position"></param>
     /// <returns>Target House or Null</returns>
-    public House GetHouseAtLocation(float x, float y)
+    public House GetHouseAtLocation(WorldInstance world, Vector3 position) => GetHouseAtLocation(world, position, DateTime.UtcNow);
+
+    private House GetHouseAtLocation(WorldInstance world, Vector3 position, DateTime utcNow)
     {
-        // TODO: Check if all houses actually use a square shape aligned to grid
-        // TODO: Add world and/or instance checks
-        foreach (var h in _houses)
+        if (world == null || !HousingAreaPolygon.IsFinite(position))
+            return null;
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            var house = h.Value;
-            var r = house.Template.GardenRadius;
-            var bounds = new RectangleF(house.Transform.World.Position.X - r, house.Transform.World.Position.Y - r,
-                r * 2f, r * 2f);
-            if (bounds.Contains(x, y))
-                return house;
+            foreach (var house in _houses.Values)
+            {
+                if (!ReferenceEquals(house.ParentWorld, world) || house.Template == null)
+                    continue;
+                // Native39326b40 has no garden when the radius is zero. Its volume is half-open on all axes.
+                if (house.Template.GardenRadius <= 0)
+                    continue;
+                try
+                {
+                    var asset = GeometryAssets.LoadHouse(house, utcNow);
+                    if (!asset.HasModelBounds)
+                        continue;
+                    var bounds = HousingGeometryAssets.GardenBounds(house.Template, asset.Bounds, HousingGeometryAssets.Transform(house));
+                    if (position.X >= bounds.Min.X && position.X < bounds.Max.X &&
+                        position.Y >= bounds.Min.Y && position.Y < bounds.Max.Y &&
+                        position.Z >= bounds.Min.Z && position.Z < bounds.Max.Z)
+                        return house;
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or ArgumentException or OverflowException)
+                {
+                    Logger.Warn(exception, "Cannot resolve garden geometry for house {0}", house.Id);
+                }
+            }
         }
         return null;
     }
 
     public uint GetActAbilityBonusFromHouse(int actabilityGroupId, House house)
     {
-        var res = 0u;
-        if (actabilityGroupId <= 0)
-            return res;
-
-        var furniture = house.ParentWorld.GetDoodadByHouseDbId(house.Id);
-        var bonusByDoodadTemplate = new Dictionary<uint, uint>(); // Make sure every furniture type only counts once
-        // TODO: Implement special decor effect limit
-        // This should not break gameplay as the server-side value would always be greater than or equal to what the client thinks
-
-        foreach (var f in furniture)
+        if (actabilityGroupId <= 0 || house == null || house.CurrentStep != -1)
+            return 0;
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            // Ignore attached objects (those are doors/windows etc)
-            if (f.AttachPoint != AttachPointKind.None)
-                continue;
-
-            // Ignore for sale signs
-            if (f.TemplateId == ForSaleMarkerDoodadId)
-                continue;
-            var decoDesign = HousingGameData.Instance.GetDecorationDesignFromDoodadId(f.TemplateId);
-            if (decoDesign != null && decoDesign.ActabilityGroupId == actabilityGroupId)
-            {
-                if (!bonusByDoodadTemplate.ContainsKey(f.TemplateId))
-                    bonusByDoodadTemplate.Add(f.TemplateId, decoDesign.ActabilityUp);
-            }
+            var furniture = house.ParentWorld.GetDoodadByHouseDbId(house.Id)
+                .Where(doodad => doodad.TemplateId != ForSaleMarkerDoodadId);
+            var placed = HousingDecorationRules.GetPlaced(furniture, HousingGameData.Instance);
+            return HousingDecorationRules.GetActAbilityBonus((uint)actabilityGroupId, house.Template,
+                placed, HousingDecorationGameData.Instance);
         }
-
-        foreach (var bonus in bonusByDoodadTemplate.Values)
-        {
-            res += bonus;
-        }
-        return res;
     }
 }

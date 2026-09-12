@@ -1,11 +1,11 @@
-using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units;
-using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
 
@@ -16,46 +16,49 @@ public class DoodadFuncRecoverItem : DoodadFuncTemplate
     {
         Logger.Debug($"DoodadFuncRecoverItem({Id}) - Caster:{caster.Name} - DoodadOwner Template:{owner?.TemplateId} - SkillId:{skillId} - Nextphase:{nextPhase}");
 
-        var character = (Character)caster;
+        TryRecover(caster as Character, owner);
+    }
+
+    public bool TryRecover(Character character, Doodad owner)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (owner != null)
+                SkillLaborBatch.For(character)?.TrackDoodad(owner);
+            var recovered = TryRecoverLocked(character, owner);
+            if (!recovered)
+                SkillLaborBatch.For(character)?.Fail();
+            return recovered;
+        }
+    }
+
+    private static bool TryRecoverLocked(Character character, Doodad owner)
+    {
+        if (owner == null)
+            return false;
+        owner.ToNextPhase = false;
+        if (character == null)
+            return false;
+
+        // Check property access before either recovery path changes an item.
+        if (owner.OwnerType == DoodadOwnerType.Housing &&
+            !(HousingManager.Instance.GetHouseById(owner.OwnerDbId)?.AllowedToInteract(character) ?? false))
+        {
+            character.SendErrorMessage(ErrorMessageType.InteractionPermissionDeny);
+            return false;
+        }
+
         var addedItem = false;
-        var item = ItemManager.Instance.GetItemByItemId(owner?.ItemId ?? 0);
-        if (owner?.ItemId > 0)
+        var item = ItemManager.Instance.GetItemByItemId(owner.ItemId);
+        if (owner.ItemId > 0)
         {
             if (item != null)
             {
-                // Recoverable doodads, should be referencing an item in a System container, if this is not the case,
-                // that means that it was already picked up by somebody else
+                // A recoverable item stays in a System container until pickup succeeds.
                 if (item._holdingContainer?.ContainerType != SlotType.System)
                 {
-                    owner.ToNextPhase = false;
-                    character.SendErrorMessage(ErrorMessageType.InteractionRecoverParent); // TODO: Not sure what error I need to put here
-                    return;
-                }
-
-                // If it's on house property, check if the player has access to it
-                if (owner.OwnerDbId > 0)
-                {
-                    GameObject ownerGameObject;
-                    switch (owner.OwnerType)
-                    {
-                        case DoodadOwnerType.Slave:
-                            ownerGameObject = character.ParentWorld.SlaveManager.GetSlaveByObjId(owner.OwnerDbId);
-                            break;
-                        case DoodadOwnerType.Housing:
-                            ownerGameObject = HousingManager.Instance.GetHouseById(owner.OwnerDbId);
-                            break;
-                        case DoodadOwnerType.Character:
-                        case DoodadOwnerType.System:
-                        default:
-                            ownerGameObject = null;
-                            break;
-                    }
-
-                    if (ownerGameObject != null && !ownerGameObject.AllowedToInteract(character))
-                    {
-                        character.SendErrorMessage(ErrorMessageType.InteractionPermissionDeny);
-                        return;
-                    }
+                    character.SendErrorMessage(ErrorMessageType.InteractionRecoverParent);
+                    return false;
                 }
 
                 if (ItemManager.Instance.IsAutoEquipTradePack(item.TemplateId))
@@ -83,7 +86,7 @@ public class DoodadFuncRecoverItem : DoodadFuncTemplate
         {
             // No itemId was provided with the doodad, need to check what needs to be done with this
             Logger.Warn($"DoodadFuncRecoverItem: Doodad {owner?.ObjId} has no item information attached to it");
-            addedItem = true; // fake it to get rid of the error state
+            character.SendErrorMessage(ErrorMessageType.FailedToUseItem);
         }
 
         if (addedItem && item != null && item._holdingContainer.ContainerType == SlotType.Equipment)
@@ -96,7 +99,7 @@ public class DoodadFuncRecoverItem : DoodadFuncTemplate
             owner.ItemTemplateId = 0;
         }
 
-        if (owner != null)
-            owner.ToNextPhase = addedItem;
+        owner.ToNextPhase = addedItem;
+        return addedItem;
     }
 }

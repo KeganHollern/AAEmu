@@ -1,0 +1,221 @@
+﻿using System.Numerics;
+
+using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.IO;
+using AAEmu.Game.Models.CryEngine.Objects;
+using AAEmu.Game.Models.Game.World;
+
+namespace AAEmu.Game.Models.CryEngine.Physics;
+
+public sealed record CryWorldObjectInstance(string ModelUri, Matrix4x4 Transform,
+    Vector3 Min, Vector3 Max, string Source)
+{
+    public ObjectDataType Kind { get; init; } = ObjectDataType.Brush;
+    public CryGeometryAsset Asset { get; init; }
+    public string MaterialPath { get; init; } = "";
+    public IReadOnlyList<string> TerrainSurfaceNames { get; init; } = [];
+    public bool AlignToTerrain { get; init; }
+}
+
+/// <summary>
+/// Immutable broad phase for authored brush instances. Model geometry loads only
+/// after a query selects an instance. The index is specific to one world template.
+/// </summary>
+public sealed class CryWorldObjectIndex
+{
+    private const int BucketSize = 64;
+    private readonly CryWorldObjectInstance[] _instances;
+    private readonly Dictionary<(int X, int Y), List<int>> _buckets = [];
+
+    public int Count => _instances.Length;
+
+    public CryWorldObjectIndex(IEnumerable<CryWorldObjectInstance> instances)
+    {
+        _instances = instances.ToArray();
+        for (var i = 0; i < _instances.Length; i++)
+        {
+            var instance = _instances[i];
+            CheckBounds(instance.Min, instance.Max);
+            for (var y = Bucket(instance.Min.Y); y <= Bucket(instance.Max.Y); y++)
+            for (var x = Bucket(instance.Min.X); x <= Bucket(instance.Max.X); x++)
+            {
+                if (!_buckets.TryGetValue((x, y), out var bucket))
+                    _buckets.Add((x, y), bucket = []);
+                bucket.Add(i);
+            }
+        }
+    }
+
+    public IReadOnlyList<CryWorldObjectInstance> Query(Vector3 min, Vector3 max)
+    {
+        CheckBounds(min, max);
+        var matches = new SortedSet<int>();
+        for (var y = Bucket(min.Y); y <= Bucket(max.Y); y++)
+        for (var x = Bucket(min.X); x <= Bucket(max.X); x++)
+        {
+            if (!_buckets.TryGetValue((x, y), out var bucket))
+                continue;
+            foreach (var index in bucket)
+            {
+                var instance = _instances[index];
+                if (instance.Min.X <= max.X && instance.Max.X >= min.X &&
+                    instance.Min.Y <= max.Y && instance.Max.Y >= min.Y &&
+                    instance.Min.Z <= max.Z && instance.Max.Z >= min.Z)
+                    matches.Add(index);
+            }
+        }
+        return matches.Select(index => _instances[index]).ToArray();
+    }
+
+    public static CryWorldObjectIndex Load(WorldTemplate world) => Load(world, path =>
+        ClientFileManager.FileExists(path) ? ClientFileManager.GetFileStream(path) : null);
+
+    public static CryWorldObjectIndex Load(WorldTemplate world, Func<string, System.IO.Stream> openFile,
+        Func<string, bool> includeVegetationModel = null)
+    {
+        var instances = new List<CryWorldObjectInstance>();
+        using var groupStream = openFile($"game/worlds/{world.Name}/vegetation.xml");
+        var groups = CryVegetationGeometry.ReadGroups(groupStream);
+        var modelResults = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        bool IncludeModel(string uri)
+        {
+            if (!modelResults.TryGetValue(uri, out var result))
+                modelResults[uri] = result = includeVegetationModel?.Invoke(uri) != false;
+            return result;
+        }
+        for (var y = 0; y < world.Cells.GetLength(1); y++)
+        for (var x = 0; x < world.Cells.GetLength(0); x++)
+        {
+            var path = $"game/worlds/{world.Name}/cells/{x:000}_{y:000}/client/object.dat";
+            var cellPath = $"game/worlds/{world.Name}/cells/{x:000}_{y:000}/client";
+            using var deferredBrushStream = openFile($"{cellPath}/brush.dat");
+            if (deferredBrushStream != null)
+            {
+                using var modelsStream = openFile($"{cellPath}/statobjs.dat");
+                using var materialsStream = openFile($"{cellPath}/materials.dat");
+                if (modelsStream == null || materialsStream == null)
+                    throw new InvalidDataException($"Missing deferred brush path tables: {cellPath}.");
+                foreach (var brush in CryDeferredBrushFile.Read(deferredBrushStream, modelsStream, materialsStream))
+                {
+                    instances.Add(CreateBrushInstance(brush.Brush, brush.AssetPath, brush.MaterialPath,
+                        $"{cellPath}/brush.dat", new Vector3(x * WorldManager.CELL_SIZE, y * WorldManager.CELL_SIZE, 0)));
+                }
+            }
+            using var stream = openFile(path);
+            if (stream != null)
+            {
+                var objects = new ObjectsFile(path);
+                if (!objects.ReadFile(stream) || objects.HasUnparsedObjects)
+                    throw new InvalidDataException($"Cannot read world collision objects: {path}.");
+                // The native deferred file contains the same brushes. Use one source per cell.
+                if (deferredBrushStream == null)
+                    instances.AddRange(ReadBrushInstances(objects, x, y));
+                instances.AddRange(ReadVoxelInstances(objects, x, y));
+                var offset = new Vector3(x * WorldManager.CELL_SIZE, y * WorldManager.CELL_SIZE, 0);
+                foreach (var vegetation in objects.PrefabsList.OfType<ObjectDataType2Vegetation>())
+                    if (groups.TryGetValue(vegetation.GroupId, out var group) &&
+                        !string.IsNullOrEmpty(group.ModelUri) && IncludeModel(group.ModelUri))
+                        instances.Add(CryVegetationGeometry.Create(vegetation, group, offset, path));
+            }
+            using var bigStream = openFile($"{cellPath}/big_object.dat");
+            if (bigStream != null)
+            {
+                var big = CryBigObjectsFile.Read(bigStream, ObjectsFile.CreateReader);
+                var data = new ObjectsFile($"{cellPath}/big_object.dat")
+                {
+                    AssetPathsList = big.AssetPaths.Select(uri => new AssetPath { Name = uri }).ToList(),
+                    MaterialPathsList = big.MaterialPaths.Select(uri => new AssetPath { Name = uri }).ToList(),
+                    PrefabsList = big.Objects.ToList()
+                };
+                instances.AddRange(ReadBrushInstances(data, x, y));
+                instances.AddRange(ReadVoxelInstances(data, x, y));
+                foreach (var vegetation in big.Objects.OfType<ObjectDataType2Vegetation>())
+                    if (groups.TryGetValue(vegetation.GroupId, out var group) &&
+                        !string.IsNullOrEmpty(group.ModelUri) && IncludeModel(group.ModelUri))
+                        instances.Add(CryVegetationGeometry.Create(vegetation, group,
+                            new Vector3(x * WorldManager.CELL_SIZE, y * WorldManager.CELL_SIZE, 0), data.FileName));
+            }
+            var vegetationPath = $"game/worlds/{world.Name}/cells/{x:000}_{y:000}/client/vegetation.dat";
+            using var vegetationStream = openFile(vegetationPath);
+            if (vegetationStream != null)
+                instances.AddRange(CryVegetationGeometry.ReadStreamed(vegetationStream, x, y, groups,
+                    vegetationPath, IncludeModel));
+        }
+        return new CryWorldObjectIndex(instances);
+    }
+
+    public static IReadOnlyList<CryWorldObjectInstance> ReadBrushInstances(ObjectsFile objects, int cellX, int cellY)
+    {
+        var result = new List<CryWorldObjectInstance>();
+        var offset = new Vector3(cellX * WorldManager.CELL_SIZE, cellY * WorldManager.CELL_SIZE, 0);
+        for (var index = 0; index < objects.PrefabsList.Count; index++)
+        {
+            if (objects.PrefabsList[index] is not ObjectDataType1Brush brush)
+                continue;
+            if (brush.PathId < 0 || brush.PathId >= objects.AssetPathsList.Count)
+                throw new InvalidDataException($"Invalid brush asset {brush.PathId} in {objects.FileName}.");
+            var uri = objects.AssetPathsList[brush.PathId].Name;
+            var material = brush.MaterialId >= 0 && brush.MaterialId < objects.MaterialPathsList.Count
+                ? objects.MaterialPathsList[brush.MaterialId].Name : "";
+            result.Add(CreateBrushInstance(brush, uri, material, $"{objects.FileName}#{index}", offset));
+        }
+        return result;
+    }
+
+    private static CryWorldObjectInstance CreateBrushInstance(ObjectDataType1Brush brush, string uri,
+        string material, string source, Vector3 offset)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+            throw new InvalidDataException($"Empty brush asset in {source}.");
+        var matrix = brush.Matrix3X4;
+        // CryEngine uses column vectors. System.Numerics uses row vectors.
+        var transform = new Matrix4x4(
+            matrix.M11, matrix.M21, matrix.M31, 0,
+            matrix.M12, matrix.M22, matrix.M32, 0,
+            matrix.M13, matrix.M23, matrix.M33, 0,
+            matrix.M14 + offset.X, matrix.M24 + offset.Y, matrix.M34, 1);
+        var min = Vector3.Min(brush.StartPos, brush.EndPos) + offset;
+        var max = Vector3.Max(brush.StartPos, brush.EndPos) + offset;
+        CheckBounds(min, max);
+        return new CryWorldObjectInstance(uri.Replace('\\', '/'), transform, min, max, source)
+        {
+            MaterialPath = material.Replace('\\', '/')
+        };
+    }
+
+    public static IReadOnlyList<CryWorldObjectInstance> ReadVoxelInstances(ObjectsFile objects, int cellX, int cellY)
+    {
+        var result = new List<CryWorldObjectInstance>();
+        var offset = new Vector3(cellX * WorldManager.CELL_SIZE, cellY * WorldManager.CELL_SIZE, 0);
+        for (var index = 0; index < objects.PrefabsList.Count; index++)
+        {
+            if (objects.PrefabsList[index] is not ObjectDataType6Voxel voxel)
+                continue;
+            var source = $"{objects.FileName}#{index}";
+            var asset = CryVoxelGeometry.Read(voxel, source);
+            var matrix = voxel.Matrix3X4;
+            var transform = new Matrix4x4(
+                matrix.M11, matrix.M21, matrix.M31, 0,
+                matrix.M12, matrix.M22, matrix.M32, 0,
+                matrix.M13, matrix.M23, matrix.M33, 0,
+                matrix.M14 + offset.X, matrix.M24 + offset.Y, matrix.M34, 1);
+            result.Add(new CryWorldObjectInstance("", transform, voxel.BoundingBoxMin + offset,
+                voxel.BoundingBoxMax + offset, source)
+            {
+                Kind = ObjectDataType.Voxel, Asset = asset,
+                TerrainSurfaceNames = CryVoxelGeometry.ReadSurfaceNames(voxel.MaterialNamesData)
+            });
+        }
+        return result;
+    }
+
+    private static int Bucket(float value) => checked((int)MathF.Floor(value / BucketSize));
+
+    private static void CheckBounds(Vector3 min, Vector3 max)
+    {
+        if (!float.IsFinite(min.X) || !float.IsFinite(min.Y) || !float.IsFinite(min.Z) ||
+            !float.IsFinite(max.X) || !float.IsFinite(max.Y) || !float.IsFinite(max.Z) ||
+            min.X > max.X || min.Y > max.Y || min.Z > max.Z)
+            throw new InvalidDataException("Invalid world collision bounds.");
+    }
+}

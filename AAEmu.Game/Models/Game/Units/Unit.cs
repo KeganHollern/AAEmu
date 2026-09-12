@@ -16,6 +16,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Plots.Tree;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
@@ -40,6 +41,7 @@ public class Unit : BaseUnit, IUnit
 
     public virtual UnitEvents Events { get; }
     public uint ModelId { get; set; }
+    public GameStanceType CollisionStance { get; set; } = GameStanceType.Combat;
     public SkillController ActiveSkillController { get; set; }
 
     // Set after a knockback/impulse so AI movement is suppressed until expiry,

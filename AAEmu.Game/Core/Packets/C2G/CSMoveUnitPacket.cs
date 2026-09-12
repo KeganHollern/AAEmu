@@ -284,6 +284,9 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                         }
                     }
 
+                    if (targetUnit is Unit movingUnit && Enum.IsDefined(dmt.Stance))
+                        movingUnit.CollisionStance = dmt.Stance;
+
                     // Actually update the position
                     targetUnit.Transform.Local.SetPosition(dmt.X, dmt.Y, dmt.Z,
                         (float)MathUtil.ConvertDirectionToRadian(dmt.RotationX),
