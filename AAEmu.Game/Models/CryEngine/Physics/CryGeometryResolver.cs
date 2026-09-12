@@ -253,7 +253,8 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
                 parts.Add(new CryGeometryPart(shape, transform, 0x1000 + slot, materialPath, node.Name)
                 {
                     PhysicsGroup = $"{path}#{(merged ? 0 : id)}",
-                    SpineCount = merged ? spineCount : 0
+                    SpineCount = merged ? spineCount : 0,
+                    PickingIndex = GetPickingIndex(node.Name)
                 });
             }
         }
@@ -332,6 +333,19 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
     }
 
     public static string Normalize(string path) => path.Replace('\\', '/').Trim().ToLowerInvariant();
+
+    private static int GetPickingIndex(string name)
+    {
+        if (!name.StartsWith("$picking", StringComparison.OrdinalIgnoreCase))
+            return 0;
+        var text = name.AsSpan(8).TrimStart();
+        var count = 0;
+        if (text.Length > 0 && text[0] is '+' or '-')
+            count++;
+        while (count < text.Length && char.IsAsciiDigit(text[count]))
+            count++;
+        return int.TryParse(text[..count], NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) ? index : 0;
+    }
     private static string AssetPath(string path) => Normalize(path).StartsWith("game/", StringComparison.Ordinal)
         ? Normalize(path) : "game/" + Normalize(path);
 

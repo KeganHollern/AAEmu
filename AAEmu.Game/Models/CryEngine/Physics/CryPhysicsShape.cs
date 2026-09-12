@@ -46,6 +46,7 @@ public sealed record CryGeometryPart(CryPhysicsShape Shape, Matrix4x4 Transform,
 {
     public string PhysicsGroup { get; init; } = "";
     public int SpineCount { get; init; }
+    public int PickingIndex { get; init; }
 }
 
 public sealed record CryGeometryAsset(CryBounds Bounds, IReadOnlyList<CryGeometryPart> Parts)
