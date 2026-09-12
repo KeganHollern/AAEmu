@@ -13,14 +13,19 @@ public class ObjectsFile(string fileName)
     public string FileName { get; init; } = fileName;
     public List<AssetPath> AssetPathsList { get; set; } = [];
     public List<ObjectDataBase> PrefabsList { get; set; } = [];
+    public bool HasUnparsedObjects { get; private set; }
 
-    public bool ReadFile()
+    public bool ReadFile() => ReadFile(ClientFileManager.GetFileStream(FileName));
+
+    /// <summary>Reads and closes the supplied object.dat stream.</summary>
+    public bool ReadFile(System.IO.Stream source)
     {
         AssetPathsList.Clear();
         PrefabsList.Clear();
+        HasUnparsedObjects = false;
         try
         {
-            using var sourceFs = ClientFileManager.GetFileStream(FileName);
+            using var sourceFs = source;
             using var fs = new MemoryStream();
             sourceFs.CopyTo(fs);
             if (fs.Length <= 8)
@@ -183,7 +188,10 @@ public class ObjectsFile(string fileName)
         {
             var startOfObjectOffset = offset;
             if (offset + 4 > blockSize)
+            {
+                HasUnparsedObjects = true;
                 break;
+            }
             var objectType = (ObjectDataType)BitConverter.ToInt32(blockData, offset);
             var prefab = GetPrefabReader(objectType);
             prefab.Name = $"{objectType}-{PrefabsList.Count}@{FileName}";
@@ -194,6 +202,7 @@ public class ObjectsFile(string fileName)
             }
             else
             {
+                HasUnparsedObjects = true;
                 Logger.Warn($"Unknown/unreadable type {objectType} @ 0x{br.BaseStream.Position:X}, DataOffset: 0x{startOfObjectOffset:X} in {FileName} — stopping block parse");
                 break;
             }
