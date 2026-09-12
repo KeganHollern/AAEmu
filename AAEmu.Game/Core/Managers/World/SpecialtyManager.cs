@@ -149,7 +149,11 @@ public partial class SpecialtyManager(
             var backpack = player.Inventory.Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack);
             if (backpack == null || (itemId != 0 && itemId != backpack.TemplateId))
                 return 0;
-            var zoneGroupId = zoneManager.GetZoneByKey(player.Transform.ZoneId)?.GroupId ?? 0;
+            var trader = player.CurrentInteractionObject as Npc;
+            var zoneId = trader?.Template is { Specialty: true } && ServiceInteraction.CanReach(player, trader, 2.5f)
+                ? trader.Transform.ZoneId
+                : player.Transform.ZoneId;
+            var zoneGroupId = zoneManager.GetZoneByKey(zoneId)?.GroupId ?? 0;
             return GetRatio(backpack.TemplateId, zoneGroupId, DateTime.UtcNow);
         }
     }

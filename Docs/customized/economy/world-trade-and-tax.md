@@ -13,7 +13,8 @@ An unsuccessful sale does not change demand.
 A sale checks the trader in the player's world, its specialty flag, and the 2.5 meter interaction distance.
 It uses the trader's zone group for payment and demand.
 The ratio query contains the equipped pack template ID. It has no trader ID.
-The server checks that ID against the equipped pack and uses the player's zone for this query.
+The server checks that ID against the equipped pack and uses the current reachable specialty trader's zone.
+Without a valid current trader, the query uses the player's zone.
 
 An authored NPC bundle takes precedence over the route matrix.
 A mapped bundle must contain the pack. An unmapped trader accepts only normal specialty packs with a matrix route.
@@ -74,6 +75,7 @@ Native addresses below use image base `0x38ff0000`.
 | `FUN_398a9a80` | The matrix lookup uses row origin and column destination. |
 | `FUN_397cd2c0` | The client rounds the grade refund before the route calculation. |
 | `FUN_393c05f0` | C2G `0x043` sends the equipped pack template ID. |
+| `FUN_393c14c0`, table `0x39ac7c70` | The `specialty_trader` interaction owns that query. The global route UI uses `GetSpecialtyRatioBetween`. |
 | `FUN_394fb8a0` | C2G `0x042` sends the selected trader object ID. |
 | `FUN_391d7c20` | The house tax handler forwards the paid flag to the UI. |
 | `maintain_window.alb`, function `UpdateMyHouseTaxInfo` | A true paid flag displays the paid state. |

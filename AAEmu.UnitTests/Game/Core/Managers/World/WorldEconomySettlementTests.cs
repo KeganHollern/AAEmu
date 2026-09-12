@@ -185,6 +185,19 @@ public sealed class WorldEconomySettlementTests
     }
 
     [Test]
+    public async Task Quote_UsesCurrentTraderZone_AndFallsBackWithoutAReachableTrader()
+    {
+        var now = DateTime.UtcNow;
+        Demand[(42, 2)] = SpecialtyDemand.Create(42, 2, now, new SpecialtyConfig()) with { Ratio = 91 };
+        Demand[(42, 3)] = SpecialtyDemand.Create(42, 3, now, new SpecialtyConfig()) with { Ratio = 102 };
+        _seller.CurrentInteractionObject = _trader;
+        await Assert.That(_specialty.GetRatioForSpecialty(_seller, 42)).IsEqualTo(91);
+        _trader.Transform.Local.SetPosition(0, 0, 3);
+        await Assert.That(_specialty.GetRatioForSpecialty(_seller, 42)).IsEqualTo(102);
+        await Assert.That(_specialty.GetRatioForSpecialty(_seller, 43)).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task Quote_KeepsBundlePrecedence_AndUsesMatrixForUnmappedTrader()
     {
         await Assert.That(_specialty.TryQuote(_seller, 20, out _, out _, out _, out var bundled)).IsEqualTo(ErrorMessageType.NoErrorMessage);
