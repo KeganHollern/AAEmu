@@ -129,13 +129,19 @@ public class NpcSpawnerNpc : Spawner<Npc>
         // aaemu-cluster#92 (#96): only the main world auto-respawns NPCs on death. Instance worlds
         // (dungeons) otherwise endlessly respawned cleared packs every SpawnDelay seconds; their
         // repopulation is owned by the dungeon script instead.
-        npc.Spawner.RespawnTime = npcSpawner.ParentWorld.Id == WorldManager.DefaultInstanceId
+        npc.Spawner.RespawnTime = npc.TowerDefenseSpawnToken == null &&
+                                 npcSpawner.ParentWorld.Id == WorldManager.DefaultInstanceId
             ? (int)Random.Shared.Next(npc.Spawner.Template.SpawnDelayMin, npc.Spawner.Template.SpawnDelayMax)
             : 0;
         SpawnAndRaiseOnSpawn(npc);
 
-        if (npc.TowerDefenseSpawnToken is { } eventToken)
-            npc.ParentWorld.EventSpawnOwnership.Register(npc, eventToken);
+        if (npc.TowerDefenseSpawnToken is { } eventToken &&
+            !npc.ParentWorld.EventSpawnOwnership.Register(npc, eventToken))
+        {
+            npc.ActivePlotState?.RequestCancellation();
+            npcSpawner.Despawn(npc);
+            return [];
+        }
 
         var world = WorldManager.Instance.GetWorld(npc.Transform.InstanceId);
         world.Events.OnUnitSpawn(world, new OnUnitSpawnArgs { Npc = npc });
@@ -162,7 +168,8 @@ public class NpcSpawnerNpc : Spawner<Npc>
         ArgumentNullException.ThrowIfNull(npc);
 
         npc.Spawn();
-        npc.Events.OnSpawn(npc, new OnSpawnArgs { Npc = npc });
+        if (npc.TowerDefenseSpawnToken?.Lifetime.IsCancelled != true)
+            npc.Events.OnSpawn(npc, new OnSpawnArgs { Npc = npc });
     }
 
     internal static WorldSpawnPosition CreateRuntimeSpawnPosition(WorldSpawnPosition authoredPosition,

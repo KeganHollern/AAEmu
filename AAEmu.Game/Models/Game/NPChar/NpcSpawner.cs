@@ -754,6 +754,8 @@ public class NpcSpawner : Spawner<Npc>
     public Npc ForceSpawnOwned(TowerDefenseSpawnToken token)
     {
         ArgumentNullException.ThrowIfNull(token);
+        if (token.Lifetime.IsCancelled)
+            return null;
         lock (_spawnLock)
         {
             var existing = SpawnedNpcs.TryGetValue(SpawnerId, out var before)
@@ -1306,6 +1308,9 @@ public class NpcSpawner : Spawner<Npc>
     /// </summary>
     public void DoSpawnEffect(uint spawnerId, SpawnEffect effect, BaseUnit caster, BaseUnit target)
     {
+        if (caster is Npc { Despawned: true } ||
+            caster is Npc { TowerDefenseSpawnToken.Lifetime.IsCancelled: true })
+            return;
         var template = NpcGameData.Instance.GetNpcSpawnerTemplate(spawnerId);
         if (template?.Npcs == null || !IsSpawnWindowActive(template))
             return;

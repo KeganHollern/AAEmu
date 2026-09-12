@@ -52,6 +52,17 @@ public class TowerDef : ICommand
                         $"{occurrence.Manifest.Key} def={occurrence.Definition.Id} site={occurrence.Site.Key} " +
                         $"state={occurrence.Status} step={occurrence.CurrentStepOrdinal} objectives=[{objectives}] " +
                         $"deadline={occurrence.HardDeadlineUtc:O}");
+                    var owned = occurrence.World.EventSpawnOwnership.GetOccurrence(occurrence.OccurrenceKey);
+                    var alive = owned.Where(value => !value.Npc.IsDead).ToList();
+                    var activePlots = alive.Count(value => value.Npc.ActivePlotState is { } plot &&
+                                                          !plot.CancellationRequested());
+                    CommandManager.SendNormalText(this, messageOutput,
+                        $"ownedAlive={alive.Count} activePlots={activePlots} " +
+                        $"npcs=[{string.Join(", ", alive.GroupBy(value => value.Npc.TemplateId)
+                            .OrderBy(group => group.Key).Select(group => $"{group.Key} x{group.Count()}"))}]");
+                    if (occurrence.TerminalObjective is { } terminal)
+                        CommandManager.SendNormalText(this, messageOutput,
+                            $"completion npc {terminal.TargetId}: {terminal.Current}/{terminal.Required}");
                 }
                 break;
             }
