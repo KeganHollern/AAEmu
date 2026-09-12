@@ -2,13 +2,14 @@ using AAEmu.Game.Core.Managers;
 
 namespace AAEmu.Game.Models.Game.Char;
 
-/// <summary>Stages the cached labor debit and writes the account row in the asset transaction.</summary>
+/// <summary>Stages labor and its rewards before the character and account rows enter the asset transaction.</summary>
 public sealed class CharacterLaborMutation(Character owner) : IDisposable
 {
     private readonly short _labor = owner.LaborPower;
     private readonly int _consumed = owner.ConsumedLaborPower;
+    private readonly Action _restoreRewards = owner.CaptureLaborRewardState();
+    private readonly List<Action> _publishRewards = [];
     private short _amount;
-    private uint _actability;
     private readonly List<(short Amount, uint Actability)> _additional = [];
     private bool _finished;
     internal bool HasChanges => _amount > 0 || _additional.Count > 0;
@@ -18,7 +19,8 @@ public sealed class CharacterLaborMutation(Character owner) : IDisposable
         if (_amount != 0 || _finished || !owner.TryStageLaborConsumption(amount))
             return false;
         _amount = amount;
-        _actability = actability;
+        if (amount > 0)
+            _publishRewards.Add(owner.PrepareLaborRewards(amount, actability));
         return true;
     }
 
@@ -29,6 +31,7 @@ public sealed class CharacterLaborMutation(Character owner) : IDisposable
             !owner.TryStageLaborConsumption(amount))
             return false;
         _additional.Add((amount, actability));
+        _publishRewards.Add(owner.PrepareLaborRewards(amount, actability));
         return true;
     }
 
@@ -51,10 +54,8 @@ public sealed class CharacterLaborMutation(Character owner) : IDisposable
         if (_finished)
             return;
         _finished = true;
-        if (_amount > 0)
-            owner.CompleteStagedLaborConsumption(_amount, _actability);
-        foreach (var debit in _additional)
-            owner.CompleteStagedLaborConsumption(debit.Amount, debit.Actability);
+        foreach (var publish in _publishRewards)
+            publish();
     }
 
     public void PreservePreparedState() => _finished = true;
@@ -62,7 +63,10 @@ public sealed class CharacterLaborMutation(Character owner) : IDisposable
     public void Dispose()
     {
         if (!_finished && HasChanges)
+        {
             owner.RestoreStagedLabor(_labor, _consumed);
+            _restoreRewards();
+        }
         _finished = true;
     }
 }

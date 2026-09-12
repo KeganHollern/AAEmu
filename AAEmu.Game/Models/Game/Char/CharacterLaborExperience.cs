@@ -19,6 +19,13 @@ public partial class Character
             foreach (var (id, experience) in oldAbilities)
                 Abilities.Abilities[id].Exp = experience;
         });
+        batch.AfterCommit(PrepareExperienceReward(amount, addAbilityExperience));
+    }
+
+    // Both skill effects and the common labor mutation prepare the same experience state.
+    internal Action PrepareExperienceReward(int amount, bool addAbilityExperience)
+    {
+        var oldLevel = Level;
         var experienceAfter = (int)Math.Clamp((long)Experience + amount, 0, int.MaxValue);
         var levelAfter = ExperienceManager.Instance.GetLevelFromExp(experienceAfter, Level, out var overflow);
         if (levelAfter >= ExperienceManager.Instance.MaxPlayerLevel)
@@ -32,7 +39,7 @@ public partial class Character
             foreach (var id in active)
                 Abilities.Abilities[id].Exp = (int)Math.Clamp((long)Abilities.Abilities[id].Exp + amount, 0, maximum);
         }
-        batch.AfterCommit(() =>
+        return () =>
         {
             Achievements?.UpdateLevel(levelAfter);
             if (addAbilityExperience)
@@ -46,6 +53,6 @@ public partial class Character
             }
             if (Connection != null)
                 QuestManager.Instance.DoOnLevelUpEvents(Connection.ActiveChar);
-        });
+        };
     }
 }
