@@ -165,11 +165,6 @@ public partial class Skill
         _laborCaster = casterCaster;
         _laborTarget = targetCaster;
         _laborObject = skillObject;
-        if (caster is Character laborOwner && laborOwner.LaborPower < GetLaborCost(laborOwner))
-        {
-            Cancelled = true;
-            return SkillResult.NeedLaborPower;
-        }
         OriginalCaster = caster;
         var sourceItem = ZoneSkillRestrictions.GetSourceItem(caster, casterCaster);
         SourceItemTemplateId = sourceItem?.TemplateId ?? 0;
@@ -178,6 +173,11 @@ public partial class Skill
         {
             Cancelled = true;
             return SkillResult.InvalidSource;
+        }
+        if (caster is Character laborOwner && laborOwner.LaborPower < GetLaborCost(laborOwner))
+        {
+            Cancelled = true;
+            return SkillResult.NeedLaborPower;
         }
         Interlocked.Exchange(ref _achievementUseRecorded, 0);
 

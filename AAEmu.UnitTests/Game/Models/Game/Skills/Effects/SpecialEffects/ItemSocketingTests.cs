@@ -293,7 +293,7 @@ public sealed class ItemSocketingTests
 
     private static Skill NewSkill() => new(new SkillTemplate
     {
-        Id = 23728, TargetType = SkillTargetType.Item, ManaCost = 10, ConsumeLaborPower = 5, CustomGcd = 1000,
+        Id = 23728, TargetType = SkillTargetType.Item, ManaCost = 10, ConsumeLaborPower = 0, CustomGcd = 1000,
         Effects = [new SkillEffect
         {
             Template = new SpecialEffect { SpecialEffectTypeId = SpecialType.ItemSocketing, Value1 = 1 },
