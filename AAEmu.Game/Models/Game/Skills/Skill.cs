@@ -1118,7 +1118,9 @@ public partial class Skill
         // The execution lease excludes new trade offers through final material consumption.
         using (execution)
         {
-            if (caster is Character laborOwner && Template.ConsumeLaborPower > 0)
+            if (_triggeredLaborBatch != null && ReferenceEquals(_triggeredLaborBatch, SkillLaborBatch.Current))
+                ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
+            else if (caster is Character laborOwner && Template.ConsumeLaborPower > 0)
             {
                 lock (SaveManager.PersistenceSyncRoot)
                 {
@@ -1159,7 +1161,7 @@ public partial class Skill
         var usedItemTemplateId = casterCaster is SkillItem usedItemSource
             ? player?.Inventory.GetItemById(usedItemSource.ItemId)?.TemplateId ?? 0
             : 0;
-        if (casterCaster is SkillItem itemSource &&
+        if (_triggeredLaborBatch == null && casterCaster is SkillItem itemSource &&
             !SkillItemSource.CanUse(ZoneSkillRestrictions.GetSourceItem(caster, casterCaster), caster.ObjId,
                 itemSource, Template, targetCaster, skillObject))
         {
@@ -1415,7 +1417,7 @@ public partial class Skill
         if (lastAppliedEffect != null)
         {
             // Consume the item
-            if (casterCaster is SkillItem castItem && player != null)
+            if (_triggeredLaborBatch == null && casterCaster is SkillItem castItem && player != null)
             {
                 var useItem = player.Inventory.GetItemById(castItem.ItemId);
                 if (lastAppliedEffect.ConsumeSourceItem)
@@ -1593,7 +1595,7 @@ public partial class Skill
 
         // TODO Call OnItemUse() moved to the ApplyEffects() method from the effects and add trigger ConditionChance;
         // If the probability of passing the effect is greater than the chance, then run the check on the use of the item for the quest
-        if (!Cancelled && casterCaster is SkillItem skillItem && unit.ConditionChance)
+        if (!Cancelled && _triggeredLaborBatch == null && casterCaster is SkillItem skillItem && unit.ConditionChance)
         {
             if (player == null)
                 return;
