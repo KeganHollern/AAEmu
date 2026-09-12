@@ -185,7 +185,10 @@ public sealed class WorldEconomySettlementTests
         {
             var mail = _mail._allPlayerMails.Values.Single();
             await Assert.That(mail.Body.CopperCoins).IsEqualTo(negotiated ? 1576 : 1502);
-            await Assert.That(mail.Body.Text.Contains(negotiated ? ", 71, 1576," : ", 0, 1502,", StringComparison.Ordinal)).IsTrue();
+            var expectedBody = negotiated
+                ? "', 130, 1501, 1576, 71, 1576, 2, 1, 0, 0)"
+                : "', 130, 1430, 1502, 0, 1502, 2, 1, 0, 0)";
+            await Assert.That(mail.Body.Text.EndsWith(expectedBody, StringComparison.Ordinal)).IsTrue();
             await Assert.That(_specialty.SellSpecialty(_seller, 20)).IsEqualTo(0);
             await Assert.That(rolls).IsEqualTo(1);
             await Assert.That(_mail._allPlayerMails.Count).IsEqualTo(1);

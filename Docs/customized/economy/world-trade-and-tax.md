@@ -95,6 +95,13 @@ A repeated request after a committed sale finds no pack and cannot make another 
 A failed checkpoint restores the pack and removes the prepared payout.
 These are custom server rules, not claims about retail rates.
 
+The exact client `locale_helper.alb` maps the payout mail through `body()` at source lines 935 through 967.
+It subtracts argument 5 from argument 3 before it sets `applyPriceMoney`.
+Argument 3 must therefore contain the price with the bonus included.
+For a demand price of 1430 copper, the server sends price 1501, bonus 71, and total 1576.
+The client displays base 1430, bonus 71, and total 1576.
+The script SHA-256 is `944dc8076da065746f4a65f767bd9870c1bb5138b641004edea2fc89e49321b9`.
+
 ## SQL review
 
 Two additive updates create `specialty_demand` and `house_tax_receipts`.
