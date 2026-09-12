@@ -1,6 +1,7 @@
 using System.Numerics;
 
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Models.CryEngine.Objects;
 using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.World;
@@ -10,18 +11,32 @@ namespace AAEmu.Game.Models.Game.Housing;
 /// <summary>Combines authored world geometry and the current persisted world objects.</summary>
 public sealed class HousingGeometryWorld(HousingGeometryAssets assets, WorldInstance world,
     Func<IEnumerable<House>> houses, Func<CryBounds, IEnumerable<CryGeometryInstance>> otherInstances,
-    Func<Doodad, bool> ignoreDoodad = null)
+    Func<Doodad, bool> ignoreDoodad = null, bool includeStatic = true)
 {
     private readonly CryGeometryScene _scene = new(bounds => QueryInstances(assets, world, houses,
-        otherInstances, ignoreDoodad, bounds), _ => true);
+        otherInstances, ignoreDoodad, includeStatic, bounds), _ => true);
 
     private static IEnumerable<CryGeometryInstance> QueryInstances(HousingGeometryAssets geometry,
         WorldInstance instance, Func<IEnumerable<House>> getHouses,
         Func<CryBounds, IEnumerable<CryGeometryInstance>> getOtherInstances, Func<Doodad, bool> ignored,
-        CryBounds bounds)
+        bool includeStatic, CryBounds bounds)
     {
-        foreach (var brush in geometry.GetWorld(instance.Template).Query(bounds.Min, bounds.Max))
-            yield return new CryGeometryInstance(0, brush.Asset ?? geometry.Load(brush.ModelUri), brush.Transform);
+        foreach (var authored in includeStatic
+                     ? geometry.GetWorld(instance.Template).Query(bounds.Min, bounds.Max) : [])
+        {
+            var transform = CryVegetationGeometry.ResolveTransform(authored, (x, y) =>
+                geometry.GetTerrain(instance.Template, Cell(x), Cell(y))?.SampleHeight(x, y) ?? float.NaN);
+            var asset = authored.Asset ?? geometry.Load(authored.ModelUri);
+            if (!string.IsNullOrEmpty(authored.MaterialPath))
+                asset = asset with { Parts = asset.Parts.Select(part => part with
+                {
+                    MaterialPath = authored.MaterialPath
+                }).ToArray() };
+            yield return new CryGeometryInstance(0, asset, transform)
+            {
+                IsVegetation = authored.Kind == ObjectDataType.Vegetation
+            };
+        }
         foreach (var house in getHouses().Where(house => ReferenceEquals(house.ParentWorld, instance)))
         {
             var asset = geometry.LoadHouse(house.Template, house.CurrentStep);

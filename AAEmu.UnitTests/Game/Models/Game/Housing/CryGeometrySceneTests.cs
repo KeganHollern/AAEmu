@@ -78,6 +78,38 @@ public sealed class CryGeometrySceneTests
             .IsEqualTo(CryIntersection.Intersects);
     }
 
+    [Test]
+    public async Task Vegetation_RaysUseSolidGeometryInsteadOfTheExtraFoliageProxy()
+    {
+        var source = Box(20, 0);
+        var solid = source.Asset.Parts[0];
+        var foliage = solid with { PhysicsType = 0x1001, Transform = Matrix4x4.CreateTranslation(0, 0, 5) };
+        var vegetation = source with { IsVegetation = true, Asset = source.Asset with { Parts = [solid, foliage] } };
+        var scene = new CryGeometryScene(_ => [vegetation], _ => true);
+        await Assert.That(scene.Raycast(new Vector3(0, 0, 10), -Vector3.UnitZ, 20, out var hit))
+            .IsEqualTo(CryIntersection.Intersects);
+        await Assert.That(hit.Hit.Distance).IsEqualTo(9f);
+        await Assert.That(scene.IntersectBox(new CryBox(new Vector3(0, 0, 5), Vector3.One, Matrix4x4.Identity)))
+            .IsEqualTo(CryIntersection.Clear);
+    }
+
+    [Test]
+    public async Task PassivePhysicalChildBesideAnimatedVisual_UsesTheResolvedCollider()
+    {
+        var source = Box(20, 0);
+        var instance = source with { Asset = source.Asset with
+        {
+            HasAnimatedCollision = true,
+            PoseRequirements = [new CryGeometryPoseRequirement("flag.cga", "flag", Matrix4x4.Identity,
+                "Default", true, true) { AffectsCollision = false }]
+        } };
+        var scene = new CryGeometryScene(_ => [instance], _ => true);
+        await Assert.That(scene.Raycast(new Vector3(0, 0, 10), -Vector3.UnitZ, 20, out _))
+            .IsEqualTo(CryIntersection.Intersects);
+        await Assert.That(scene.IntersectBox(new CryBox(Vector3.Zero, Vector3.One, Matrix4x4.Identity)))
+            .IsEqualTo(CryIntersection.Intersects);
+    }
+
     private static CryGeometryInstance Box(uint id, float height) => new(id,
         new CryGeometryAsset(new CryBounds(new Vector3(-10), new Vector3(10)),
             [new CryGeometryPart(new CryBox(Vector3.Zero, Vector3.One, Matrix4x4.Identity),

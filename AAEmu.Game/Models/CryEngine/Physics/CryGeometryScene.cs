@@ -2,7 +2,10 @@ using System.Numerics;
 
 namespace AAEmu.Game.Models.CryEngine.Physics;
 
-public sealed record CryGeometryInstance(uint ObjectId, CryGeometryAsset Asset, Matrix4x4 Transform, int EntityType = 1, bool RayOnly = false);
+public sealed record CryGeometryInstance(uint ObjectId, CryGeometryAsset Asset, Matrix4x4 Transform, int EntityType = 1, bool RayOnly = false)
+{
+    public bool IsVegetation { get; init; }
+}
 public readonly record struct CrySceneRayHit(CryRayHit Hit, uint ObjectId, bool IsTerrain, int PickingIndex = 0);
 
 /// <summary>Queries authored instances. A missing shape must not become a clear result.</summary>
@@ -20,9 +23,9 @@ public sealed class CryGeometryScene(Func<CryBounds, IEnumerable<CryGeometryInst
         {
             if ((instance.EntityType & 7) == 0)
                 continue;
-            if (instance.Asset.HasAnimatedCollision)
+            if (HasUnresolvedCollisionPose(instance.Asset))
                 return CryIntersection.Indeterminate;
-            foreach (var part in instance.RayOnly ? instance.Asset.Parts.Where(includePart) : SelectParts(instance.Asset, CryGeometryQueryUsage.Ray))
+            foreach (var part in instance.RayOnly ? instance.Asset.Parts.Where(includePart) : SelectParts(instance, CryGeometryQueryUsage.Ray))
             {
                 if (!CryGeometryQueries.GetBounds(part, instance.Transform).Intersects(bounds) ||
                     !CryGeometryQueries.Raycast(part, instance.Transform, origin, direction,
@@ -35,8 +38,19 @@ public sealed class CryGeometryScene(Func<CryBounds, IEnumerable<CryGeometryInst
         return found ? CryIntersection.Intersects : CryIntersection.Clear;
     }
 
-    private IEnumerable<CryGeometryPart> SelectParts(CryGeometryAsset asset, CryGeometryQueryUsage usage)
+    private static bool HasUnresolvedCollisionPose(CryGeometryAsset asset) =>
+        asset.PoseRequirements.Any(pose => pose.Playing && pose.Physicalized && pose.AffectsCollision);
+
+    private IEnumerable<CryGeometryPart> SelectParts(CryGeometryInstance instance, CryGeometryQueryUsage usage)
     {
+        var asset = instance.Asset;
+        if (instance.IsVegetation)
+        {
+            foreach (var part in asset.Parts)
+                if (includePart(part) && (CryGeometryLayerRules.GetVegetationUsage(part.PhysicsType) & usage) != 0)
+                    yield return part;
+            yield break;
+        }
         foreach (var group in asset.Parts.GroupBy(part => part.PhysicsGroup))
         {
             var types = group.Select(part => part.PhysicsType).ToArray();
@@ -54,9 +68,9 @@ public sealed class CryGeometryScene(Func<CryBounds, IEnumerable<CryGeometryInst
         {
             if ((instance.EntityType & 0x1f) == 0 || instance.RayOnly)
                 continue;
-            if (instance.Asset.HasAnimatedCollision)
+            if (HasUnresolvedCollisionPose(instance.Asset))
                 return CryIntersection.Indeterminate;
-            foreach (var part in SelectParts(instance.Asset, CryGeometryQueryUsage.PlacementOverlap))
+            foreach (var part in SelectParts(instance, CryGeometryQueryUsage.PlacementOverlap))
             {
                 if (!CryGeometryQueries.GetBounds(part, instance.Transform).Intersects(bounds))
                     continue;
