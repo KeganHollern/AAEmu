@@ -5,8 +5,6 @@ using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Crafts;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
-using AAEmu.Game.Models.Game.DoodadObj.Static;
-using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
@@ -110,53 +108,8 @@ public class CharacterCraft(Character owner)
             return;
         }
 
-        // Check if we have permission to actually use the doodad (mostly sanity check since the client already checks this before you can craft)
-        var hasPermission = true;
-        var doodad = Owner.ParentWorld.GetDoodad(doodadId);
-        if (doodad != null && doodad.FuncPermission != DoodadFuncPermission.Any && Owner != null)
+        if (!HasCraftPermission(doodadId))
         {
-            switch (doodad.FuncPermission)
-            {
-                case DoodadFuncPermission.Any:
-                case DoodadFuncPermission.Permission1:
-                case DoodadFuncPermission.Permission2:
-                case DoodadFuncPermission.OwnerOnly:
-                case DoodadFuncPermission.Permission4:
-                case DoodadFuncPermission.OwnerRaidMembers:
-                    break;
-                case DoodadFuncPermission.SameAccount:
-                    if (doodad.OwnerType == DoodadOwnerType.Character)
-                        hasPermission = WorldManager.Instance.GetCharacterById(doodad.OwnerId).AccountId == Owner.AccountId;
-                    break;
-                case DoodadFuncPermission.ZoneResidents:
-                    hasPermission = false;
-                    var zoneGroup = ZoneManager.Instance.GetZoneByKey(doodad.Transform.ZoneId)?.GroupId ?? 0;
-                    var playerHouses = new Dictionary<uint, House>();
-                    if (HousingManager.Instance.GetByAccountId(playerHouses, Owner.AccountId) > 0)
-                    {
-                        foreach (var (_, playerHouse) in playerHouses)
-                        {
-                            var houseZoneGroup = ZoneManager.Instance.GetZoneByKey(playerHouse.Transform.ZoneId)?.GroupId ?? 0;
-                            if (houseZoneGroup == zoneGroup)
-                            {
-                                hasPermission = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException(Convert.ToString(doodad.FuncPermission));
-            }
-
-            Owner.SendDebugMessage($"Crafting using @DOODAD_NAME({doodad.TemplateId}) - {doodad.TemplateId} (objId: {doodad.ObjId}) with current permission {doodad.FuncPermission} = {hasPermission}");
-        }
-
-        if (!hasPermission)
-        {
-            // TODO not verified
-            Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.CraftPermissionDeny, 0, false);
             CancelCraft();
             return;
         }
@@ -247,6 +200,13 @@ public class CharacterCraft(Character owner)
     private void EndCraftCore()
     {
         if (CurrentCraft == null)
+        {
+            CancelCraft();
+            return;
+        }
+
+        // Permission can change during the cast. Recheck before any products or materials change.
+        if (!HasCraftPermission(DoodadId))
         {
             CancelCraft();
             return;
@@ -493,6 +453,18 @@ Owner.Achievements?.Increment(
             batch.AfterCommit(CompleteCraft);
         else
             CompleteCraft();
+    }
+
+    private bool HasCraftPermission(uint doodadId)
+    {
+        if (doodadId == 0)
+            return true;
+        var doodad = Owner.ParentWorld?.GetDoodad(doodadId);
+        // The client craft window checks every current function permission (FUN_394f9bc0).
+        if (doodad != null && doodad.CurrentFuncs.All(func => DoodadPermissionRules.Allows(Owner, doodad, func.PermId)))
+            return true;
+        Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.CraftPermissionDeny, 0, false);
+        return false;
     }
 
     private bool ValidateCraftLocation(Craft craft, uint doodadId)

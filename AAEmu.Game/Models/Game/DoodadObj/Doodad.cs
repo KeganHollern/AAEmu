@@ -226,7 +226,7 @@ public class Doodad : BaseUnit
     public uint OwnerDbId { get; set; }
 
     /// <summary>
-    /// Type2? Set to 1 if this doodad is part of a vehicle?
+    /// Expedition identifier used by the SiegeMaster function permission in r208022.
     /// </summary>
     public uint Type2 { get; init; }
 
@@ -485,6 +485,10 @@ public class Doodad : BaseUnit
             }
             else
             {
+                if (funcWithSkill != null && !DoodadPermissionRules.Demand(caster, this, funcWithSkill.PermId))
+                {
+                    return;
+                }
                 if (DoFunc(caster, startedSkillId, funcWithSkill))
                 {
                     // FuncGroupId will be equal to either the current phase, func.NextPhase, or OverridePhase
@@ -565,6 +569,12 @@ public class Doodad : BaseUnit
             if (Logger.IsTraceEnabled)
                 Logger.Trace($"DoFunc: Finished execution with func = null: TemplateId {TemplateId}, Using phase {FuncGroupId} with SkillId {skillId}");
 
+            return true;
+        }
+
+        if (!DoodadPermissionRules.Demand(caster, this, func.PermId))
+        {
+            ToNextPhase = false;
             return true;
         }
 

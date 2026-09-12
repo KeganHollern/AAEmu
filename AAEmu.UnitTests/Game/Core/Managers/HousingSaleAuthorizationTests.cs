@@ -238,6 +238,24 @@ public sealed class HousingSaleAuthorizationTests
         }
     }
 
+    [Test]
+    [Arguments(HousingPermission.Family)]
+    [Arguments(HousingPermission.Guild)]
+    [Arguments((HousingPermission)255)]
+    public async Task ChangeHousePermission_MissingMembershipOrInvalidValue_PreservesPermission(HousingPermission permission)
+    {
+        var manager = CreateManager();
+        var house = CreateHouse();
+        house.Permission = HousingPermission.Private;
+        RegisterHouse(manager, house);
+        var owner = CreateCharacter(house.OwnerId);
+        var connection = new GameConnection(null) { ActiveChar = owner };
+
+        manager.ChangeHousePermission(connection, house.TlId, permission);
+
+        await Assert.That(house.Permission).IsEqualTo(HousingPermission.Private);
+    }
+
     private static House CreateHouse()
     {
         return new House

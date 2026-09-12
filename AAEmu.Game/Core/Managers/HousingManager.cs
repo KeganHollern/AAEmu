@@ -644,6 +644,15 @@ public partial class HousingManager(
             if (!IsActiveSaleHouse(house) || connection?.ActiveChar == null || house.OwnerId != connection.ActiveChar.Id)
                 return; // not the owner
 
+            var owner = connection.ActiveChar;
+            if (!Enum.IsDefined(permission) ||
+                (permission == HousingPermission.Family && owner.Family == 0) ||
+                (permission == HousingPermission.Guild && !(owner.Expedition?.Id > 0)))
+            {
+                owner.SendErrorMessage(ErrorMessageType.InteractionPermissionDeny);
+                return;
+            }
+
             house.Permission = permission;
             house.BroadcastPacket(new SCHousePermissionChangedPacket(tlId, (byte)permission), false);
         }
