@@ -3,10 +3,12 @@ using System.Reflection;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Char.Templates;
 using AAEmu.Game.Models.Game.Features;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Housing;
@@ -158,6 +160,41 @@ public sealed class WorldEconomySettlementTests
         await Assert.That(_mail._allPlayerMails.Values.Single().Body.CopperCoins).IsEqualTo(1502);
         await Assert.That(Demand[(42, 2)].PendingSales).IsEqualTo(1);
         await Assert.That(Demand.ContainsKey((42, 3))).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task Sale_NegotiationUsesOneRollAndSharesThePayoutTransaction(bool commit, bool negotiated)
+    {
+        var characters = new CharacterManager(null, null, null, null, null, null, null, null, null, null, null);
+        SetField(characters, "_expertLimits", new Dictionary<int, ExpertLimit> { [1] = new() { UpLimit = 20000 } });
+        ReplaceSingleton(characters);
+        _seller.Actability.Actabilities[(uint)ActabilityType.Commerce] =
+            new Actability(new ActabilityTemplate { Id = (uint)ActabilityType.Commerce }) { Step = 1 };
+        var rolls = 0;
+        _specialty.NegotiationRoll = () => { rolls++; return negotiated ? 0 : 1; };
+        _save.TryCommitEconomy(Any<IReadOnlyCollection<Character>>(), Any<Action<PersistenceSaveContext>>()).Returns(commit);
+        await Assert.That(_specialty.SellSpecialty(_seller, 20)).IsEqualTo(commit ? 1100 : 0);
+        await Assert.That(rolls).IsEqualTo(1);
+        await Assert.That(_seller.LaborPower).IsEqualTo((short)(commit ? 40 : 100));
+        await Assert.That(_pack.Count).IsEqualTo(commit ? 0 : 1);
+        if (commit)
+        {
+            var mail = _mail._allPlayerMails.Values.Single();
+            await Assert.That(mail.Body.CopperCoins).IsEqualTo(negotiated ? 1576 : 1502);
+            await Assert.That(mail.Body.Text.Contains(negotiated ? ", 71, 1576," : ", 0, 1502,", StringComparison.Ordinal)).IsTrue();
+            await Assert.That(_specialty.SellSpecialty(_seller, 20)).IsEqualTo(0);
+            await Assert.That(rolls).IsEqualTo(1);
+            await Assert.That(_mail._allPlayerMails.Count).IsEqualTo(1);
+        }
+        else
+        {
+            await Assert.That(_mail._allPlayerMails).IsEmpty();
+            await Assert.That(Demand).IsEmpty();
+        }
     }
 
     [Test]

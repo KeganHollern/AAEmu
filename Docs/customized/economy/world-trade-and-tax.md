@@ -52,11 +52,11 @@ The receipt keeps the bill ID, house, payer, amount, currency mode, fee setting,
 The receipt key rejects a repeated bill. The mail allocator keeps receipt IDs reserved after restart.
 A stale amount creates a new quote and consumes no payment.
 
-`World.HouseLateFeePercent` controls a custom fee. Its default is 0.
+`World.HouseLateFeePercent` controls the approved custom fee. Its default is 10.
 The accepted range is 0 through 100 percent.
 A nonzero value adds `ceil(weekly_tax × percent / 100)` once during the grace window.
 It does not compound. The mail quote, tax status, payment check, and receipt use the same setting.
-A value of 10 is a proposed server rule. It is not a confirmed retail value.
+The user approved 10 percent for this server. It is not a confirmed retail value.
 
 ## Exact client evidence
 
@@ -84,8 +84,16 @@ Native addresses below use image base `0x38ff0000`.
 Client text confirms negotiation and a late-payment penalty.
 It does not state the negotiation chance, multiplier, or late-fee percentage.
 The compact tables and retained upstream history did not resolve those values.
-Negotiation remains disabled. The default late-fee percentage remains 0.
-These acceptance items remain open until the user selects a custom rule or exact evidence resolves them.
+The user selected custom rules for this server.
+The late fee is 10 percent of the weekly tax, rounded up once after the due date.
+Commerce rank sets a negotiation chance of 1 percent per rank, capped at 7 percent.
+Each sale gets 1 roll after its quote and labor checks.
+A successful roll adds 5 percent of the demand-adjusted price before interest and maker sharing.
+The bonus rounds down to whole copper or whole reward items.
+The payout mail records the bonus amount and final payout in the same transaction as the pack and labor debit.
+A repeated request after a committed sale finds no pack and cannot make another roll.
+A failed checkpoint restores the pack and removes the prepared payout.
+These are custom server rules, not claims about retail rates.
 
 ## SQL review
 
@@ -109,7 +117,7 @@ They also check demand reload, receipt replay rejection, and repeated additive u
 5. Place a house and check that the first due date is 7 days later.
 6. Pay one tax bill, repeat the same request, and check one debit and one date extension.
 7. Try owner demolition after the due date and check error 567.
-8. If a custom late fee is enabled, compare the displayed quote, debit, and receipt.
+8. Pay an overdue bill. Compare the quote, debit, and receipt with the weekly tax plus its rounded-up 10 percent fee.
 
 ## Doodad purchase evidence for issue 311
 

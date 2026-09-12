@@ -12,6 +12,8 @@ namespace AAEmu.Game.Core.Managers.World;
 
 public partial class SpecialtyManager
 {
+    internal Func<int> NegotiationRoll { get; set; } = () => Random.Shared.Next(100);
+
     public int SellSpecialty(Character player, uint npcObjId)
     {
         lock (SaveManager.PersistenceSyncRoot)
@@ -37,7 +39,8 @@ public partial class SpecialtyManager
             var crafterId = backpack.MadeUnitId != player.Id ? backpack.MadeUnitId : 0;
             var share = crafterId != 0 && FeaturesManager.Fsets.Check(Feature.backpackProfitShare);
             var reward = npc.Template.SpecialtyCoinId;
-            var payout = SpecialtyPrice.Calculate(basePrice, ratio, reward != 0, share);
+            var negotiated = SpecialtyPrice.Negotiates(commerce?.Step ?? 0, NegotiationRoll());
+            var payout = SpecialtyPrice.Calculate(basePrice, ratio, reward != 0, share, negotiated);
             if (payout.Seller <= 0)
             {
                 player.SendErrorMessage(ErrorMessageType.Invalid);
@@ -118,7 +121,7 @@ public partial class SpecialtyManager
         {
             mail.Body.CopperCoins = amount;
             mail.Body.Text = FormattableString.Invariant(
-                $"body('{packName}', {ratio}, {payout.Price}, {payout.PriceWithInterest}, 0, {amount}, {receiverCase}, 1, 0, 0)");
+                $"body('{packName}', {ratio}, {payout.Price}, {payout.PriceWithInterest}, {payout.NegotiationBonus}, {amount}, {receiverCase}, 1, 0, 0)");
         }
         else
         {
@@ -127,7 +130,7 @@ public partial class SpecialtyManager
                 return false;
             mail.Body.Attachments.AddRange(items);
             mail.Body.Text = FormattableString.Invariant(
-                $"body('{packName}', {ratio}, 0, 0, 0, 0, {receiverCase}, 0, {payout.Crafter}, {payout.Seller})");
+                $"body('{packName}', {ratio}, 0, 0, {payout.NegotiationBonus}, 0, {receiverCase}, 0, {payout.Crafter}, {payout.Seller})");
         }
         return mails.TryAdd(mail);
     }

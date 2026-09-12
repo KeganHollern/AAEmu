@@ -25,4 +25,38 @@ public sealed class SpecialtyPriceTests
         await Assert.That(HouseTaxAmount.WithLateFee(101, due, due.AddDays(6), 10)).IsEqualTo(112);
         await Assert.That(HouseTaxAmount.WithLateFee(101, due, due, 0)).IsEqualTo(101);
     }
+
+    [Test]
+    [Arguments((byte)0, 0, false)]
+    [Arguments((byte)1, 0, true)]
+    [Arguments((byte)1, 1, false)]
+    [Arguments((byte)7, 6, true)]
+    [Arguments((byte)7, 7, false)]
+    [Arguments((byte)255, 7, false)]
+    public async Task Negotiation_UsesRankPercentWithSevenPercentCap(byte rank, int roll, bool success)
+    {
+        await Assert.That(SpecialtyPrice.Negotiates(rank, roll)).IsEqualTo(success);
+    }
+
+    [Test]
+    public async Task Negotiation_AddsFivePercentBeforeInterestAndMakerShare()
+    {
+        var payout = SpecialtyPrice.Calculate(10000, 130, false, true, true);
+        await Assert.That(payout.NegotiationBonus).IsEqualTo(650);
+        await Assert.That(payout.Price).IsEqualTo(13650);
+        await Assert.That(payout.PriceWithInterest).IsEqualTo(14333);
+        await Assert.That(payout.Seller).IsEqualTo(11466);
+        await Assert.That(payout.Crafter).IsEqualTo(2867);
+        await Assert.That(payout.Seller + payout.Crafter).IsEqualTo(payout.PriceWithInterest);
+    }
+
+    [Test]
+    public async Task Negotiation_FloorsBonusToWholeCurrencyUnits()
+    {
+        await Assert.That(SpecialtyPrice.Calculate(19, 100, false, false, true).NegotiationBonus).IsEqualTo(0);
+        await Assert.That(SpecialtyPrice.Calculate(199999, 100, true, false, true).NegotiationBonus).IsEqualTo(0);
+        var items = SpecialtyPrice.Calculate(400000, 100, true, true, true);
+        await Assert.That(items.NegotiationBonus).IsEqualTo(20000);
+        await Assert.That(items.Seller + items.Crafter).IsEqualTo(44);
+    }
 }

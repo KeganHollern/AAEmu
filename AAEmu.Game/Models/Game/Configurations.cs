@@ -79,8 +79,8 @@ public class WorldConfig
     /// </summary>
     public uint DaysForTaxPayment { get; set; } = 7u;
 
-    /// <summary>Custom one-time late fee. Zero leaves the unknown retail rate disabled.</summary>
-    public uint HouseLateFeePercent { get; set; } = 0u;
+    /// <summary>Approved custom one-time late fee, as a percentage of the weekly tax.</summary>
+    public uint HouseLateFeePercent { get; set; } = 10u;
 
     /// <summary>
     /// Maximum number of optional tax periods that can be prepaid after paying the current bill.

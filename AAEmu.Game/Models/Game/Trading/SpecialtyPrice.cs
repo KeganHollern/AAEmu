@@ -11,15 +11,26 @@ public static class SpecialtyPrice
 
     public static int Round(decimal amount) => checked((int)decimal.Floor(amount + 0.5m));
 
-    public static SpecialtyPayout Calculate(int basePrice, int demandPercent, bool itemReward, bool shareWithCrafter)
+    // Custom server rule: one percentage point per Commerce rank, capped at rank 7.
+    public static bool Negotiates(byte commerceRank, int roll) =>
+        roll is >= 0 and < 100 && roll < Math.Min((int)commerceRank, 7);
+
+    public static SpecialtyPayout Calculate(int basePrice, int demandPercent, bool itemReward, bool shareWithCrafter,
+        bool negotiated = false)
     {
         var price = Round(basePrice * (decimal)demandPercent / 100m);
+        // Item rewards use whole reward units. This prevents a fractional bonus
+        // from becoming an entire extra item through the final rounding step.
+        var unit = itemReward ? 10000 : 1;
+        var bonus = negotiated ? checked((int)decimal.Floor(price * 0.05m / unit) * unit) : 0;
+        price = checked(price + bonus);
         const int interestPercent = 5;
         var withInterest = Round(price * (100m + interestPercent) / 100m);
         var total = itemReward ? Round(withInterest / 10000m) : withInterest;
         var seller = shareWithCrafter ? Round(total * 0.8m) : total;
-        return new(price, withInterest, seller, total - seller, interestPercent);
+        return new(price, withInterest, seller, total - seller, interestPercent, bonus);
     }
 }
 
-public sealed record SpecialtyPayout(int Price, int PriceWithInterest, int Seller, int Crafter, int InterestPercent);
+public sealed record SpecialtyPayout(int Price, int PriceWithInterest, int Seller, int Crafter, int InterestPercent,
+    int NegotiationBonus);
