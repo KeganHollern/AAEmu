@@ -10,6 +10,8 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.CommonFarm;
 using AAEmu.Game.Models.Game.DoodadObj;
@@ -48,12 +50,16 @@ public sealed class HousingBuildEligibilityTests
         var previousItems = Swap(items);
         var previousHousing = Swap(housing);
         var previousAreas = Swap(areas);
+        var previousWorldConfig = AppConfiguration.Instance.World;
+        AppConfiguration.Instance.World = new WorldConfig { DaysForTaxPayment = 7 };
         var farms = new CommonFarmGameData();
         var previousFarms = Swap(farms);
         var previousAccounts = Swap(new AccountManager(null, null, TimeProvider.System));
         var fsets = typeof(FeaturesManager).GetProperty(nameof(FeaturesManager.Fsets))!;
         var previousFeatures = fsets.GetValue(null);
-        fsets.SetValue(null, new FeatureSet());
+        var features = new FeatureSet();
+        features.Set(Feature.taxItem, false);
+        fsets.SetValue(null, features);
         var worlds = new WorldManager(Mock.Of<ITickManager>().Object, Mock.Of<IWorldIdManager>().Object,
             new Lazy<IZoneManager>(() => Mock.Of<IZoneManager>().Object),
             new Lazy<IIndunManager>(() => Mock.Of<IIndunManager>().Object),
@@ -107,7 +113,7 @@ public sealed class HousingBuildEligibilityTests
             {
                 Id = 7,
                 AccountId = 42,
-                Faction = new Faction(),
+                Faction = new SystemFaction(),
                 Money = 1000000,
                 NumInventorySlots = 10,
                 NumBankSlots = 10,
@@ -173,6 +179,7 @@ public sealed class HousingBuildEligibilityTests
             Swap(previousFarms);
             Swap(previousAccounts);
             fsets.SetValue(null, previousFeatures);
+            AppConfiguration.Instance.World = previousWorldConfig;
         }
     }
 
