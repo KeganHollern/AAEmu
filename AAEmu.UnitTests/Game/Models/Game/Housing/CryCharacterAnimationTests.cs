@@ -17,6 +17,15 @@ public sealed class CryCharacterAnimationTests
     }
 
     [Test]
+    public async Task Sample_CurrentBounds_UseSkinPaletteAndNativeAxisPadding()
+    {
+        var pose = CryCharacterAnimation.Read(Clip()).Sample(BindAsset(), 0.5, false);
+        await Assert.That(Vector3.Distance(pose.Bounds.Min, new Vector3(0.8f, 0.8f, -0.2f))).IsLessThan(0.00001f);
+        await Assert.That(Vector3.Distance(pose.Bounds.Max, new Vector3(1.2f, 1.2f, 0.2f))).IsLessThan(0.00001f);
+        await Assert.That(pose.PoseRequirements.Count).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task Sample_LoopingAndLastKey_UseClipDuration()
     {
         var clip = CryCharacterAnimation.Read(Clip());
@@ -55,6 +64,7 @@ public sealed class CryCharacterAnimationTests
                 new CryCharacterBone(0, 23, "root", -1, Matrix4x4.Identity, null, 0),
                 new CryCharacterBone(1, 24, "child", 0, Matrix4x4.CreateTranslation(Vector3.UnitX), sphere, 0)
             ],
+            CharacterBoundsBones = [1],
             HasAnimatedCollision = true,
             PoseRequirements = [new CryGeometryPoseRequirement("model.chr", "Default", Matrix4x4.Identity, "Default", true, true)]
         };

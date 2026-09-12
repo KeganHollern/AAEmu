@@ -24,7 +24,7 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
         if (uri.StartsWith("prefab://", StringComparison.Ordinal))
             return LoadPrefab(uri[9..], elapsedSeconds);
         var asset = Load(uri);
-        if (asset.CgaAnimation != null)
+        if (asset.CgaAnimation != null && asset.PoseRequirements.Any(pose => pose.Playing))
             return asset.CgaAnimation.Sample(asset, elapsedSeconds, uri.StartsWith("cga_loop://", StringComparison.Ordinal));
         if (asset.PoseRequirements.Any(pose => pose.Playing))
             return LoadCharacterPose(uri, "Default", elapsedSeconds, uri.StartsWith("cga_loop://", StringComparison.Ordinal));
@@ -73,6 +73,8 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
             using var buffer = new MemoryStream();
             stream.CopyTo(buffer);
             asset = ReadCgf(buffer.ToArray(), AssetPath(path));
+            if (asset.CharacterBones.Count > 0)
+                asset = LoadCharacterLodBounds(path, asset);
         }
         var startsAnimation = scheme is "cga" or "cga_loop";
         var characterPath = ResolveCharacterModelPath(path);
@@ -379,17 +381,26 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
                     BoneIndex = bone.Index
                 });
             animatedCollision = bones.Any(bone => bone.Shape != null);
+            bounds = CryCharacterBounds.FromPose(bones.Select(bone => bone.BindTransform).ToArray());
         }
         return new CryGeometryAsset(bounds.Value, parts)
         {
             HasAnimatedCollision = animatedCollision,
             CharacterBones = bones,
+            CharacterBoundsBones = bones.Count == 0 ? [] : chunks.Values.Where(chunk => chunk.Kind == 0xcccc0017)
+                .SelectMany(chunk => ReadCharacterSubsetBones(data, chunk)).Distinct().Order().ToArray(),
             CgaAnimation = path.EndsWith(".cga", StringComparison.OrdinalIgnoreCase)
                 ? CryCgaAnimation.Read(data, nodes.Select(pair => new CryCgaNode(pair.Key, pair.Value.Parent,
                     pair.Value.Transform, pair.Value.Controllers[0], pair.Value.Controllers[1], pair.Value.Controllers[2])
                     { Name = pair.Value.Name }).ToArray(), renderBounds)
                 : null
         };
+    }
+
+    private static IReadOnlyList<int> ReadCharacterSubsetBones(byte[] data, Chunk chunk)
+    {
+        RequireVersion(chunk, 0x800);
+        return CryCharacterBounds.ReadSubsetBones(data.AsSpan(chunk.Body, chunk.Size - 16).ToArray());
     }
 
     private static byte[] ReadMaterials(BinaryReader reader, Dictionary<int, Chunk> chunks, int id, int indexCount)

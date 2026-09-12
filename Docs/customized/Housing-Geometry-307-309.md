@@ -193,8 +193,8 @@ Native `315fbd40` selects packed quaternion formats `5` and `8`.
 Their decoders are `315fb0b0` and `315fb4f0`.
 Native `31653e80` uses shortest-path normalized linear interpolation between quaternion keys.
 The sampler reads local bone tracks, then applies the parent hierarchy to each physical proxy.
-Its returned bounds cover the physical proxies for broad-phase scene queries.
-It keeps a separate active bounds requirement because these bounds do not represent the animated render mesh.
+Its returned model bounds use the native character bone selection.
+Scene broad-phase checks must also include the physical proxy bounds.
 
 Native `3910b080` requests the `Default` animation for a direct CGA model.
 The `cga_loop` flag controls looping, not whether the animation starts.
@@ -285,3 +285,22 @@ The resolver returns their empty part list and sets `HasModelBounds` to false.
 It also excludes a missing animation child from the bounds of other valid children.
 Placement candidates still need model bounds.
 An empty effect in another part of the world does not cause a model-read failure for all housing queries.
+
+## Character bounds
+
+Native `3151d5d0` initializes character preview bounds through `31549f80` with mode zero.
+This mode includes every bind bone position, including the root.
+Runtime mode one uses the bone list from `3150df50` and `31527310`.
+That list contains the bone palettes of all loaded skin LOD subsets.
+It does not add every parent or every physical bone.
+
+Mesh subset chunk `0xCCCC0017`, version `0x800`, stores those palettes when flag `2` is set.
+Each subset has a count followed by a fixed array of 128 unsigned 16-bit indices.
+Native `315ec4c0` builds the `_lod1.chr` and later LOD paths.
+Native `315ec790` stops when a LOD file is absent.
+The resolver reads the palettes of those authored LODs once per character model.
+
+The bounds routine adds `0.2` meters per side when an axis is smaller than `0.4` meters.
+An invalid box or coordinate outside `-13000` through `13000` uses the native `[-2, 2]` fallback.
+The CAF sampler returns these current model bounds and clears its resolved pose requirements.
+The focused character tests passed: 21 passed, with 2 optional game_pak checks skipped.

@@ -142,17 +142,11 @@ public sealed class CryCharacterAnimation
         }
         var parts = bindAsset.Parts.Select(part => part.BoneIndex < 0 ? part :
             part with { Transform = transforms[part.BoneIndex] }).ToArray();
-        // This is a broad-phase bound. Native animated render bounds remain a separate requirement.
-        var bounds = bindAsset.Bounds;
-        foreach (var part in parts)
-            bounds = bounds.Union(CryGeometryQueries.GetBounds(part, Matrix4x4.Identity));
         return bindAsset with
         {
-            Bounds = bounds,
+            Bounds = CryCharacterBounds.FromPose(transforms, bindAsset.CharacterBoundsBones),
             Parts = parts,
-            PoseRequirements = bindAsset.PoseRequirements.Select(pose => pose with { AffectsCollision = false })
-                .Append(new CryGeometryPoseRequirement("", "", Matrix4x4.Identity, "", true, true)
-                    { AffectsCollision = false }).ToArray()
+            PoseRequirements = []
         };
     }
 

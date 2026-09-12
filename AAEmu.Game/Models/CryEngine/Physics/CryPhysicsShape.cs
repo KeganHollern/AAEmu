@@ -58,6 +58,7 @@ public sealed record CryGeometryAsset(CryBounds Bounds, IReadOnlyList<CryGeometr
     public IReadOnlyList<CryGeometryPoseRequirement> PoseRequirements { get; init; } = [];
     public bool HasAnimatedCollision { get; init; }
     public IReadOnlyList<CryCharacterBone> CharacterBones { get; init; } = [];
+    public IReadOnlyList<int> CharacterBoundsBones { get; init; } = [];
     public CryCgaAnimation CgaAnimation { get; init; }
 }
 
