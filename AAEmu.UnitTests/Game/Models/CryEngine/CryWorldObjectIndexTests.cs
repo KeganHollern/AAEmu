@@ -18,6 +18,7 @@ public sealed class CryWorldObjectIndexTests
         var objects = new ObjectsFile("fixture")
         {
             AssetPathsList = [new AssetPath { Name = "objects\\wall.cgf" }],
+            MaterialPathsList = [new AssetPath { Name = "materials\\stone" }],
             PrefabsList = [new ObjectDataType1Brush
             {
                 PathId = 0, StartPos = new(10, 20, 30), EndPos = new(20, 30, 40),
@@ -31,6 +32,7 @@ public sealed class CryWorldObjectIndexTests
         };
         var instance = CryWorldObjectIndex.ReadBrushInstances(objects, 2, 3).Single();
         await Assert.That(instance.ModelUri).IsEqualTo("objects/wall.cgf");
+        await Assert.That(instance.MaterialPath).IsEqualTo("materials/stone");
         await Assert.That(Vector3.Transform(new Vector3(1, 2, 3), instance.Transform)).IsEqualTo(new Vector3(2052, 3094, 42));
         await Assert.That(instance.Min).IsEqualTo(new Vector3(2058, 3092, 30));
         await Assert.That(instance.Max).IsEqualTo(new Vector3(2068, 3102, 40));
@@ -103,8 +105,17 @@ public sealed class CryWorldObjectIndexTests
                 return source.GetFileStream(name);
             });
             await Assert.That(files).IsEqualTo(1205);
-            await Assert.That(index.Count).IsEqualTo(162386);
-            Console.WriteLine($"r208022 main_world: {files} object.dat files, {index.Count} brush instances.");
+            await Assert.That(index.Count).IsEqualTo(162615);
+            var all = index.Query(new(-1000, -1000, -10000), new(40000, 40000, 10000));
+            await Assert.That(all.Count(row => row.Kind == ObjectDataType.Brush)).IsEqualTo(162386);
+            await Assert.That(all.Count(row => row.Kind == ObjectDataType.Voxel)).IsEqualTo(229);
+            foreach (var voxel in all.Where(row => row.Kind == ObjectDataType.Voxel))
+            {
+                await Assert.That(voxel.Asset.Parts.Count).IsGreaterThan(0);
+                await Assert.That(voxel.TerrainSurfaceNames.Count).IsEqualTo(32);
+                await Assert.That(voxel.Asset.Parts.All(part => part.Shape is CryTriangleMesh)).IsTrue();
+            }
+            Console.WriteLine($"r208022 main_world: {files} object.dat files, 162386 brushes, 229 authored voxel meshes.");
         }
         finally
         {

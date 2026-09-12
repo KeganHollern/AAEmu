@@ -8,7 +8,13 @@ using AAEmu.Game.Models.Game.World;
 namespace AAEmu.Game.Models.CryEngine.Physics;
 
 public sealed record CryWorldObjectInstance(string ModelUri, Matrix4x4 Transform,
-    Vector3 Min, Vector3 Max, string Source);
+    Vector3 Min, Vector3 Max, string Source)
+{
+    public ObjectDataType Kind { get; init; } = ObjectDataType.Brush;
+    public CryGeometryAsset Asset { get; init; }
+    public string MaterialPath { get; init; } = "";
+    public IReadOnlyList<string> TerrainSurfaceNames { get; init; } = [];
+}
 
 /// <summary>
 /// Immutable broad phase for authored brush instances. Model geometry loads only
@@ -77,6 +83,7 @@ public sealed class CryWorldObjectIndex
             if (!objects.ReadFile(stream) || objects.HasUnparsedObjects)
                 throw new InvalidDataException($"Cannot read world collision objects: {path}.");
             instances.AddRange(ReadBrushInstances(objects, x, y));
+            instances.AddRange(ReadVoxelInstances(objects, x, y));
         }
         return new CryWorldObjectIndex(instances);
     }
@@ -106,7 +113,37 @@ public sealed class CryWorldObjectIndex
             var max = Vector3.Max(brush.StartPos, brush.EndPos) + offset;
             CheckBounds(min, max);
             result.Add(new CryWorldObjectInstance(uri.Replace('\\', '/'), transform, min, max,
-                $"{objects.FileName}#{index}"));
+                $"{objects.FileName}#{index}")
+            {
+                MaterialPath = brush.MaterialId >= 0 && brush.MaterialId < objects.MaterialPathsList.Count
+                    ? objects.MaterialPathsList[brush.MaterialId].Name.Replace('\\', '/') : ""
+            });
+        }
+        return result;
+    }
+
+    public static IReadOnlyList<CryWorldObjectInstance> ReadVoxelInstances(ObjectsFile objects, int cellX, int cellY)
+    {
+        var result = new List<CryWorldObjectInstance>();
+        var offset = new Vector3(cellX * WorldManager.CELL_SIZE, cellY * WorldManager.CELL_SIZE, 0);
+        for (var index = 0; index < objects.PrefabsList.Count; index++)
+        {
+            if (objects.PrefabsList[index] is not ObjectDataType6Voxel voxel)
+                continue;
+            var source = $"{objects.FileName}#{index}";
+            var asset = CryVoxelGeometry.Read(voxel, source);
+            var matrix = voxel.Matrix3X4;
+            var transform = new Matrix4x4(
+                matrix.M11, matrix.M21, matrix.M31, 0,
+                matrix.M12, matrix.M22, matrix.M32, 0,
+                matrix.M13, matrix.M23, matrix.M33, 0,
+                matrix.M14 + offset.X, matrix.M24 + offset.Y, matrix.M34, 1);
+            result.Add(new CryWorldObjectInstance("", transform, voxel.BoundingBoxMin + offset,
+                voxel.BoundingBoxMax + offset, source)
+            {
+                Kind = ObjectDataType.Voxel, Asset = asset,
+                TerrainSurfaceNames = CryVoxelGeometry.ReadSurfaceNames(voxel.MaterialNamesData)
+            });
         }
         return result;
     }

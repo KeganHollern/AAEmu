@@ -12,6 +12,7 @@ public class ObjectsFile(string fileName)
 
     public string FileName { get; init; } = fileName;
     public List<AssetPath> AssetPathsList { get; set; } = [];
+    public List<AssetPath> MaterialPathsList { get; set; } = [];
     public List<ObjectDataBase> PrefabsList { get; set; } = [];
     public bool HasUnparsedObjects { get; private set; }
 
@@ -21,6 +22,7 @@ public class ObjectsFile(string fileName)
     public bool ReadFile(System.IO.Stream source)
     {
         AssetPathsList.Clear();
+        MaterialPathsList.Clear();
         PrefabsList.Clear();
         HasUnparsedObjects = false;
         try
@@ -86,10 +88,21 @@ public class ObjectsFile(string fileName)
                 AssetPathsList.Add(assetPath);
             }
 
-            // Prefabs
-            var prefabCount = br.ReadUInt32();
-            br.BaseStream.Seek(prefabCount * 260, SeekOrigin.Current);
-            for (var i = 0u; i < prefabCount; i++)
+            // The second path table contains material overrides, not prefab names.
+            var materialCount = br.ReadUInt32();
+            for (var i = 0u; i < materialCount; i++)
+            {
+                var unknown = br.ReadUInt32();
+                var bytes = br.ReadBytes(256);
+                if (bytes.Length != 256)
+                    return false;
+                MaterialPathsList.Add(new AssetPath
+                {
+                    Unknown = unknown,
+                    Name = Encoding.UTF8.GetString(bytes).Split('\0')[0]
+                });
+            }
+            while (br.BaseStream.Position < br.BaseStream.Length)
             {
                 if (br.BaseStream.Position >= br.BaseStream.Length)
                     return true;

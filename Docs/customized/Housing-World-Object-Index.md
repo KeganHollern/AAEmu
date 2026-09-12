@@ -1,5 +1,34 @@
 # World objects for house placement
 
+## Authored voxel geometry and materials
+
+The index also reads all 229 voxel objects in the main world.
+Each voxel uses the serialized CryPhysics mesh from its first compressed CGF LOD.
+The shared CGF reader preserves the authored node transforms and triangle material IDs.
+The voxel instance adds its object.dat transform and the cell origin.
+The index does not substitute the voxel bounding box for its collision mesh.
+
+Native `_LoadVoxelObject` at `301f5e30` reads voxel version `5` and adds the cell origin to its matrix.
+`30196930` reads 32 terrain surface names, with 64 bytes for each name.
+It maps those names through the cell terrain surface table.
+`3019d570` retains the compressed LOD blocks.
+`30192d40` loads their CGF content, and `3019bfa0` uses the serialized physical mesh when it exists.
+All 229 main-world first LODs contain mesh, node, and physical mesh chunks.
+
+`CryWorldObjectInstance.Asset` holds this decoded voxel geometry.
+`TerrainSurfaceNames` preserves the authored material index table.
+The material adapter must map these terrain names before it applies surface rules.
+
+The second path table in object.dat contains material overrides.
+`ObjectsFile.MaterialPathsList` now retains those paths.
+Brush instances preserve their selected path in `CryWorldObjectInstance.MaterialPath`.
+The native brush loader is `301f2ca0`.
+
+The exact-client index test reads 1205 files, 162386 brush instances, and 229 voxel meshes.
+Vegetation and other streamed cell files need their separate native loaders.
+
+## Brush index
+
 This change provides the broad phase for static brush collision queries in
 cluster issues #307 and #309. It uses the current `ObjectsFile` parser and
 the exact r208022 `object.dat` data.
