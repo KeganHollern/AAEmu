@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "scope": "QuestActObjSphere and QuestActCheckSphere with a current quest_contexts row in r208022.",
+  "world_overrides": [
+    {
+      "quest_id": 5979,
+      "component_id": 25757,
+      "world": "instance_training_camp",
+      "evidence": "The objective requires entry into the arena. The two authored player entry points belong to instance_training_camp."
+    },
+    {
+      "quest_id": 6039,
+      "component_id": 26000,
+      "world": "instance_prologue",
+      "evidence": "The objective is the top of the ladder in the prologue. Its starter is NPC14317."
+    },
+    {
+      "quest_id": 6050,
+      "component_id": 26033,
+      "world": "instance_prologue",
+      "evidence": "Sphere2264 is the guardian tower objective in the prologue chain6046 through6050."
+    }
+  ],
+  "exclusions": [
+    {
+      "quest_id": 1012,
+      "component_id": 9506,
+      "sphere_id": 362,
+      "world": "main_world",
+      "reason": "no_npc_starter_placement",
+      "npc_ids": [4594],
+      "evidence": "Accept act839 uses NPC4594. No authored NPC placement or alternate starter exists. Zone19 is also closed."
+    },
+    {
+      "quest_id": 1024,
+      "component_id": 5015,
+      "sphere_id": 368,
+      "world": "main_world",
+      "reason": "no_npc_starter_placement",
+      "npc_ids": [4606],
+      "evidence": "Accept act850 uses NPC4606. No authored NPC placement or alternate starter exists. Zone19 is also closed."
+    },
+    {
+      "quest_id": 1033,
+      "component_id": 5065,
+      "sphere_id": 945,
+      "world": "main_world",
+      "reason": "no_npc_starter_placement",
+      "npc_ids": [4795],
+      "evidence": "Accept act859 uses NPC4795. No authored NPC placement or alternate starter exists. CheckSphere45 uses sphere945."
+    },
+    {
+      "quest_id": 1039,
+      "component_id": 5094,
+      "sphere_id": 943,
+      "world": "main_world",
+      "reason": "no_npc_starter_placement",
+      "npc_ids": [4624],
+      "evidence": "Accept act865 uses NPC4624. No authored NPC placement or alternate starter exists. Escort NPC4729 also has no placement."
+    },
+    {
+      "quest_id": 1372,
+      "component_id": 6499,
+      "sphere_id": 457,
+      "world": "main_world",
+      "reason": "closed_zone",
+      "zone_id": 16,
+      "evidence": "The quest belongs to closed zone16, key150. NPC2279 has a placement. Nuia Alliance characters can meet the faction requirement."
+    },
+    {
+      "quest_id": 1392,
+      "component_id": 6859,
+      "sphere_id": 492,
+      "world": "main_world",
+      "reason": "closed_zone",
+      "zone_id": 16,
+      "evidence": "The quest belongs to closed zone16, key150. NPC5800 has a placement. Required objective component6858 contains no acts."
+    },
+    {
+      "quest_id": 1398,
+      "component_id": 7009,
+      "sphere_id": 499,
+      "world": "main_world",
+      "reason": "no_npc_starter_placement",
+      "npc_ids": [5823],
+      "evidence": "Accept act1212 uses NPC5823. No authored NPC placement or alternate starter exists. NPC5807 is the escort, not the destination."
+    },
+    {
+      "quest_id": 1400,
+      "component_id": 7020,
+      "sphere_id": 500,
+      "world": "main_world",
+      "reason": "closed_zone",
+      "zone_id": 16,
+      "evidence": "The quest belongs to closed zone16, key150. NPC5808 has a placement. Required item14202 has use_skill_id0."
+    },
+    {
+      "quest_id": 1897,
+      "component_id": 8802,
+      "sphere_id": 1007,
+      "world": "main_world",
+      "reason": "no_starter",
+      "evidence": "Accept component8799 contains no acts, and no alternate starter exists. The source marks this old Sunbite Wilds quest as unfinished."
+    },
+    {
+      "quest_id": 5272,
+      "component_id": 22762,
+      "sphere_id": 2185,
+      "world": "main_world",
+      "reason": "no_npc_starter_placement",
+      "npc_ids": [13010],
+      "evidence": "The only accept NPC13010 has no authored placement. Report NPC13011 also has no placement. No alternate starter exists."
+    },
+    {
+      "quest_id": 5439,
+      "component_id": 23509,
+      "sphere_id": 2211,
+      "world": "main_world",
+      "reason": "no_starter",
+      "evidence": "Accept component23508 contains no acts. No alternate starter or inbound quest chain exists."
+    },
+    {
+      "quest_id": 5898,
+      "component_id": 25474,
+      "sphere_id": 2254,
+      "world": "main_world",
+      "reason": "no_npc_starter_placement",
+      "npc_ids": [14200],
+      "evidence": "The only accept NPC14200 has no authored placement or alternate starter. Zone198, key281, is also closed."
+    },
+    {
+      "quest_id": 5898,
+      "component_id": 25825,
+      "sphere_id": 2256,
+      "world": "main_world",
+      "reason": "no_npc_starter_placement",
+      "npc_ids": [14200],
+      "evidence": "The only accept NPC14200 has no authored placement or alternate starter. Zone198, key281, is also closed."
+    },
+    {
+      "quest_id": 5898,
+      "component_id": 25826,
+      "sphere_id": 2255,
+      "world": "main_world",
+      "reason": "no_npc_starter_placement",
+      "npc_ids": [14200],
+      "evidence": "The only accept NPC14200 has no authored placement or alternate starter. Zone198, key281, is also closed."
+    },
+    {
+      "quest_id": 6039,
+      "component_id": 26000,
+      "sphere_id": 2262,
+      "world": "instance_prologue",
+      "reason": "no_npc_starter_placement",
+      "npc_ids": [14317],
+      "evidence": "The only accept NPC14317 has no authored placement in any world. No alternate starter exists."
+    },
+    {
+      "quest_id": 6050,
+      "component_id": 26033,
+      "sphere_id": 2264,
+      "world": "instance_prologue",
+      "reason": "unavailable_chain",
+      "quest_chain": [6046, 6047, 6048, 6049, 6050],
+      "npc_ids": [14317],
+      "evidence": "The only inbound path is the recorded chain. Quest6046 needs NPC14317, which has no authored placement. Self-accept acts do not start the chain."
+    }
+  ]
+}

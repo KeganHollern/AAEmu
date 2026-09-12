@@ -1,7 +1,6 @@
 ﻿using System.Numerics;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Quests.Acts;
@@ -334,10 +333,11 @@ public class SphereGameData : Singleton<SphereGameData>, IGameDataLoader
     /// </summary>
     /// <param name="sphereId">Sphere Id as defined in a Quest Act</param>
     /// <param name="value2">Unknown, always one except for skill 13305 (plant unidentified tree)</param>
+    /// <param name="world">World instance that owns the position.</param>
     /// <param name="worldPosition"></param>
     /// <param name="requiredComponentId"></param>
     /// <returns>SphereQuest that was hit, null if none found</returns>
-    public SphereQuest IsInsideAreaSphere(uint sphereId, uint value2, Vector3 worldPosition, uint requiredComponentId = 0)
+    public SphereQuest IsInsideAreaSphere(uint sphereId, uint value2, WorldInstance world, Vector3 worldPosition, uint requiredComponentId = 0)
     {
         if (!_spheres.TryGetValue(sphereId, out var dbSphere))
             return null;
@@ -348,7 +348,10 @@ public class SphereGameData : Singleton<SphereGameData>, IGameDataLoader
         if (!_sphereQuests.TryGetValue(dbSphere.SphereDetailId, out var dbSphereQuest))
             return null;
 
-        var pakDataSpheres = SphereQuestManager.GetSpheresForQuest(dbSphereQuest.QuestId);
+        if (world?.SphereQuestManager == null)
+            return null;
+
+        var pakDataSpheres = world.SphereQuestManager.GetSpheresForQuest(dbSphereQuest.QuestId);
         var requiredComponent = requiredComponentId > 0
             ? QuestManager.Instance.GetComponent(requiredComponentId)
             : null;

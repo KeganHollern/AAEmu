@@ -1,0 +1,22 @@
+[
+    {
+        "Name": "Unleashing the Beast (5979): enter Drill Camp at the first team entry point from battlefields.json; authored 30 m radius",
+        "QuestId": 5979,
+        "ComponentId": 25757,
+        "ZoneId": 198,
+        "X": 1101.1,
+        "Y": 401.5,
+        "Z": 199.0,
+        "Radius": 30.0
+    },
+    {
+        "Name": "Unleashing the Beast (5979): enter Drill Camp at the second team entry point from battlefields.json; authored 30 m radius",
+        "QuestId": 5979,
+        "ComponentId": 25757,
+        "ZoneId": 198,
+        "X": 1229.0,
+        "Y": 530.0,
+        "Z": 199.0,
+        "Radius": 30.0
+    }
+]

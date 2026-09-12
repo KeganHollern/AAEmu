@@ -3,10 +3,40 @@
         "Name": "Borrowed Bravery (1650): deliver the Lost Swimwear to Vorden outside Blackreath Keep; sphere 650 has no client quest_sign_sphere entry, centered on Vorden (npc 3535) spawn",
         "QuestId": 1650,
         "ComponentId": 7764,
-        "ZoneId": 9,
+        "ZoneId": 142,
         "X": 14254.55,
         "Y": 15001.14,
         "Z": 121.79874,
         "Radius": 10.0
+    },
+    {
+        "Name": "The Price of Labor (5716): Tryster's Garden at Borm Gaffrion (npc 13734); deployed NPC anchor, authored 30 m radius",
+        "QuestId": 5716,
+        "ComponentId": 24586,
+        "ZoneId": 186,
+        "X": 13630.061,
+        "Y": 10353.12,
+        "Z": 194.31546,
+        "Radius": 30.0
+    },
+    {
+        "Name": "A Quick Escape (6213): return to the Riverspan Memory Tome (doodad 1886); deployed tome anchor, authored 30 m radius",
+        "QuestId": 6213,
+        "ComponentId": 26636,
+        "ZoneId": 144,
+        "X": 13553.896,
+        "Y": 15867.64,
+        "Z": 176.9137,
+        "Radius": 30.0
+    },
+    {
+        "Name": "Return to Headquarters (6216): return to the Watermist Forest Memory Tome (doodad 7900); deployed tome anchor, authored 30 m radius",
+        "QuestId": 6216,
+        "ComponentId": 26646,
+        "ZoneId": 158,
+        "X": 21037.6,
+        "Y": 8314.3,
+        "Z": 372.3,
+        "Radius": 30.0
     }
 ]

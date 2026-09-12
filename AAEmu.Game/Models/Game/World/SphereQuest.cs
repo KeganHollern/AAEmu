@@ -58,6 +58,8 @@ public class SphereQuest
 /// </summary>
 public class SphereQuestTrigger
 {
+    private bool _inside;
+
     /// <summary>
     /// Sphere data to check against
     /// </summary>
@@ -77,6 +79,11 @@ public class SphereQuestTrigger
     /// If set, the nearest NPC with this template Id is used as a center point for the check
     /// </summary>
     public uint NpcTemplate { get; set; }
+
+    /// <summary>
+    /// Sphere requirements for this act, which can differ between components of one quest.
+    /// </summary>
+    public uint SphereId { get; set; }
 
     /// <summary>
     /// Last location of the Owner
@@ -99,47 +106,44 @@ public class SphereQuestTrigger
     /// <param name="delta"></param>
     public void Tick(TimeSpan delta)
     {
-        if (TickRate > 0 && (DateTime.UtcNow - LastTick).TotalMilliseconds > TickRate)
+        var now = DateTime.UtcNow;
+        if (TickRate > 0 && (now - LastTick).TotalMilliseconds < TickRate)
+            return;
+        if (Owner?.Transform?.World == null)
+            return;
+
+        var position = Owner.Transform.World.Position;
+        var dbSphere = SphereId != 0 ? SphereGameData.Instance.GetSphere(SphereId) : Sphere.DbSphere;
+        var triggerActive = dbSphere == null || UnitRequirementsGameData.Instance.CanTriggerSphere(dbSphere, (BaseUnit)Owner);
+        var newInside = false;
+        if (triggerActive)
         {
-            var triggerActive = Sphere.DbSphere == null || UnitRequirementsGameData.Instance.CanTriggerSphere(Sphere.DbSphere, (BaseUnit)Owner);
-
-            if (triggerActive)
+            if (NpcTemplate == 0)
             {
-                var oldInside = false;
-                var newInside = false;
-                if (NpcTemplate <= 0)
-                {
-                    // Normal distance check
-                    oldInside = Sphere.Contains(LastCheckLocation);
-                    newInside = Sphere.Contains(Owner?.Transform?.World?.Position ?? Vector3.Zero);
-                }
-                else
-                {
-                    // Using NPC Template, find nearby NPCs with it first
-                    var npcsNear = WorldManager.GetAround<Npc>((Character)Owner, Sphere.Radius * 1.5f, false);
-                    foreach (var npc in npcsNear)
-                    {
-                        if (MathUtil.CalculateDistance(npc.Transform.World.Position, LastCheckLocation, true) <=
-                            Sphere.Radius)
-                            oldInside = true;
-                        if (MathUtil.CalculateDistance(npc, (Character)Owner, true) <= Sphere.Radius)
-                            newInside = true;
-                    }
-                }
-
-                if (!oldInside && newInside)
-                {
-                    QuestManager.Instance.DoOnEnterSphereEvents(Owner, Sphere, LastCheckLocation);
-                }
-                else if (oldInside && !newInside)
-                {
-                    QuestManager.Instance.DoOnExitSphereEvents(Owner, Sphere, LastCheckLocation);
-                }
+                newInside = Sphere.Contains(position);
             }
-
-            LastCheckLocation = Owner?.Transform?.World?.Position ?? Vector3.Zero;
-            LastTick = DateTime.UtcNow;
+            else
+            {
+                var character = (Character)Owner;
+                var npcsNear = WorldManager.GetAround<Npc>(character, Sphere.Radius, false);
+                newInside = npcsNear.Any(npc => npc.TemplateId == NpcTemplate &&
+                    npc.ParentWorld == character.ParentWorld &&
+                    MathUtil.CalculateDistance(npc.Transform.World.Position, position, true) <= Sphere.Radius);
+            }
         }
+
+        // Keep the previous result. Rechecking an old position against a moving
+        // NPC loses transitions, and the world origin is not an initial sample.
+        var oldInside = _inside;
+        var oldPosition = LastCheckLocation;
+        _inside = newInside;
+        LastCheckLocation = position;
+        LastTick = now;
+
+        if (!oldInside && newInside)
+            QuestManager.Instance.DoOnEnterSphereEvents(Owner, Sphere, oldPosition);
+        else if (oldInside && !newInside)
+            QuestManager.Instance.DoOnExitSphereEvents(Owner, Sphere, oldPosition);
     }
 }
 

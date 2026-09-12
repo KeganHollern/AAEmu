@@ -1,0 +1,1888 @@
+{
+  "client_geometry": {
+    "file_count": 69,
+    "sha256": "687bef70ed4ba11a92a378cc43d01e65d61e644d5af97965a6767fec17ee0390"
+  },
+  "client_volume_count": 2479,
+  "compact_sha256": "636ca9ecfe777bc86542e4b828f930c7861d2b4639b1bcfff670c064fee9c1ac",
+  "covered_count": 110,
+  "errors": [],
+  "excluded_count": 16,
+  "manifest_sha256": "dc4eb968057b1ac0a2f02a6218feeeb1c3ae1818150549c193b2f7adb1dc72c6",
+  "npc_placements": {
+    "file_count": 19,
+    "sha256": "2fd9dadcf26ca4d69be5f257539faaef06cc34e4c221ad37f4c6c016140bde64"
+  },
+  "objective_count": 126,
+  "objectives": [
+    {
+      "act_detail_id": 199,
+      "act_id": 5170,
+      "act_type": "QuestActObjSphere",
+      "component_id": 3653,
+      "quest_id": 137,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/133/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 191,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 10
+    },
+    {
+      "act_detail_id": 606,
+      "act_id": 22215,
+      "act_type": "QuestActObjSphere",
+      "component_id": 2000,
+      "quest_id": 176,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/133/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 4,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 2
+    },
+    {
+      "act_detail_id": 458,
+      "act_id": 10494,
+      "act_type": "QuestActObjSphere",
+      "component_id": 925,
+      "quest_id": 312,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/182/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 575,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 128
+    },
+    {
+      "act_detail_id": 151,
+      "act_id": 3858,
+      "act_type": "QuestActObjSphere",
+      "component_id": 2521,
+      "quest_id": 339,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/133/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 122,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 2
+    },
+    {
+      "act_detail_id": 607,
+      "act_id": 22401,
+      "act_type": "QuestActObjSphere",
+      "component_id": 16966,
+      "quest_id": 341,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/133/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 121,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 2
+    },
+    {
+      "act_detail_id": 142,
+      "act_id": 3666,
+      "act_type": "QuestActObjSphere",
+      "component_id": 2447,
+      "quest_id": 567,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/257/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 132,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 14
+    },
+    {
+      "act_detail_id": 256,
+      "act_id": 6380,
+      "act_type": "QuestActObjSphere",
+      "component_id": 2316,
+      "quest_id": 577,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/257/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 148,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 14
+    },
+    {
+      "act_detail_id": 612,
+      "act_id": 22569,
+      "act_type": "QuestActObjSphere",
+      "component_id": 17090,
+      "quest_id": 604,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/183/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 10,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 2
+    },
+    {
+      "act_detail_id": 613,
+      "act_id": 22570,
+      "act_type": "QuestActObjSphere",
+      "component_id": 17091,
+      "quest_id": 604,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/183/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 12,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 2
+    },
+    {
+      "act_detail_id": 611,
+      "act_id": 22568,
+      "act_type": "QuestActObjSphere",
+      "component_id": 17092,
+      "quest_id": 604,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/183/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 18,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 2
+    },
+    {
+      "act_detail_id": 493,
+      "act_id": 12601,
+      "act_type": "QuestActObjSphere",
+      "component_id": 3106,
+      "quest_id": 820,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/256/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 206,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 140
+    },
+    {
+      "act_detail_id": 490,
+      "act_id": 12545,
+      "act_type": "QuestActObjSphere",
+      "component_id": 8913,
+      "quest_id": 821,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/256/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 201,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 140
+    },
+    {
+      "act_detail_id": 518,
+      "act_id": 13195,
+      "act_type": "QuestActObjSphere",
+      "component_id": 9506,
+      "quest_id": 1012,
+      "reason": "no_npc_starter_placement",
+      "sphere_id": 362,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 19
+    },
+    {
+      "act_detail_id": 316,
+      "act_id": 7925,
+      "act_type": "QuestActObjSphere",
+      "component_id": 5015,
+      "quest_id": 1024,
+      "reason": "no_npc_starter_placement",
+      "sphere_id": 368,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 19
+    },
+    {
+      "act_detail_id": 45,
+      "act_id": 12780,
+      "act_type": "QuestActCheckSphere",
+      "component_id": 5065,
+      "quest_id": 1033,
+      "reason": "no_npc_starter_placement",
+      "sphere_id": 945,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 19
+    },
+    {
+      "act_detail_id": 498,
+      "act_id": 12754,
+      "act_type": "QuestActObjSphere",
+      "component_id": 5094,
+      "quest_id": 1039,
+      "reason": "no_npc_starter_placement",
+      "sphere_id": 943,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 19
+    },
+    {
+      "act_detail_id": 336,
+      "act_id": 8390,
+      "act_type": "QuestActObjSphere",
+      "component_id": 5525,
+      "quest_id": 1105,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/158/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 392,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 23
+    },
+    {
+      "act_detail_id": 337,
+      "act_id": 8392,
+      "act_type": "QuestActObjSphere",
+      "component_id": 5529,
+      "quest_id": 1106,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/158/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 393,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 23
+    },
+    {
+      "act_detail_id": 513,
+      "act_id": 12973,
+      "act_type": "QuestActObjSphere",
+      "component_id": 5824,
+      "quest_id": 1137,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/189/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 422,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 134
+    },
+    {
+      "act_detail_id": 558,
+      "act_id": 17019,
+      "act_type": "QuestActObjSphere",
+      "component_id": 6071,
+      "quest_id": 1192,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/187/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 414,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 133
+    },
+    {
+      "act_detail_id": 546,
+      "act_id": 15539,
+      "act_type": "QuestActObjSphere",
+      "component_id": 5262,
+      "quest_id": 1237,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/156/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1098,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 21
+    },
+    {
+      "act_detail_id": 385,
+      "act_id": 9274,
+      "act_type": "QuestActObjSphere",
+      "component_id": 6548,
+      "quest_id": 1313,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/159/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 461,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 24
+    },
+    {
+      "act_detail_id": 397,
+      "act_id": 9393,
+      "act_type": "QuestActObjSphere",
+      "component_id": 6704,
+      "quest_id": 1339,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/159/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 473,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 24
+    },
+    {
+      "act_detail_id": 403,
+      "act_id": 9459,
+      "act_type": "QuestActObjSphere",
+      "component_id": 6759,
+      "quest_id": 1352,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/159/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 477,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 24
+    },
+    {
+      "act_detail_id": 380,
+      "act_id": 9225,
+      "act_type": "QuestActObjSphere",
+      "component_id": 6499,
+      "quest_id": 1372,
+      "reason": "closed_zone",
+      "sphere_id": 457,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 16
+    },
+    {
+      "act_detail_id": 408,
+      "act_id": 9562,
+      "act_type": "QuestActObjSphere",
+      "component_id": 6859,
+      "quest_id": 1392,
+      "reason": "closed_zone",
+      "sphere_id": 492,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 16
+    },
+    {
+      "act_detail_id": 413,
+      "act_id": 9679,
+      "act_type": "QuestActObjSphere",
+      "component_id": 7009,
+      "quest_id": 1398,
+      "reason": "no_npc_starter_placement",
+      "sphere_id": 499,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 16
+    },
+    {
+      "act_detail_id": 414,
+      "act_id": 9685,
+      "act_type": "QuestActObjSphere",
+      "component_id": 7020,
+      "quest_id": 1400,
+      "reason": "closed_zone",
+      "sphere_id": 500,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 16
+    },
+    {
+      "act_detail_id": 622,
+      "act_id": 23217,
+      "act_type": "QuestActObjSphere",
+      "component_id": 7349,
+      "quest_id": 1525,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/142/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1415,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 124
+    },
+    {
+      "act_detail_id": 465,
+      "act_id": 10812,
+      "act_type": "QuestActObjSphere",
+      "component_id": 7690,
+      "quest_id": 1601,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/144/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 639,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 11
+    },
+    {
+      "act_detail_id": 466,
+      "act_id": 10915,
+      "act_type": "QuestActObjSphere",
+      "component_id": 7760,
+      "quest_id": 1608,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/144/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 649,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 11
+    },
+    {
+      "act_detail_id": 467,
+      "act_id": 10920,
+      "act_type": "QuestActObjSphere",
+      "component_id": 7764,
+      "quest_id": 1650,
+      "sources": [
+        "main_world/quest_spheres.json"
+      ],
+      "sphere_id": 650,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 9
+    },
+    {
+      "act_detail_id": 632,
+      "act_id": 25691,
+      "act_type": "QuestActObjSphere",
+      "component_id": 8232,
+      "quest_id": 1702,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/244/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 763,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 10
+    },
+    {
+      "act_detail_id": 563,
+      "act_id": 18073,
+      "act_type": "QuestActObjSphere",
+      "component_id": 12363,
+      "quest_id": 1756,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/207/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1160,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 17
+    },
+    {
+      "act_detail_id": 571,
+      "act_id": 18430,
+      "act_type": "QuestActObjSphere",
+      "component_id": 12729,
+      "quest_id": 1791,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/284/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1169,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 17
+    },
+    {
+      "act_detail_id": 573,
+      "act_id": 18534,
+      "act_type": "QuestActObjSphere",
+      "component_id": 12839,
+      "quest_id": 1803,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/206/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1171,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 17
+    },
+    {
+      "act_detail_id": 521,
+      "act_id": 13427,
+      "act_type": "QuestActObjSphere",
+      "component_id": 8802,
+      "quest_id": 1897,
+      "reason": "no_starter",
+      "sphere_id": 1007,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 22
+    },
+    {
+      "act_detail_id": 496,
+      "act_id": 12737,
+      "act_type": "QuestActObjSphere",
+      "component_id": 9073,
+      "quest_id": 1969,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/162/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 941,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 27
+    },
+    {
+      "act_detail_id": 501,
+      "act_id": 12796,
+      "act_type": "QuestActObjSphere",
+      "component_id": 9130,
+      "quest_id": 1983,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/162/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 985,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 27
+    },
+    {
+      "act_detail_id": 565,
+      "act_id": 18204,
+      "act_type": "QuestActObjSphere",
+      "component_id": 12478,
+      "quest_id": 2320,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/139/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1164,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 6
+    },
+    {
+      "act_detail_id": 575,
+      "act_id": 18925,
+      "act_type": "QuestActObjSphere",
+      "component_id": 12436,
+      "quest_id": 2327,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/139/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1177,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 6
+    },
+    {
+      "act_detail_id": 567,
+      "act_id": 18227,
+      "act_type": "QuestActObjSphere",
+      "component_id": 12499,
+      "quest_id": 2338,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/139/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1158,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 6
+    },
+    {
+      "act_detail_id": 564,
+      "act_id": 18198,
+      "act_type": "QuestActObjSphere",
+      "component_id": 12471,
+      "quest_id": 2346,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/139/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1157,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 6
+    },
+    {
+      "act_detail_id": 544,
+      "act_id": 15253,
+      "act_type": "QuestActObjSphere",
+      "component_id": 10700,
+      "quest_id": 2476,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/129/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1082,
+      "status": "covered",
+      "volume_count": 3,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 555,
+      "act_id": 16278,
+      "act_type": "QuestActObjSphere",
+      "component_id": 11247,
+      "quest_id": 2684,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/144/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1122,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 11
+    },
+    {
+      "act_detail_id": 556,
+      "act_id": 16973,
+      "act_type": "QuestActObjSphere",
+      "component_id": 11615,
+      "quest_id": 2717,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/283/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1138,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 557,
+      "act_id": 17015,
+      "act_type": "QuestActObjSphere",
+      "component_id": 11621,
+      "quest_id": 2762,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/179/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1142,
+      "status": "covered",
+      "volume_count": 3,
+      "world": "main_world",
+      "zone_id": 125
+    },
+    {
+      "act_detail_id": 559,
+      "act_id": 17022,
+      "act_type": "QuestActObjSphere",
+      "component_id": 11625,
+      "quest_id": 2764,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/156/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1143,
+      "status": "covered",
+      "volume_count": 3,
+      "world": "main_world",
+      "zone_id": 21
+    },
+    {
+      "act_detail_id": 587,
+      "act_id": 20584,
+      "act_type": "QuestActObjSphere",
+      "component_id": 13111,
+      "quest_id": 2998,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/246/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1233,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 5
+    },
+    {
+      "act_detail_id": 576,
+      "act_id": 19224,
+      "act_type": "QuestActObjSphere",
+      "component_id": 13178,
+      "quest_id": 3041,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/172/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1176,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 30
+    },
+    {
+      "act_detail_id": 578,
+      "act_id": 19498,
+      "act_type": "QuestActObjSphere",
+      "component_id": 13197,
+      "quest_id": 3046,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/136/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1183,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 3
+    },
+    {
+      "act_detail_id": 580,
+      "act_id": 20075,
+      "act_type": "QuestActObjSphere",
+      "component_id": 13232,
+      "quest_id": 3069,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/247/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1209,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 3
+    },
+    {
+      "act_detail_id": 618,
+      "act_id": 22634,
+      "act_type": "QuestActObjSphere",
+      "component_id": 17161,
+      "quest_id": 3482,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/159/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1364,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 24
+    },
+    {
+      "act_detail_id": 608,
+      "act_id": 22449,
+      "act_type": "QuestActObjSphere",
+      "component_id": 17005,
+      "quest_id": 3547,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/191/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1382,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 137
+    },
+    {
+      "act_detail_id": 582,
+      "act_id": 20517,
+      "act_type": "QuestActObjSphere",
+      "component_id": 14996,
+      "quest_id": 3612,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/138/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1231,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 5
+    },
+    {
+      "act_detail_id": 583,
+      "act_id": 20518,
+      "act_type": "QuestActObjSphere",
+      "component_id": 14997,
+      "quest_id": 3612,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/246/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1230,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 5
+    },
+    {
+      "act_detail_id": 584,
+      "act_id": 20519,
+      "act_type": "QuestActObjSphere",
+      "component_id": 14998,
+      "quest_id": 3612,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/138/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1232,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 5
+    },
+    {
+      "act_detail_id": 586,
+      "act_id": 20578,
+      "act_type": "QuestActObjSphere",
+      "component_id": 15022,
+      "quest_id": 3615,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/161/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1210,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 26
+    },
+    {
+      "act_detail_id": 645,
+      "act_id": 29619,
+      "act_type": "QuestActObjSphere",
+      "component_id": 15027,
+      "quest_id": 3616,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/272/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1234,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 20
+    },
+    {
+      "act_detail_id": 591,
+      "act_id": 21290,
+      "act_type": "QuestActObjSphere",
+      "component_id": 15274,
+      "quest_id": 3656,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/141/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1266,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 8
+    },
+    {
+      "act_detail_id": 597,
+      "act_id": 21420,
+      "act_type": "QuestActObjSphere",
+      "component_id": 15470,
+      "quest_id": 3704,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/141/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1292,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 8
+    },
+    {
+      "act_detail_id": 595,
+      "act_id": 21356,
+      "act_type": "QuestActObjSphere",
+      "component_id": 15478,
+      "quest_id": 3706,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/140/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1252,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 7
+    },
+    {
+      "act_detail_id": 593,
+      "act_id": 21344,
+      "act_type": "QuestActObjSphere",
+      "component_id": 15661,
+      "quest_id": 3746,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/185/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1270,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 131
+    },
+    {
+      "act_detail_id": 594,
+      "act_id": 21347,
+      "act_type": "QuestActObjSphere",
+      "component_id": 15719,
+      "quest_id": 3747,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/185/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1271,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 131
+    },
+    {
+      "act_detail_id": 596,
+      "act_id": 21410,
+      "act_type": "QuestActObjSphere",
+      "component_id": 15765,
+      "quest_id": 3766,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/243/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1290,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 4
+    },
+    {
+      "act_detail_id": 646,
+      "act_id": 30718,
+      "act_type": "QuestActObjSphere",
+      "component_id": 21816,
+      "quest_id": 3772,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/243/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1368,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 4
+    },
+    {
+      "act_detail_id": 604,
+      "act_id": 21679,
+      "act_type": "QuestActObjSphere",
+      "component_id": 15875,
+      "quest_id": 3788,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/137/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1341,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 4
+    },
+    {
+      "act_detail_id": 619,
+      "act_id": 22657,
+      "act_type": "QuestActObjSphere",
+      "component_id": 17179,
+      "quest_id": 3835,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/243/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1394,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 4
+    },
+    {
+      "act_detail_id": 601,
+      "act_id": 21650,
+      "act_type": "QuestActObjSphere",
+      "component_id": 16333,
+      "quest_id": 3872,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/245/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1335,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 27
+    },
+    {
+      "act_detail_id": 602,
+      "act_id": 21651,
+      "act_type": "QuestActObjSphere",
+      "component_id": 16334,
+      "quest_id": 3872,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/245/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1336,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 27
+    },
+    {
+      "act_detail_id": 603,
+      "act_id": 21652,
+      "act_type": "QuestActObjSphere",
+      "component_id": 16335,
+      "quest_id": 3872,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/245/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1337,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 27
+    },
+    {
+      "act_detail_id": 630,
+      "act_id": 24782,
+      "act_type": "QuestActObjSphere",
+      "component_id": 18771,
+      "quest_id": 4299,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/139/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1481,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 6
+    },
+    {
+      "act_detail_id": 633,
+      "act_id": 25987,
+      "act_type": "QuestActObjSphere",
+      "component_id": 18945,
+      "quest_id": 4340,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/145/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1515,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 12
+    },
+    {
+      "act_detail_id": 634,
+      "act_id": 25990,
+      "act_type": "QuestActObjSphere",
+      "component_id": 18948,
+      "quest_id": 4341,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/145/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1516,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 12
+    },
+    {
+      "act_detail_id": 635,
+      "act_id": 26058,
+      "act_type": "QuestActObjSphere",
+      "component_id": 19014,
+      "quest_id": 4363,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/145/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1517,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 12
+    },
+    {
+      "act_detail_id": 637,
+      "act_id": 27540,
+      "act_type": "QuestActObjSphere",
+      "component_id": 20265,
+      "quest_id": 4662,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/182/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1710,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 11
+    },
+    {
+      "act_detail_id": 638,
+      "act_id": 27544,
+      "act_type": "QuestActObjSphere",
+      "component_id": 20267,
+      "quest_id": 4663,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/178/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1711,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 11
+    },
+    {
+      "act_detail_id": 639,
+      "act_id": 27555,
+      "act_type": "QuestActObjSphere",
+      "component_id": 20269,
+      "quest_id": 4664,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/183/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1712,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 11
+    },
+    {
+      "act_detail_id": 640,
+      "act_id": 27560,
+      "act_type": "QuestActObjSphere",
+      "component_id": 20271,
+      "quest_id": 4665,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/191/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1713,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 11
+    },
+    {
+      "act_detail_id": 641,
+      "act_id": 27566,
+      "act_type": "QuestActObjSphere",
+      "component_id": 20273,
+      "quest_id": 4666,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/156/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1714,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 23
+    },
+    {
+      "act_detail_id": 642,
+      "act_id": 27575,
+      "act_type": "QuestActObjSphere",
+      "component_id": 20275,
+      "quest_id": 4667,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/189/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1715,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 23
+    },
+    {
+      "act_detail_id": 643,
+      "act_id": 27584,
+      "act_type": "QuestActObjSphere",
+      "component_id": 20277,
+      "quest_id": 4668,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/191/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1716,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 23
+    },
+    {
+      "act_detail_id": 644,
+      "act_id": 27589,
+      "act_type": "QuestActObjSphere",
+      "component_id": 20279,
+      "quest_id": 4669,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/178/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 1717,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 23
+    },
+    {
+      "act_detail_id": 649,
+      "act_id": 31414,
+      "act_type": "QuestActObjSphere",
+      "component_id": 22098,
+      "quest_id": 5096,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/178/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2163,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 9
+    },
+    {
+      "act_detail_id": 647,
+      "act_id": 31261,
+      "act_type": "QuestActObjSphere",
+      "component_id": 22107,
+      "quest_id": 5099,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/195/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2165,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 11
+    },
+    {
+      "act_detail_id": 650,
+      "act_id": 32083,
+      "act_type": "QuestActObjSphere",
+      "component_id": 22762,
+      "quest_id": 5272,
+      "reason": "no_npc_starter_placement",
+      "sphere_id": 2185,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 651,
+      "act_id": 32124,
+      "act_type": "QuestActObjSphere",
+      "component_id": 22803,
+      "quest_id": 5289,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/158/client/quest_sign_sphere.g",
+        "game/worlds/main_world/level_design/zone/258/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2190,
+      "status": "covered",
+      "volume_count": 2,
+      "world": "main_world",
+      "zone_id": 18
+    },
+    {
+      "act_detail_id": 660,
+      "act_id": 33101,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23509,
+      "quest_id": 5439,
+      "reason": "no_starter",
+      "sphere_id": 2211,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 195
+    },
+    {
+      "act_detail_id": 657,
+      "act_id": 33084,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23524,
+      "quest_id": 5442,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/246/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2208,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 5
+    },
+    {
+      "act_detail_id": 658,
+      "act_id": 33085,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23525,
+      "quest_id": 5442,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/246/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2209,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 5
+    },
+    {
+      "act_detail_id": 662,
+      "act_id": 33107,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23530,
+      "quest_id": 5442,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/246/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2210,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 5
+    },
+    {
+      "act_detail_id": 661,
+      "act_id": 33105,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23555,
+      "quest_id": 5442,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/246/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2212,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 5
+    },
+    {
+      "act_detail_id": 663,
+      "act_id": 33110,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23535,
+      "quest_id": 5443,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/138/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2213,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 664,
+      "act_id": 33112,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23559,
+      "quest_id": 5443,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/138/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2214,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 665,
+      "act_id": 33113,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23560,
+      "quest_id": 5443,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/138/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2215,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 666,
+      "act_id": 33114,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23561,
+      "quest_id": 5443,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/138/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2216,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 667,
+      "act_id": 33126,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23578,
+      "quest_id": 5449,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/138/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2217,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 668,
+      "act_id": 33127,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23579,
+      "quest_id": 5449,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/138/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2218,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 669,
+      "act_id": 33128,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23580,
+      "quest_id": 5449,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/138/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2219,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 670,
+      "act_id": 33129,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23581,
+      "quest_id": 5449,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/138/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2220,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 672,
+      "act_id": 33572,
+      "act_type": "QuestActObjSphere",
+      "component_id": 23874,
+      "quest_id": 5528,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/173/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2228,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 15
+    },
+    {
+      "act_detail_id": 674,
+      "act_id": 34437,
+      "act_type": "QuestActObjSphere",
+      "component_id": 24586,
+      "quest_id": 5716,
+      "sources": [
+        "main_world/quest_spheres.json"
+      ],
+      "sphere_id": 933,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 132
+    },
+    {
+      "act_detail_id": 678,
+      "act_id": 35368,
+      "act_type": "QuestActObjSphere",
+      "component_id": 25474,
+      "quest_id": 5898,
+      "reason": "no_npc_starter_placement",
+      "sphere_id": 2254,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 198
+    },
+    {
+      "act_detail_id": 680,
+      "act_id": 35372,
+      "act_type": "QuestActObjSphere",
+      "component_id": 25825,
+      "quest_id": 5898,
+      "reason": "no_npc_starter_placement",
+      "sphere_id": 2256,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 198
+    },
+    {
+      "act_detail_id": 679,
+      "act_id": 35369,
+      "act_type": "QuestActObjSphere",
+      "component_id": 25826,
+      "quest_id": 5898,
+      "reason": "no_npc_starter_placement",
+      "sphere_id": 2255,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "main_world",
+      "zone_id": 198
+    },
+    {
+      "act_detail_id": 677,
+      "act_id": 35301,
+      "act_type": "QuestActObjSphere",
+      "component_id": 25757,
+      "quest_id": 5979,
+      "sources": [
+        "instance_training_camp/quest_spheres.json"
+      ],
+      "sphere_id": 2252,
+      "status": "covered",
+      "volume_count": 2,
+      "world": "instance_training_camp",
+      "zone_id": 6
+    },
+    {
+      "act_detail_id": 685,
+      "act_id": 35894,
+      "act_type": "QuestActObjSphere",
+      "component_id": 26000,
+      "quest_id": 6039,
+      "reason": "no_npc_starter_placement",
+      "sphere_id": 2262,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "instance_prologue",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 686,
+      "act_id": 35900,
+      "act_type": "QuestActObjSphere",
+      "component_id": 26033,
+      "quest_id": 6050,
+      "reason": "unavailable_chain",
+      "sphere_id": 2264,
+      "status": "excluded",
+      "volume_count": 0,
+      "world": "instance_prologue",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 687,
+      "act_id": 35976,
+      "act_type": "QuestActObjSphere",
+      "component_id": 26427,
+      "quest_id": 6160,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/129/client/quest_sign_sphere.g",
+        "game/worlds/main_world/level_design/zone/156/client/quest_sign_sphere.g",
+        "game/worlds/main_world/level_design/zone/179/client/quest_sign_sphere.g",
+        "game/worlds/main_world/level_design/zone/187/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2266,
+      "status": "covered",
+      "volume_count": 4,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 688,
+      "act_id": 36678,
+      "act_type": "QuestActObjSphere",
+      "component_id": 26636,
+      "quest_id": 6213,
+      "sources": [
+        "main_world/quest_spheres.json"
+      ],
+      "sphere_id": 2270,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 11
+    },
+    {
+      "act_detail_id": 689,
+      "act_id": 36883,
+      "act_type": "QuestActObjSphere",
+      "component_id": 26646,
+      "quest_id": 6216,
+      "sources": [
+        "main_world/quest_spheres.json"
+      ],
+      "sphere_id": 2271,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 23
+    },
+    {
+      "act_detail_id": 691,
+      "act_id": 39930,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27918,
+      "quest_id": 6496,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/160/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2278,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 692,
+      "act_id": 39931,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27919,
+      "quest_id": 6519,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/257/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2279,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 693,
+      "act_id": 39932,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27920,
+      "quest_id": 6520,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/283/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2280,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 694,
+      "act_id": 39933,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27923,
+      "quest_id": 6521,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/160/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2281,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 695,
+      "act_id": 39934,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27922,
+      "quest_id": 6522,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/257/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2282,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 696,
+      "act_id": 39935,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27921,
+      "quest_id": 6523,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/283/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2283,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 697,
+      "act_id": 39936,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27924,
+      "quest_id": 6524,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/183/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2284,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 698,
+      "act_id": 39937,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27925,
+      "quest_id": 6525,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/139/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2285,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 699,
+      "act_id": 39938,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27926,
+      "quest_id": 6526,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/283/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2286,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 700,
+      "act_id": 39939,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27927,
+      "quest_id": 6527,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/183/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2287,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 701,
+      "act_id": 39940,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27928,
+      "quest_id": 6528,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/139/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2288,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 702,
+      "act_id": 39941,
+      "act_type": "QuestActObjSphere",
+      "component_id": 27929,
+      "quest_id": 6529,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/283/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2289,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 129
+    },
+    {
+      "act_detail_id": 703,
+      "act_id": 40560,
+      "act_type": "QuestActObjSphere",
+      "component_id": 28285,
+      "quest_id": 6614,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/275/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2290,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 191
+    },
+    {
+      "act_detail_id": 704,
+      "act_id": 40632,
+      "act_type": "QuestActObjSphere",
+      "component_id": 28318,
+      "quest_id": 6630,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/257/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2291,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 1
+    },
+    {
+      "act_detail_id": 705,
+      "act_id": 40633,
+      "act_type": "QuestActObjSphere",
+      "component_id": 28319,
+      "quest_id": 6636,
+      "sources": [
+        "game/worlds/main_world/level_design/zone/139/client/quest_sign_sphere.g"
+      ],
+      "sphere_id": 2292,
+      "status": "covered",
+      "volume_count": 1,
+      "world": "main_world",
+      "zone_id": 1
+    }
+  ],
+  "ok": true,
+  "schema_version": 1,
+  "supplement_volume_count": 6,
+  "supplements": {
+    "file_count": 2,
+    "sha256": "162f29aff3e8860be9dbf8b40427933f9721a0d3ca2312c529b7bfe88d3c9317"
+  }
+}

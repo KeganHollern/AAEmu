@@ -168,7 +168,7 @@ public class UnitReqs
             case UnitReqsKindType.AreaSphere:
                 // Check Sphere for Quest
                 // NOTE: There is an exception for this check in CanUseSkill that handles this separately
-                return RetWithValue(SkillResultKeys.skill_urk_area_sphere, Value1, SphereGameData.Instance.IsInsideAreaSphere(Value1, Value2, owner?.Transform?.World?.Position ?? Vector3.Zero) != null);
+                return RetWithValue(SkillResultKeys.skill_urk_area_sphere, Value1, SphereGameData.Instance.IsInsideAreaSphere(Value1, Value2, owner?.ParentWorld, owner?.Transform?.World?.Position ?? Vector3.Zero) != null);
 
             case UnitReqsKindType.ExceptCompleteQuestContext:
                 // No specific key for this?

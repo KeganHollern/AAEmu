@@ -184,7 +184,7 @@ public class UnitRequirementsGameData : Singleton<UnitRequirementsGameData>, IGa
                 // Special handling for quests spheres with items
                 foreach (var requiredComponentId in validQuestComponents)
                 {
-                    var foundSphere = SphereGameData.Instance.IsInsideAreaSphere(unitReq.Value1, unitReq.Value2, ownerUnit?.Transform?.World?.Position ?? Vector3.Zero, requiredComponentId);
+                    var foundSphere = SphereGameData.Instance.IsInsideAreaSphere(unitReq.Value1, unitReq.Value2, ownerUnit?.ParentWorld, ownerUnit?.Transform?.World?.Position ?? Vector3.Zero, requiredComponentId);
                     reqRes = foundSphere != null;
                     var lastCheckResult = new UnitReqsValidationResult(reqRes ? SkillResultKeys.ok : SkillResultKeys.skill_urk_area_sphere, 0, unitReq.Value1);
                     if (lastCheckResult.ResultKey != SkillResultKeys.ok)
