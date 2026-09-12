@@ -31,7 +31,7 @@ using AAEmu.UnitTests.Utils.Mocks;
 namespace AAEmu.UnitTests.Game.Models.Game.Skills;
 
 [NotInParallel]
-public sealed class SkillLaborTests
+public sealed partial class SkillLaborTests
 {
     private readonly Dictionary<FieldInfo, object> _previousInstances = [];
     private readonly Dictionary<uint, SkillReagent> _reagents = [];
@@ -270,6 +270,37 @@ public sealed class SkillLaborTests
             _owner, new SkillCastUnitTarget(70), null);
         await Assert.That(_material.Count).IsEqualTo(0);
         await Assert.That(uses).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Tempering_CommitsEquipmentFieldsWithLaborAndSourceOrRestoresAll(bool succeeds)
+    {
+        var equipment = new EquipItem(99, new EquipItemTemplate { Id = 300, MaxCount = 1 }, 1)
+        {
+            OwnerId = _owner.Id, SlotType = SlotType.Inventory, Slot = 1,
+            _holdingContainer = _owner.Inventory.Bag, TemperPhysical = 103, TemperMagical = 104
+        };
+        _owner.Inventory.Bag.Items.Add(equipment);
+        _items.Add(equipment.Id, equipment);
+        SetField(ItemManager.Instance, "_itemCapScales", new Dictionary<uint, AAEmu.Game.Models.Game.Items.ItemCapScale>
+        { [50] = new() { SkillId = 50, ScaleMin = 105, ScaleMax = 106 } });
+        var skill = NewSkill();
+        skill.CommitLaborBatch = (_, _) => succeeds;
+        var result = SkillLaborBatch.Run(_owner, skill, true, () =>
+        {
+            new AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects.ItemCapScale().Execute(_owner,
+                new SkillItem(70, _material.Id, _material.TemplateId), _owner,
+                new SkillCastItemTarget { Id = equipment.Id }, new CastSkill(50, 0), skill, null,
+                DateTime.UtcNow, 0, 0, 0, 0);
+            _owner.Inventory.Bag.ConsumeItem(ItemTaskType.SkillReagents, _material.TemplateId, 1, _material);
+        });
+        await Assert.That(result).IsEqualTo(succeeds);
+        await Assert.That(equipment.TemperPhysical).IsEqualTo((ushort)(succeeds ? 105 : 103));
+        await Assert.That(equipment.TemperMagical).IsEqualTo((ushort)(succeeds ? 105 : 104));
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)(succeeds ? 10 : 20));
+        await Assert.That(_material.Count).IsEqualTo(succeeds ? 2 : 3);
     }
 
     private void Products()

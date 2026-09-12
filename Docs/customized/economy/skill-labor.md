@@ -34,11 +34,12 @@ Its SHA-256 is `636ca9ecfe777bc86542e4b828f930c7861d2b4639b1bcfff670c064fee9c1ac
 The effect audit joins `skills`, `skill_effects`, and `effects`, plus `plot_events` and `plot_effects` for each assigned plot.
 The audit includes all events in each plot. The runtime check follows reachable nodes.
 
-The first batch implementation supports the effect types of 1135 paid skills.
-It rejects the other 40 skills before effects because their state does not yet join the transaction.
-Those skills include delayed child skills, temporary doodad creation, tempering, and test or incomplete effects.
+The batch implementation supports the effect types of 1143 paid skills.
+It rejects the other 32 skills before effects because their state does not yet join the transaction.
+Those skills include delayed child skills and test or incomplete effects.
 This count does not prove that every interaction function is safe.
-Temporary doodad publication and the separate direct placement packet still need focused follow-up changes before release.
+Temporary doodads now publish after the batch commits.
+The separate direct placement packet still needs its focused follow-up before release.
 The direct placement path must preserve its current public-farm and house labor waivers.
 
 No schema or compact change is part of this batch implementation.
@@ -60,3 +61,14 @@ After release, test one gather and one craft at zero labor.
 Then start a delayed gather, remove its required labor, and check that completion gives no reward.
 Check one harvest after restart, one regrade, one long-duration paid buff, and one house construction step.
 Check craft 4107 against its 15-second base before active speed bonuses.
+
+## Tempering
+
+The 2 paid tempering skills now stage both equipment scale fields with labor and the source item.
+The server marks the equipment as dirty before the SQL checkpoint.
+Known failure restores both fields and suppresses the success notice.
+The 2 MySQL cases check success and failure through a fresh item load.
+
+The compact rows use skill 25871 with scale bounds 101 and 110.
+Skill 26943 uses bounds 105 and 115.
+The change keeps the current random range rule.

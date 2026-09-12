@@ -25,49 +25,52 @@ public class ItemCapScale : SpecialEffectAction
         int value3,
         int value4)
     {
-        // TODO ...
-        if (caster is Character) { Logger.Debug("Special effects: ItemCapScale value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4); }
-
-        var owner = (Character)caster;
-        var temperSkillItem = (SkillItem)casterObj;
-        var skillTargetItem = (SkillCastItemTarget)targetObj;
-
-        if (owner == null)
+        if (caster is not Character owner)
+            return;
+        var batch = SkillLaborBatch.For(owner);
+        if (casterObj is not SkillItem || targetObj is not SkillCastItemTarget itemTarget ||
+            owner.Inventory.GetItemById(itemTarget.Id) is not EquipItem equipItem ||
+            TradeReservation.GetReservedCount(equipItem) != 0)
         {
+            Fail();
+            return;
+        }
+        var scale = ItemManager.Instance.GetItemCapScale(skill.Id);
+        if (scale == null || scale.ScaleMin < 0 || scale.ScaleMax <= scale.ScaleMin || scale.ScaleMax > ushort.MaxValue)
+        {
+            Fail();
             return;
         }
 
-        if (temperSkillItem == null)
+        var oldPhysical = equipItem.TemperPhysical;
+        var oldMagical = equipItem.TemperMagical;
+        var oldDirty = equipItem.IsDirty;
+        batch?.Enlist(null, () =>
         {
-            return;
-        }
-
-        if (skillTargetItem == null)
+            equipItem.TemperPhysical = oldPhysical;
+            equipItem.TemperMagical = oldMagical;
+            equipItem.IsDirty = oldDirty;
+        });
+        var physical = (ushort)Random.Shared.Next(scale.ScaleMin, scale.ScaleMax);
+        var magical = (ushort)Random.Shared.Next(scale.ScaleMin, scale.ScaleMax);
+        equipItem.TemperPhysical = physical;
+        equipItem.TemperMagical = magical;
+        equipItem.IsDirty = true;
+        void Notify()
         {
-            return;
+            owner.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.EnchantPhysical, [new ItemUpdate(equipItem)], []));
+            owner.SendMessage(ChatType.System, $"Temper:\n |cFFFFFFFF{physical}%|r Physical\n|cFFFFFFFF{magical}%|r Magical");
         }
+        if (batch != null)
+            batch.AfterCommit(Notify);
+        else
+            Notify();
 
-        var targetItem = owner.Inventory.GetItemById(skillTargetItem.Id);
-
-        if (targetItem == null)
+        void Fail()
         {
-            return;
+            skill.Cancelled = true;
+            batch?.Fail();
+            owner.SendErrorMessage(ErrorMessageType.InvalidTarget);
         }
-
-        var equipItem = (EquipItem)targetItem;
-
-        var itemCapScale = ItemManager.Instance.GetItemCapScale(skill.Id);
-
-        var physicalScale = (ushort)Random.Shared.Next(itemCapScale.ScaleMin, itemCapScale.ScaleMax);
-        var magicalScale = (ushort)Random.Shared.Next(itemCapScale.ScaleMin, itemCapScale.ScaleMax);
-
-        equipItem.TemperPhysical = physicalScale;
-        equipItem.TemperMagical = magicalScale;
-
-        // The item appears to be consumed as a skill reagent
-        // temperItem._holdingContainer.ConsumeItem(ItemTaskType.EnchantPhysical, temperItem.TemplateId, 1, temperItem);
-        owner.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.EnchantPhysical, [new ItemUpdate(equipItem)], []));
-        // Note: According to various videos I have found, there is no information on the % reached by a temper in-game. This is sent to help indicate what was achieved.
-        owner.SendMessage(ChatType.System, $"Temper:\n |cFFFFFFFF{physicalScale}%|r Physical\n|cFFFFFFFF{magicalScale}%|r Magical");
     }
 }
