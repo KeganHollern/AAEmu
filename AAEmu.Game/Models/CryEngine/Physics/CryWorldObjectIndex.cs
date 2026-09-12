@@ -14,6 +14,7 @@ public sealed record CryWorldObjectInstance(string ModelUri, Matrix4x4 Transform
     public CryGeometryAsset Asset { get; init; }
     public string MaterialPath { get; init; } = "";
     public IReadOnlyList<string> TerrainSurfaceNames { get; init; } = [];
+    public bool AlignToTerrain { get; init; }
 }
 
 /// <summary>
@@ -69,21 +70,42 @@ public sealed class CryWorldObjectIndex
     public static CryWorldObjectIndex Load(WorldTemplate world) => Load(world, path =>
         ClientFileManager.FileExists(path) ? ClientFileManager.GetFileStream(path) : null);
 
-    public static CryWorldObjectIndex Load(WorldTemplate world, Func<string, System.IO.Stream> openFile)
+    public static CryWorldObjectIndex Load(WorldTemplate world, Func<string, System.IO.Stream> openFile,
+        Func<string, bool> includeVegetationModel = null)
     {
         var instances = new List<CryWorldObjectInstance>();
+        using var groupStream = openFile($"game/worlds/{world.Name}/vegetation.xml");
+        var groups = CryVegetationGeometry.ReadGroups(groupStream);
+        var modelResults = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        bool IncludeModel(string uri)
+        {
+            if (!modelResults.TryGetValue(uri, out var result))
+                modelResults[uri] = result = includeVegetationModel?.Invoke(uri) != false;
+            return result;
+        }
         for (var y = 0; y < world.Cells.GetLength(1); y++)
         for (var x = 0; x < world.Cells.GetLength(0); x++)
         {
             var path = $"game/worlds/{world.Name}/cells/{x:000}_{y:000}/client/object.dat";
             using var stream = openFile(path);
-            if (stream == null)
-                continue;
-            var objects = new ObjectsFile(path);
-            if (!objects.ReadFile(stream) || objects.HasUnparsedObjects)
-                throw new InvalidDataException($"Cannot read world collision objects: {path}.");
-            instances.AddRange(ReadBrushInstances(objects, x, y));
-            instances.AddRange(ReadVoxelInstances(objects, x, y));
+            if (stream != null)
+            {
+                var objects = new ObjectsFile(path);
+                if (!objects.ReadFile(stream) || objects.HasUnparsedObjects)
+                    throw new InvalidDataException($"Cannot read world collision objects: {path}.");
+                instances.AddRange(ReadBrushInstances(objects, x, y));
+                instances.AddRange(ReadVoxelInstances(objects, x, y));
+                var offset = new Vector3(x * WorldManager.CELL_SIZE, y * WorldManager.CELL_SIZE, 0);
+                foreach (var vegetation in objects.PrefabsList.OfType<ObjectDataType2Vegetation>())
+                    if (groups.TryGetValue(vegetation.GroupId, out var group) &&
+                        !string.IsNullOrEmpty(group.ModelUri) && IncludeModel(group.ModelUri))
+                        instances.Add(CryVegetationGeometry.Create(vegetation, group, offset, path));
+            }
+            var vegetationPath = $"game/worlds/{world.Name}/cells/{x:000}_{y:000}/client/vegetation.dat";
+            using var vegetationStream = openFile(vegetationPath);
+            if (vegetationStream != null)
+                instances.AddRange(CryVegetationGeometry.ReadStreamed(vegetationStream, x, y, groups,
+                    vegetationPath, IncludeModel));
         }
         return new CryWorldObjectIndex(instances);
     }

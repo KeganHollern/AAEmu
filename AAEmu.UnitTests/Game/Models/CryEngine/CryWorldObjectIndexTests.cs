@@ -65,13 +65,15 @@ public sealed class CryWorldObjectIndexTests
         var index = CryWorldObjectIndex.Load(world, path =>
         {
             seen.Add(path);
-            return path.Contains("001_000", StringComparison.Ordinal) ? BrushFile() : null;
+            return path.Contains("001_000", StringComparison.Ordinal) && path.EndsWith("/object.dat", StringComparison.Ordinal)
+                ? BrushFile() : null;
         });
         await Assert.That(index.Count).IsEqualTo(1);
         var brush = index.Query(new(1024, 0, 0), new(1034, 10, 10)).Single();
         await Assert.That(Vector3.Transform(Vector3.Zero, brush.Transform)).IsEqualTo(new Vector3(1029, 5, 5));
-        await Assert.That(seen[0]).IsEqualTo("game/worlds/test/cells/000_000/client/object.dat");
-        await Assert.That(seen[1]).IsEqualTo("game/worlds/test/cells/001_000/client/object.dat");
+        var objectPaths = seen.Where(path => path.EndsWith("/object.dat", StringComparison.Ordinal)).ToArray();
+        await Assert.That(objectPaths[0]).IsEqualTo("game/worlds/test/cells/000_000/client/object.dat");
+        await Assert.That(objectPaths[1]).IsEqualTo("game/worlds/test/cells/001_000/client/object.dat");
         await Assert.That(CryWorldObjectIndex.Load(new WorldTemplate { Name = "other" }, _ => null).Count).IsEqualTo(0);
     }
 
@@ -82,7 +84,8 @@ public sealed class CryWorldObjectIndexTests
         await Assert.That(() => CryWorldObjectIndex.ReadBrushInstances(objects, 0, 0)).Throws<InvalidDataException>();
         using var valid = BrushFile();
         var truncated = valid.ToArray()[..^1];
-        await Assert.That(() => CryWorldObjectIndex.Load(new WorldTemplate(), _ => new MemoryStream(truncated)))
+        await Assert.That(() => CryWorldObjectIndex.Load(new WorldTemplate(), path =>
+            path.EndsWith("/object.dat", StringComparison.Ordinal) ? new MemoryStream(truncated) : null))
             .Throws<InvalidDataException>();
     }
 
@@ -101,21 +104,22 @@ public sealed class CryWorldObjectIndexTests
             {
                 if (!source.FileExists(name))
                     return null;
-                files++;
+                if (name.EndsWith("/object.dat", StringComparison.Ordinal)) files++;
                 return source.GetFileStream(name);
             });
             await Assert.That(files).IsEqualTo(1205);
-            await Assert.That(index.Count).IsEqualTo(162615);
+            await Assert.That(index.Count).IsEqualTo(1724150);
             var all = index.Query(new(-1000, -1000, -10000), new(40000, 40000, 10000));
             await Assert.That(all.Count(row => row.Kind == ObjectDataType.Brush)).IsEqualTo(162386);
             await Assert.That(all.Count(row => row.Kind == ObjectDataType.Voxel)).IsEqualTo(229);
+            await Assert.That(all.Count(row => row.Kind == ObjectDataType.Vegetation)).IsEqualTo(1561535);
             foreach (var voxel in all.Where(row => row.Kind == ObjectDataType.Voxel))
             {
                 await Assert.That(voxel.Asset.Parts.Count).IsGreaterThan(0);
                 await Assert.That(voxel.TerrainSurfaceNames.Count).IsEqualTo(32);
                 await Assert.That(voxel.Asset.Parts.All(part => part.Shape is CryTriangleMesh)).IsTrue();
             }
-            Console.WriteLine($"r208022 main_world: {files} object.dat files, 162386 brushes, 229 authored voxel meshes.");
+            Console.WriteLine($"r208022 main_world: {files} object.dat files, 162386 brushes, 229 voxel meshes, 1561535 vegetation instances.");
         }
         finally
         {

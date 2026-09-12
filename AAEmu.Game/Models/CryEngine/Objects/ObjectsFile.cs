@@ -179,6 +179,7 @@ public class ObjectsFile(string fileName)
         switch (objectType)
         {
             case ObjectDataType.Brush: return new ObjectDataType1Brush();
+            case ObjectDataType.Vegetation: return new ObjectDataType2Vegetation();
             case ObjectDataType.Voxel: return new ObjectDataType6Voxel();
             case ObjectDataType.WaterVolume: return new ObjectDataType11Water();
             case ObjectDataType.Road: return new ObjectDataType13Road();

@@ -14,6 +14,11 @@ public enum CryGeometryQueryUsage
 /// </summary>
 public static class CryGeometryLayerRules
 {
+    // CVegetation::Physicalize retains ordinary solid flags for slot0. Its extra
+    // foliage proxies have neither geom_colltype0/1 nor geom_colltype_ray.
+    public static CryGeometryQueryUsage GetVegetationUsage(int physicsType) => physicsType == 0x1000
+        ? CryGeometryQueryUsage.Ray | CryGeometryQueryUsage.PlacementOverlap : CryGeometryQueryUsage.None;
+
     public const int Solid = 0x1000;
     public const int Ray = 0x1001;
     public const int Obstruct = 0x1002;

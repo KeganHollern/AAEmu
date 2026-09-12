@@ -12,7 +12,8 @@ public enum ObjectDataType : int
     WaterVolume = 11,
     WaterWave = 12,
     Road = 13,
-    AutoCubeMap = 14,
+    DistanceCloud = 14,
+    AutoCubeMap = 16,
 
     Type27 = 27,
 }
