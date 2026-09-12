@@ -1,4 +1,5 @@
-﻿using AAEmu.Commons.Utils;
+﻿using System.Collections.Concurrent;
+using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Network.Connections;
@@ -16,12 +17,10 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers.Stream;
 
-public class UccManager(IUccIdManager uccIdManager) : Singleton<UccManager>, IUccManager
+public partial class UccManager(IUccIdManager uccIdManager) : Singleton<UccManager>, IUccManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
-    private Dictionary<uint, Ucc> _uploadQueue;
-    private Dictionary<uint, UccUploadHandle> _complexUploadParts;
-    private Dictionary<ulong, Ucc> _uccs;
+    private ConcurrentDictionary<ulong, Ucc> _uccs = new();
     private Dictionary<uint, ulong> _downloadQueue; // connection, UCCId
     private static readonly object s_lockObject = new();
 
@@ -47,9 +46,8 @@ public class UccManager(IUccIdManager uccIdManager) : Singleton<UccManager>, IUc
 
     public void Load()
     {
-        _uploadQueue = [];
-        _complexUploadParts = [];
-        _uccs = [];
+        LoadPatterns();
+        _uccs = new();
         lock (s_lockObject)
         {
             _downloadQueue = [];
@@ -88,7 +86,7 @@ public class UccManager(IUccIdManager uccIdManager) : Singleton<UccManager>, IUc
                                 Modified = reader.GetDateTime("modified")
                             };
 
-                            _uccs.Add(id, ucc);
+                            _uccs.TryAdd(id, ucc);
                         }
                         else if (type == UccType.Complex)
                         {
@@ -148,51 +146,12 @@ public class UccManager(IUccIdManager uccIdManager) : Singleton<UccManager>, IUc
 
 #endif
 
-                            _uccs.Add(id, ucc);
+                            _uccs.TryAdd(id, ucc);
                         }
                     }
                 }
             }
         }
-    }
-
-    public void StartUpload(StreamConnection connection, int expectedDataSize, CustomUcc customUcc)
-    {
-        // Make sure the newly created customUcc has it's SaveDataInDB value set correctly
-#if STORE_UCC_AS_FILE
-        customUcc.SaveDataInDB = false;
-#else
-        customUcc.SaveDataInDB = true;
-#endif
-
-        _uploadQueue.Add(connection.Id, customUcc);
-        var uploadHandler = new UccUploadHandle { ExpectedSize = expectedDataSize, UploadingUcc = customUcc };
-        _complexUploadParts.Add(connection.Id, uploadHandler);
-        connection.SendPacket(new TCEmblemStreamRecvStatusPacket(EmblemStreamStatus.Continue));
-    }
-
-    public void UploadPart(StreamConnection connection, UccPart part)
-    {
-        if (!_complexUploadParts.TryGetValue(connection.Id, out var handle))
-            return;
-
-        handle.AddPart(part);
-
-        if (handle.UploadComplete)
-        {
-            handle.FinalizeUpload();
-            ConfirmDefaultUcc(connection);
-        }
-        else
-        {
-            connection.SendPacket(new TCEmblemStreamRecvStatusPacket(EmblemStreamStatus.Continue));
-        }
-    }
-
-    public void AddDefaultUcc(DefaultUcc defaultUcc, StreamConnection connection)
-    {
-        _uploadQueue.Add(connection.Id, defaultUcc);
-        connection.SendPacket(new TCEmblemStreamRecvStatusPacket(EmblemStreamStatus.Start));
     }
 
     public void CheckUccIsValid(StreamConnection connection, ulong id)
@@ -311,38 +270,6 @@ public class UccManager(IUccIdManager uccIdManager) : Singleton<UccManager>, IUc
         {
             connection.SendPacket(new TCEmblemStreamSendStatusPacket(ucc, EmblemStreamStatus.Start));
         }
-    }
-
-    public void ConfirmDefaultUcc(StreamConnection connection)
-    {
-        var ucc = _uploadQueue[connection.Id];
-        var id = uccIdManager.GetNextId();
-
-        ucc.Id = id;
-        _uccs.Add(id, ucc);
-        _uploadQueue.Remove(connection.Id);
-
-#if STORE_UCC_AS_FILE
-        // Temporary on-disk storage of UCC data
-        if ((ucc is CustomUcc customUcc) && (customUcc.Data.Count > 0))
-        {
-            var uccFileName = Path.Combine(FileManager.AppPath, "UserData", "UCC", id.ToString("000000") + ".dds");
-            File.WriteAllBytes(uccFileName,customUcc.Data.ToArray());
-            if (!File.Exists(uccFileName))
-                Logger.Error("Failed to save UCC data to file {0}", uccFileName);
-        }
-#endif
-
-        connection.SendPacket(new TCEmblemStreamRecvStatusPacket(EmblemStreamStatus.End));
-
-        var character = connection.GameConnection.ActiveChar;
-
-        connection.GameConnection.ActiveChar.ChangeMoney(SlotType.Inventory, -50000);
-
-        var newItem = (UccItem)ItemManager.Instance.Create(Item.CrestInk, 1, 0, true); // Crest Ink
-        newItem.UccId = id;
-        Save(ucc);
-        character.Inventory.Bag.AddOrMoveExistingItem(ItemTaskType.GainItemWithUcc, newItem);
     }
 
     public static void CreateStamp(Character player, Item sourceInk)

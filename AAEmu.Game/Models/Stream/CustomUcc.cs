@@ -39,7 +39,7 @@ public class CustomUcc : DefaultUcc
         command.Parameters.AddWithValue("@color3R", Color3R);
         command.Parameters.AddWithValue("@color3G", Color3G);
         command.Parameters.AddWithValue("@color3B", Color3B);
-        command.Parameters.AddWithValue("@modified", DateTime.UtcNow);
+        command.Parameters.AddWithValue("@modified", Modified);
         if (SaveDataInDB)
             command.Parameters.AddWithValue("@data", Data.ToArray());
         command.ExecuteNonQuery();

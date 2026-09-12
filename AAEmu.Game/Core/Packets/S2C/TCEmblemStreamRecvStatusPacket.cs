@@ -19,5 +19,6 @@ public enum EmblemStreamStatus
 {
     Continue = 0,
     Start = 1,
-    End = 2
+    End = 2,
+    Failed = 3
 }

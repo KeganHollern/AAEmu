@@ -35,7 +35,10 @@ public class StreamProtocolHandler : BaseProtocolHandler
         {
             var con = StreamConnectionTable.Instance.GetConnection(session.SessionId);
             if (con != null)
+            {
+                AAEmu.Game.Core.Managers.Stream.UccManager.Instance.RemoveConnection(con);
                 StreamConnectionTable.Instance.RemoveConnection(session.SessionId);
+            }
         }
         catch (Exception e)
         {
