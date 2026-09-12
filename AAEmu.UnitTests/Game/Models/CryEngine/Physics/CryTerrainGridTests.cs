@@ -93,6 +93,28 @@ public sealed class CryTerrainGridTests
     }
 
     [Test]
+    public async Task SampleRawHeight_FloorsIntegerMetresAndKeepsTheHeightUnderAHole()
+    {
+        using var stream = Map(4, Node(3,
+            [Pack(3, 31), Pack(4), Pack(5), Pack(6), Pack(7), Pack(8), Pack(9), Pack(10), Pack(11)]));
+        var grid = CryTerrainGrid.Read(stream, new Vector2(100, 200));
+        await Assert.That(grid.SampleRawHeight(101, 201)).IsEqualTo(3f);
+        await Assert.That(grid.SampleRawHeight(102, 201)).IsEqualTo(6f);
+        await Assert.That(grid.SampleRawHeight(104, 204)).IsEqualTo(11f);
+        await Assert.That(float.IsNaN(grid.SampleHeight(101, 201))).IsTrue();
+        await Assert.That(float.IsNaN(grid.SampleRawHeight(99, 201))).IsTrue();
+    }
+
+    [Test]
+    public async Task SampleRawHeight_CoarseNode_InterpolatesTheFullResolutionVertex()
+    {
+        using var stream = Map(4, Node(2, [Pack(0, 31), Pack(0), Pack(0), Pack(16)]));
+        var grid = CryTerrainGrid.Read(stream, Vector2.Zero);
+        await Assert.That(grid.SampleRawHeight(3, 3)).IsEqualTo(4f);
+        await Assert.That(grid.SampleRawHeight(1, 1)).IsEqualTo(0f);
+    }
+
+    [Test]
     public async Task Raycast_FindsFirstObliqueHitAndUsesWorldDistance()
     {
         using var stream = Map(4, Node(3, Enumerable.Repeat(Pack(2), 9).ToArray()));

@@ -126,6 +126,19 @@ public sealed class CryTerrainGrid
             : (1 - fractionY) * h10 + (fractionX + fractionY - 1) * h11 + (1 - fractionX) * h01;
     }
 
+    /// <summary>
+    /// Matches I3DEngine +0x204: floor integer metre coordinates to the unit grid and read that
+    /// vertex, including heights under holes. Unavailable data returns NaN instead of native zero.
+    /// </summary>
+    public float SampleRawHeight(int worldX, int worldY)
+    {
+        if (worldX < Bounds.Min.X || worldY < Bounds.Min.Y || worldX > Bounds.Max.X || worldY > Bounds.Max.Y)
+            return float.NaN;
+        var x = (int)MathF.Floor((worldX - Origin.X) / UnitSize);
+        var y = (int)MathF.Floor((worldY - Origin.Y) / UnitSize);
+        return Height(x, y);
+    }
+
     /// <summary>Traces the terrain's upward-facing triangles. Distance is measured in world metres.</summary>
     public CryIntersection Raycast(Vector3 origin, Vector3 direction, float maxDistance, out CryRayHit hit)
     {
@@ -207,11 +220,13 @@ public sealed class CryTerrainGrid
             var sy = Math.Min(y / step, size - 2);
             var fx = x / (float)step - sx;
             var fy = y / (float)step - sy;
-            var h00 = Decode(sx, sy);
-            var h10 = Decode(sx + 1, sy);
-            var h01 = Decode(sx, sy + 1);
-            var h11 = Decode(sx + 1, sy + 1);
-            var height = (1 - fy) * ((1 - fx) * h00 + fx * h10) + fy * ((1 - fx) * h01 + fx * h11);
+            var h00 = HeightBits(sx, sy);
+            var h10 = HeightBits(sx + 1, sy);
+            var h01 = HeightBits(sx, sy + 1);
+            var h11 = HeightBits(sx + 1, sy + 1);
+            // Native interpolation precedes the float range and offset conversion.
+            var height = offset + (((h10 * fx + h00 * (1 - fx)) * (1 - fy) +
+                h01 * (1 - fx) * fy) + h11 * fx * fy) * range;
             if (!Finite(height))
                 throw new InvalidDataException("Non-finite terrain height.");
             var index = (x0 + x) * GridSize + y0 + y;
@@ -223,7 +238,7 @@ public sealed class CryTerrainGrid
         }
         return;
 
-        float Decode(int x, int y) => offset + (packed[x * size + y] & 0xffe0) * range;
+        float HeightBits(int x, int y) => packed[x * size + y] & 0xffe0;
     }
 
     private bool TryLocate(float x, float y, out int cellX, out int cellY, out float fx, out float fy)
