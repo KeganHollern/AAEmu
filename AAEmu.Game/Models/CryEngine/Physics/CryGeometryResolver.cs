@@ -7,13 +7,29 @@ using System.Xml.Linq;
 namespace AAEmu.Game.Models.CryEngine.Physics;
 
 /// <summary>Loads authored r208022 collision proxies without replacing them with render triangles.</summary>
-public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
+public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
 {
     private readonly ConcurrentDictionary<string, CryGeometryAsset> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, CryCharacterAnimation> _animations = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<(string Model, string Name), string> _animationPaths = new();
+    private readonly ConcurrentDictionary<string, XDocument> _prefabLibraries = new(StringComparer.OrdinalIgnoreCase);
 
     public CryGeometryAsset Load(string modelUri) => _cache.GetOrAdd(Normalize(modelUri), LoadCore);
+
+    public CryGeometryAsset LoadPose(string modelUri, double elapsedSeconds)
+    {
+        if (!double.IsFinite(elapsedSeconds) || elapsedSeconds < 0)
+            throw new ArgumentOutOfRangeException(nameof(elapsedSeconds));
+        var uri = Normalize(modelUri);
+        if (uri.StartsWith("prefab://", StringComparison.Ordinal))
+            return LoadPrefab(uri[9..], elapsedSeconds);
+        var asset = Load(uri);
+        if (asset.CgaAnimation != null)
+            return asset.CgaAnimation.Sample(asset, elapsedSeconds, uri.StartsWith("cga_loop://", StringComparison.Ordinal));
+        if (asset.PoseRequirements.Any(pose => pose.Playing))
+            return LoadCharacterPose(uri, "Default", elapsedSeconds, uri.StartsWith("cga_loop://", StringComparison.Ordinal));
+        return asset;
+    }
 
     public CryGeometryAsset LoadCharacterPose(string modelUri, string animationName, double elapsedSeconds, bool loop)
     {
@@ -57,13 +73,16 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         return asset;
     }
 
-    private CryGeometryAsset LoadPrefab(string path)
+    private CryGeometryAsset LoadPrefab(string path, double? elapsedSeconds = null)
     {
         var separator = path.IndexOf(".xml/", StringComparison.Ordinal);
         if (separator < 0)
             throw new InvalidDataException("Prefab model has no library and element name.");
-        using var stream = OpenFile(AssetPath(path[..(separator + 4)]));
-        var root = XDocument.Load(stream);
+        var root = _prefabLibraries.GetOrAdd(AssetPath(path[..(separator + 4)]), file =>
+        {
+            using var stream = OpenFile(file);
+            return XDocument.Load(stream);
+        });
         var name = path[(separator + 5)..];
         var prefab = root.Descendants("Prefab").SingleOrDefault(x =>
             string.Equals((string)x.Attribute("Name"), name, StringComparison.OrdinalIgnoreCase)) ??
@@ -96,7 +115,25 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
                 throw new NotSupportedException("Nested prefab transforms need their native object hierarchy.");
             if (string.IsNullOrWhiteSpace(childPath))
                 continue;
+            var animation = obj.Element("Properties")?.Element("Animation");
+            var active = animation != null && (string)animation.Attribute("bPlaying") == "1";
             var child = Load(childPath);
+            if (active && childPath.EndsWith(".chr", StringComparison.OrdinalIgnoreCase) &&
+                FindCharacterAnimation(Normalize(childPath), (string)animation.Attribute("Animation") ?? "Default") == null)
+                active = false;
+            if (elapsedSeconds.HasValue && active)
+            {
+                var time = elapsedSeconds.Value * Parse((string)animation.Attribute("Speed") ?? "1");
+                var loop = (string)animation.Attribute("bLoop") == "1";
+                if (child.CgaAnimation != null)
+                {
+                    if (!string.Equals((string)animation.Attribute("Animation"), "Default", StringComparison.OrdinalIgnoreCase))
+                        throw new NotSupportedException("A named CGA animation needs its external ANM file.");
+                    child = child.CgaAnimation.Sample(child, time, loop);
+                }
+                else if (child.CharacterBones.Count > 0)
+                    child = LoadCharacterPose(childPath, (string)animation.Attribute("Animation") ?? "Default", time, loop);
+            }
             var transform = ReadPrefabTransform(obj);
             var childBounds = child.Bounds.Transform(transform);
             bounds = bounds?.Union(childBounds) ?? childBounds;
@@ -104,8 +141,7 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
             var physics = obj.Element("Properties")?.Element("Physics");
             var physicalized = (string)physics?.Attribute("bPhysicalize") != "0";
             animatedCollision |= physicalized && child.HasAnimatedCollision;
-            var animation = obj.Element("Properties")?.Element("Animation");
-            if (animation != null && (string)animation.Attribute("bPlaying") == "1")
+            if (active && !elapsedSeconds.HasValue)
                 poses.Add(new CryGeometryPoseRequirement(childPath, (string)obj.Attribute("Name") ?? "", transform,
                     (string)animation.Attribute("Animation") ?? "", true, physicalized)
                     { AffectsCollision = child.HasAnimatedCollision });
@@ -203,13 +239,15 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
             var matrix = new Matrix4x4(values[0], values[1], values[2], 0, values[4], values[5], values[6], 0,
                 values[8], values[9], values[10], 0, values[12] * 0.01f, values[13] * 0.01f, values[14] * 0.01f, 1);
             Seek(reader, chunk.Body + 188, 12);
+            var controllers = new int[3];
             var hasController = false;
             for (var i = 0; i < 3; i++)
             {
                 var controller = reader.ReadInt32();
+                controllers[i] = controller;
                 hasController |= controller >= 0 && chunks.ContainsKey(controller);
             }
-            nodes.Add(id, new Node(name, mesh, parent, material, matrix, hasController));
+            nodes.Add(id, new Node(name, mesh, parent, material, matrix, hasController, controllers));
         }
 
         Matrix4x4 Transform(int id, HashSet<int> chain)
@@ -232,6 +270,7 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         var merged = mergeAll || (modelNodes.Length <= 1 && !nodes.Values.Any(node =>
             node.Name.StartsWith("$joint", StringComparison.Ordinal) || node.Name.StartsWith("$cutdown", StringComparison.Ordinal)));
         CryBounds? bounds = null;
+        var renderBounds = new List<CryCgaRenderBounds>();
         var parts = new List<CryGeometryPart>();
         // A skeletal model needs bone transforms until its compiled character physics is resolved.
         var animatedCollision = chunks.Values.Any(chunk => chunk.Kind == 0xacdc0000);
@@ -261,6 +300,7 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
             {
                 var transformedBounds = localBounds.Transform(transform);
                 bounds = bounds?.Union(transformedBounds) ?? transformedBounds;
+                renderBounds.Add(new CryCgaRenderBounds(id, localBounds, transform));
             }
             Vector3[] vertices = null;
             ushort[] indices = null;
@@ -309,7 +349,8 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
                 {
                     PhysicsGroup = $"{path}#{(merged ? 0 : id)}",
                     SpineCount = merged ? spineCount : 0,
-                    PickingIndex = GetPickingIndex(node.Name)
+                    PickingIndex = GetPickingIndex(node.Name),
+                    CgaNodeId = id
                 });
             }
         }
@@ -334,7 +375,11 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         return new CryGeometryAsset(bounds.Value, parts)
         {
             HasAnimatedCollision = animatedCollision,
-            CharacterBones = bones
+            CharacterBones = bones,
+            CgaAnimation = path.EndsWith(".cga", StringComparison.OrdinalIgnoreCase)
+                ? CryCgaAnimation.Read(data, nodes.Select(pair => new CryCgaNode(pair.Key, pair.Value.Parent,
+                    pair.Value.Transform, pair.Value.Controllers[0], pair.Value.Controllers[1], pair.Value.Controllers[2])).ToArray(), renderBounds)
+                : null
         };
     }
 
@@ -414,6 +459,9 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
 
     private string FindCharacterAnimation(string modelPath, string name)
     {
+        var uriSeparator = modelPath.IndexOf("://", StringComparison.Ordinal);
+        if (uriSeparator >= 0)
+            modelPath = modelPath[(uriSeparator + 3)..];
         if (!modelPath.EndsWith(".chr", StringComparison.Ordinal))
             throw new NotSupportedException("A compiled character animation needs a CHR model.");
         var result = _animationPaths.GetOrAdd((modelPath, name.ToLowerInvariant()), _ =>
@@ -470,5 +518,5 @@ public sealed class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
         ? Normalize(path) : "game/" + Normalize(path);
 
     private sealed record Chunk(uint Kind, int Version, int Body, int Size);
-    private sealed record Node(string Name, int Mesh, int Parent, int Material, Matrix4x4 Transform, bool HasController);
+    private sealed record Node(string Name, int Mesh, int Parent, int Material, Matrix4x4 Transform, bool HasController, int[] Controllers);
 }

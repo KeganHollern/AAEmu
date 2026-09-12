@@ -229,3 +229,26 @@ Native `393a4360` supplies a 0.5 second transition to that animation.
 A client can thus show another animation time or selected clip.
 The server uses the authored physical proxies at its own phase time.
 It does not claim to reproduce each client's visual frame or transition.
+
+## CGA poses and bounds
+
+`LoadPose(modelUri, elapsedSeconds)` samples direct CGA models and active prefab children.
+Prefab samples use the authored `Speed` and `bLoop` values.
+The caller supplies the animation clock. The packet does not contain a client animation time.
+The server uses its placement and phase times as an explicit clock policy.
+The client can start an animation when the object becomes visible, so its visual time can differ.
+
+Native `315e2220` loads controller version `0x826`.
+It reads TCB vector keys and relative angle-axis keys.
+Native `315e5480` accumulates the rotation deltas into absolute quaternion keys.
+Native `3158ad50`, `3158b070`, `3158b150`, and `3158b240` calculate vector tangents.
+Native `315ead40` calculates the quaternion tangents.
+Native `3162bae0` conjugates the sampled rotation and converts position centimeters to meters.
+The current authored CGA fixture has no cyclic track flags or multiple-revolution key segments.
+The reader rejects those unresolved formats instead of changing their interpolation.
+
+Native `31549f80` calculates CGA bounds from the posed rigid joint objects.
+It adds `0.2` meters to each side of any dimension smaller than `0.4` meters.
+The CGA sampler applies this rule after the node hierarchy transforms.
+It returns both sampled physical proxies and sampled rigid mesh bounds.
+All 30 extracted CGA fixtures passed samples at `0`, `0.5`, and `2` seconds.

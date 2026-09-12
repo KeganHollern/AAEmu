@@ -48,6 +48,7 @@ public sealed record CryGeometryPart(CryPhysicsShape Shape, Matrix4x4 Transform,
     public int SpineCount { get; init; }
     public int PickingIndex { get; init; }
     public int BoneIndex { get; init; } = -1;
+    public int CgaNodeId { get; init; } = -1;
 }
 
 public sealed record CryGeometryAsset(CryBounds Bounds, IReadOnlyList<CryGeometryPart> Parts)
@@ -56,6 +57,7 @@ public sealed record CryGeometryAsset(CryBounds Bounds, IReadOnlyList<CryGeometr
     public IReadOnlyList<CryGeometryPoseRequirement> PoseRequirements { get; init; } = [];
     public bool HasAnimatedCollision { get; init; }
     public IReadOnlyList<CryCharacterBone> CharacterBones { get; init; } = [];
+    public CryCgaAnimation CgaAnimation { get; init; }
 }
 
 public sealed record CryGeometryHelper(string Name, string Text, Matrix4x4 Transform);

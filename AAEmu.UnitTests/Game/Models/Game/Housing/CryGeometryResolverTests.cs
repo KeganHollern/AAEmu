@@ -135,7 +135,10 @@ public sealed class CryGeometryResolverTests
         chunks.Add((0xcccc0000, 0x800, 3, proxyMesh));
         chunks.Add((0xcccc000b, 0x823, 4, Node("house", 2, -1, 1000, animatedParent ? 6 : -1)));
         chunks.Add((0xcccc000b, 0x823, 5, Node("proxy", 3, 4, 1000)));
-        chunks.Add((0xcccc000d, 0x827, 6, []));
+        var controller = new byte[52];
+        BitConverter.GetBytes(9).CopyTo(controller, 0);
+        BitConverter.GetBytes(1).CopyTo(controller, 4);
+        chunks.Add((0xcccc000d, 0x826, 6, controller));
         // This animated visual node has no collision and is not a parent of the proxy.
         chunks.Add((0xcccc000b, 0x823, 8, Node("visual", -1, 4, 0, 6)));
         using var stream = new MemoryStream();
