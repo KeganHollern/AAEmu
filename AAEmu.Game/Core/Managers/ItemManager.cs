@@ -2177,12 +2177,15 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         var item = character?.Inventory?.GetItemById(itemId);
         if (item == null)
             return false;
+        if (item.HasFlag(ItemFlag.Unpacked) || TradeReservation.GetReservedCount(item) > 0 ||
+            slotType == SlotType.Bank && !ServiceInteraction.CanUseBank(character))
+            return false;
         if (item.SlotType != slotType || item.Slot != slot)
         {
             Logger.Warn($"UnwrapItem: Requested item position does not match up for {itemId} of user {character.Name}");
             return false;
         }
-        item.UnpackTime = DateTime.UtcNow;//.AddDays(-30).AddSeconds(15);
+        item.UnpackTime = DateTime.UtcNow;
         item.SetFlag(ItemFlag.Unpacked);
         if (item.Template.BindType == ItemBindType.BindOnUnpack)
             item.SetFlag(ItemFlag.SoulBound);

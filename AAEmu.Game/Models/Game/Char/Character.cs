@@ -318,8 +318,8 @@ public partial class Character : Unit, ICharacter
         }
         var formula = FormulaManager.Instance.GetFormula((uint)FormulaKind.ExpByLaborPower);
         if (formula != null)
-            AddExp((int)(formula.Evaluate(new Dictionary<string, double>
-                { ["labor_power"] = amount, ["pc_level"] = Level }) * expMultiplier), true);
+            AddLaborExperience((int)(formula.Evaluate(new Dictionary<string, double>
+                { ["labor_power"] = amount, ["pc_level"] = Level }) * expMultiplier));
         Achievements?.Increment(CharRecordKind.SpendLabor, 0, 0, (uint)amount);
         SendPacket(new SCCharacterLaborPowerChangedPacket(-amount, (int)actabilityId, actabilityChange, step));
     }

@@ -327,7 +327,7 @@ public class AccountManager(
             }
             catch (Exception exception)
             {
-                Logger.Error(exception, "Account currency change failed for {AccountId}", accountId);
+                Logger.Error(exception, "Account currency change failed");
                 return false;
             }
         }

@@ -39,7 +39,8 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
 
     public Shipyard Create(Character owner, ShipyardData shipyardData)
     {
-        if (!_shipyardsTemplate.TryGetValue(shipyardData.TemplateId, out var template))
+        if (!_shipyardsTemplate.TryGetValue(shipyardData.TemplateId, out var template) ||
+            !template.ShipyardSteps.ContainsKey(shipyardData.Step))
             return null;
 
         var design = ItemManager.Instance.GetTemplate(template.OriginItemId);
@@ -56,13 +57,10 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
         pos.Z = shipyardData.Z;
         pos.Yaw = shipyardData.zRot;
 
-        var objId = objectIdManager.GetNextId();
-        var shipId = shipyardIdManager.GetNextId();
         var shipyard = new Shipyard
         {
             Transform = { InstanceId = owner.ParentWorld.Id }, TemplateId = shipyardData.TemplateId, // duplicate Id
             Id = shipyardData.TemplateId,
-            ObjId = objId,
             Template = template,
             Faction = owner.Faction,
             Level = 30
@@ -72,7 +70,7 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
         shipyard.ModelId = template.ShipyardSteps[shipyardData.Step].ModelId;
         shipyard.Transform.ApplyWorldSpawnPosition(pos);
 
-        shipyard.ShipyardData = new ShipyardData { Id = shipId, TemplateId = template.Id, X = pos.X, Y = pos.Y,
+        shipyard.ShipyardData = new ShipyardData { TemplateId = template.Id, X = pos.X, Y = pos.Y,
             Z = pos.Z,
             zRot = pos.Yaw,
             MoneyAmount = 0,
@@ -82,30 +80,25 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
             Type2 = owner.Id,
             Type3 = owner.Faction.Id,
             Spawned = DateTime.UtcNow,
-            ObjId = objId,
             Hp = template.ShipyardSteps[shipyardData.Step].MaxHp * 100,
             Step = shipyardData.Step
         };
 
-        // we will make checks for the availability of money and items to create a shipyard
-        // and remove from the inventory items and money necessary for the construction of the shipyard
-        if (!RemoveRequiredItems(shipyard))
+        if (!TryInstallPaidShipyard(owner, shipyard))
         {
             owner.SendErrorMessage(ErrorMessageType.NotEnoughItem);
             return null;
         }
 
-        _shipyard.Add(shipId, shipyard);
         shipyard.Spawn();
 
         return shipyard;
     }
 
-    private bool RemoveRequiredItems(Shipyard shipyard)
+    internal bool TryInstallPaidShipyard(Character character, Shipyard shipyard)
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
-            var character = worldManager.GetCharacter(shipyard.ShipyardData.OwnerName);
             if (character == null || character.Id != shipyard.ShipyardData.Type2 ||
                 !taxationsManager.Taxations.TryGetValue((uint)shipyard.Template.TaxationId, out var taxation) ||
                 taxation.Tax > int.MaxValue)
@@ -128,7 +121,35 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
             foreach (var product in products)
                 if (!mutation.TryGrant(character.Inventory.Bag, product.ItemId, product.Amount))
                     return false;
-            mutation.Complete();
+            // Failed payment must not allocate world or shipyard IDs. Install the
+            // accepted construction before any item or quest observer can run.
+            var objId = objectIdManager.GetNextId();
+            uint shipId = 0;
+            try
+            {
+                shipId = shipyardIdManager.GetNextId();
+                shipyard.ObjId = objId;
+                shipyard.ShipyardData.ObjId = objId;
+                shipyard.ShipyardData.Id = shipId;
+                _shipyard.Add(shipId, shipyard);
+            }
+            catch
+            {
+                objectIdManager.ReleaseId(objId);
+                if (shipId != 0)
+                    shipyardIdManager.ReleaseId(shipId);
+                throw;
+            }
+            try
+            {
+                mutation.Complete();
+            }
+            catch (Exception exception)
+            {
+                // Complete accepts the assets before notification. Continue to
+                // spawn the installed construction even when an observer fails.
+                Logger.Error(exception, "Shipyard payment notification failed for shipyard {0}", shipId);
+            }
             return true;
         }
     }

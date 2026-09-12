@@ -12,6 +12,9 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Shipyard;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Taxations;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
@@ -825,6 +828,116 @@ public sealed class InventoryMutationTests
         await Assert.That(ItemManager.Instance.UnwrapItem(_owner, SlotType.Inventory, 0, foreign.Id)).IsFalse();
         await Assert.That(foreign.OwnerId).IsEqualTo(8U);
         await Assert.That(foreign.ItemFlags).IsEqualTo(flags);
+    }
+
+    [Test]
+    public async Task Unwrap_RepeatedRequest_PreservesOriginalLifetimeStart()
+    {
+        var item = AddItem(1, 100, 1);
+        item.Template.BindType = ItemBindType.BindOnUnpack;
+        await Assert.That(ItemManager.Instance.UnwrapItem(_owner, SlotType.Inventory, 0, item.Id)).IsTrue();
+        var originalStart = DateTime.UtcNow.AddDays(-1);
+        item.UnpackTime = originalStart;
+        await Assert.That(ItemManager.Instance.UnwrapItem(_owner, SlotType.Inventory, 0, item.Id)).IsFalse();
+        await Assert.That(item.UnpackTime).IsEqualTo(originalStart);
+        await Assert.That(item.HasFlag(ItemFlag.SoulBound)).IsTrue();
+    }
+
+    [Test]
+    public async Task Unwrap_ReservedItem_DoesNotChangeTradeTerms()
+    {
+        var item = AddItem(1, 100, 2);
+        using var reservation = new TradeReservation();
+        await Assert.That(reservation.TryReserve(item, 1)).IsTrue();
+        var flags = item.ItemFlags;
+        var originalStart = item.UnpackTime;
+        await Assert.That(ItemManager.Instance.UnwrapItem(_owner, SlotType.Inventory, 0, item.Id)).IsFalse();
+        await Assert.That(item.UnpackTime).IsEqualTo(originalStart);
+        await Assert.That(item.ItemFlags).IsEqualTo(flags);
+    }
+
+    [Test]
+    public async Task Unwrap_BankItemWithoutService_DoesNotChangeItem()
+    {
+        var item = AddItem(1, 100, 1);
+        _bag.Items.Remove(item);
+        var bank = _owner.Inventory.Warehouse;
+        bank.Items.Add(item);
+        item._holdingContainer = bank;
+        item.SlotType = SlotType.Bank;
+        var flags = item.ItemFlags;
+        var originalStart = item.UnpackTime;
+        await Assert.That(_owner.Inventory.GetItemById(item.Id)).IsSameReferenceAs(item);
+        await Assert.That(ItemManager.Instance.UnwrapItem(_owner, SlotType.Bank, 0, item.Id)).IsFalse();
+        await Assert.That(item.UnpackTime).IsEqualTo(originalStart);
+        await Assert.That(item.ItemFlags).IsEqualTo(flags);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Shipyard_MissingPayment_RestoresAllAssetsWithoutAllocatingIds(bool missingMoney)
+    {
+        var design = AddItem(1, 100, 1);
+        var reagent = AddItem(2, 200, missingMoney ? 3 : 2);
+        _owner.Money = missingMoney ? 49 : 100;
+        var (manager, shipyard, objectIds, shipyardIds) = CreateShipyardPurchase();
+        await Assert.That(manager.TryInstallPaidShipyard(_owner, shipyard)).IsFalse();
+        await Assert.That(_owner.Money).IsEqualTo(missingMoney ? 49L : 100L);
+        await Assert.That(design.Count).IsEqualTo(1);
+        await Assert.That(reagent.Count).IsEqualTo(missingMoney ? 3 : 2);
+        await Assert.That(_bag.Items).Count().IsEqualTo(2);
+        objectIds.GetNextId().WasCalled(Times.Never);
+        shipyardIds.GetNextId().WasCalled(Times.Never);
+    }
+
+    [Test]
+    public async Task Shipyard_ThrowingObserver_SeesInstalledConstructionAndCannotCancelIt()
+    {
+        AddItem(1, 100, 1);
+        AddItem(2, 200, 1);
+        AddItem(3, 200, 2);
+        var (manager, shipyard, _, _) = CreateShipyardPurchase();
+        var installed = (Dictionary<uint, Shipyard>)typeof(ShipyardManager)
+            .GetField("_shipyard", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
+        var observed = false;
+        _owner.Events.OnItemGather += (_, _) =>
+        {
+            observed = installed.TryGetValue(60, out var value) && ReferenceEquals(value, shipyard) &&
+                _owner.Money == 50 && _bag.Items.Single().TemplateId == 300;
+            throw new IOException("Injected shipyard observer failure");
+        };
+        await Assert.That(manager.TryInstallPaidShipyard(_owner, shipyard)).IsTrue();
+        await Assert.That(observed).IsTrue();
+        await Assert.That(installed[60]).IsSameReferenceAs(shipyard);
+        await Assert.That(shipyard.ObjId).IsEqualTo(50U);
+        await Assert.That(shipyard.ShipyardData.Id).IsEqualTo(60UL);
+        await Assert.That(_owner.Money).IsEqualTo(50L);
+        await Assert.That(_bag.Items.Single().TemplateId).IsEqualTo(300U);
+    }
+
+    private (ShipyardManager Manager, Shipyard Shipyard, Mock<IObjectIdManager> ObjectIds,
+        Mock<IShipyardIdManager> ShipyardIds) CreateShipyardPurchase()
+    {
+        Template(100).UseSkillId = 10;
+        Template(300);
+        var taxations = Mock.Of<ITaxationsManager>();
+        taxations.Taxations.Returns(new Dictionary<uint, Taxation> { [1] = new() { Id = 1, Tax = 50 } });
+        var skills = Mock.Of<ISkillManager>();
+        skills.GetSkillReagentsBySkillId(10).Returns([new SkillReagent { ItemId = 200, Amount = 3 }]);
+        skills.GetSkillProductsBySkillId(10).Returns([new SkillProduct { ItemId = 300, Amount = 1 }]);
+        var objectIds = Mock.Of<IObjectIdManager>();
+        objectIds.GetNextId().Returns(50U);
+        var shipyardIds = Mock.Of<IShipyardIdManager>();
+        shipyardIds.GetNextId().Returns(60U);
+        var manager = new ShipyardManager(Mock.Of<ITaskManager>().Object, objectIds.Object, shipyardIds.Object,
+            Mock.Of<IWorldManager>().Object, taxations.Object, skills.Object);
+        var shipyard = new Shipyard
+        {
+            Template = new ShipyardsTemplate { Id = 1, OriginItemId = 100, TaxationId = 1 },
+            ShipyardData = new ShipyardData { Type2 = _owner.Id, OwnerName = _owner.Name }
+        };
+        return (manager, shipyard, objectIds, shipyardIds);
     }
 
     [Test]
