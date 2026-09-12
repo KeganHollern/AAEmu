@@ -18,6 +18,7 @@ namespace AAEmu.Game.Models.Game.Housing;
 public sealed class HousingGeometryAssets
 {
     private readonly CryGeometryResolver _resolver;
+    private readonly CryWorldGeometryResolver _staticResolver;
     private readonly Func<uint, uint, IReadOnlyList<string>> _modelPaths;
     private readonly Func<string, System.IO.Stream> _openFile;
     private readonly ConcurrentDictionary<uint, CryGeometryAsset> _models = [];
@@ -32,10 +33,13 @@ public sealed class HousingGeometryAssets
     {
         _openFile = openFile;
         _resolver = new CryGeometryResolver(openFile);
+        _staticResolver = new CryWorldGeometryResolver(Load);
         _modelPaths = modelPaths;
     }
 
     public CryGeometryAsset Load(string path) => _resolver.Load(path);
+
+    public CryGeometryAsset LoadStatic(CryWorldObjectInstance instance) => _staticResolver.Load(instance);
 
     public CryGeometryAsset LoadModel(uint id) => _models.GetOrAdd(id, modelId =>
     {

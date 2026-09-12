@@ -26,7 +26,7 @@ public sealed class HousingGeometryWorld(HousingGeometryAssets assets, WorldInst
         {
             var transform = CryVegetationGeometry.ResolveTransform(authored, (x, y) =>
                 geometry.GetTerrain(instance.Template, Cell(x), Cell(y))?.SampleHeight(x, y) ?? float.NaN);
-            var asset = authored.Asset ?? geometry.Load(authored.ModelUri);
+            var asset = geometry.LoadStatic(authored);
             if (!string.IsNullOrEmpty(authored.MaterialPath))
                 asset = asset with { Parts = asset.Parts.Select(part => part with
                 {
