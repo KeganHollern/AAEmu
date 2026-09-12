@@ -87,19 +87,53 @@ public sealed class CryWorldObjectIndex
         for (var x = 0; x < world.Cells.GetLength(0); x++)
         {
             var path = $"game/worlds/{world.Name}/cells/{x:000}_{y:000}/client/object.dat";
+            var cellPath = $"game/worlds/{world.Name}/cells/{x:000}_{y:000}/client";
+            using var deferredBrushStream = openFile($"{cellPath}/brush.dat");
+            if (deferredBrushStream != null)
+            {
+                using var modelsStream = openFile($"{cellPath}/statobjs.dat");
+                using var materialsStream = openFile($"{cellPath}/materials.dat");
+                if (modelsStream == null || materialsStream == null)
+                    throw new InvalidDataException($"Missing deferred brush path tables: {cellPath}.");
+                foreach (var brush in CryDeferredBrushFile.Read(deferredBrushStream, modelsStream, materialsStream))
+                {
+                    instances.Add(CreateBrushInstance(brush.Brush, brush.AssetPath, brush.MaterialPath,
+                        $"{cellPath}/brush.dat", new Vector3(x * WorldManager.CELL_SIZE, y * WorldManager.CELL_SIZE, 0)));
+                }
+            }
             using var stream = openFile(path);
             if (stream != null)
             {
                 var objects = new ObjectsFile(path);
                 if (!objects.ReadFile(stream) || objects.HasUnparsedObjects)
                     throw new InvalidDataException($"Cannot read world collision objects: {path}.");
-                instances.AddRange(ReadBrushInstances(objects, x, y));
+                // The native deferred file contains the same brushes. Use one source per cell.
+                if (deferredBrushStream == null)
+                    instances.AddRange(ReadBrushInstances(objects, x, y));
                 instances.AddRange(ReadVoxelInstances(objects, x, y));
                 var offset = new Vector3(x * WorldManager.CELL_SIZE, y * WorldManager.CELL_SIZE, 0);
                 foreach (var vegetation in objects.PrefabsList.OfType<ObjectDataType2Vegetation>())
                     if (groups.TryGetValue(vegetation.GroupId, out var group) &&
                         !string.IsNullOrEmpty(group.ModelUri) && IncludeModel(group.ModelUri))
                         instances.Add(CryVegetationGeometry.Create(vegetation, group, offset, path));
+            }
+            using var bigStream = openFile($"{cellPath}/big_object.dat");
+            if (bigStream != null)
+            {
+                var big = CryBigObjectsFile.Read(bigStream, ObjectsFile.CreateReader);
+                var data = new ObjectsFile($"{cellPath}/big_object.dat")
+                {
+                    AssetPathsList = big.AssetPaths.Select(uri => new AssetPath { Name = uri }).ToList(),
+                    MaterialPathsList = big.MaterialPaths.Select(uri => new AssetPath { Name = uri }).ToList(),
+                    PrefabsList = big.Objects.ToList()
+                };
+                instances.AddRange(ReadBrushInstances(data, x, y));
+                instances.AddRange(ReadVoxelInstances(data, x, y));
+                foreach (var vegetation in big.Objects.OfType<ObjectDataType2Vegetation>())
+                    if (groups.TryGetValue(vegetation.GroupId, out var group) &&
+                        !string.IsNullOrEmpty(group.ModelUri) && IncludeModel(group.ModelUri))
+                        instances.Add(CryVegetationGeometry.Create(vegetation, group,
+                            new Vector3(x * WorldManager.CELL_SIZE, y * WorldManager.CELL_SIZE, 0), data.FileName));
             }
             var vegetationPath = $"game/worlds/{world.Name}/cells/{x:000}_{y:000}/client/vegetation.dat";
             using var vegetationStream = openFile(vegetationPath);
@@ -121,27 +155,32 @@ public sealed class CryWorldObjectIndex
             if (brush.PathId < 0 || brush.PathId >= objects.AssetPathsList.Count)
                 throw new InvalidDataException($"Invalid brush asset {brush.PathId} in {objects.FileName}.");
             var uri = objects.AssetPathsList[brush.PathId].Name;
-            if (string.IsNullOrWhiteSpace(uri))
-                throw new InvalidDataException($"Empty brush asset in {objects.FileName}.");
-            var matrix = brush.Matrix3X4;
-            // CryEngine uses column vectors. System.Numerics uses row vectors.
-            // object.dat transforms and bounds are cell-local, in game XYZ axes.
-            var transform = new Matrix4x4(
-                matrix.M11, matrix.M21, matrix.M31, 0,
-                matrix.M12, matrix.M22, matrix.M32, 0,
-                matrix.M13, matrix.M23, matrix.M33, 0,
-                matrix.M14 + offset.X, matrix.M24 + offset.Y, matrix.M34, 1);
-            var min = Vector3.Min(brush.StartPos, brush.EndPos) + offset;
-            var max = Vector3.Max(brush.StartPos, brush.EndPos) + offset;
-            CheckBounds(min, max);
-            result.Add(new CryWorldObjectInstance(uri.Replace('\\', '/'), transform, min, max,
-                $"{objects.FileName}#{index}")
-            {
-                MaterialPath = brush.MaterialId >= 0 && brush.MaterialId < objects.MaterialPathsList.Count
-                    ? objects.MaterialPathsList[brush.MaterialId].Name.Replace('\\', '/') : ""
-            });
+            var material = brush.MaterialId >= 0 && brush.MaterialId < objects.MaterialPathsList.Count
+                ? objects.MaterialPathsList[brush.MaterialId].Name : "";
+            result.Add(CreateBrushInstance(brush, uri, material, $"{objects.FileName}#{index}", offset));
         }
         return result;
+    }
+
+    private static CryWorldObjectInstance CreateBrushInstance(ObjectDataType1Brush brush, string uri,
+        string material, string source, Vector3 offset)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+            throw new InvalidDataException($"Empty brush asset in {source}.");
+        var matrix = brush.Matrix3X4;
+        // CryEngine uses column vectors. System.Numerics uses row vectors.
+        var transform = new Matrix4x4(
+            matrix.M11, matrix.M21, matrix.M31, 0,
+            matrix.M12, matrix.M22, matrix.M32, 0,
+            matrix.M13, matrix.M23, matrix.M33, 0,
+            matrix.M14 + offset.X, matrix.M24 + offset.Y, matrix.M34, 1);
+        var min = Vector3.Min(brush.StartPos, brush.EndPos) + offset;
+        var max = Vector3.Max(brush.StartPos, brush.EndPos) + offset;
+        CheckBounds(min, max);
+        return new CryWorldObjectInstance(uri.Replace('\\', '/'), transform, min, max, source)
+        {
+            MaterialPath = material.Replace('\\', '/')
+        };
     }
 
     public static IReadOnlyList<CryWorldObjectInstance> ReadVoxelInstances(ObjectsFile objects, int cellX, int cellY)

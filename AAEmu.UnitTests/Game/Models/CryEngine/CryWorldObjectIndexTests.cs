@@ -90,6 +90,30 @@ public sealed class CryWorldObjectIndexTests
     }
 
     [Test]
+    public async Task Load_UsesOneNativeBrushSourceWhenBothFilesExist()
+    {
+        using var typed = BrushFile();
+        var typedBytes = typed.ToArray();
+        var deferred = new byte[2052 + 128];
+        BitConverter.GetBytes(1).CopyTo(deferred, 0);
+        BitConverter.GetBytes(2052).CopyTo(deferred, 4);
+        BitConverter.GetBytes(128).CopyTo(deferred, 1028);
+        typedBytes.AsSpan(typedBytes.Length - 128).CopyTo(deferred.AsSpan(2052));
+        var paths = new Dictionary<string, byte[]>
+        {
+            ["object.dat"] = typedBytes, ["brush.dat"] = deferred,
+            ["statobjs.dat"] = SinglePath("objects/wall.cgf"),
+            ["materials.dat"] = SinglePath("materials/native_override")
+        };
+        var index = CryWorldObjectIndex.Load(new WorldTemplate { Name = "test", Cells = new WorldCell[1, 1] },
+            path => paths.TryGetValue(Path.GetFileName(path), out var bytes) ? new MemoryStream(bytes, false) : null);
+        await Assert.That(index.Count).IsEqualTo(1);
+        var brush = index.Query(Vector3.Zero, new Vector3(10)).Single();
+        await Assert.That(brush.MaterialPath).IsEqualTo("materials/native_override");
+        await Assert.That(brush.Source.EndsWith("/brush.dat", StringComparison.Ordinal)).IsTrue();
+    }
+
+    [Test]
     public async Task ExactClient_LoadsAllMainWorldBrushes()
     {
         var path = Environment.GetEnvironmentVariable("AAEMU_HOUSING_GAME_PAK");
@@ -111,6 +135,8 @@ public sealed class CryWorldObjectIndexTests
             await Assert.That(index.Count).IsEqualTo(1724150);
             var all = index.Query(new(-1000, -1000, -10000), new(40000, 40000, 10000));
             await Assert.That(all.Count(row => row.Kind == ObjectDataType.Brush)).IsEqualTo(162386);
+            await Assert.That(all.Where(row => row.Kind == ObjectDataType.Brush)
+                .All(row => row.Source.EndsWith("/brush.dat", StringComparison.Ordinal))).IsTrue();
             await Assert.That(all.Count(row => row.Kind == ObjectDataType.Voxel)).IsEqualTo(229);
             await Assert.That(all.Count(row => row.Kind == ObjectDataType.Vegetation)).IsEqualTo(1561535);
             foreach (var voxel in all.Where(row => row.Kind == ObjectDataType.Voxel))
@@ -129,6 +155,14 @@ public sealed class CryWorldObjectIndexTests
 
     private static CryWorldObjectInstance Instance(string name, Vector3 min, Vector3 max) =>
         new(name, Matrix4x4.Identity, min, max, name);
+
+    private static byte[] SinglePath(string path)
+    {
+        var bytes = new byte[260];
+        BitConverter.GetBytes(1).CopyTo(bytes, 0);
+        Encoding.UTF8.GetBytes(path).CopyTo(bytes, 4);
+        return bytes;
+    }
 
     private static MemoryStream BrushFile()
     {

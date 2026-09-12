@@ -1,5 +1,17 @@
 # World objects for house placement
 
+The index now uses `brush.dat` when that native source exists.
+It does not also add the copies from `object.dat`.
+The complete main-world comparison found the same 162386 authored brushes in both sources.
+The deferred source supplies sector-local coordinates and its own model and material tables.
+The parser adds the sector origin before the index adds the cell origin.
+The index uses `object.dat` brushes when the deferred source does not exist.
+
+The index also reads the flat `big_object.dat` records through the common typed reader.
+The main-world large files contain water volumes and no solid geometry.
+Water inclusion remains the responsibility of the world water model.
+See `Housing-Separate-World-Files.md` for the exact native formats and comparison evidence.
+
 ## Authored voxel geometry and materials
 
 The index also reads all 229 voxel objects in the main world.

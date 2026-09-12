@@ -174,7 +174,7 @@ public class ObjectsFile(string fileName)
     /// </summary>
     /// <param name="objectType"></param>
     /// <returns></returns>
-    private ObjectDataBase GetPrefabReader(ObjectDataType objectType)
+    public static ObjectDataBase CreateReader(ObjectDataType objectType)
     {
         switch (objectType)
         {
@@ -207,7 +207,7 @@ public class ObjectsFile(string fileName)
                 break;
             }
             var objectType = (ObjectDataType)BitConverter.ToInt32(blockData, offset);
-            var prefab = GetPrefabReader(objectType);
+            var prefab = CreateReader(objectType);
             prefab.Name = $"{objectType}-{PrefabsList.Count}@{FileName}";
             var totalObjectSize = prefab.ReadData(blockData, startOfObjectOffset);
             if (totalObjectSize > 0)
