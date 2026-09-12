@@ -126,3 +126,37 @@ Both functions use the count copied from the purchase descriptor.
 The currency ID passes through the gold dialog unchanged.
 `FUN_393b92a0` displays the coin item name and exact coin count for the item-coin branch.
 The loader `FUN_3966f260` confirms the descriptor field order against the compact table query.
+
+## Dormant specialty goods and records in issue 488
+
+The active trader quote and the global route window use separate requests.
+`FUN_393c14c0` registers `FUN_393c05f0` for the `specialty_trader` interaction, skill 16376.
+That handler sends C2G `0x043` with the equipped pack template ID.
+The route window calls `GetSpecialtyRatioBetween` with its selected origin and destination.
+A valid current trader can supply the quote destination without a change to the route window.
+
+The same native registry keeps an old `specialty_store` interaction for skill 17135.
+Its handler, `FUN_393bf840`, sends C2G `0x044` with a 3-byte object ID.
+No authored `npc_interactions` row uses skill 17135.
+The only compact skill references are `doodad_funcs` rows 9975 and 9976.
+Both use `DoodadFuncPurchase`, which has the separate purchase dispatch described above.
+The current NPC script exposes the specialty sale control. It has no old specialty-store control.
+
+The exact client keeps these incomplete response paths:
+
+| Response | Native behavior |
+| --- | --- |
+| G2C `0x09a` | `FUN_39185ba0` passes at most 20 goods to `FUN_394fcbc0`. The function replaces a private cache and resolves item templates. |
+| G2C `0x09b` | `FUN_39181ff0` calls `FUN_394fb300`, which immediately returns. |
+
+The bounded native scan found no goods-cache reader beyond its destructor.
+The complete script scan found no specialty purchase or record API caller.
+The script scan scope and manifest hash appear in `dominion-and-dormant-packets.md`.
+Current sale scripts use `GetSpecialtyRatio`, `GetSpecialtyRatioRefund`, and `SellBackPackGoods`.
+The route script uses `GetSpecialtyRatioBetween`.
+
+The server keeps `CSListSpecialtyGoodsPacket` as an unsupported old request.
+`CSBuySpecialtyItemPacket` and `CSSpecialtyRecordLoadPacket` have no confirmed r208022 opcode and stay unregistered.
+The G2C goods and record constants do not imply a usable client feature.
+No invented goods catalog, purchase settlement, or record packet was added.
+An active implementation needs a confirmed caller, complete response contract, and authored purchase data.

@@ -63,12 +63,32 @@ Issue 143 permits voting and elections as later work.
 The minimum state now includes authored territories, login data, persistent zero ownership, and a durable balance store.
 It does not create a working castle economy or award ownership.
 
-Issue 139 still has a client presentation gap.
-The exact client contains both craft and national tax requests.
-The server now recognizes them and returns an unavailable message.
-The craft payment control has no confirmed feature flag.
-A client-content change must remove or disable that control before the client can meet the full hidden-UI alternative.
-No active craft settlement, nation owner, or voting contract was invented.
+The client no longer exposes the old craft-pay control.
+A scan covered all 1251 ALB, Lua, and G script files under `scriptsbin` and `scripts`, with 10,346,498 bytes total.
+This includes all 728 compiled X2UI files.
+No script contains `SetCraftingPay` or `GetCraftingPayStr`.
+The current `crafting_renewal.alb` and its view have no payment or owner control.
+Native `FUN_39460cc0` still binds the unused API, so the server gives an explicit unavailable response to a direct call.
+The legacy compact contains 25 `DoodadFuncCraftStart` rows, but their server action is a stub.
+For example, functions 6, 7, and 8 map to doodad 274.
+No tracked client patch recipe adds a craft-pay caller.
+
+The national tax control has one script caller in `nation/tab_dominion.alb`.
+Its function at source lines 177 through 186 asks `X2Nation:IsNationOwner` about the player.
+It passes that result to `EditTaxMode` at lines 138 through 143.
+That function enables or disables both the slider and `adjustTaxBtn`.
+A separate 24-hour guard also disables the button before the next change time.
+The unclaimed model gives no player nation ownership. Direct tax requests still receive an unavailable response.
+
+The sorted script manifest uses JSON objects with path, size, and SHA-256, without whitespace.
+Its SHA-256 is `22319eb0373c0293ff5667761dbdcbc1085c05bfb7d088160e208cb5e7e847a9`.
+The exact representative files have these SHA-256 values:
+
+| Script | SHA-256 |
+| --- | --- |
+| `crafting/crafting_renewal.alb` | `0afe417960629cbd2386d8ab6b7665ebe0c427d5a261fa5b06efa6e53f082170` |
+| `crafting/crafting_renewal_view.alb` | `a3f8f5c31097f1b5e506202afa166acd9fb56062960b7d5891045164094845ff` |
+| `nation/tab_dominion.alb` | `5f387ade7c65a21c6f6aa73984d8b09c92a7aef869371189073eb003f7eb58e3` |
 
 A later claim feature needs these facts:
 
