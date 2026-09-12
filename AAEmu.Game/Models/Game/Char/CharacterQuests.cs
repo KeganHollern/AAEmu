@@ -11,6 +11,7 @@ using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
+using AAEmu.Game.Models.Game.World;
 
 using MySql.Data.MySqlClient;
 
@@ -47,6 +48,38 @@ public class CharacterQuests(Character owner)
     public bool HasQuest(uint questId)
     {
         return ActiveQuests.ContainsKey(questId);
+    }
+
+    /// <summary>
+    /// Moves current sphere objectives to the new instance without restarting
+    /// quest acts, supplies, timers, or event subscriptions.
+    /// </summary>
+    internal void RefreshSphereTriggers(WorldInstance previousWorld, WorldInstance world)
+    {
+        previousWorld?.SphereQuestManager?.RemoveSphereQuestTriggers(Owner.Id, 0);
+
+        foreach (var quest in ActiveQuests.Values)
+        {
+            if (!quest.QuestSteps.TryGetValue(quest.Step, out var step))
+                continue;
+            foreach (var component in step.Components.Values)
+            {
+                foreach (var act in component.Acts)
+                {
+                    if (act.Template is QuestActObjSphere objective)
+                    {
+                        // Removing the old trigger must also apply its normal exit state.
+                        objective.ClearLocationState(act);
+                        world?.SphereQuestManager?.AddSphereQuestTriggers(Owner, quest, component.Template.Id, objective.NpcId, objective.SphereId);
+                    }
+                    else if (act.Template is QuestActCheckSphere check)
+                    {
+                        act.OverrideObjectiveCompleted = false;
+                        world?.SphereQuestManager?.AddSphereQuestTriggers(Owner, quest, component.Template.Id, 0, check.SphereId);
+                    }
+                }
+            }
+        }
     }
 
     public bool RestartMainQuest(uint questId)

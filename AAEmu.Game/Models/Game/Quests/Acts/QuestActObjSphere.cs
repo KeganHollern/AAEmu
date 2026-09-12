@@ -33,7 +33,7 @@ public class QuestActObjSphere(QuestComponentTemplate parentComponent) : QuestAc
         base.InitializeAction(quest, questAct);
         quest.Owner.Events.OnEnterSphere += questAct.OnEnterSphere;
         quest.Owner.Events.OnExitSphere += questAct.OnExitSphere;
-        ((GameObject)quest.Owner).ParentWorld.SphereQuestManager.AddSphereQuestTriggers(quest.Owner, quest, questAct.QuestComponent.Template.Id, NpcId);
+        ((GameObject)quest.Owner).ParentWorld.SphereQuestManager.AddSphereQuestTriggers(quest.Owner, quest, questAct.QuestComponent.Template.Id, NpcId, SphereId);
     }
 
     public override void FinalizeAction(Quest quest, QuestAct questAct)
@@ -59,6 +59,11 @@ public class QuestActObjSphere(QuestComponentTemplate parentComponent) : QuestAc
             return;
 
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnExitSphere: Quest: {questAct.QuestComponent.Parent.Parent.TemplateId}, Owner {questAct.QuestComponent.Parent.Parent.Owner.Name} ({questAct.QuestComponent.Parent.Parent.Owner.Id}), ComponentId {args.SphereQuest.ComponentId}");
+        ClearLocationState(questAct);
+    }
+
+    internal void ClearLocationState(QuestAct questAct)
+    {
         if (SphereGameData.Instance.GetSphere(SphereId)?.TriggerConditionId == AreaSphereTriggerCondition.TriggerEveryNTimeAfter)
             return;
 

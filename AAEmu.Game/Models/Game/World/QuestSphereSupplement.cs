@@ -20,7 +20,7 @@ public class QuestSphereSupplement
     /// <summary>Quest template id the sphere belongs to.</summary>
     public uint QuestId { get; set; }
 
-    /// <summary>Quest component id whose QuestActObjSphere act this sphere completes.</summary>
+    /// <summary>Quest component id for the starter, objective, or location check that uses this sphere.</summary>
     public uint ComponentId { get; set; }
 
     /// <summary>Zone key the sphere is located in (informational).</summary>

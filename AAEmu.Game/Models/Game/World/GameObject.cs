@@ -71,8 +71,12 @@ public class GameObject : IGameObject
         {
             if (_parentWorld != value)
             {
+                var previousWorld = _parentWorld;
                 _parentWorld = value;
-                Transform.InstanceId = value.Id; // should not loop on itself
+                if (value != null)
+                    Transform.InstanceId = value.Id; // should not loop on itself
+                if (this is Character character)
+                    character.Quests?.RefreshSphereTriggers(previousWorld, value);
             }
         }
     }

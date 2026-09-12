@@ -6,6 +6,7 @@ public interface ISphereQuestManager
 {
     void AddSphereQuestTrigger(SphereQuestTrigger trigger);
     List<SphereQuest> GetQuestSpheres(uint componentId);
+    List<SphereQuest> GetSpheresForQuest(uint questId);
     List<SphereQuestTrigger> GetSphereQuestTriggers();
     void Initialize();
     void Load();
