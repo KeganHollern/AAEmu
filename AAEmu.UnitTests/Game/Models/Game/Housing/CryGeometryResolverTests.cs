@@ -65,11 +65,38 @@ public sealed class CryGeometryResolverTests
 
     [Test]
     [Arguments("cgf://objects/missing.cgf")]
-    [Arguments("prefab://prefabs/missing.xml/house")]
     public async Task Load_MissingFile_ThrowsFileNotFound(string path)
     {
         var resolver = new CryGeometryResolver(_ => null);
         await Assert.That(() => resolver.Load(path)).Throws<FileNotFoundException>();
+    }
+
+    [Test]
+    [Arguments("prefab://prefabs/missing.xml/house")]
+    [Arguments("prefab://prefabs/present.xml/missing")]
+    [Arguments("cga://objects/missing.chr")]
+    public async Task Load_AbsentPrefabOrAnimation_HasNoGeometryOrModelBounds(string path)
+    {
+        var resolver = new CryGeometryResolver(name => name.EndsWith("present.xml", StringComparison.Ordinal)
+            ? new MemoryStream(Encoding.UTF8.GetBytes("<PrefabsLibrary><Prefab Name=\"house\" /></PrefabsLibrary>")) : null);
+        var asset = resolver.Load(path);
+        await Assert.That(asset.HasModelBounds).IsFalse();
+        await Assert.That(asset.Parts.Count).IsEqualTo(0);
+        await Assert.That(asset.PoseRequirements.Count).IsEqualTo(0);
+        if (path.StartsWith("cga://", StringComparison.Ordinal))
+            await Assert.That(resolver.LoadCharacterPose(path, "idle", 10, true)).IsSameReferenceAs(asset);
+    }
+
+    [Test]
+    public async Task Load_MissingBrush_UsesAuthoredFallbackAndKeepsMalformedErrors()
+    {
+        var resolver = new CryGeometryResolver(path => path.EndsWith("box_nodraw.cgf", StringComparison.Ordinal)
+            ? new MemoryStream(Model(true)) : null);
+        var asset = resolver.Load("cgf://objects/missing.cgf");
+        await Assert.That(asset.Bounds.Min).IsEqualTo(-Vector3.One);
+        await Assert.That(asset.HasModelBounds).IsTrue();
+        var malformed = new CryGeometryResolver(_ => new MemoryStream(new byte[32]));
+        await Assert.That(() => malformed.Load("cgf://objects/broken.cgf")).Throws<InvalidDataException>();
     }
 
     [Test]

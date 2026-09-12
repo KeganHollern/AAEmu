@@ -34,6 +34,8 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
     public CryGeometryAsset LoadCharacterPose(string modelUri, string animationName, double elapsedSeconds, bool loop)
     {
         var asset = Load(modelUri);
+        if (!asset.HasModelBounds)
+            return asset;
         var uri = Normalize(modelUri);
         var separator = uri.IndexOf("://", StringComparison.Ordinal);
         var path = separator < 0 ? uri : uri[(separator + 3)..];
@@ -60,12 +62,14 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
             throw new NotSupportedException("Entity model geometry needs its native entity definition.");
         if (scheme is not ("cgf" or "vegetation" or "cga" or "cga_loop"))
             return Load("objects/box_nodraw.cgf");
+        using var stream = OpenOptionalModelFile(AssetPath(path));
+        if (stream == null)
+            return ResolveMissingModel(scheme, AssetPath(path));
         CryGeometryAsset asset;
         if (path.EndsWith(".cdf", StringComparison.Ordinal))
             asset = LoadCharacterDefinition(path);
         else
         {
-            using var stream = OpenFile(AssetPath(path));
             using var buffer = new MemoryStream();
             stream.CopyTo(buffer);
             asset = ReadCgf(buffer.ToArray(), AssetPath(path));
@@ -85,15 +89,12 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
         var separator = path.IndexOf(".xml/", StringComparison.Ordinal);
         if (separator < 0)
             throw new InvalidDataException("Prefab model has no library and element name.");
-        var root = _prefabLibraries.GetOrAdd(AssetPath(path[..(separator + 4)]), file =>
-        {
-            using var stream = OpenFile(file);
-            return XDocument.Load(stream);
-        });
+        var root = _prefabLibraries.GetOrAdd(AssetPath(path[..(separator + 4)]), ReadPrefabLibrary);
         var name = path[(separator + 5)..];
         var prefab = root.Descendants("Prefab").SingleOrDefault(x =>
-            string.Equals((string)x.Attribute("Name"), name, StringComparison.OrdinalIgnoreCase)) ??
-            throw new InvalidDataException($"Missing prefab element '{name}'.");
+            string.Equals((string)x.Attribute("Name"), name, StringComparison.OrdinalIgnoreCase));
+        if (prefab == null)
+            return EmptyModel();
         var parts = new List<CryGeometryPart>();
         var helpers = new List<CryGeometryHelper>();
         var poses = new List<CryGeometryPoseRequirement>();

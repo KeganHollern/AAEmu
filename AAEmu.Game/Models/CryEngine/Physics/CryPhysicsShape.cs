@@ -53,6 +53,7 @@ public sealed record CryGeometryPart(CryPhysicsShape Shape, Matrix4x4 Transform,
 
 public sealed record CryGeometryAsset(CryBounds Bounds, IReadOnlyList<CryGeometryPart> Parts)
 {
+    public bool HasModelBounds { get; init; } = true;
     public IReadOnlyList<CryGeometryHelper> Helpers { get; init; } = [];
     public IReadOnlyList<CryGeometryPoseRequirement> PoseRequirements { get; init; } = [];
     public bool HasAnimatedCollision { get; init; }

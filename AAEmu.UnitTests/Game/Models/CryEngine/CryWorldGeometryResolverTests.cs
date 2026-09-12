@@ -74,9 +74,14 @@ public sealed class CryWorldGeometryResolverTests
         await Assert.That(source.Open()).IsTrue();
         try
         {
-            Stream Open(string name) => source.FileExists(name) ? source.GetFileStream(name) : null;
-            var models = new CryGeometryResolver(Open);
             var missing = new HashSet<string>();
+            Stream Open(string name)
+            {
+                if (source.FileExists(name)) return source.GetFileStream(name);
+                if (name.EndsWith(".cgf", StringComparison.Ordinal)) missing.Add(name);
+                return null;
+            }
+            var models = new CryGeometryResolver(Open);
             var resolver = new CryWorldGeometryResolver(name =>
             {
                 try { return models.Load(name); }
