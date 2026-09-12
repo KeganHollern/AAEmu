@@ -34,7 +34,7 @@ using NLog;
 namespace AAEmu.Game.Core.Managers.UnitManagers;
 
 // ReSharper disable once ClassNeverInstantiated.Global
-public class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager doodadIdManager, IItemManager itemManager, Lazy<IHousingManager> housingManager, ISusManager susManager) : Singleton<DoodadManager>, IDoodadManager
+public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager doodadIdManager, IItemManager itemManager, Lazy<IHousingManager> housingManager, ISusManager susManager) : Singleton<DoodadManager>, IDoodadManager
 {
     private Dictionary<uint, DoodadFuncGroups> _allFuncGroups;
 
@@ -2988,15 +2988,11 @@ public class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager do
     /// <summary>
     /// Saves and creates a doodad
     /// </summary>
-    public Doodad CreatePlayerDoodad(Character character, uint id, float x, float y, float z, float zRot, float scale, ulong itemId, FarmType farmType = FarmType.Invalid, uint itemTemplateId = 0, int customData = 0, bool ignoreHouses = false)
+    public Doodad CreatePlayerDoodad(Character character, uint id, float x, float y, float z, float zRot, float scale, ulong itemId, FarmType farmType = FarmType.Invalid, uint itemTemplateId = 0, int customData = 0, bool ignoreHouses = false, int laborCost = 0)
     {
         if (itemId != 0)
-        {
-            var sourceItem = character.Inventory.Bag.GetItemByItemId(itemId);
-            if (sourceItem == null || !itemManager.GetItemIdsFromDoodad(id).Contains(sourceItem.TemplateId) ||
-                !ZoneSkillRestrictions.CanUseItem(character, sourceItem, new Vector3(x, y, z)))
-                return null;
-        }
+            return CreatePaidPlayerDoodad(character, id, x, y, z, zRot, scale, itemId, farmType, customData, ignoreHouses, laborCost);
+
         Logger.Warn($"{character.Name} is placing a doodad {id} at position {x} {y} {z}");
 
         // NOTE: If you would ever want to use player housing outside of main_world, you'll need to modify this
@@ -3010,7 +3006,7 @@ public class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager do
         doodad.Transform.Local.SetPosition(x, y, z);
         doodad.Transform.Local.SetRotation(0, 0, zRot);
         // doodad.Transform.WorldId = world.Template.Id;
-        doodad.ItemId = itemId;
+        doodad.ItemId = 0;
         doodad.PlantTime = DateTime.UtcNow;
         doodad.FarmType = farmType;
         doodad.ItemTemplateId = itemTemplateId;
@@ -3034,37 +3030,9 @@ public class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdManager do
             doodad.SetScale(scale);
         }
 
-        var items = itemManager.GetItemIdsFromDoodad(id);
-        var preferredItem = itemId > 0 ? character.Inventory.Bag.GetItemByItemId(itemId) : null;
-        if (itemId > 0)
-        {
-            // Consume item
-
-            if (preferredItem == null)
-            {
-                Logger.Error($"Unable to create doodad because source item (Id: {itemId}) does not exist in {character.Name}'s bag inventory.");
-                doodad.Delete();
-                return null;
-            }
-
-            doodad.ItemTemplateId = preferredItem.TemplateId;
-
-            if (preferredItem.Template.MaxCount > 1)
-            {
-                doodad.ItemId = 0; // If it's a stackable item, don't store the actual itemId, but only it's templateId
-            }
-        }
-
         if (doodad is DoodadCoffer coffer)
         {
             coffer.InitializeCoffer(character.Id);
-        }
-
-        foreach (var item in items)
-        {
-            character.ItemUse(preferredItem);
-            character.Inventory.ConsumeItem([SlotType.Inventory], ItemTaskType.DoodadCreate, item, 1,
-                preferredItem);
         }
 
         doodad.InitDoodad();

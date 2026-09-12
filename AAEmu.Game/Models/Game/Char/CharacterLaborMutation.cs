@@ -9,7 +9,9 @@ public sealed class CharacterLaborMutation(Character owner) : IDisposable
     private readonly int _consumed = owner.ConsumedLaborPower;
     private short _amount;
     private uint _actability;
+    private readonly List<(short Amount, uint Actability)> _additional = [];
     private bool _finished;
+    internal bool HasChanges => _amount > 0 || _additional.Count > 0;
 
     public bool TryConsume(short amount, uint actability)
     {
@@ -20,9 +22,19 @@ public sealed class CharacterLaborMutation(Character owner) : IDisposable
         return true;
     }
 
+    internal bool TryConsumeAdditional(short amount, uint actability)
+    {
+        if (_finished || amount <= 0 ||
+            (long)_amount + _additional.Sum(debit => debit.Amount) + amount > short.MaxValue ||
+            !owner.TryStageLaborConsumption(amount))
+            return false;
+        _additional.Add((amount, actability));
+        return true;
+    }
+
     public void Save(PersistenceSaveContext context)
     {
-        if (_amount <= 0 || _finished)
+        if (!HasChanges || _finished)
             throw new InvalidOperationException("No labor debit was staged.");
         using var command = context.Connection.CreateCommand();
         command.Transaction = context.Transaction;
@@ -36,15 +48,20 @@ public sealed class CharacterLaborMutation(Character owner) : IDisposable
 
     public void Complete()
     {
+        if (_finished)
+            return;
         _finished = true;
-        owner.CompleteStagedLaborConsumption(_amount, _actability);
+        if (_amount > 0)
+            owner.CompleteStagedLaborConsumption(_amount, _actability);
+        foreach (var debit in _additional)
+            owner.CompleteStagedLaborConsumption(debit.Amount, debit.Actability);
     }
 
     public void PreservePreparedState() => _finished = true;
 
     public void Dispose()
     {
-        if (!_finished && _amount > 0)
+        if (!_finished && HasChanges)
             owner.RestoreStagedLabor(_labor, _consumed);
         _finished = true;
     }

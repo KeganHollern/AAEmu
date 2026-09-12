@@ -847,14 +847,7 @@ public class Doodad : BaseUnit
     /// </summary>
     public void InitDoodad()
     {
-        // Apply Climate settings
-        var growTime = Template.TotalDoodadGrowthTime / AppConfiguration.Instance.World.GrowthRate;
-        if (Template.TotalDoodadGrowthTime > 0 && ZoneManager.Instance.DoodadHasMatchingClimate(this))
-        {
-            growTime = (int)Math.Round(growTime * 0.73f);
-        }
-
-        GrowthTime = PlantTime.AddMilliseconds(growTime);
+        InitializeGrowthTime();
 
         // Actually do the phase change
         var unit = ParentWorld.GetUnit(OwnerObjId);
@@ -863,6 +856,18 @@ public class Doodad : BaseUnit
             settledPhase = ResolveTodPhase(FuncGroupId, TimeManager.Instance.GetTime);
 
         ApplyTodPhase(unit, (int)settledPhase);
+    }
+
+    internal void InitializeGrowthTime()
+    {
+        // Apply Climate settings
+        var growTime = Template.TotalDoodadGrowthTime / AppConfiguration.Instance.World.GrowthRate;
+        if (Template.TotalDoodadGrowthTime > 0 && ZoneManager.Instance.DoodadHasMatchingClimate(this))
+        {
+            growTime = (int)Math.Round(growTime * 0.73f);
+        }
+
+        GrowthTime = PlantTime.AddMilliseconds(growTime);
     }
 
     /// <summary>

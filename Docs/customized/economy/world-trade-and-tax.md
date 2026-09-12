@@ -226,3 +226,29 @@ These changes add no persistent doodad rows, schema changes, or compact changes.
 
 The MySQL tests check successful creation, insufficient labor, and a failed checkpoint.
 They check account labor, material rows, initial phase timing, world publication, and object ID reuse.
+
+### Direct player doodad placement in issue 463
+
+`CSCreateDoodadPacket` passes its validated labor cost to the placement transaction.
+Public farms and permitted house land keep their current zero-cost rules.
+The transaction checks the exact bag item again before it allocates a doodad ID.
+Reserved quantities and items in a bank cannot pay for placement.
+The transaction saves labor, the source item, the new doodad, and any empty coffer container together.
+A known failure restores the source item and labor, removes the new container, and releases the new doodad IDs.
+
+Stackable sources use 1 unit from the requested item.
+Non-stackable sources move to `SystemContainer`, which preserves their identity, UCC, and other details for `DoodadFuncRecoverItem`.
+The manager sends 1 item-use event after the commit.
+It does not send another event for each alternative source template in `item_spawn_doodads`.
+System-created doodads with no source item do not consume player inventory.
+The current compact contains 10 doodads with multiple source templates.
+Doodad 272 maps to item templates 501, 16158, 16237, and 1449.
+
+The saved new doodad includes its initial phase and growth times.
+Phase functions and world publication start after the commit.
+The current startup loader calls `InitDoodad` for saved player doodads, so it can resume a committed placement after a process stop.
+The change uses the current `doodads`, `items`, `item_containers`, and account labor columns.
+It adds no schema or compact change.
+
+The focused checks cover failed SQL after doodad writes, insufficient labor, reserved sources, bank sources, coffer containers, and exact item details after reload.
+After release, place and recover a non-stackable item with UCC, then reconnect and repeat the recovery check.

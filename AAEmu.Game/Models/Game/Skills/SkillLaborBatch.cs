@@ -16,6 +16,7 @@ internal sealed class SkillLaborBatch
     public Character Owner { get; }
     public Skill Skill { get; }
     public InventoryMutation Inventory { get; }
+    private readonly CharacterLaborMutation _labor;
     public bool IsCommitting { get; private set; }
     private readonly List<Action> _afterCommit = [];
     private readonly HashSet<object> _deferred = [];
@@ -26,11 +27,12 @@ internal sealed class SkillLaborBatch
     private readonly HashSet<Character> _participants = [];
     public IReadOnlyCollection<Character> Participants => _participants;
 
-    private SkillLaborBatch(Character owner, Skill skill, InventoryMutation inventory)
+    private SkillLaborBatch(Character owner, Skill skill, InventoryMutation inventory, CharacterLaborMutation labor)
     {
         Owner = owner;
         Skill = skill;
         Inventory = inventory;
+        _labor = labor;
         _participants.Add(owner);
     }
 
@@ -42,6 +44,25 @@ internal sealed class SkillLaborBatch
             return s_current;
         s_current.Fail();
         throw new InvalidOperationException("A paid skill cannot change another character's inventory.");
+    }
+
+    internal bool TryConsumeChildLabor(Skill child)
+    {
+        if (!ReferenceEquals(s_current, this) || IsCommitting || child == null)
+            return Fail();
+        if (child.LaborSettled)
+            return true;
+        var cost = child.GetLaborCost(Owner);
+        if (cost == 0)
+            return true;
+        if (cost > short.MaxValue || !_labor.TryConsumeAdditional((short)cost, (uint)child.Template.ActabilityGroupId))
+        {
+            child.RejectLabor(Owner);
+            return Fail();
+        }
+        child.LaborSettled = true;
+        Enlist(null, () => child.LaborSettled = false);
+        return true;
     }
 
     public void EnlistCharacter(Character character) => _participants.Add(character);
@@ -117,7 +138,31 @@ internal sealed class SkillLaborBatch
         return 0;
     }
 
-    public static bool Run(Character owner, Skill skill, bool chargeLabor, Action effects)
+    public static bool Run(Character owner, Skill skill, bool chargeLabor, Action effects) =>
+        RunCore(owner, skill, chargeLabor, effects, null);
+
+    internal static bool RunPlacement(Character owner, Skill skill, int laborCost, Action effects)
+    {
+        if (laborCost < 0 || laborCost > short.MaxValue)
+            return false;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (s_current != null)
+                return s_current.Fail();
+            var previousCancelled = owner.SkillCancelled;
+            owner.SkillCancelled = false;
+            try
+            {
+                return RunCore(owner, skill, true, effects, laborCost);
+            }
+            finally
+            {
+                owner.SkillCancelled = previousCancelled;
+            }
+        }
+    }
+
+    private static bool RunCore(Character owner, Skill skill, bool chargeLabor, Action effects, int? placementLaborCost)
     {
         lock (SaveManager.PersistenceSyncRoot)
         lock (AccountManager.Instance.GetAccountSyncRoot(owner.AccountId))
@@ -132,16 +177,25 @@ internal sealed class SkillLaborBatch
                 effects();
                 return !skill.Cancelled;
             }
-            var cost = skill.GetLaborCost(owner);
-            if (!skill.LaborSettled && (cost > short.MaxValue || owner.LaborPower < cost))
-                return skill.RejectLabor(owner);
+            bool RejectLabor()
+            {
+                if (!placementLaborCost.HasValue)
+                    return skill.RejectLabor(owner);
+                owner.SendErrorMessage(ErrorMessageType.LaborPowerNeeded);
+                return false;
+            }
 
-            using var inventory = new InventoryMutation(ItemTaskType.SkillEffectGainItem);
+            var cost = placementLaborCost ?? skill.GetLaborCost(owner);
+            if (!skill.LaborSettled && (cost > short.MaxValue || owner.LaborPower < cost))
+                return RejectLabor();
+
+            using var inventory = new InventoryMutation(placementLaborCost.HasValue
+                ? ItemTaskType.DoodadCreate : ItemTaskType.SkillEffectGainItem);
             using var labor = new CharacterLaborMutation(owner);
             var charged = chargeLabor && !skill.LaborSettled && cost > 0;
-            if (charged && !labor.TryConsume((short)cost, (uint)skill.Template.ActabilityGroupId))
-                return skill.RejectLabor(owner);
-            var batch = new SkillLaborBatch(owner, skill, inventory);
+            if (charged && !labor.TryConsume((short)cost, placementLaborCost.HasValue ? 0U : (uint)skill.Template.ActabilityGroupId))
+                return RejectLabor();
+            var batch = new SkillLaborBatch(owner, skill, inventory, labor);
             s_current = batch;
             var committed = false;
             try
@@ -149,17 +203,17 @@ internal sealed class SkillLaborBatch
                 effects();
                 if (skill.Cancelled || owner.SkillCancelled || inventory.HasFailed)
                     return batch.Fail();
-                if (charged && !skill.Template.PlotOnly && skill.Template.GainLifePoint > 0)
+                if (charged && !placementLaborCost.HasValue && !skill.Template.PlotOnly && skill.Template.GainLifePoint > 0)
                     owner.ChangeGamePoints(GamePointKind.Vocation,
                         (int)Math.Ceiling(AppConfiguration.Instance.World.VocationRate * skill.Template.GainLifePoint));
                 if (skill.Cancelled || owner.SkillCancelled || inventory.HasFailed)
                     return batch.Fail();
-                if (charged || inventory.HasChanges || batch._doodads.Count > 0 || batch._writes.Count > 0 || batch._restore.Count > 0)
+                if (labor.HasChanges || inventory.HasChanges || batch._doodads.Count > 0 || batch._writes.Count > 0 || batch._restore.Count > 0)
                 {
                     batch.IsCommitting = true;
                     committed = skill.CommitLaborBatch(owner, context =>
                     {
-                        if (charged)
+                        if (labor.HasChanges)
                             labor.Save(context);
                         foreach (var doodad in batch._doodads.Keys)
                             doodad.SaveLaborState(context, batch._deletedDoodads.Contains(doodad));
@@ -180,7 +234,7 @@ internal sealed class SkillLaborBatch
                 }
                 s_current = null;
                 inventory.Complete();
-                if (charged)
+                if (labor.HasChanges)
                     labor.Complete();
                 foreach (var action in batch._afterCommit)
                     action();
@@ -208,7 +262,7 @@ internal sealed class SkillLaborBatch
                         restore();
                     foreach (var restore in batch._doodads.Values.Reverse())
                         restore();
-                    if (skill.Cancelled)
+                    if (skill.Cancelled && !placementLaborCost.HasValue)
                         owner.Craft?.CancelFromSkill(skill.Template.Id);
                 }
             }
