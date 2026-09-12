@@ -356,3 +356,27 @@ Native empty model results are distinct from a parser failure or an unresolved c
 The read set includes 83 CGA files and 74 authored scale tracks.
 Those scale tracks contain constant values.
 The focused final checks passed 7 CAF tests, 9 CGA tests, and 18 resolver tests.
+
+## Doodad phase animation coverage
+
+`LoadAnimationPose(modelUri, animationName, elapsedSeconds, loop)` applies the selected phase clip.
+It handles direct CGA or CHR models and character children inside a prefab.
+Native `393a9b00` calls `39108de0` for a doodad phase animation.
+That function visits each animation child, including a child whose authored `bPlaying` is zero.
+The resolver keeps the child transform and material after the phase clip changes its pose.
+
+Native `3155b350` returns false before a queue change when the requested animation ID is absent.
+A missing phase name thus keeps the model's current default pose in the server clock policy.
+The resolver does not replace it with an unknown pose or empty collision.
+
+The phase check covers 317 distinct model and animation pairs from 735 applicable compact rows.
+All 951 phase samples passed, with no parser errors or unresolved collision poses.
+The check found 3 legacy-only CAF clips for quest wings, sewing, and printing.
+The reader supports their controller versions `0x827` and `0x828`.
+Version `0x827` omits the normal chunk header. Version `0x828` includes that header.
+Native `3162f6e0` converts position centimeters to meters and divides integer key ticks by `160`.
+Native `3162ac20` decodes conjugate log quaternions and uses normalized shortest-path interpolation through `3162a840`.
+
+The focused checks passed 9 CAF tests and 2 game_pak phase tests.
+Those phase tests cover a named CGA door clip, a missing name, and a stopped prefab character with a world transform.
+The resolver retains cached geometry for static prefab models without active animation.

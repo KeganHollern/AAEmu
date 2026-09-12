@@ -21,9 +21,11 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
         if (!double.IsFinite(elapsedSeconds) || elapsedSeconds < 0)
             throw new ArgumentOutOfRangeException(nameof(elapsedSeconds));
         var uri = Normalize(modelUri);
+        var asset = Load(uri);
+        if (!asset.PoseRequirements.Any(pose => pose.Playing))
+            return asset;
         if (uri.StartsWith("prefab://", StringComparison.Ordinal))
             return LoadPrefab(uri[9..], elapsedSeconds);
-        var asset = Load(uri);
         if (asset.CgaAnimation != null && asset.PoseRequirements.Any(pose => pose.Playing))
             return asset.CgaAnimation.Sample(asset, elapsedSeconds, uri.StartsWith("cga_loop://", StringComparison.Ordinal));
         if (asset.PoseRequirements.Any(pose => pose.Playing))
@@ -90,7 +92,8 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
         return asset;
     }
 
-    private CryGeometryAsset LoadPrefab(string path, double? elapsedSeconds = null)
+    private CryGeometryAsset LoadPrefab(string path, double? elapsedSeconds = null,
+        string phaseAnimation = null, bool phaseLoop = false)
     {
         var separator = path.IndexOf(".xml/", StringComparison.Ordinal);
         if (separator < 0)
@@ -158,6 +161,8 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
                 else if (child.CharacterBones.Count > 0)
                     child = LoadCharacterPose(childPath, (string)animation.Attribute("Animation") ?? "Default", time, loop);
             }
+            if (phaseAnimation != null && animatedEntity && elapsedSeconds.HasValue && child.HasModelBounds)
+                child = ApplyRequestedAnimation(childPath, child, phaseAnimation, elapsedSeconds.Value, phaseLoop);
             var transform = ReadPrefabTransform(obj, origin);
             if (child.HasModelBounds)
             {

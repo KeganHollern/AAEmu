@@ -46,7 +46,7 @@ public sealed class CryCharacterAnimation
                 reader.ReadInt32();
             if (offset < 20 || offset > data.Length - 32)
                 throw new InvalidDataException("Invalid CAF chunk offset.");
-            chunks.Add((kind, chunkVersion, offset + 16));
+            chunks.Add((kind, chunkVersion, offset + (kind == 0xcccc000d && chunkVersion == 0x827 ? 0 : 16)));
         }
         var hasCompressedControllers = chunks.Any(chunk => chunk.Kind == 0xcccc000d && chunk.Version is >= 0x829 and <= 0x831);
         var tracks = new Dictionary<uint, Track>();
@@ -70,6 +70,27 @@ public sealed class CryCharacterAnimation
                 // Native3162f080 and3162f6e0 select compressed tracks for the whole clip.
                 if (hasCompressedControllers && chunk.Version is 0x827 or 0x828)
                     continue;
+                if (chunk.Version is 0x827 or 0x828)
+                {
+                    var countKeys = CryPhysicsDataReader.ReadCount(reader, data.Length / 28);
+                    var controller = reader.ReadUInt32();
+                    var times = new float[countKeys];
+                    var points = new Vector3[countKeys];
+                    var quaternions = new Quaternion[countKeys];
+                    for (var key = 0; key < countKeys; key++)
+                    {
+                        times[key] = reader.ReadInt32() / 160;
+                        points[key] = CryPhysicsDataReader.ReadVector(reader) * 0.01f;
+                        var logarithm = CryPhysicsDataReader.ReadVector(reader);
+                        var angle = logarithm.Length();
+                        quaternions[key] = angle == 0 ? Quaternion.Identity :
+                            new Quaternion(logarithm * (-MathF.Sin(angle) / angle), MathF.Cos(angle));
+                        if (key > 0 && times[key] <= times[key - 1])
+                            throw new InvalidDataException("CAF key times are not strictly ordered.");
+                    }
+                    tracks.Add(controller, new Track(quaternions, times, points, times));
+                    continue;
+                }
                 if (chunk.Version != 0x829)
                     throw new NotSupportedException($"Unsupported CAF controller version {chunk.Version:X}.");
                 var id = reader.ReadUInt32();

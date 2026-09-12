@@ -62,6 +62,54 @@ public sealed class CryCharacterAnimationTests
         await Assert.That(mixed.Bounds).IsEqualTo(normal.Bounds);
     }
 
+    [Test]
+    [Arguments(0x827)]
+    [Arguments(0x828)]
+    public async Task Read_LegacyLogQuaternion_UsesHeaderLayoutUnitsAndConjugation(int version)
+    {
+        var clip = CryCharacterAnimation.Read(LegacyClip(version));
+        var pose = clip.Sample(BindAsset(), 0.5, false);
+        await Assert.That(Vector3.Distance(pose.Parts[0].Transform.Translation, new Vector3(1 + MathF.Sqrt(0.5f), -MathF.Sqrt(0.5f), 0))).IsLessThan(0.00001f);
+        await Assert.That(clip.DurationSeconds).IsEqualTo((double)(30 * (1f / 4800 * 160)));
+    }
+
+    private static byte[] LegacyClip(int version)
+    {
+        var original = Clip();
+        var timingOffset = BitConverter.ToInt32(original, 32);
+        var timingSize = BitConverter.ToInt32(original, 40);
+        using var payload = new MemoryStream();
+        using (var writer = new BinaryWriter(payload, Encoding.UTF8, true))
+        {
+            if (version == 0x828)
+                writer.Write(new byte[16]);
+            writer.Write(2);
+            writer.Write(23u);
+            for (var key = 0; key < 2; key++)
+            {
+                writer.Write((100 + key * 30) * 160);
+                foreach (var value in new[] { key * 200f, 0, 0, 0, 0, key * MathF.PI / 4 })
+                    writer.Write(value);
+            }
+        }
+        using var result = new MemoryStream();
+        using var output = new BinaryWriter(result);
+        output.Write(original, 0, 24);
+        output.Write(0xcccc000eu);
+        output.Write(0x918);
+        output.Write(64);
+        output.Write(1);
+        output.Write(timingSize);
+        output.Write(0xcccc000du);
+        output.Write(version);
+        output.Write(64 + timingSize);
+        output.Write(2);
+        output.Write((int)payload.Length);
+        output.Write(original, timingOffset, timingSize);
+        output.Write(payload.ToArray());
+        return result.ToArray();
+    }
+
     private static CryGeometryAsset BindAsset()
     {
         var sphere = new CrySphere(Vector3.Zero, 0.1f);
