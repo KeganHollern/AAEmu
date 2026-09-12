@@ -44,3 +44,8 @@ Other static render types need separate treatment. Native dispatch
 AutoCubeMap is type 16. The decal and distance-cloud loaders create render
 nodes and do not add solid physics geometry. Water volumes use physics
 area entities, outside the housing overlap entity mask `0x1F`.
+
+The decal vtable is `30257848`. Its `GetPhysics` slot `+0xB8` points to
+`30056760`, which returns null. Its `Physicalize` slot `+0xC4` points to the
+empty `3001aa20`. The distance-cloud vtable is `3025CC48`; its `Physicalize`
+slot points to the same empty method.
