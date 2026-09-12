@@ -22,8 +22,8 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
 
     private readonly List<SphereQuestTrigger> _sphereQuestTriggers = [];
     private readonly List<SphereQuestStarter> _questStartingSpheres = [];
-    // PlayerId, Pos
-    private readonly Dictionary<uint, Vector3> _questStartingLastPositionChecks = [];
+    // Keep the session owner so late logout cleanup cannot remove reconnect state.
+    private readonly Dictionary<uint, (Character Character, Vector3 Position)> _questStartingLastPositionChecks = [];
 
     private readonly object _triggersLock = new();
     private readonly object _questStartingSpheresLock = new();
@@ -129,6 +129,18 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
         }
     }
 
+    internal void RemoveSphereQuestTriggers(ICharacter owner)
+    {
+        lock (_triggersLock)
+            _sphereQuestTriggers.RemoveAll(trigger => ReferenceEquals(trigger.Owner, owner));
+        lock (_questStartingSpheresLock)
+        {
+            if (_questStartingLastPositionChecks.TryGetValue(owner.Id, out var sample) &&
+                ReferenceEquals(sample.Character, owner))
+                _questStartingLastPositionChecks.Remove(owner.Id);
+        }
+    }
+
     private void Tick(TimeSpan delta)
     {
         try
@@ -163,11 +175,11 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
     {
         // Handle Global triggers for quest starters
         List<SphereQuestStarter> startingSphereSnapshot;
-        Dictionary<uint, Vector3> previousPositions;
+        Dictionary<uint, (Character Character, Vector3 Position)> previousPositions;
         lock (_questStartingSpheresLock)
         {
             startingSphereSnapshot = [.. _questStartingSpheres];
-            previousPositions = new Dictionary<uint, Vector3>(_questStartingLastPositionChecks);
+            previousPositions = new(_questStartingLastPositionChecks);
         }
         var currentPositions = new Dictionary<uint, (Character Character, Vector3 Position)>();
         foreach (var questStartingSphere in startingSphereSnapshot)
@@ -192,7 +204,9 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
 
             foreach (var (characterId, character) in playersInNearbyRegion)
             {
-                var hasLastPosition = previousPositions.TryGetValue(characterId, out var lastCheckLocation);
+                var hasLastPosition = previousPositions.TryGetValue(characterId, out var previousSample) &&
+                    ReferenceEquals(previousSample.Character, character);
+                var lastCheckLocation = hasLastPosition ? previousSample.Position : Vector3.Zero;
                 var oldInside = hasLastPosition && questStartingSphere.Sphere.Contains(lastCheckLocation);
                 if (!currentPositions.TryGetValue(characterId, out var currentPosition))
                 {
@@ -216,7 +230,7 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
             foreach (var (characterId, sample) in currentPositions)
             {
                 if (sample.Character.Transform.InstanceId == parent.Id)
-                    _questStartingLastPositionChecks[characterId] = sample.Position;
+                    _questStartingLastPositionChecks[characterId] = sample;
             }
         }
     }

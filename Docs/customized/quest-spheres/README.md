@@ -37,6 +37,10 @@ It also clears location objectives that normally reset on exit.
 It preserves completed arrival objectives with `TriggerEveryNTimeAfter`.
 AreaSphere skill requirements also use the owner's world instance.
 
+The shared logout and disconnect path removes the departing character's triggers and starter positions.
+It keeps persisted quest counters unchanged.
+Cleanup checks the character reference so a repeated call cannot remove a new session's state.
+
 ## Data decisions
 
 The client has 2,479 hint volumes in 69 files across 9 worlds.

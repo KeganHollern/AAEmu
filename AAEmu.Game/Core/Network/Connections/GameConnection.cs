@@ -287,6 +287,8 @@ public class GameConnection
 
         CleanupThenSave(() =>
         {
+            // Release only this session's triggers before any other cleanup can fail.
+            activeChar.ParentWorld?.SphereQuestManager?.RemoveSphereQuestTriggers(activeChar);
             TradeManager.Instance.CancelTrade(activeChar, 0);
 
             // Remove Radars
