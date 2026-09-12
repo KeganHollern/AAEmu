@@ -251,10 +251,9 @@ public sealed partial class PlayerMailSendPersistenceTests
                     Assert.Equal(HousingPermission.Private, restoredHouse.Permission);
                     Assert.Equal(expectedPosition, restoredHouse.Transform.World.Position);
                     Assert.InRange(Vector3.Distance(expectedRotation, restoredHouse.Transform.World.Rotation), 0, 0.000001f);
-                    Assert.Equal(expectedPlaceDate.Ticks / TimeSpan.TicksPerSecond,
-                        restoredHouse.PlaceDate.Ticks / TimeSpan.TicksPerSecond);
-                    Assert.Equal(expectedProtection.Ticks / TimeSpan.TicksPerSecond,
-                        restoredHouse.ProtectionEndDate.Ticks / TimeSpan.TicksPerSecond);
+                    // MySQL DATETIME rounds the fractional second when it stores this row.
+                    Assert.InRange(Math.Abs((restoredHouse.PlaceDate - expectedPlaceDate).TotalSeconds), 0, 0.500001);
+                    Assert.InRange(Math.Abs((restoredHouse.ProtectionEndDate - expectedProtection).TotalSeconds), 0, 0.500001);
                     Assert.False(restoredHouse.IsDirty);
                     return;
                 }
