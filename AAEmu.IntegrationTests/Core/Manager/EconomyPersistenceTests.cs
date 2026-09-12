@@ -13,6 +13,7 @@ using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Trading;
 using AAEmu.Game.Models.Game.Dominions;
 using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Mails;
@@ -35,45 +36,55 @@ public sealed class EconomyPersistenceTests
     [Fact]
     public void PriestPurchase_BuffInsertFailureRestoresWallet_AndRetryPersistsBoth()
     {
-        var graph = new SaveGraph();
-        var character = CreateCharacter(graph.Id);
-        character.Money = 10000;
-        Assert.True(graph.Save.TryCommitEconomy([character]));
-        var effects = Field<List<Buff>>(character.Buffs, "_effects");
-        var buff = new Buff(character, character, new SkillCasterUnit(character.ObjId),
-            new BuffTemplate { Id = 239, SaveRuleId = BuffSaveRuleType.Normal }, null, DateTime.UtcNow)
-            { State = EffectState.Acting, Duration = 1800000 };
-        var trigger = $"reject_priest_{graph.Id}";
-        Execute($"CREATE TRIGGER {trigger} BEFORE INSERT ON character_active_buffs FOR EACH ROW " +
-            $"BEGIN IF NEW.character_id={character.Id} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected priest buff failure'; END IF; END");
+        var skillField = typeof(Singleton<SkillManager>).GetField("s_instance", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var oldSkills = skillField.GetValue(null);
+        var skills = new SkillManager(null, null);
+        typeof(SkillManager).GetField("_skills", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(skills, new Dictionary<uint, SkillTemplate>());
+        skillField.SetValue(null, skills);
         try
         {
-            Assert.False(Purchase());
-            Assert.Equal(10000, character.Money);
-            Assert.Equal(10000, Read("characters", "money", character.Id));
-            Assert.Empty(effects);
-            Assert.Equal(0, PersistedBuffs());
-        }
-        finally
-        {
-            Execute($"DROP TRIGGER {trigger}");
-        }
-        Assert.True(Purchase());
-        Assert.Equal(5000, character.Money);
-        Assert.Equal(5000, Read("characters", "money", character.Id));
-        Assert.Same(buff, Assert.Single(effects));
-        Assert.Equal(1, PersistedBuffs());
+            var graph = new SaveGraph();
+            var character = CreateCharacter(graph.Id);
+            character.Money = 10000;
+            Assert.True(graph.Save.TryCommitEconomy([character]));
+            var effects = Field<List<Buff>>(character.Buffs, "_effects");
+            var buff = new Buff(character, character, new SkillCasterUnit(character.ObjId),
+                new BuffTemplate { Id = 239, SaveRuleId = BuffSaveRuleType.Normal }, null, DateTime.UtcNow)
+                { State = EffectState.Acting, Duration = 1800000 };
+            var trigger = $"reject_priest_{graph.Id}";
+            Execute($"CREATE TRIGGER {trigger} BEFORE INSERT ON character_active_buffs FOR EACH ROW " +
+                $"BEGIN IF NEW.character_id={character.Id} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected priest buff failure'; END IF; END");
+            try
+            {
+                Assert.False(Purchase());
+                Assert.Equal(10000, character.Money);
+                Assert.Equal(10000, Read("characters", "money", character.Id));
+                Assert.Empty(effects);
+                Assert.Equal(0, PersistedBuffs());
+            }
+            finally
+            {
+                Execute($"DROP TRIGGER {trigger}");
+            }
+            Assert.True(Purchase());
+            Assert.Equal(5000, character.Money);
+            Assert.Equal(5000, Read("characters", "money", character.Id));
+            Assert.Same(buff, Assert.Single(effects));
+            Assert.Equal(1, PersistedBuffs());
 
-        bool Purchase() => character.CompletePriestPurchase(5000,
-            () => effects.Add(buff), () => effects.Remove(buff),
-            () => graph.Save.TryCommitEconomy([character]));
-        long PersistedBuffs()
-        {
-            using var connection = MySQL.CreateConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = $"SELECT COUNT(*) FROM character_active_buffs WHERE character_id={character.Id} AND buff_id=239";
-            return Convert.ToInt64(command.ExecuteScalar());
+            bool Purchase() => character.CompletePriestPurchase(5000,
+                () => effects.Add(buff), () => effects.Remove(buff),
+                () => graph.Save.TryCommitEconomy([character]));
+            long PersistedBuffs()
+            {
+                using var connection = MySQL.CreateConnection();
+                using var command = connection.CreateCommand();
+                command.CommandText = $"SELECT COUNT(*) FROM character_active_buffs WHERE character_id={character.Id} AND buff_id=239";
+                return Convert.ToInt64(command.ExecuteScalar());
+            }
         }
+        finally { skillField.SetValue(null, oldSkills); }
     }
 
     [Theory]
@@ -126,6 +137,12 @@ public sealed class EconomyPersistenceTests
         var previous = accountField.GetValue(null);
         var accounts = new AccountManager(Mock.Of<ITickManager>(), Mock.Of<ITimedRewardsManager>(), TimeProvider.System);
         accountField.SetValue(null, accounts);
+        var formulaField = typeof(Singleton<FormulaManager>).GetField("s_instance", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var previousFormulas = formulaField.GetValue(null);
+        var formulas = new FormulaManager();
+        typeof(FormulaManager).GetField("_formulas", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(formulas, new Dictionary<uint, Formula>());
+        formulaField.SetValue(null, formulas);
         try
         {
             lock (SaveManager.PersistenceSyncRoot)
@@ -178,6 +195,7 @@ public sealed class EconomyPersistenceTests
         finally
         {
             accountField.SetValue(null, previous);
+            formulaField.SetValue(null, previousFormulas);
         }
     }
 

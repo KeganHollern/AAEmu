@@ -121,31 +121,24 @@ public sealed partial class PlayerMailSendPersistenceTests
     public void SkillLabor_NestedCheckpointRejectsAndRestoresTheWholeBatch()
     {
         using var graph = new SendGraph();
-        var oldAccounts = SwapSingleton(new AccountManager(null, null, TimeProvider.System));
-        try
+        using var services = new LaborBuffServices();
+        var player = graph.Sender;
+        player.InitializeLaborCache(20, DateTime.UtcNow);
+        Execute($"INSERT INTO accounts(account_id,labor) VALUES({player.AccountId},20) ON DUPLICATE KEY UPDATE labor=20");
+        var material = graph.AddItem(0);
+        Assert.True(graph.Save.TryCommitEconomy([player]));
+        var skill = new Skill(new SkillTemplate { Id = 50, ConsumeLaborPower = 10 });
+        var count = material.Count;
+        Assert.False(SkillLaborBatch.Run(player, skill, true, () =>
         {
-            var player = graph.Sender;
-            player.InitializeLaborCache(20, DateTime.UtcNow);
-            Execute($"INSERT INTO accounts(account_id,labor) VALUES({player.AccountId},20) ON DUPLICATE KEY UPDATE labor=20");
-            var material = graph.AddItem(0);
-            Assert.True(graph.Save.TryCommitEconomy([player]));
-            var skill = new Skill(new SkillTemplate { Id = 50, ConsumeLaborPower = 10 });
-            var count = material.Count;
-            Assert.False(SkillLaborBatch.Run(player, skill, true, () =>
-            {
-                Assert.Equal(1, player.Inventory.Bag.ConsumeItem(ItemTaskType.SkillReagents, material.TemplateId, 1, material));
-                Assert.False(graph.Save.TryCommitEconomy([player]));
-            }));
-            Assert.True(skill.Cancelled);
-            Assert.Equal(20, player.LaborPower);
-            Assert.Equal(count, material.Count);
-            Assert.Equal(count, Scalar($"SELECT count FROM items WHERE id={material.Id}"));
-            Assert.Equal(20, Scalar($"SELECT labor FROM accounts WHERE account_id={player.AccountId}"));
-        }
-        finally
-        {
-            SwapSingleton(oldAccounts);
-        }
+            Assert.Equal(1, player.Inventory.Bag.ConsumeItem(ItemTaskType.SkillReagents, material.TemplateId, 1, material));
+            Assert.False(graph.Save.TryCommitEconomy([player]));
+        }));
+        Assert.True(skill.Cancelled);
+        Assert.Equal(20, player.LaborPower);
+        Assert.Equal(count, material.Count);
+        Assert.Equal(count, Scalar($"SELECT count FROM items WHERE id={material.Id}"));
+        Assert.Equal(20, Scalar($"SELECT labor FROM accounts WHERE account_id={player.AccountId}"));
     }
 
 }
