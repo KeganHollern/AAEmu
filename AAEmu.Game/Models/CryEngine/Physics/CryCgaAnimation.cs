@@ -3,7 +3,10 @@ using System.Numerics;
 namespace AAEmu.Game.Models.CryEngine.Physics;
 
 public sealed record CryCgaNode(int Id, int ParentId, Matrix4x4 LocalTransform,
-    int PositionController, int RotationController, int ScaleController);
+    int PositionController, int RotationController, int ScaleController)
+{
+    public string Name { get; init; } = "";
+}
 
 public sealed record CryCgaRenderBounds(int NodeId, CryBounds Bounds, Matrix4x4 Transform);
 
@@ -30,8 +33,10 @@ public sealed class CryCgaAnimation
 
     public double DurationSeconds => (_endFrame - _startFrame) * _secondsPerFrame;
 
+    public CryCgaAnimation WithClip(byte[] data) => Read(data, _nodes, _renderBounds, true);
+
     public static CryCgaAnimation Read(byte[] data, IReadOnlyList<CryCgaNode> nodes,
-        IReadOnlyList<CryCgaRenderBounds> renderBounds)
+        IReadOnlyList<CryCgaRenderBounds> renderBounds, bool matchNodeNames = false)
     {
         using var reader = new BinaryReader(new MemoryStream(data, false));
         reader.BaseStream.Position = 12;
@@ -54,10 +59,19 @@ public sealed class CryCgaAnimation
         }
         float start = 0, end = 0, secondsPerFrame = 1f / 30;
         var tracks = new Dictionary<int, Track>();
+        var clipNodes = new Dictionary<string, (int Position, int Rotation, int Scale)>(StringComparer.OrdinalIgnoreCase);
         foreach (var chunk in chunks)
         {
             reader.BaseStream.Position = chunk.Body;
-            if (chunk.Kind == 0xcccc000e)
+            if (matchNodeNames && chunk.Kind == 0xcccc000b)
+            {
+                if (chunk.Version != 0x823)
+                    throw new NotSupportedException("Unsupported CGA clip node version.");
+                var name = System.Text.Encoding.UTF8.GetString(CryPhysicsDataReader.ReadExactly(reader, 64)).TrimEnd('\0');
+                reader.BaseStream.Position = chunk.Body + 188;
+                clipNodes[name] = (reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
+            }
+            else if (chunk.Kind == 0xcccc000e)
             {
                 if (chunk.Version != 0x918)
                     throw new NotSupportedException("Unsupported CGA timing chunk.");
@@ -96,6 +110,13 @@ public sealed class CryCgaAnimation
         }
         if (!float.IsFinite(start) || !float.IsFinite(end) || end < start || secondsPerFrame <= 0)
             throw new InvalidDataException("Invalid CGA animation range.");
+        if (matchNodeNames)
+        {
+            var assignedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            nodes = nodes.Select(node => assignedNames.Add(node.Name) && clipNodes.TryGetValue(node.Name, out var controls)
+                    ? node with { PositionController = controls.Position, RotationController = controls.Rotation, ScaleController = controls.Scale }
+                    : node with { PositionController = -1, RotationController = -1, ScaleController = -1 }).ToArray();
+        }
         return new CryCgaAnimation(tracks, nodes, renderBounds, start, end, secondsPerFrame);
     }
 

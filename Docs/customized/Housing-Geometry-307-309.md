@@ -253,6 +253,13 @@ The CGA sampler applies this rule after the node hierarchy transforms.
 It returns both sampled physical proxies and sampled rigid mesh bounds.
 All 30 extracted CGA fixtures passed samples at `0`, `0.5`, and `2` seconds.
 
+`LoadCgaPose` also reads named external ANM clips.
+Native `315e39c0` removes the CGA base name and underscore to get the animation name.
+Native `315e2220` maps ANM nodes to the first base joint with the same name CRC.
+Later ANM entries with that name update the same joint controllers.
+The crafting seal contains duplicate node names, so this rule matters for its pose.
+The authored fixture includes the Halloween coffin, crafting seals, and active guard tower clips.
+
 ## Character definitions
 
 Native `315d28b0` reads the `Model` element from a `CharacterDefinition` XML file.

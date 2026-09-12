@@ -68,13 +68,33 @@ public sealed class CryCgaAnimationTests
         await Assert.That(Vector3.Distance(pose.Bounds.Max, new Vector3(0.3f, 1, 1))).IsLessThan(0.00001f);
     }
 
+    [Test]
+    public async Task WithClip_NodeName_MapsDifferentControllerIdsToTheBindModel()
+    {
+        var animation = Read([(0, Vector3.Zero, 0), (4800, new Vector3(200, 0, 0), 0)], false, remap: true);
+        var pose = animation.Sample(Asset(), 0.5, false);
+        await Assert.That(MathF.Abs(pose.Parts[0].Transform.M41 - 1)).IsLessThan(0.00001f);
+    }
+
+    [Test]
+    public async Task WithClip_DuplicateNames_UpdateOnlyTheFirstBaseJoint()
+    {
+        var animation = Read([(0, Vector3.Zero, 0), (4800, new Vector3(200, 0, 0), 0)], false, child: true, remap: true);
+        var pose = animation.Sample(Asset() with
+        {
+            Parts = [Asset().Parts[0] with { CgaNodeId = 2, Transform = Matrix4x4.CreateTranslation(0, 3, 0) }]
+        }, 0.5, false);
+        await Assert.That(Vector3.Distance(pose.Parts[0].Transform.Translation, new Vector3(1, 3, 0))).IsLessThan(0.00001f);
+    }
+
     private static CryGeometryAsset Asset() => new(new CryBounds(-Vector3.One, Vector3.One),
         [new CryGeometryPart(new CrySphere(Vector3.Zero, 1), Matrix4x4.Identity, 0x1000, "", "root") { CgaNodeId = 1 }])
     {
         PoseRequirements = [new CryGeometryPoseRequirement("model.cga", "", Matrix4x4.Identity, "Default", true, true)]
     };
 
-    private static CryCgaAnimation Read((int Time, Vector3 Value, float Angle)[] keys, bool rotation, bool child = false, bool narrow = false)
+    private static CryCgaAnimation Read((int Time, Vector3 Value, float Angle)[] keys, bool rotation, bool child = false,
+        bool narrow = false, bool remap = false)
     {
         var chunks = new List<(uint Kind, int Version, int Id, byte[] Body)>();
         using var timing = new MemoryStream();
@@ -105,7 +125,18 @@ public sealed class CryCgaAnimationTests
                 writer.Write(new byte[20]);
             }
         }
-        chunks.Add((0xcccc000d, 0x826, 4, track.ToArray()));
+        chunks.Add((0xcccc000d, 0x826, remap ? 17 : 4, track.ToArray()));
+        if (remap)
+        {
+            var node = new byte[200];
+            Encoding.UTF8.GetBytes("root").CopyTo(node, 0);
+            BitConverter.GetBytes(-1).CopyTo(node, 188);
+            BitConverter.GetBytes(-1).CopyTo(node, 192);
+            BitConverter.GetBytes(-1).CopyTo(node, 196);
+            chunks.Add((0xcccc000b, 0x823, 12, node.ToArray()));
+            BitConverter.GetBytes(17).CopyTo(node, 188);
+            chunks.Add((0xcccc000b, 0x823, 13, node));
+        }
         using var stream = new MemoryStream();
         using var output = new BinaryWriter(stream);
         output.Write(Encoding.ASCII.GetBytes("CryTek\0\0"));
@@ -128,11 +159,12 @@ public sealed class CryCgaAnimationTests
             output.Write(new byte[16]);
             output.Write(chunk.Body);
         }
-        List<CryCgaNode> nodes = [new(1, -1, Matrix4x4.Identity, rotation ? -1 : 4, rotation ? 4 : -1, -1)];
+        List<CryCgaNode> nodes = [new(1, -1, Matrix4x4.Identity, rotation ? -1 : 4, rotation ? 4 : -1, -1) { Name = "root" }];
         if (child)
-            nodes.Add(new CryCgaNode(2, 1, Matrix4x4.CreateTranslation(0, 3, 0), -1, -1, -1));
+            nodes.Add(new CryCgaNode(2, 1, Matrix4x4.CreateTranslation(0, 3, 0), -1, -1, -1) { Name = remap ? "root" : "child" });
         var extent = narrow ? new Vector3(0.1f, 1, 1) : Vector3.One;
-        return CryCgaAnimation.Read(stream.ToArray(), nodes,
+        var animation = CryCgaAnimation.Read(stream.ToArray(), nodes,
             [new CryCgaRenderBounds(1, new CryBounds(-extent, extent), Matrix4x4.Identity)]);
+        return remap ? animation.WithClip(stream.ToArray()) : animation;
     }
 }

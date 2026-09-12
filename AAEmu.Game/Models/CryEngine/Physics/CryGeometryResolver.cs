@@ -134,11 +134,7 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
                 var time = elapsedSeconds.Value * Parse((string)animation.Attribute("Speed") ?? "1");
                 var loop = (string)animation.Attribute("bLoop") == "1";
                 if (child.CgaAnimation != null)
-                {
-                    if (!string.Equals((string)animation.Attribute("Animation"), "Default", StringComparison.OrdinalIgnoreCase))
-                        throw new NotSupportedException("A named CGA animation needs its external ANM file.");
-                    child = child.CgaAnimation.Sample(child, time, loop);
-                }
+                    child = LoadCgaPose(childPath, (string)animation.Attribute("Animation") ?? "Default", time, loop);
                 else if (child.CharacterBones.Count > 0)
                     child = LoadCharacterPose(childPath, (string)animation.Attribute("Animation") ?? "Default", time, loop);
             }
@@ -386,7 +382,8 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
             CharacterBones = bones,
             CgaAnimation = path.EndsWith(".cga", StringComparison.OrdinalIgnoreCase)
                 ? CryCgaAnimation.Read(data, nodes.Select(pair => new CryCgaNode(pair.Key, pair.Value.Parent,
-                    pair.Value.Transform, pair.Value.Controllers[0], pair.Value.Controllers[1], pair.Value.Controllers[2])).ToArray(), renderBounds)
+                    pair.Value.Transform, pair.Value.Controllers[0], pair.Value.Controllers[1], pair.Value.Controllers[2])
+                    { Name = pair.Value.Name }).ToArray(), renderBounds)
                 : null
         };
     }
