@@ -62,6 +62,7 @@ public sealed class ExpeditionAchievementTests
                 Name = "Guild",
                 Members = [member]
             };
+            character.Expedition = expedition;
             var guildChannels =
                 (ConcurrentDictionary<FactionsEnum, ChatChannel>)s_guildChannelsProperty.GetValue(chatManager)!;
             var channel = new ChatChannel { ChatType = ChatType.Clan, InternalName = expedition.Name };

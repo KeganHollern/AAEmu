@@ -607,6 +607,8 @@ public class CharacterManager(
     /// <param name="fullWipe">Do owned items need to be actually deleted</param>
     public void DeleteCharacterAssets(Character character, bool fullWipe)
     {
+        if (character.Expedition?.OwnerId == character.Id)
+            return;
         if (!mailManager.ReturnDeletedCharacterMail(character.Id))
         {
             Logger.Warn("DeleteCharacterAssets - Mail cleanup remains pending for character {0}", character.Id);
@@ -638,11 +640,11 @@ public class CharacterManager(
 
         // Remove from Guild
         if (character.Expedition != null)
-            ExpeditionManager.Leave(character);
+            ExpeditionManager.Instance.Leave(character);
 
         // Remove from Family
         if (character.Family > 0)
-            familyManager.LeaveFamily(character);
+            familyManager.RemoveDeletedCharacter(character);
 
         // TODO: Remove from player nation
         // TODO: Delete leadership
@@ -670,6 +672,8 @@ public class CharacterManager(
 
     private bool CompleteCharacterDeletion(Character character, GameConnection gameConnection, MySqlConnection dbConnection)
     {
+        if (character.Expedition?.OwnerId == character.Id)
+            return false;
         if (character.DeleteTime > DateTime.MinValue && character.DeleteTime <= DateTime.UtcNow)
         {
             using (var pending = dbConnection.CreateCommand())
@@ -809,6 +813,11 @@ public class CharacterManager(
     {
         if (gameConnection.Characters.TryGetValue(characterId, out var character))
         {
+            if (character.Expedition?.OwnerId == character.Id)
+            {
+                gameConnection.SendPacket(new SCErrorMsgPacket(ErrorMessageType.ExpeditionOwnerCannotDelete, 0, true));
+                return;
+            }
             character.DeleteRequestTime = DateTime.UtcNow;
 
             var targetDeleteDelay = 0;

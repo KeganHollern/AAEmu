@@ -92,6 +92,7 @@ public sealed class CharacterBlockTests
         world.GetCharacter(receiver.Name).Returns(receiver);
         var expeditions = new ExpeditionManager(Mock.Of<IExpeditionIdManager>().Object,
             Mock.Of<ITeamManager>().Object, world.Object, Mock.Of<IChatManager>().Object);
+        RegisterGuild(expeditions, sender.Expedition);
         expeditions.Invite(sender.Connection, receiver.Name);
         session.SendPacket(Any<byte[]>()).WasCalled(receiverBlocks ? Times.Never : Times.Once);
     }
@@ -123,6 +124,7 @@ public sealed class CharacterBlockTests
             Mock.Of<ITeamManager>().Object, world.Object, Mock.Of<IChatManager>().Object);
         typeof(ExpeditionManager).GetField("_expeditions", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(manager, new Dictionary<FactionsEnum, Expedition> { [guild.Id] = guild });
+        RegisterGuild(manager, sender.Expedition);
         var now = DateTime.UtcNow;
         manager.InvitationTime = () => now;
         if (reason != "no_invitation")
@@ -160,6 +162,7 @@ public sealed class CharacterBlockTests
         world.GetCharacter(receiver.Name).Returns(receiver);
         var manager = new ExpeditionManager(Mock.Of<IExpeditionIdManager>().Object,
             Mock.Of<ITeamManager>().Object, world.Object, Mock.Of<IChatManager>().Object);
+        RegisterGuild(manager, sender.Expedition);
         var now = DateTime.UtcNow;
         manager.InvitationTime = () => now;
         manager.Invite(sender.Connection, receiver.Name);
@@ -169,6 +172,10 @@ public sealed class CharacterBlockTests
         manager.Invite(sender.Connection, receiver.Name);
         session.SendPacket(Any<byte[]>()).WasCalled(Times.Exactly(2));
     }
+
+    private static void RegisterGuild(ExpeditionManager manager, Expedition guild) =>
+        typeof(ExpeditionManager).GetField("_expeditions", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(manager, new Dictionary<FactionsEnum, Expedition> { [guild.Id] = guild });
 
     private static void Block(Character blocker, Character blocked) =>
         blocker.Blocked.BlockedList.Add(blocked.Id, new BlockedTemplate { Owner = blocker.Id, BlockedId = blocked.Id });

@@ -12,19 +12,15 @@ public class CSLootDicePacket() : GamePacket(CSOffsets.CSLootDicePacket, 1)
 {
     public override void Read(PacketStream stream)
     {
-        var itemIndex = stream.ReadUInt16();
-        var lootOwnerType = (LootOwnerType)stream.ReadUInt16();
-        var lootOwnerObjId = stream.ReadBc();
-        var b = stream.ReadByte();
-        var rollRequest = stream.ReadBoolean(); // this might be a byte instead?
+        var lootId = stream.ReadUInt64();
+        var choice = stream.ReadByte();
+        if (stream.LeftBytes != 0 || choice > 1)
+            return;
 
-        byte[] remainingBytes = [];
-        if (stream.Pos < stream.Count)
-        {
-            remainingBytes = stream.ReadBytes(stream.Count - stream.Pos);
-        }
-        
-        Logger.Warn($"CSLootDice, ItemIndex: {itemIndex}, LootOwner: {lootOwnerType}:{lootOwnerObjId}, b: {b}, Roll: {rollRequest}, remainingBytes: {remainingBytes.Length}");
+        var itemIndex = (ushort)lootId;
+        var lootOwnerType = (LootOwnerType)(ushort)(lootId >> 16);
+        var lootOwnerObjId = (uint)(lootId >> 32);
+        var rollRequest = choice == 1;
 
         BaseUnit lootOwner = null;
         switch (lootOwnerType)

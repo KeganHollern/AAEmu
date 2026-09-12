@@ -1,5 +1,7 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Reflection;
+
+using AAEmu.Commons.Utils;
 
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
@@ -8,6 +10,7 @@ using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Team;
+using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.UnitTests.Utils.Mocks;
 
 using AchievementDataBuilder = AAEmu.UnitTests.Game.Models.Game.Char.CharacterAchievementsTests.AchievementDataBuilder;
@@ -141,6 +144,209 @@ public class TeamManagerTests
 
         await Assert.That(achievements.GetAmount(expectedAchievementId)).IsEqualTo(1u);
         await Assert.That(achievements.GetAmount(otherAchievementId)).IsEqualTo(0u);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AskRiskyTeam_NonOwnerDismiss_DoesNotChangeTeamOrChat(bool member)
+    {
+        var world = Mock.Of<IWorldManager>();
+        var chat = Mock.Of<IChatManager>();
+        var manager = new TeamManager(world.Object, chat.Object, Mock.Of<ITeamIdManager>().Object);
+        var owner = CreateCharacter(1, "Owner");
+        var actor = CreateCharacter(2, "Actor");
+        var team = CreateTeam(10, owner);
+        if (member) team.AddMember(actor);
+        GetActiveTeams(manager)[team.Id] = team;
+
+        manager.AskRiskyTeam(actor, team.Id, owner.Id, RiskyAction.Dismiss);
+
+        await Assert.That(manager.GetActiveTeam(team.Id)).IsSameReferenceAs(team);
+        await Assert.That(team.IsMember(owner.Id)).IsTrue();
+        Mock.VerifyNoOtherCalls(chat);
+        Mock.VerifyNoOtherCalls(world);
+    }
+
+    [Test]
+    public async Task AskRiskyTeam_OwnerDismiss_RemovesTeamAndMemberChat()
+    {
+        var chat = Mock.Of<IChatManager>();
+        var manager = new TeamManager(Mock.Of<IWorldManager>().Object, chat.Object, Mock.Of<ITeamIdManager>().Object);
+        var owner = CreateCharacter(1, "Owner");
+        var team = CreateTeam(10, owner);
+        chat.GetPartyChat(team, owner).Returns(new ChatChannel());
+        GetActiveTeams(manager)[team.Id] = team;
+
+        manager.AskRiskyTeam(owner, team.Id, owner.Id, RiskyAction.Dismiss);
+
+        await Assert.That(manager.GetActiveTeam(team.Id)).IsNull();
+    }
+
+    [Test]
+    [Arguments(RiskyAction.Leave, 1u)]
+    [Arguments(RiskyAction.Kick, 999u)]
+    [Arguments((RiskyAction)99, 1u)]
+    public async Task AskRiskyTeam_InvalidActionOrTarget_DoesNotTouchChat(RiskyAction action, uint targetId)
+    {
+        var chat = Mock.Of<IChatManager>();
+        var manager = new TeamManager(Mock.Of<IWorldManager>().Object, chat.Object, Mock.Of<ITeamIdManager>().Object);
+        var owner = CreateCharacter(1, "Owner");
+        var actor = action == RiskyAction.Leave ? CreateCharacter(2, "Member") : owner;
+        var team = CreateTeam(10, owner);
+        if (actor != owner) team.AddMember(actor);
+        GetActiveTeams(manager)[team.Id] = team;
+
+        manager.AskRiskyTeam(actor, team.Id, targetId, action);
+
+        await Assert.That(manager.GetActiveTeam(team.Id)).IsSameReferenceAs(team);
+        Mock.VerifyNoOtherCalls(chat);
+    }
+
+    [Test]
+    [Arguments(true, false, false, false)]
+    [Arguments(false, false, false, false)]
+    [Arguments(true, true, false, true)]
+    [Arguments(false, true, false, false)]
+    [Arguments(false, true, true, true)]
+    public async Task SetOverHeadMarker_ChecksMembershipAndRaidOwner(bool party, bool member, bool owner, bool allowed)
+    {
+        var manager = CreateManager();
+        var leader = CreateCharacter(1, "Owner");
+        var actor = owner ? leader : CreateCharacter(2, "Actor");
+        var team = CreateTeam(10, leader);
+        team.IsParty = party;
+        if (member && actor != leader) team.AddMember(actor);
+        GetActiveTeams(manager)[team.Id] = team;
+        // An overhead icon does not confer a rank in the r208022 client.
+        team.MarksList[1] = (1, actor.Id);
+
+        manager.SetOverHeadMarker(actor, team.Id, OverHeadMark.Number1, 2, 700);
+
+        await Assert.That(team.MarksList[0].Item2).IsEqualTo(allowed ? 700u : 0u);
+    }
+
+    [Test]
+    public async Task ChangeLootingRule_OutsideMaster_DoesNotPartiallyChangeRule()
+    {
+        var manager = CreateManager();
+        var owner = CreateCharacter(1, "Owner");
+        var team = CreateTeam(10, owner);
+        GetActiveTeams(manager)[team.Id] = team;
+        var oldGrade = team.LootingRule.MinimumGrade;
+        var oldBind = team.LootingRule.RollForBindOnPickup;
+        var oldMethod = team.LootingRule.LootMethod;
+
+        manager.ChangeLootingRule(owner, team.Id, 15, LootingRuleMethod.LootMaster, 7, 999, !oldBind);
+
+        await Assert.That(team.LootingRule.LootMaster).IsEqualTo(0u);
+        await Assert.That(team.LootingRule.LootMethod).IsEqualTo(oldMethod);
+        await Assert.That(team.LootingRule.MinimumGrade).IsEqualTo(oldGrade);
+        await Assert.That(team.LootingRule.RollForBindOnPickup).IsEqualTo(oldBind);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ChangeLootingRule_ValidMasterOrMethodOnly_UsesMember(bool explicitMaster)
+    {
+        var manager = CreateManager();
+        var owner = CreateCharacter(1, "Owner");
+        var member = CreateCharacter(2, "Member");
+        var team = CreateTeam(10, owner);
+        team.AddMember(member);
+        GetActiveTeams(manager)[team.Id] = team;
+
+        manager.ChangeLootingRule(owner, team.Id, explicitMaster ? (byte)5 : (byte)1,
+            LootingRuleMethod.LootMaster, 2, explicitMaster ? member.Id : 0, false);
+
+        await Assert.That(team.LootingRule.LootMethod).IsEqualTo(LootingRuleMethod.LootMaster);
+        await Assert.That(team.LootingRule.LootMaster).IsEqualTo(explicitMaster ? member.Id : owner.Id);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    [NotInParallel]
+    public async Task AskRiskyTeam_ValidKick_RemovesTargetChatAndKeepsLeader(bool concurrentKick)
+    {
+        using var friends = new EmptyFriendsScope();
+        var world = Mock.Of<IWorldManager>();
+        var chat = Mock.Of<IChatManager>();
+        var manager = new TeamManager(world.Object, chat.Object, Mock.Of<ITeamIdManager>().Object);
+        var owner = CreateCharacter(1, "Owner");
+        var target = CreateCharacter(2, "Target");
+        var other = CreateCharacter(3, "Other");
+        var members = new[] { owner, target, other };
+        var team = CreateTeam(10, owner);
+        team.AddMember(target);
+        team.AddMember(other);
+        var partyChat = new ChatChannel();
+        foreach (var character in members)
+        {
+            typeof(Character).GetField("<IsOnline>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(character, true);
+            s_inPartyField.SetValue(character, true);
+            partyChat.JoinChannel(character);
+            chat.GetPartyChat(team, character).Returns(partyChat);
+            world.GetCharacterById(character.Id).Returns(character);
+        }
+        GetActiveTeams(manager)[team.Id] = team;
+
+        if (concurrentKick)
+            await Task.WhenAll(
+                Task.Run(() => manager.AskRiskyTeam(owner, team.Id, target.Id, RiskyAction.Kick)),
+                Task.Run(() => manager.AskRiskyTeam(owner, team.Id, target.Id, RiskyAction.Kick)));
+        else
+            manager.AskRiskyTeam(owner, team.Id, target.Id, RiskyAction.Kick);
+
+        await Assert.That(manager.GetActiveTeam(team.Id)).IsSameReferenceAs(team);
+        await Assert.That(team.MembersCount()).IsEqualTo(2);
+        await Assert.That(team.IsMember(target.Id)).IsFalse();
+        await Assert.That(partyChat.Members.Contains(target)).IsFalse();
+        await Assert.That(partyChat.Members.Contains(owner)).IsTrue();
+        await Assert.That(partyChat.Members.Contains(other)).IsTrue();
+        await Assert.That(target.InParty).IsFalse();
+        await Assert.That(owner.InParty).IsTrue();
+        chat.GetPartyChat(team, target).WasCalled(Times.Once);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SetPingPos_MarkedCharacter_MustBelongToTheTeam(bool isMember)
+    {
+        var manager = CreateManager();
+        var owner = CreateCharacter(1, "Owner");
+        var actor = CreateCharacter(2, "Actor");
+        var team = CreateTeam(10, owner);
+        if (isMember)
+            team.AddMember(actor);
+        team.MarksList[0] = (1, actor.Id);
+        GetActiveTeams(manager)[team.Id] = team;
+        var previousPosition = team.PingPosition;
+        var requestedPosition = new WorldSpawnPosition { X = 123, Y = 456, Z = 78 };
+
+        manager.SetPingPos(actor, team.Id, true, requestedPosition, 1);
+
+        await Assert.That(team.PingPosition).IsSameReferenceAs(isMember ? requestedPosition : previousPosition);
+    }
+
+    private sealed class EmptyFriendsScope : IDisposable
+    {
+        private static readonly FieldInfo s_instance = typeof(Singleton<FriendMananger>)
+            .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        private readonly object _previous = s_instance.GetValue(null);
+
+        public EmptyFriendsScope()
+        {
+            var manager = new FriendMananger();
+            typeof(FriendMananger).GetField("_allFriends", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(manager, new Dictionary<uint, FriendTemplate>());
+            s_instance.SetValue(null, manager);
+        }
+
+        public void Dispose() => s_instance.SetValue(null, _previous);
     }
 
     private static TeamManager CreateManager()

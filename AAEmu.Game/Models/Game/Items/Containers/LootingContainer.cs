@@ -1,4 +1,6 @@
-﻿using AAEmu.Game.Core.Managers;
+﻿using System.Numerics;
+
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
@@ -20,8 +22,27 @@ namespace AAEmu.Game.Models.Game.Items.Containers;
 /// <summary>
 /// Unlike other item containers this one is not an actual ItemContainer
 /// </summary>
-public class LootingContainer(IBaseUnit owner)
+public class LootingContainer
 {
+    private readonly Random _random;
+    private readonly Action<AAEmu.Game.Models.Tasks.Task, TimeSpan> _schedule;
+    private readonly Func<uint, Character> _findCharacter;
+
+    public LootingContainer(IBaseUnit owner) : this(owner, Random.Shared,
+        (task, delay) => TaskManager.Instance.Schedule(task, delay, count: 1),
+        id => WorldManager.Instance.GetCharacterById(id))
+    {
+    }
+
+    internal LootingContainer(IBaseUnit owner, Random random, Action<AAEmu.Game.Models.Tasks.Task, TimeSpan> schedule,
+        Func<uint, Character> findCharacter)
+    {
+        LootOwner = owner;
+        _random = random;
+        _schedule = schedule;
+        _findCharacter = findCharacter;
+    }
+
     // ReSharper disable once FieldCanBeMadeReadOnly.Local
     // ReSharper disable once InconsistentNaming
     private static Logger Logger = LogManager.GetCurrentClassLogger();
@@ -31,6 +52,13 @@ public class LootingContainer(IBaseUnit owner)
     /// Maximum range from owner to be permitted to loot (don't allow looting by far away people)
     /// </summary>
     public const float MaxLootingRange = 200f;
+
+    // Native loot-bag distance checks use sqrt(9) for NPCs and 9 for doodads.
+    internal const float NpcPickupRange = 3f;
+    internal const float DoodadPickupRange = 9f;
+
+    // r208022 X2UI loot_dice.alb sends Pass after 60000 milliseconds.
+    internal static readonly TimeSpan RollTimeout = TimeSpan.FromSeconds(60);
 
     /// <summary>
     /// Time before loot goes to public in seconds
@@ -50,7 +78,7 @@ public class LootingContainer(IBaseUnit owner)
     /// <summary>
     /// Unit this looting container is attached to
     /// </summary>
-    private IBaseUnit LootOwner { get; } = owner;
+    private IBaseUnit LootOwner { get; }
     private LootOwnerType LootOwnerType { get; set; } = LootOwnerType.None;
 
     /// <summary>
@@ -80,6 +108,12 @@ public class LootingContainer(IBaseUnit owner)
     /// </summary>
     /// <param name="killer"></param>
     public void GenerateLoot(IBaseUnit killer)
+    {
+        lock (ItemsLock)
+            GenerateLootLocked(killer);
+    }
+
+    private void GenerateLootLocked(IBaseUnit killer)
     {
         // Do not allow multiple generations of loot 
         if (AlreadyGenerated)
@@ -117,29 +151,30 @@ public class LootingContainer(IBaseUnit owner)
             // Check all people with a claim on the NPC
             EligiblePlayers.Clear();
             KillerTeam = TeamManager.Instance.GetActiveTeam(npc.CharacterTagging.TagTeam);
-            TeamLootingRule = KillerTeam?.LootingRule.Clone() ?? new LootingRule
+            Character[] teamMembers = [];
+            if (KillerTeam != null)
             {
-                LootMethod = LootingRuleMethod.FreeForAll,
-            };
+                lock (KillerTeam.SyncLock)
+                {
+                    TeamLootingRule = KillerTeam.LootingRule.Clone();
+                    teamMembers = KillerTeam.Members.Where(member => member?.Character != null)
+                        .Select(member => member.Character).ToArray();
+                }
+            }
+            else
+            {
+                TeamLootingRule = new LootingRule { LootMethod = LootingRuleMethod.FreeForAll };
+            }
 
             if (npc.CharacterTagging.TagTeam != 0)
             {
                 // A team has tagging rights
                 if (KillerTeam != null)
                 {
-                    foreach (var member in KillerTeam.Members)
+                    foreach (var member in teamMembers)
                     {
-                        if (member == null || member.Character == null)
-                            continue;
-
-                        //if (member.HasGoneRoundRobin)
-                        //    continue;
-
-                        if (member.Character.GetDistanceTo(npc) <= MaxLootingRange)
-                        {
-                            //This player is in range of the mob and in a group with tagging rights.
-                            EligiblePlayers.Add(member.Character);
-                        }
+                        if (IsWithinLootRange(member))
+                            EligiblePlayers.Add(member);
                     }
                 }
                 else if (npc.CharacterTagging.Tagger != null)
@@ -181,9 +216,9 @@ public class LootingContainer(IBaseUnit owner)
                 lootDropRate = maxDropRateMul;
                 lootGoldRate = maxLootGoldMul;
             }
-            else if (killer is Character player)
+            else if (npc.CharacterTagging.TagTeam == 0 && npc.CharacterTagging.Tagger == null && killer is Character player)
             {
-                // If no eligible players defined, then try to use the killer's loot rates and mark it as the sole valid option
+                // Only an untagged kill can fall back to the killer. An absent tagging team keeps its private claim.
                 lootDropRate *= (100f + player.DropRateMul) / 100f;
                 lootGoldRate *= (100f + player.LootGoldMul) / 100f;
                 Logger.Info($"Unit killed without aggro: {npc.ObjId} ({npc.TemplateId}) by {player.Name}");
@@ -277,10 +312,12 @@ public class LootingContainer(IBaseUnit owner)
     /// <param name="packet"></param>
     private void SendPacketToPlayers(HashSet<Character> players, GamePacket packet)
     {
-        foreach (var target in players)
-        {
+        Character[] targets;
+        lock (ItemsLock)
+            targets = players.ToArray();
+
+        foreach (var target in targets)
             target.SendPacket(packet);
-        }
     }
 
     /// <summary>
@@ -329,6 +366,9 @@ public class LootingContainer(IBaseUnit owner)
         KeyValuePair<ushort, LootingContainerItemEntry>[] lootItems = [];
         lock (ItemsLock)
         {
+            if (!CanAccessLoot(player))
+                return;
+
             OpenedBy.Add(player);
 
             if (lootAll)
@@ -387,123 +427,142 @@ public class LootingContainer(IBaseUnit owner)
 
     private bool TryTakeLootLocked(Character player, ushort itemIndex, LootingContainerItemEntry itemEntry, bool didLootAll)
     {
-        var lootTarget = player;
-        // If itemEntry not specified, grab it from its index
-        itemEntry ??= Items.GetValueOrDefault(itemIndex);
-
-        // Invalid item?
-        if (itemEntry == null)
+        if (!CanAccessLoot(player) || !Items.TryGetValue(itemIndex, out var currentItemEntry) ||
+            (itemEntry != null && itemEntry != currentItemEntry))
             return false;
 
-        // Check if it's already claimed by somebody else
+        itemEntry = currentItemEntry;
         if (itemEntry.HighestRoller > 0 && itemEntry.HighestRoller != player.Id)
         {
-            if (itemEntry.HighestRoller > 0)
-            {
-                player.SendErrorMessage(ErrorMessageType.NoPermissionToLoot, itemEntry.HighestRoller);
-            }
+            player.SendErrorMessage(ErrorMessageType.NoPermissionToLoot, itemEntry.HighestRoller);
             player.SendPacket(new SCLootItemFailedPacket(ErrorMessageType.NoPermissionToLoot, LootOwnerType, LootOwner.ObjId, itemEntry.ItemIndex, itemEntry.Item.TemplateId));
             return false;
         }
 
-        // Check for quest items eligibility
-        if (itemEntry.Item.Template.LootQuestId > 0)
+        if (!CanReceiveQuestItem(player, itemEntry))
+            return false;
+
+        if (itemEntry.HighestRoller == player.Id)
+            return TryDistributeLootToPlayer(player, itemEntry, didLootAll);
+
+        if (itemEntry.RollInProgress)
+            return false;
+
+        if (itemEntry.RollCompleted)
+            return TryDistributeLootToPlayer(player, itemEntry, didLootAll);
+
+        var rollMandatory = !itemEntry.RollCompleted && TeamLootingRule.LootMethod != LootingRuleMethod.Public &&
+            ((TeamLootingRule.MinimumGrade > 0 && itemEntry.Item.Grade >= TeamLootingRule.MinimumGrade) ||
+             (TeamLootingRule.RollForBindOnPickup && itemEntry.Item.Template.BindType.HasFlag(ItemBindType.BindOnPickup)));
+
+        // Dice take priority over rotation and master distribution for items that meet the rule.
+        if (rollMandatory)
         {
-            if (!player.Quests.HasQuest(itemEntry.Item.Template.LootQuestId))
+            foreach (var eligiblePlayer in GetCurrentEligiblePlayers().Where(candidate =>
+                         IsWithinLootRange(candidate) && HasRequiredQuest(candidate, itemEntry)))
+                itemEntry.PlayerRolls.Add(eligiblePlayer, 0);
+
+            if (itemEntry.PlayerRolls.Count > 1)
             {
-                player.SendPacket(new SCLootItemFailedPacket(ErrorMessageType.NeedQuestToInteract, LootOwnerType, LootOwner.ObjId, itemEntry.ItemIndex, itemEntry.Item.TemplateId));
+                itemEntry.RollInProgress = true;
+                _schedule(new LootRollTimeoutTask(this, itemEntry), RollTimeout);
+                foreach (var character in itemEntry.PlayerRolls.Keys)
+                    character.SendPacket(new SCLootDicePacket(itemEntry.Item));
                 return false;
             }
+
+            itemEntry.PlayerRolls.Clear();
         }
 
-        // Check if we already have looting right, if so, try to loot again
-        if (itemEntry.HighestRoller == player.Id)
-        {
-            return TryDistributeLootToPlayer(player, itemEntry, didLootAll);
-        }
-
-        // Check if rolls in progress (for more than one player only)
-        if (itemEntry.PlayerRolls.Count > 1)
-        {
-            return false;
-        }
-
-        // Do the Team looting rules require us to do a manual roll?
-        var rollMandatory = (TeamLootingRule.MinimumGrade > 0 && itemEntry.Item.Grade >= TeamLootingRule.MinimumGrade) || (TeamLootingRule.RollForBindOnPickup && itemEntry.Item.Template.BindType.HasFlag(ItemBindType.BindOnPickup));
-
-        // Check the other party/raid loot settings (if applicable)
-        var allowLootingNow = false;
+        var lootTarget = player;
         switch (TeamLootingRule.LootMethod)
         {
             case LootingRuleMethod.FreeForAll:
-                allowLootingNow = true;
+            case LootingRuleMethod.Public:
                 break;
             case LootingRuleMethod.RotateWinner:
-                if (EligiblePlayers.Count <= 1)
+                if (EligiblePlayers.Count > 1 && KillerTeam != null)
                 {
-                    // Only one possible player, so always allow 
-                    allowLootingNow = true;
+                    var candidates = GetCurrentEligiblePlayers().Where(candidate =>
+                        IsWithinLootRange(candidate) && HasRequiredQuest(candidate, itemEntry)).ToHashSet();
+                    lock (KillerTeam.SyncLock)
+                        lootTarget = KillerTeam.GetNextLootWinner(candidates, LootOwner);
+                    if (lootTarget == null)
+                        return false;
+                    itemEntry.HighestRoller = lootTarget.Id;
                 }
-                else if (KillerTeam != null)
-                {
-                    // Kill credits go to a team, pick a winner at random
-                    var winner = KillerTeam.GetNextLootWinner(EligiblePlayers, itemEntry.Owner.LootOwner);
-                    itemEntry.HighestRoller = winner?.Id ?? 0;
-
-                    if (itemEntry.HighestRoller > 0)
-                    {
-                        var res = TryDistributeLootToPlayer(winner, itemEntry, didLootAll);
-                        return winner == player && res;
-                    }
-                }
-                else
-                {
-                    Logger.Warn($"TryTakeLoot, We have no valid Team to apply {TeamLootingRule.LootMethod} to. Reverting it to public as a failsafe");
-                    allowLootingNow = true;
-                    rollMandatory = false;
-                    TeamLootingRule.LootMethod = LootingRuleMethod.Public;
-                }
-
-                // TODO: Handle edge-case where party is removed before rolls are executed
                 break;
             case LootingRuleMethod.LootMaster:
-                allowLootingNow = true;
-                lootTarget = WorldManager.Instance.GetCharacterById(TeamLootingRule.LootMaster) ?? player;
-                // TODO: verify if looting range matters
+                // The rule is a snapshot. A master who left the team cannot receive its later loot.
+                if (KillerTeam == null)
+                    return false;
+                lock (KillerTeam.SyncLock)
+                    lootTarget = KillerTeam.Members.FirstOrDefault(member =>
+                        member?.Character?.Id == TeamLootingRule.LootMaster)?.Character;
+                if (lootTarget == null || !EligiblePlayers.Any(eligible => eligible.Id == lootTarget.Id))
+                    return false;
                 break;
-            case LootingRuleMethod.Public:
-                allowLootingNow = true;
-                rollMandatory = false;
-                break;
+            default:
+                return false;
         }
 
-        if (allowLootingNow == false)
-        {
+        var result = TryDistributeLootToPlayer(lootTarget, itemEntry, didLootAll);
+        return lootTarget == player && result;
+    }
+
+    private IEnumerable<Character> GetCurrentEligiblePlayers()
+    {
+        // A reconnect keeps corpse eligibility, but an active dice pool keeps the session that received its prompt.
+        return EligiblePlayers.Select(player => HasCurrentSession(player) ? player : _findCharacter(player.Id))
+            .Where(player => player != null).DistinctBy(player => player.Id);
+    }
+
+    private static bool HasCurrentSession(Character player)
+    {
+        var connection = player?.Connection;
+        return player is { IsOnline: true } && connection is { IsClosed: false } &&
+               ReferenceEquals(connection.ActiveChar, player);
+    }
+
+    private bool IsWithinLootRange(Character player)
+    {
+        return HasCurrentSession(player) &&
+               LootOwner is BaseUnit owner && player.ParentWorld != null &&
+               ReferenceEquals(player.ParentWorld, owner.ParentWorld) &&
+               Vector3.Distance(player.Transform.World.Position, owner.Transform.World.Position) <= MaxLootingRange;
+    }
+
+    private bool CanAccessLoot(Character player)
+    {
+        if (!CanReceiveLoot(player) || LootOwner is not BaseUnit owner)
             return false;
-        }
 
-        // If a roll is required, then add all eligible players to the roll pool
-        if (rollMandatory && itemEntry.HighestRoller <= 0)
-        {
-            foreach (var eligiblePlayer in EligiblePlayers)
-            {
-                itemEntry.PlayerRolls.TryAdd(eligiblePlayer, 0);
-            }
-        }
+        // The server uses actor radii for the native collision-shape distance check.
+        var distance = Math.Max(0, Vector3.Distance(player.Transform.World.Position, owner.Transform.World.Position) -
+                                  player.ModelSize - owner.ModelSize);
+        var range = owner is Npc ? NpcPickupRange : DoodadPickupRange;
+        return float.IsFinite(distance) && distance < range;
+    }
 
-        //  If more than one person needs to roll, send out rolls to all players
-        if (itemEntry.PlayerRolls.Count > 1)
-        {
-            foreach (var (character, _) in itemEntry.PlayerRolls)
-            {
-                character.SendPacket(new SCLootDicePacket(itemEntry.Item));
-            }
-            return false;
-        }
+    private bool CanReceiveLoot(Character player)
+    {
+        return TeamLootingRule != null && IsWithinLootRange(player) &&
+               (TeamLootingRule.LootMethod == LootingRuleMethod.Public || EligiblePlayers.Any(eligible => eligible.Id == player.Id));
+    }
 
-        // TODO: Handle pickup limit, not sure if we should prevent looting/rolling in the first place, or just prevent adding to inventory
+    private static bool HasRequiredQuest(Character player, LootingContainerItemEntry itemEntry)
+    {
+        return itemEntry.Item.Template.LootQuestId == 0 ||
+               (player.Quests?.HasQuest(itemEntry.Item.Template.LootQuestId) ?? false);
+    }
 
-        return TryDistributeLootToPlayer(lootTarget, itemEntry, didLootAll);
+    private bool CanReceiveQuestItem(Character player, LootingContainerItemEntry itemEntry)
+    {
+        if (HasRequiredQuest(player, itemEntry))
+            return true;
+
+        player.SendPacket(new SCLootItemFailedPacket(ErrorMessageType.NeedQuestToInteract, LootOwnerType, LootOwner.ObjId, itemEntry.ItemIndex, itemEntry.Item.TemplateId));
+        return false;
     }
 
     /// <summary>
@@ -516,7 +575,8 @@ public class LootingContainer(IBaseUnit owner)
     /// <param name="b"></param>
     public void CloseBag(Character player, ushort itemIndex, LootOwnerType ownerType, uint ownerObjId, byte b)
     {
-        OpenedBy.Remove(player);
+        lock (ItemsLock)
+            OpenedBy.Remove(player);
     }
 
     /// <summary>
@@ -536,10 +596,11 @@ public class LootingContainer(IBaseUnit owner)
     private void DoPlayerRollLocked(Character player, ushort itemIndex, bool rollRequest)
     {
         var itemEntry = Items.GetValueOrDefault(itemIndex);
-        if (itemEntry == null)
+        if (itemEntry == null || !itemEntry.RollInProgress || !IsWithinLootRange(player) ||
+            !itemEntry.PlayerRolls.TryGetValue(player, out var previousRoll) || previousRoll != 0)
             return;
 
-        var rollResult = rollRequest ? (sbyte)Random.Shared.Next(1, 100) : (sbyte)-1;
+        var rollResult = rollRequest ? (sbyte)_random.Next(1, 101) : (sbyte)-1;
         itemEntry.PlayerRolls[player] = rollResult;
 
         // Notify the others of this roll result
@@ -561,44 +622,64 @@ public class LootingContainer(IBaseUnit owner)
     /// <param name="itemEntry"></param>
     private void FinishRolling(LootingContainerItemEntry itemEntry)
     {
-        // All done? Send summary as well to all
-        foreach (var (targetPlayer, _) in itemEntry.PlayerRolls)
-        {
-            targetPlayer?.SendPacket(new SCLootDiceSummaryPacket(LootOwnerType, LootOwner.ObjId, itemEntry.ItemIndex, itemEntry.PlayerRolls));
-        }
-
-        // Find the highest rolled value
-        var highestResult = itemEntry.PlayerRolls
-            .Where(x => x.Value > 0)
-            .OrderBy(x => x.Value)
-            .Select(x => x.Value)
-            .FirstOrDefault();
-
-        // Find highest roller(s)
-        var highestEntries = itemEntry.PlayerRolls
-            .Where(x => x.Value >= highestResult)
-            .OrderBy(x => x.Value)
-            .ToList();
-
-        if (highestEntries.Count <= 0)
-        {
-            // Everybody passed or didn't roll, set it to public
-            itemEntry.PlayerRolls.Clear();
+        if (!itemEntry.RollInProgress)
             return;
+
+        itemEntry.RollInProgress = false;
+        itemEntry.RollCompleted = true;
+        var participants = itemEntry.PlayerRolls.Keys.ToArray();
+        var round = itemEntry.PlayerRolls.ToDictionary();
+        Character winner;
+        while (true)
+        {
+            foreach (var participant in participants)
+                participant.SendPacket(new SCLootDiceSummaryPacket(LootOwnerType, LootOwner.ObjId, itemEntry.ItemIndex, round));
+
+            var highestResult = round.Values.Where(value => value > 0).DefaultIfEmpty().Max();
+            var tied = round.Where(entry => entry.Value == highestResult && entry.Value > 0)
+                .Select(entry => entry.Key).ToArray();
+            if (tied.Length == 0)
+            {
+                // All players passed. A later pickup must not start the same roll again.
+                itemEntry.PlayerRolls.Clear();
+                return;
+            }
+
+            if (tied.Length == 1)
+            {
+                winner = tied[0];
+                break;
+            }
+
+            // Re-roll only the tied highest Need players. Their original Need choice still applies.
+            round = tied.ToDictionary(character => character, _ => (sbyte)_random.Next(1, 101));
+            foreach (var (character, dice) in round)
+            {
+                itemEntry.PlayerRolls[character] = dice;
+                foreach (var participant in participants)
+                    participant.SendPacket(new SCLootDiceNotifyPacket(character.Name, itemEntry.Item, dice));
+            }
         }
 
-        // Select random winner (if multiple people roll the same)
-        var pickIndex = Random.Shared.Next(highestEntries.Count);
-        var highestEntry = highestEntries[pickIndex];
+        itemEntry.HighestRoller = winner.Id;
+        TryDistributeLootToPlayer(winner, itemEntry, false);
+    }
 
-        // Mark winner
-        itemEntry.HighestRoller = highestEntry.Key.Id;
-        TryDistributeLootToPlayer(highestEntry.Key, itemEntry, false);
+    private sealed class LootRollTimeoutTask(LootingContainer container, LootingContainerItemEntry itemEntry) : AAEmu.Game.Models.Tasks.Task
+    {
+        public override void Execute()
+        {
+            lock (container.ItemsLock)
+            {
+                if (container.Items.GetValueOrDefault(itemEntry.ItemIndex) == itemEntry && itemEntry.RollInProgress)
+                    container.ForceLootRollToFinish(itemEntry);
+            }
+        }
     }
 
     private bool TryDistributeLootToPlayer(Character player, LootingContainerItemEntry itemEntry, bool didLootAll)
     {
-        if (!TryReserveLootItem(itemEntry))
+        if (!CanReceiveLoot(player) || !CanReceiveQuestItem(player, itemEntry) || !TryReserveLootItem(itemEntry))
             return false;
 
         var fullOldItemId = itemEntry.Item.Id;
@@ -738,58 +819,41 @@ public class LootingContainer(IBaseUnit owner)
     /// <summary>
     /// Forces any ongoing loot rolls to end by making the remaining players auto-pass
     /// </summary>
-    private void ForceLootRollToFinish()
+    private void ForceLootRollToFinish(LootingContainerItemEntry itemEntry)
     {
-        LootingContainerItemEntry[] itemEntries;
-        lock (ItemsLock)
+        if (!itemEntry.RollInProgress)
+            return;
+
+        foreach (var player in itemEntry.PlayerRolls.Where(entry => entry.Value == 0).Select(entry => entry.Key).ToArray())
         {
-            itemEntries = Items.Values.ToArray();
+            itemEntry.PlayerRolls[player] = -1;
+            foreach (var participant in itemEntry.PlayerRolls.Keys)
+                participant.SendPacket(new SCLootDiceNotifyPacket(player.Name, itemEntry.Item, -1));
         }
 
-        foreach (var itemEntry in itemEntries)
-        {
-            lock (ItemsLock)
-            {
-                if (!Items.TryGetValue(itemEntry.ItemIndex, out var currentItemEntry) || currentItemEntry != itemEntry)
-                    continue;
-
-                if (itemEntry.PlayerRolls.All(m => m.Value != 0))
-                    continue;
-
-                foreach (var (player, roll) in itemEntry.PlayerRolls)
-                {
-                    if (roll == 0)
-                    {
-                        itemEntry.PlayerRolls[player] = -1;
-                        // Notify the others of this roll result (not sure if we should add this)
-                        // foreach (var targetPlayer in itemEntry.PlayerRolls.Keys)
-                        // {
-                        //     targetPlayer.SendPacket(new SCLootDiceNotifyPacket(player.Name, itemEntry.Item, -1));
-                        // }
-                    }
-                }
-
-                FinishRolling(itemEntry);
-            }
-        }
+        FinishRolling(itemEntry);
     }
 
     public void MakeLootPublic()
     {
-        ForceLootRollToFinish();
         lock (ItemsLock)
         {
+            if (TeamLootingRule == null)
+                return;
+
+            foreach (var itemEntry in Items.Values.ToArray())
+                ForceLootRollToFinish(itemEntry);
+
             if (Items.Count <= 0)
                 return;
+
+            // Claimed items remain reserved for their winner, including a failed inventory grant.
+            TeamLootingRule.LootMethod = LootingRuleMethod.Public;
+            TeamLootingRule.MinimumGrade = 0;
+            TeamLootingRule.RollForBindOnPickup = false;
+
+            LootOwner?.BroadcastPacket(new SCLootableStatePacket(LootOwnerType, LootOwner.ObjId, true), false);
         }
-
-        // Force full public looting for all non-claimed items
-        TeamLootingRule.LootMethod = LootingRuleMethod.Public;
-        TeamLootingRule.MinimumGrade = 0;
-        TeamLootingRule.RollForBindOnPickup = false;
-
-        // Broadcast the new state it to everybody nearby
-        LootOwner?.BroadcastPacket(new SCLootableStatePacket(LootOwnerType, LootOwner.ObjId, true), false);
     }
 
     public bool CanMakePublic()

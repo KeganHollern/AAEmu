@@ -47,6 +47,12 @@ public class SaveManager(
         }
     }
 
+    internal void ThrowIfConsistencyFailed()
+    {
+        if (_consistencyFailed)
+            throw new InvalidOperationException("Persistence is stopped after an unconfirmed commit.");
+    }
+
     public void Initialize()
     {
         Logger.Info("Initialising Save Manager...");
@@ -139,8 +145,7 @@ public class SaveManager(
     {
         lock (PersistenceSyncRoot)
         {
-            if (_consistencyFailed)
-                throw new InvalidOperationException("Persistence is stopped after an unconfirmed commit.");
+            ThrowIfConsistencyFailed();
             if (AAEmu.Game.Models.Game.Skills.SkillLaborBatch.Current is { IsCommitting: false } skillBatch)
                 return skillBatch.Fail();
             if (_isSaving)

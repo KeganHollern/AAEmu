@@ -1,7 +1,10 @@
-﻿using AAEmu.Commons.Utils;
+﻿using System.Text;
+
+using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Achievement.Enums;
@@ -15,8 +18,19 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
-    private Dictionary<uint, Family> _families;
-    private Dictionary<uint, FamilyMember> _familyMembers;
+    private const int MaximumTitleCharacters = 45; // family_members.title varchar(45)
+    private const int MaximumTitleBytes = 104; // Native FamilyMember title buffer, excluding the terminator.
+
+    private Dictionary<uint, Family> _families = [];
+    private Dictionary<uint, FamilyMember> _familyMembers = [];
+    private readonly object _syncRoot = SaveManager.PersistenceSyncRoot;
+    private readonly Dictionary<uint, PendingInvitation> _pendingInvitations = [];
+
+    internal Func<DateTime> InvitationTime { get; set; } = () => DateTime.UtcNow;
+    internal Action<Family> PersistFamily { get; set; } = SaveFamily;
+
+    private sealed record PendingInvitation(Character Inviter, GameConnection InviterConnection,
+        Character Invited, GameConnection InvitedConnection, Family Family, string Title, DateTime Expires);
 
     /// <summary>
     /// Load family data
@@ -64,13 +78,28 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     /// </summary>
     public void SaveAllFamilies()
     {
-        using var connection = MySQL.CreateConnection();
-        using var transaction = connection.BeginTransaction();
-
-        foreach (var family in _families.Values)
-            family.Save(connection, transaction);
-
-        transaction.Commit(); // TODO try/catch
+        lock (_syncRoot)
+        {
+            var save = SaveManager.Instance;
+            save.ThrowIfConsistencyFailed();
+            using var connection = MySQL.CreateConnection();
+            using var transaction = connection.BeginTransaction();
+            var commitAttempted = false;
+            try
+            {
+                foreach (var family in _families.Values)
+                    family.Save(connection, transaction);
+                commitAttempted = true;
+                save.CommitTransaction(transaction);
+                foreach (var family in _families.Values)
+                    family.AcceptSave();
+            }
+            catch (Exception exception) when (commitAttempted)
+            {
+                save.FailForConsistency(exception);
+                throw;
+            }
+        }
     }
 
     /// <summary>
@@ -79,12 +108,26 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     /// <param name="family"></param>
     public static void SaveFamily(Family family)
     {
-        using var connection = MySQL.CreateConnection();
-        using var transaction = connection.BeginTransaction();
-
-        family.Save(connection, transaction);
-
-        transaction.Commit(); // TODO: try/catch
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            var save = SaveManager.Instance;
+            save.ThrowIfConsistencyFailed();
+            using var connection = MySQL.CreateConnection();
+            using var transaction = connection.BeginTransaction();
+            var commitAttempted = false;
+            try
+            {
+                family.Save(connection, transaction);
+                commitAttempted = true;
+                save.CommitTransaction(transaction);
+                family.AcceptSave();
+            }
+            catch (Exception exception) when (commitAttempted)
+            {
+                save.FailForConsistency(exception);
+                throw;
+            }
+        }
     }
 
     /// <summary>
@@ -95,67 +138,151 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     /// <param name="title"></param>
     public void InviteToFamily(Character inviter, string invitedCharacterName, string title)
     {
-        var invited = worldManager.GetCharacter(invitedCharacterName);
-        if (invited is { Family: 0 } && !CharacterBlocked.IsBlockedBy(invited, inviter.Id))
-            invited.SendPacket(new SCFamilyInvitationPacket(inviter.Id, inviter.Name, 1, title));
-    }
-
-    /// <summary>
-    /// Handle reply from a invite request
-    /// </summary>
-    /// <param name="invitorId"></param>
-    /// <param name="invitedChar"></param>
-    /// <param name="join"></param>
-    /// <param name="title"></param>
-    public void ReplyToInvite(uint invitorId, Character invitedChar, bool join, string title)
-    {
-        if (!join || invitedChar == null || invitedChar.Family != 0 || invitedChar.Id == invitorId ||
-            CharacterBlocked.IsBlockedBy(invitedChar, invitorId))
-            return;
-
-        var invitor = worldManager.GetCharacterById(invitorId);
-        if (invitor == null) return;
-
-        if (invitor.Family == 0)
+        lock (_syncRoot)
         {
-            CreateFamily(invitor, invitedChar, title);
-        }
-        else
-        {
-            if (!_families.TryGetValue(invitor.Family, out var family) ||
-                family.GetMember(invitor) == null ||
-                family.GetMember(invitedChar) != null)
+            RemoveExpiredInvitations();
+            if (!CurrentCharacter(inviter, inviter?.Connection))
+                return;
+            if (!IsValidTitle(title))
             {
+                inviter.SendErrorMessage(ErrorMessageType.FamilyTitleBad);
                 return;
             }
 
-            AddFamilyMember(family, invitedChar, title);
+            Family family = null;
+            if (inviter.Family != 0 &&
+                (!_families.TryGetValue(inviter.Family, out family) || family.GetMember(inviter) == null))
+                return;
+            if (family != null && family.GetMember(inviter)?.Role != 1)
+            {
+                inviter.SendErrorMessage(ErrorMessageType.FamilyNotOwner);
+                return;
+            }
+            if (family?.Members.Count >= Family.MaximumMembers)
+            {
+                inviter.SendErrorMessage(ErrorMessageType.FamilyMaximum);
+                return;
+            }
+
+            var invited = worldManager.GetCharacter(invitedCharacterName);
+            if (!CurrentCharacter(invited, invited?.Connection) || invited.Id == inviter.Id || invited.Family != 0 ||
+                _familyMembers.ContainsKey(invited.Id) || CharacterBlocked.IsBlockedBy(invited, inviter.Id) ||
+                _pendingInvitations.ContainsKey(invited.Id))
+                return;
+
+            _pendingInvitations.Add(invited.Id, new PendingInvitation(inviter, inviter.Connection,
+                invited, invited.Connection, family, title ?? "", InvitationTime().AddMinutes(1)));
+            invited.SendPacket(new SCFamilyInvitationPacket(inviter.Id, inviter.Name, 1, title ?? ""));
+        }
+    }
+
+    private static bool IsValidTitle(string title) => title == null ||
+        title.Length <= MaximumTitleCharacters && Encoding.UTF8.GetByteCount(title) <= MaximumTitleBytes;
+
+    private static bool CurrentCharacter(Character character, GameConnection connection) =>
+        character != null && character.IsOnline && connection != null &&
+        ReferenceEquals(character.Connection, connection) && ReferenceEquals(connection.ActiveChar, character);
+
+    private void RemoveExpiredInvitations()
+    {
+        var now = InvitationTime();
+        foreach (var (id, invitation) in _pendingInvitations.ToArray())
+            if (invitation.Expires <= now || !CurrentCharacter(invitation.Inviter, invitation.InviterConnection) ||
+                !CurrentCharacter(invitation.Invited, invitation.InvitedConnection))
+                _pendingInvitations.Remove(id);
+    }
+
+    /// <summary>
+    /// Consumes the invitation chosen by the server. The reply title is not authoritative.
+    /// </summary>
+    public void ReplyToInvite(uint invitorId, Character invitedChar, bool join, string title)
+    {
+        lock (_syncRoot)
+        {
+            RemoveExpiredInvitations();
+            if (invitedChar == null || !_pendingInvitations.TryGetValue(invitedChar.Id, out var invitation) ||
+                !ReferenceEquals(invitation.Invited, invitedChar) || invitation.Inviter.Id != invitorId)
+                return;
+            _pendingInvitations.Remove(invitedChar.Id);
+            if (!join || invitedChar.Family != 0 || _familyMembers.ContainsKey(invitedChar.Id) ||
+                CharacterBlocked.IsBlockedBy(invitedChar, invitorId))
+                return;
+
+            var invitor = invitation.Inviter;
+            var family = invitation.Family;
+            if (family == null)
+            {
+                if (invitor.Family == 0 && !_familyMembers.ContainsKey(invitor.Id))
+                    CreateFamily(invitor, invitedChar, invitation.Title);
+                return;
+            }
+
+            if (invitor.Family != family.Id || !_families.TryGetValue(family.Id, out var currentFamily) ||
+                !ReferenceEquals(currentFamily, family) || family.GetMember(invitor)?.Role != 1)
+                return;
+            if (family.Members.Count >= Family.MaximumMembers)
+            {
+                invitedChar.SendErrorMessage(ErrorMessageType.FamilyMaximum);
+                return;
+            }
+
+            var stagedFamily = CopyFamily(family);
+            stagedFamily.AddMember(GetMemberForCharacter(invitedChar, 0, invitation.Title));
+            if (!TrySaveFamily(stagedFamily))
+                return;
+
+            AddFamilyMember(family, invitedChar, invitation.Title);
             family.SendPacket(new SCFamilyMemberAddedPacket(family, family.Members.Count - 1));
-            SaveFamily(family);
             invitedChar.Achievements.Increment(CharRecordKind.EnrollFamily, 0, 0);
         }
     }
 
-    private Family CreateFamily(Character invitor, Character invitedChar, string invitedCharTitle)
+    private void CreateFamily(Character invitor, Character invitedChar, string invitedCharTitle)
     {
-        var family = new Family
+        var family = new Family { Id = familyIdManager.GetNextId() };
+        family.AddMember(GetMemberForCharacter(invitor, 1, ""));
+        family.AddMember(GetMemberForCharacter(invitedChar, 0, invitedCharTitle));
+        if (!TrySaveFamily(family))
         {
-            Id = familyIdManager.GetNextId()
-        };
-
-        AddFamilyMember(family, invitor);
-        AddFamilyMember(family, invitedChar, invitedCharTitle);
+            familyIdManager.ReleaseId(family.Id);
+            return;
+        }
 
         _families.Add(family.Id, family);
-
+        foreach (var member in family.Members)
+        {
+            _familyMembers.Add(member.Id, member);
+            member.Character.Family = family.Id;
+            chatManager.GetFamilyChat(family.Id)?.JoinChannel(member.Character);
+        }
         family.SendPacket(new SCFamilyCreatedPacket(family));
-
-        SaveFamily(family);
-
         invitor.Achievements.Increment(CharRecordKind.EnrollFamily, 0, 0);
         invitedChar.Achievements.Increment(CharRecordKind.EnrollFamily, 0, 0);
+    }
 
-        return family;
+    private bool TrySaveFamily(Family family)
+    {
+        try
+        {
+            PersistFamily(family);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(exception, "Failed to save family {0}", family.Id);
+            return false;
+        }
+    }
+
+    private static Family CopyFamily(Family family)
+    {
+        var copy = new Family { Id = family.Id };
+        foreach (var member in family.Members)
+            copy.AddMember(new FamilyMember
+            {
+                Character = member.Character, Id = member.Id, Name = member.Name, Role = member.Role, Title = member.Title
+            });
+        return copy;
     }
 
     /// <summary>
@@ -189,18 +316,17 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     /// <param name="character"></param>
     public void OnCharacterLogin(Character character)
     {
-        var family = _families.GetValueOrDefault(character.Family);
-        var member = _familyMembers.GetValueOrDefault(character.Id);
-        if (family == null || member == null)
+        lock (_syncRoot)
         {
-            // Family no longer valid
-            character.Family = 0;
-        }
-        else
-        {
-            // Update Member field and send family packets
-            member.Character = character;
+            var family = _families.GetValueOrDefault(character.Family);
+            var member = family?.GetMember(character);
+            if (family == null || member == null)
+            {
+                character.Family = 0;
+                return;
+            }
 
+            member.Character = character;
             chatManager.GetFamilyChat(family.Id)?.JoinChannel(character);
             character.SendPacket(new SCFamilyDescPacket(family));
             family.SendPacket(new SCFamilyMemberOnlinePacket(family.Id, member.Id, true));
@@ -214,105 +340,100 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     /// <param name="character"></param>
     public void OnCharacterLogout(Character character)
     {
-        var family = _families[character.Family];
-        var member = family.GetMember(character);
-        member.Character = null;
-
-        chatManager.GetFamilyChat(family.Id)?.LeaveChannel(character);
-        family.SendPacket(new SCFamilyMemberOnlinePacket(family.Id, character.Id, false), character.Id);
+        lock (_syncRoot)
+        {
+            foreach (var (id, invitation) in _pendingInvitations.ToArray())
+                if (invitation.Inviter.Id == character.Id || invitation.Invited.Id == character.Id)
+                    _pendingInvitations.Remove(id);
+            if (!_families.TryGetValue(character.Family, out var family))
+                return;
+            var member = family.GetMember(character);
+            if (member == null || !ReferenceEquals(member.Character, character))
+                return;
+            member.Character = null;
+            chatManager.GetFamilyChat(family.Id)?.LeaveChannel(character);
+            family.SendPacket(new SCFamilyMemberOnlinePacket(family.Id, character.Id, false), character.Id);
+        }
     }
 
     /// <summary>
-    /// Called when a player wants to leave a family. Removes him from the family, saves it, and updates family members.
+    /// Removes a member and persists the resulting family before notifying its members.
     /// </summary>
-    /// <param name="character"></param>
     public void LeaveFamily(Character character)
     {
-        var family = _families[character.Family];
-        character.Family = 0;
-        family.RemoveMember(character);
-        _familyMembers.Remove(character.Id);
-
-        character.SendPacket(new SCFamilyRemovedPacket(family.Id));
-        family.SendPacket(new SCFamilyMemberRemovedPacket(family.Id, false, character.Id));
-        chatManager.GetFamilyChat(family.Id)?.LeaveChannel(character);
-
-        if (family.Members.Count < 2)
-            DisbandFamily(family);
-        else
-            SaveFamily(family); // TODO: need to think how to do right
-    }
-
-    /// <summary>
-    /// Called when a family is disbanded (when they have less than 2 members)
-    /// </summary>
-    /// <param name="family"></param>
-    private void DisbandFamily(Family family)
-    {
-        var removed = new SCFamilyRemovedPacket(family.Id);
-
-        for (var i = family.Members.Count - 1; i > -1; i--)
+        lock (_syncRoot)
         {
-            var member = family.Members[i];
-            if (member.Character != null)
-            {
-                chatManager.GetFamilyChat(family.Id)?.LeaveChannel(member.Character);
-                member.Character.SendPacket(removed);
-                member.Character.Family = 0;
-            }
-
-            family.RemoveMember(member);
-            _familyMembers.Remove(member.Id);
+            if (character != null && _families.TryGetValue(character.Family, out var family) &&
+                family.GetMember(character) is { Role: 0 } member)
+                RemoveFamilyMember(family, member, false);
         }
-
-        SaveFamily(family);
-        _families.Remove(family.Id);
     }
 
     /// <summary>
-    /// Called when a family member is kicked. Disbands the family if it has 2 members.
+    /// Character deletion must not leave a family with a missing steward.
     /// </summary>
-    /// <param name="kicker"></param>
-    /// <param name="kickedId"></param>
+    public void RemoveDeletedCharacter(Character character)
+    {
+        lock (_syncRoot)
+        {
+            if (character != null && _families.TryGetValue(character.Family, out var family) &&
+                family.GetMember(character) is { } member)
+                RemoveFamilyMember(family, member, false, member.Role == 1);
+        }
+    }
+
+    private void RemoveFamilyMember(Family family, FamilyMember member, bool kicked, bool forceDisband = false)
+    {
+        var disband = forceDisband || family.Members.Count <= 2;
+        var removed = disband ? family.Members.ToArray() : [member];
+        var stagedFamily = CopyFamily(family);
+        foreach (var target in removed)
+            stagedFamily.RemoveMember(stagedFamily.GetMember(target.Id));
+        if (!TrySaveFamily(stagedFamily))
+            return;
+
+        foreach (var target in removed)
+        {
+            family.RemoveMember(target);
+            _familyMembers.Remove(target.Id);
+            if (target.Character != null)
+            {
+                target.Character.Family = 0;
+                chatManager.GetFamilyChat(family.Id)?.LeaveChannel(target.Character);
+                target.Character.SendPacket(new SCFamilyRemovedPacket(family.Id));
+            }
+        }
+        family.AcceptSave();
+        if (disband)
+        {
+            _families.Remove(family.Id);
+            familyIdManager.ReleaseId(family.Id);
+        }
+        else
+            family.SendPacket(new SCFamilyMemberRemovedPacket(family.Id, kicked, member.Id));
+    }
+
+    /// <summary>
+    /// Removes only another member of the steward's family, including an offline member.
+    /// </summary>
     public void KickMember(Character kicker, uint kickedId)
     {
-        if (kicker.Family == 0) return;
-        var family = _families[kicker.Family];
-
-        var kickerMember = family.GetMember(kicker);
-        if (kickerMember.Role != 1) return; // Only the steward can kick
-
-        // Load kicked character
-        var kickedCharacter = worldManager.GetCharacterById(kickedId);
-        var isOnline = false;
-        if (kickedCharacter != null)
+        lock (_syncRoot)
         {
-            isOnline = true;
+            if (!TryGetOwnedFamilyMember(kicker, kickedId, out var family, out var member) || member.Id == kicker.Id)
+                return;
+            RemoveFamilyMember(family, member, true);
         }
-        else
-        {
-            kickedCharacter = Character.Load(kickedId);
-        }
+    }
 
-        if (kickedCharacter == null) return;
-
-        // Remove kicked character (if online, packet)
-        kickedCharacter.Family = 0;
-        family.RemoveMember(kickedCharacter);
-        _familyMembers.Remove(kickedCharacter.Id);
-
-        if (isOnline)
-        {
-            chatManager.GetFamilyChat(family.Id)?.LeaveChannel(kickedCharacter);
-            kickedCharacter.SendPacket(new SCFamilyRemovedPacket(family.Id));
-        }
-
-        family.SendPacket(new SCFamilyMemberRemovedPacket(family.Id, true, kickedCharacter.Id));
-
-        if (family.Members.Count < 2)
-            DisbandFamily(family);
-        else
-            SaveFamily(family);
+    private bool TryGetOwnedFamilyMember(Character owner, uint memberId, out Family family, out FamilyMember member)
+    {
+        family = null;
+        member = null;
+        if (owner == null || !_families.TryGetValue(owner.Family, out family) || family.GetMember(owner)?.Role != 1)
+            return false;
+        member = family.GetMember(memberId);
+        return member != null;
     }
 
     /// <summary>
@@ -323,16 +444,22 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     /// <param name="newTitle"></param>
     public void ChangeTitle(Character owner, uint memberId, string newTitle)
     {
-        if (owner.Family == 0) return;
-        var family = _families[owner.Family];
-
-        var ownerMember = family.GetMember(owner);
-        if (ownerMember.Role != 1) return; // Only the steward can change titles
-
-        var member = _familyMembers[memberId];
-        member.Title = newTitle;
-
-        family.SendPacket(new SCFamilyTitleChangedPacket(family.Id, memberId, newTitle));
+        lock (_syncRoot)
+        {
+            if (!TryGetOwnedFamilyMember(owner, memberId, out var family, out var member))
+                return;
+            if (!IsValidTitle(newTitle))
+            {
+                owner.SendErrorMessage(ErrorMessageType.FamilyTitleBad);
+                return;
+            }
+            var stagedFamily = CopyFamily(family);
+            stagedFamily.GetMember(memberId).Title = newTitle ?? "";
+            if (!TrySaveFamily(stagedFamily))
+                return;
+            member.Title = newTitle ?? "";
+            family.SendPacket(new SCFamilyTitleChangedPacket(family.Id, memberId, member.Title));
+        }
     }
 
     /// <summary>
@@ -342,18 +469,21 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     /// <param name="memberId"></param>
     public void ChangeOwner(Character previousOwner, uint memberId)
     {
-        if (previousOwner.Family == 0) return;
-        var family = _families[previousOwner.Family];
-
-        var previousOwnerMember = family.GetMember(previousOwner);
-        if (previousOwnerMember.Role != 1) return; // Only the steward can change owner
-
-        var member = _familyMembers[memberId];
-        member.Role = 1;
-        previousOwnerMember.Role = 0;
-
-        family.SendPacket(new SCFamilyOwnerChangedPacket(family.Id, memberId));
-        family.SendPacket(new SCFamilyDescPacket(family));
+        lock (_syncRoot)
+        {
+            if (!TryGetOwnedFamilyMember(previousOwner, memberId, out var family, out var member) ||
+                member.Id == previousOwner.Id)
+                return;
+            var stagedFamily = CopyFamily(family);
+            stagedFamily.GetMember(memberId).Role = 1;
+            stagedFamily.GetMember(previousOwner).Role = 0;
+            if (!TrySaveFamily(stagedFamily))
+                return;
+            member.Role = 1;
+            family.GetMember(previousOwner).Role = 0;
+            family.SendPacket(new SCFamilyOwnerChangedPacket(family.Id, memberId));
+            family.SendPacket(new SCFamilyDescPacket(family));
+        }
     }
 
     /// <summary>
@@ -363,7 +493,8 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     /// <returns></returns>
     public Family GetFamily(uint id)
     {
-        return _families[id];
+        lock (_syncRoot)
+            return _families.GetValueOrDefault(id);
     }
 
     /// <summary>
@@ -392,11 +523,12 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     /// <returns></returns>
     public uint GetFamilyOfCharacter(uint characterId)
     {
-        foreach (var family in _families.Values)
-            foreach (var member in family.Members)
-                if (member.Id == characterId)
+        lock (_syncRoot)
+        {
+            foreach (var family in _families.Values)
+                if (family.GetMember(characterId) != null)
                     return family.Id;
-
-        return 0;
+            return 0;
+        }
     }
 }
