@@ -60,6 +60,8 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
             return LoadPrefab(path);
         if (scheme == "entity")
             throw new NotSupportedException("Entity model geometry needs its native entity definition.");
+        if ((scheme is "cga" or "cga_loop") && !IsCharacterModelPath(path))
+            return EmptyModel();
         if (scheme is not ("cgf" or "vegetation" or "cga" or "cga_loop"))
             return Load("objects/box_nodraw.cgf");
         using var stream = OpenOptionalModelFile(AssetPath(path));
@@ -77,6 +79,8 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
                 asset = LoadCharacterLodBounds(path, asset);
         }
         var startsAnimation = scheme is "cga" or "cga_loop";
+        if (startsAnimation && asset.CgaAnimation != null)
+            asset = asset with { Bounds = asset.CgaAnimation.GetBindBounds() };
         var characterPath = ResolveCharacterModelPath(path);
         if (characterPath.EndsWith(".chr", StringComparison.Ordinal))
             startsAnimation &= FindCharacterAnimation(characterPath, "Default") != null;
@@ -127,7 +131,10 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
                 continue;
             var animation = obj.Element("Properties")?.Element("Animation");
             var active = animation != null && (string)animation.Attribute("bPlaying") == "1";
-            var child = Load(childPath);
+            var animatedEntity = kind == "Entity" && (string)obj.Attribute("EntityClass") == "AnimObject";
+            var child = animatedEntity && !IsCharacterModelPath(childPath) ? EmptyModel() : Load(childPath);
+            if (animatedEntity && child.CgaAnimation != null)
+                child = child with { Bounds = child.CgaAnimation.GetBindBounds() };
             if (active && ResolveCharacterModelPath(Normalize(childPath)).EndsWith(".chr", StringComparison.Ordinal) &&
                 FindCharacterAnimation(ResolveCharacterModelPath(Normalize(childPath)), (string)animation.Attribute("Animation") ?? "Default") == null)
                 active = false;
@@ -396,6 +403,9 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
                 : null
         };
     }
+
+    private static bool IsCharacterModelPath(string path) => path.EndsWith(".cga", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".chr", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".cdf", StringComparison.OrdinalIgnoreCase);
 
     private static IReadOnlyList<int> ReadCharacterSubsetBones(byte[] data, Chunk chunk)
     {

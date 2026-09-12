@@ -53,6 +53,15 @@ public sealed class CryCharacterAnimationTests
         await Assert.That(() => CryCharacterAnimation.Read(Clip(1, true))).Throws<InvalidDataException>();
     }
 
+    [Test]
+    public async Task Read_MixedOldAndCompressedControllers_UsesNativeCompressedSelection()
+    {
+        var normal = CryCharacterAnimation.Read(Clip()).Sample(BindAsset(), 0.5, false);
+        var mixed = CryCharacterAnimation.Read(Clip(includeOldController: true)).Sample(BindAsset(), 0.5, false);
+        await Assert.That(mixed.Parts[0].Transform).IsEqualTo(normal.Parts[0].Transform);
+        await Assert.That(mixed.Bounds).IsEqualTo(normal.Bounds);
+    }
+
     private static CryGeometryAsset BindAsset()
     {
         var sphere = new CrySphere(Vector3.Zero, 0.1f);
@@ -70,7 +79,7 @@ public sealed class CryCharacterAnimationTests
         };
     }
 
-    private static byte[] Clip(int rotationFormat = 1, bool badTimes = false)
+    private static byte[] Clip(int rotationFormat = 1, bool badTimes = false, bool includeOldController = false)
     {
         using var timingStream = new MemoryStream();
         using (var writer = new BinaryWriter(timingStream, Encoding.UTF8, true))
@@ -107,17 +116,22 @@ public sealed class CryCharacterAnimationTests
             foreach (var value in new[] { 0f, 0, 0, 2, 0, 0 })
                 writer.Write(value);
         }
-        var chunks = new[] { (Kind: 0xcccc000eu, Version: 0x918, Data: timingStream.ToArray()),
-            (Kind: 0xcccc000du, Version: 0x829, Data: trackStream.ToArray()) };
+        var chunks = new List<(uint Kind, int Version, byte[] Data)>
+        {
+            (0xcccc000e, 0x918, timingStream.ToArray()),
+            (0xcccc000d, 0x829, trackStream.ToArray())
+        };
+        if (includeOldController)
+            chunks.Add((0xcccc000d, 0x828, new byte[16]));
         using var stream = new MemoryStream();
         using var output = new BinaryWriter(stream);
         output.Write(Encoding.ASCII.GetBytes("CryTek\0\0"));
         output.Write(0xffff0000);
         output.Write(0x745);
         output.Write(20);
-        output.Write(chunks.Length);
-        var offset = 24 + chunks.Length * 20;
-        for (var i = 0; i < chunks.Length; i++)
+        output.Write(chunks.Count);
+        var offset = 24 + chunks.Count * 20;
+        for (var i = 0; i < chunks.Count; i++)
         {
             output.Write(chunks[i].Kind);
             output.Write(chunks[i].Version);

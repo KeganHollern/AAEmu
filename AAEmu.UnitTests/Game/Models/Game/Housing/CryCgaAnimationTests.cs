@@ -69,6 +69,16 @@ public sealed class CryCgaAnimationTests
     }
 
     [Test]
+    public async Task GetBindBounds_PreviewUsesBindPoseAndNativePadding()
+    {
+        var animation = Read([(0, new Vector3(200, 0, 0), 0), (4800, new Vector3(400, 0, 0), 0)], false, narrow: true);
+        var bounds = animation.GetBindBounds();
+        await Assert.That(Vector3.Distance(bounds.Min, new Vector3(-0.3f, -1, -1))).IsLessThan(0.00001f);
+        await Assert.That(Vector3.Distance(bounds.Max, new Vector3(0.3f, 1, 1))).IsLessThan(0.00001f);
+        await Assert.That(animation.Sample(Asset(), 0, false).Bounds.Center.X).IsEqualTo(2f);
+    }
+
+    [Test]
     public async Task WithClip_NodeName_MapsDifferentControllerIdsToTheBindModel()
     {
         var animation = Read([(0, Vector3.Zero, 0), (4800, new Vector3(200, 0, 0), 0)], false, remap: true);

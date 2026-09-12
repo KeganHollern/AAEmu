@@ -304,3 +304,48 @@ The bounds routine adds `0.2` meters per side when an axis is smaller than `0.4`
 An invalid box or coordinate outside `-13000` through `13000` uses the native `[-2, 2]` fallback.
 The CAF sampler returns these current model bounds and clears its resolved pose requirements.
 The focused character tests passed: 21 passed, with 2 optional game_pak checks skipped.
+
+## Mixed CAF controller versions
+
+Native `3162f080` selects compressed controllers when a CAF file contains any version `0x829` through `0x831`.
+Native `3162f6e0` then skips old versions `0x827` and `0x828` for that whole clip.
+This rule also applies when an old controller has no compressed controller with the same ID.
+The two pirate protection prefabs and the Ferre flag contain mixed CAF files.
+The reader uses their compressed tracks and keeps bind transforms for absent selected tracks.
+
+## Animation model format and preview bounds
+
+Native `315d6820` accepts only `.cga`, `.chr`, and `.cdf` character files.
+It returns no character for another extension, even when that static file exists.
+The Ezna iron gate uses a `cga://` URI with a `.cgf` file and thus has no client character geometry.
+The resolver uses the same format gate for animation URIs and prefab `AnimObject` entities.
+
+CGA preview bounds use their bind rigid mesh bounds with the native narrow-axis padding.
+A static brush with a CGA file does not start a default animation.
+`LoadPose` samples a direct model only when its URI starts animation.
+An active prefab child uses its explicit animation properties.
+
+## Complete authored model check
+
+The direct game_pak fixture checked all nonempty model URIs for owned housing and decorations.
+It also checked every distinct main-world doodad model URI.
+Each check loaded the preview and sampled times `0`, `0.5`, and `2` seconds.
+
+| Source | Distinct nonempty URIs | Pose samples | Parse errors | Unresolved collision poses |
+| --- | ---: | ---: | ---: | ---: |
+| Owned house, build, decoration, and phase models | 953 | 2859 | 0 | 0 |
+| Main-world doodad models | 1666 | 4998 | 0 | 0 |
+
+All 460 house build cases have model bounds.
+The 385 house main cases include 11 obsolete `siegefield.xml` elements that are absent from the client.
+These belong to designs `4` through `9`, `25`, `28`, `30`, `93`, and `94`.
+The castle gate and tower designs `268` and `269` load their authored geometry.
+
+The 577 decoration base cases include 4 empty model strings: designs `383`, `386`, `389`, and `392`.
+Wraith designs `257` and `258` reference absent prefab elements.
+These 6 designs have no native preview bounds and cannot pass the placement geometry check.
+Native empty model results are distinct from a parser failure or an unresolved collision pose.
+
+The read set includes 83 CGA files and 74 authored scale tracks.
+Those scale tracks contain constant values.
+The focused final checks passed 7 CAF tests, 9 CGA tests, and 18 resolver tests.

@@ -16,6 +16,13 @@ public static class CryCharacterBounds
             min = Vector3.Min(min, transforms[index].Translation);
             max = Vector3.Max(max, transforms[index].Translation);
         }
+        return Normalize(new CryBounds(min, max));
+    }
+
+    public static CryBounds Normalize(CryBounds bounds)
+    {
+        var min = bounds.Min;
+        var max = bounds.Max;
         var size = max - min;
         var padding = new Vector3(size.X < 0.4f ? 0.2f : 0, size.Y < 0.4f ? 0.2f : 0, size.Z < 0.4f ? 0.2f : 0);
         min -= padding;

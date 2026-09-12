@@ -120,6 +120,17 @@ public sealed class CryCgaAnimation
         return new CryCgaAnimation(tracks, nodes, renderBounds, start, end, secondsPerFrame);
     }
 
+    public CryBounds GetBindBounds()
+    {
+        CryBounds? bounds = null;
+        foreach (var mesh in _renderBounds)
+        {
+            var next = mesh.Bounds.Transform(mesh.Transform);
+            bounds = bounds?.Union(next) ?? next;
+        }
+        return CryCharacterBounds.Normalize(bounds ?? new CryBounds(new Vector3(1), new Vector3(-1)));
+    }
+
     public CryGeometryAsset Sample(CryGeometryAsset asset, double elapsedSeconds, bool loop)
     {
         if (!double.IsFinite(elapsedSeconds) || elapsedSeconds < 0)
@@ -145,11 +156,7 @@ public sealed class CryCgaAnimation
             bounds = bounds?.Union(next) ?? next;
         }
         if (bounds.HasValue)
-        {
-            var size = bounds.Value.Max - bounds.Value.Min;
-            var padding = new Vector3(size.X < 0.4f ? 0.2f : 0, size.Y < 0.4f ? 0.2f : 0, size.Z < 0.4f ? 0.2f : 0);
-            bounds = new CryBounds(bounds.Value.Min - padding, bounds.Value.Max + padding);
-        }
+            bounds = CryCharacterBounds.Normalize(bounds.Value);
         return asset with
         {
             Bounds = bounds ?? asset.Bounds,

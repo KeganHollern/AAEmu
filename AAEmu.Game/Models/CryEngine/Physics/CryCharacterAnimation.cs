@@ -48,6 +48,7 @@ public sealed class CryCharacterAnimation
                 throw new InvalidDataException("Invalid CAF chunk offset.");
             chunks.Add((kind, chunkVersion, offset + 16));
         }
+        var hasCompressedControllers = chunks.Any(chunk => chunk.Kind == 0xcccc000d && chunk.Version is >= 0x829 and <= 0x831);
         var tracks = new Dictionary<uint, Track>();
         float firstFrame = 0, lastFrame = 0, secondsPerFrame = 0;
         foreach (var chunk in chunks)
@@ -66,6 +67,9 @@ public sealed class CryCharacterAnimation
             }
             else if (chunk.Kind == 0xcccc000d)
             {
+                // Native3162f080 and3162f6e0 select compressed tracks for the whole clip.
+                if (hasCompressedControllers && chunk.Version is 0x827 or 0x828)
+                    continue;
                 if (chunk.Version != 0x829)
                     throw new NotSupportedException($"Unsupported CAF controller version {chunk.Version:X}.");
                 var id = reader.ReadUInt32();

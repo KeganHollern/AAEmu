@@ -184,6 +184,15 @@ public sealed class CryGeometryResolverTests
         await Assert.That(asset.Bounds.Max).IsEqualTo(new Vector3(11, 11, 11));
     }
 
+    [Test]
+    public async Task Load_AnimationSchemeWithStaticExtension_UsesNativeEmptyCharacterResult()
+    {
+        var resolver = new CryGeometryResolver(_ => new MemoryStream(Model(true)));
+        await Assert.That(resolver.Load("cga://objects/irongate.cgf").HasModelBounds).IsFalse();
+        await Assert.That(resolver.LoadPose("cga://objects/irongate.cgf", 2).Parts.Count).IsEqualTo(0);
+        await Assert.That(resolver.Load("cgf://objects/irongate.cgf").HasModelBounds).IsTrue();
+    }
+
     private static byte[] Model(bool merge, bool physics = false, bool animatedParent = false)
     {
         var chunks = new List<(uint Kind, int Version, int Id, byte[] Data)>();
