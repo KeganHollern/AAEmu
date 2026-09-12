@@ -22,11 +22,10 @@ public class ConsumeLaborPower : SpecialEffectAction
     {
         if (caster is Character) { Logger.Debug("Special effects: ConsumeLaborPower value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4); }
 
-        // TODO: Need to factor skill level into how much lp we subtract.
-        if (skill.Template.ConsumeLaborPower > 0)
-        {
-            var player = (Character)caster;
-            player.ChangeLabor((short)-skill.Template.ConsumeLaborPower, skill.Template.ActabilityGroupId);
-        }
+        if (caster is not Character player || skill.Template.ConsumeLaborPower <= 0 || skill.LaborSettled)
+            return;
+        // The plot node stages this debit before any effect in the same event can grant products.
+        if (SkillLaborBatch.For(player) == null)
+            SkillLaborBatch.Run(player, skill, true, () => { });
     }
 }

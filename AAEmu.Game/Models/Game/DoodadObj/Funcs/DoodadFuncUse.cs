@@ -78,7 +78,12 @@ public class DoodadFuncUse : DoodadFuncTemplate
                 return;
             }
             var useSkill = new Skill(skillTemplate);
-            TaskManager.Instance.Schedule(new UseSkillTask(useSkill, caster, new SkillCasterUnit(caster.ObjId), owner, new SkillCastDoodadTarget { ObjId = owner.ObjId }, null), TimeSpan.FromMilliseconds(0));
+            void StartChildSkill() => TaskManager.Instance.Schedule(new UseSkillTask(useSkill, caster,
+                new SkillCasterUnit(caster.ObjId), owner, new SkillCastDoodadTarget { ObjId = owner.ObjId }, null), TimeSpan.Zero);
+            if (SkillLaborBatch.Current is { } batch)
+                batch.AfterCommit(StartChildSkill);
+            else
+                StartChildSkill();
         }
 
         owner.ToNextPhase = skillId > 0;

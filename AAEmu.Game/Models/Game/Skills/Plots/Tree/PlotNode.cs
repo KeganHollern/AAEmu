@@ -41,6 +41,16 @@ public class PlotNode
 
     public void Execute(PlotState state, PlotTargetInfo targetInfo, CompressedGamePackets packets = null)
     {
+        if (!state.ActiveSkill.CanSettleLaborEffects(state.Caster, state.Target))
+        {
+            state.RequestCancellation();
+            return;
+        }
+        state.ActiveSkill.RunPlotLaborBatch(this, state, () => ExecuteCore(state, targetInfo, packets));
+    }
+
+    private void ExecuteCore(PlotState state, PlotTargetInfo targetInfo, CompressedGamePackets packets)
+    {
         //Logger.Debug("Executing plot node with id {0}", Event.Id);
 
         var stopwatch = new Stopwatch();
@@ -58,6 +68,9 @@ public class PlotNode
             {
                 state?.Caster?.SendPacket(new SCChatMessagePacket(Chat.ChatType.Notice, "Plot Effects Error - Check Logs"));
                 Logger.Error("[Plot Effects Error]: {0}\n{1}", e.Message, e.StackTrace);
+                state.ActiveSkill.Cancelled = true;
+                state.RequestCancellation();
+                throw;
             }
         }
 

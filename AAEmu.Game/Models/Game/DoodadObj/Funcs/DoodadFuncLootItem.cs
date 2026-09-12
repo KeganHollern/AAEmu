@@ -4,6 +4,7 @@ using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
@@ -64,11 +65,11 @@ public class DoodadFuncLootItem : DoodadFuncTemplate
 
         if (granted)
         {
-            character.Achievements?.Increment(
-                CharRecordKind.GetLootitem,
-                ItemId,
-                0,
-                (uint)count);
+            void RecordLoot() => character.Achievements?.Increment(CharRecordKind.GetLootitem, ItemId, 0, (uint)count);
+            if (SkillLaborBatch.For(character) is { } batch)
+                batch.AfterCommit(RecordLoot);
+            else
+                RecordLoot();
         }
 
         if (!granted)

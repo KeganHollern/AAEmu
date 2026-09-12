@@ -1,4 +1,5 @@
-﻿using AAEmu.Commons.Utils;
+﻿using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Packets.G2C;
@@ -763,6 +764,17 @@ public class Inventory
     /// <returns></returns>
     public bool TryEquipNewBackPack(ItemTaskType taskType, uint itemId, int itemCount, int gradeToAdd = -1, uint crafterId = 0)
     {
+        if (SkillLaborBatch.For(Owner) is { } batch)
+        {
+            var backpack = Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack);
+            if (backpack != null && !batch.Inventory.TryMove(backpack, Bag))
+                return batch.Fail();
+            if (!batch.Inventory.TryGrant(Equipment, itemId, itemCount, out var items, gradeToAdd))
+                return batch.Fail();
+            foreach (var item in items)
+                item.MadeUnitId = crafterId;
+            return true;
+        }
         // Remove player backpack
         if (Owner.Inventory.TakeoffBackpack(taskType, true))
         {

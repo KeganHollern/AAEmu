@@ -1517,6 +1517,12 @@ public partial class Character : Unit, ICharacter
         if (applyModifiers)
             expDelta = CalculateExperienceGain(expDelta, labor);
         
+        if (SkillLaborBatch.For(this) is { } batch)
+        {
+            StageSkillExperience(batch, expDelta, shouldAddAbilityExp);
+            return;
+        }
+
         var newExperience = (int)Math.Clamp((long)Experience + expDelta, 0, int.MaxValue);
         var newLevel = ExperienceManager.Instance.GetLevelFromExp(newExperience, Level, out var overflow);
         var leveledUp = newLevel > Level;
@@ -1606,6 +1612,14 @@ public partial class Character : Unit, ICharacter
                 amount < 0)
                 return false;
 
+            if (SkillLaborBatch.For(this) is { } batch)
+            {
+                if (typeFrom != SlotType.None && !batch.Inventory.TryChangeMoney(this, -amount, typeFrom))
+                    return batch.Fail();
+                if (typeTo != SlotType.None && !batch.Inventory.TryChangeMoney(this, amount, typeTo))
+                    return batch.Fail();
+                return true;
+            }
             var money = Money;
             var bankMoney = Money2;
             try
@@ -1772,9 +1786,21 @@ public partial class Character : Unit, ICharacter
     {
         lock (StorePurchaseSyncRoot)
         {
+            var batch = SkillLaborBatch.For(this);
+            if (batch != null)
+            {
+                var oldHonor = HonorPoint;
+                var oldVocation = VocationPoint;
+                batch.Enlist(null, () => { HonorPoint = oldHonor; VocationPoint = oldVocation; });
+            }
             switch (kind)
             {
                 case GamePointKind.Honor:
+                    if (batch != null && (long)HonorPoint + change is < 0 or > int.MaxValue)
+                    {
+                        batch.Fail();
+                        return;
+                    }
                     HonorPoint += change;
                     break;
                 case GamePointKind.Vocation:
@@ -1785,15 +1811,30 @@ public partial class Character : Unit, ICharacter
                         var vocMul = GetAttribute(UnitAttribute.LivingPointGainMul, 0f) + 100f;
                         change = (int)Math.Round(change * (vocMul / 100f));
                     }
+                    if (batch != null && (long)VocationPoint + change is < 0 or > int.MaxValue)
+                    {
+                        batch.Fail();
+                        return;
+                    }
                     VocationPoint += change;
                     if (change > 0)
-                        Achievements?.Increment(CharRecordKind.GetLifePoint, 0, 0, (uint)change);
+                    {
+                        var gained = (uint)change;
+                        if (batch != null)
+                            batch.AfterCommit(() => Achievements?.Increment(CharRecordKind.GetLifePoint, 0, 0, gained));
+                        else
+                            Achievements?.Increment(CharRecordKind.GetLifePoint, 0, 0, gained);
+                    }
                     break;
                 default:
                     Logger.Error($"ChangeGamePoints - Unknown Game Point Type {kind}");
                     return;
             }
-            SendPacket(new SCGamePointChangedPacket((byte)kind, change));
+            var packet = new SCGamePointChangedPacket((byte)kind, change);
+            if (batch != null)
+                batch.AfterCommit(() => SendPacket(packet));
+            else
+                SendPacket(packet);
         }
     }
 

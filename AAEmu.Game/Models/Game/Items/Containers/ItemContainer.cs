@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
@@ -324,6 +325,13 @@ public class ItemContainer
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            if (SkillLaborBatch.For(Owner) is { } batch)
+            {
+                var moved = item?._holdingContainer == null
+                    ? batch.Inventory.TryAddCreated(item, this, preferredSlot)
+                    : batch.Inventory.TryMove(item, this, preferredSlot);
+                return moved || batch.Fail();
+            }
             return AddOrMoveExistingItemLocked(taskType, item, preferredSlot, notifyInventory, applyBindRules);
         }
     }
@@ -486,6 +494,8 @@ public class ItemContainer
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            if (SkillLaborBatch.For(Owner) is { } batch)
+                return item != null && releaseIdAsWell && batch.Inventory.TryConsume(this, item, item.Count) || batch.Fail();
             return RemoveItemLocked(task, item, releaseIdAsWell);
         }
     }
@@ -544,6 +554,8 @@ public class ItemContainer
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            if (SkillLaborBatch.For(Owner) is { } batch)
+                return batch.Consume(this, templateId, amountToConsume, preferredItem);
             return ConsumeItemLocked(taskType, templateId, amountToConsume, preferredItem);
         }
     }
@@ -757,6 +769,20 @@ public class ItemContainer
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            if (SkillLaborBatch.For(Owner) is { } batch)
+            {
+                var previous = Items.ToHashSet();
+                var granted = batch.Inventory.TryGrant(this, templateId, amountToAdd, out var items, gradeToAdd);
+                newItemsList = items.Where(item => !previous.Contains(item)).ToList();
+                updatedItemsList = items.Where(previous.Contains).ToList();
+                foreach (var item in newItemsList)
+                    item.MadeUnitId = crafterId;
+                if (!granted)
+                    return batch.Fail();
+                if (onGranted != null)
+                    batch.AfterCommit(() => onGranted(amountToAdd));
+                return true;
+            }
             return AcquireDefaultItemExLocked(taskType, templateId, amountToAdd, gradeToAdd, out newItemsList, out updatedItemsList, crafterId, preferredSlot, notifyInventory, deferredSyncPackets, onGranted);
         }
     }

@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+﻿using AAEmu.Game.Models.Game.Skills;
+using System.ComponentModel;
 
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
@@ -227,6 +228,11 @@ public class DoodadSpawner : Spawner<Doodad>
     /// <param name="doodad"></param>
     public override void Despawn(Doodad doodad)
     {
+        if (doodad != null && SkillLaborBatch.Current is { } batch)
+        {
+            batch.DeleteDoodad(doodad, () => Despawn(doodad));
+            return;
+        }
         lock (_spawnLock)
         {
             if (doodad == null || !ReferenceEquals(Last, doodad) && !_spawned.Contains(doodad))

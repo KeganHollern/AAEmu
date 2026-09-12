@@ -187,3 +187,23 @@ No packet contract or compact data change is needed.
 The helper tests cover craft 4107, shared skill templates, and ordinary instant skills.
 The execution test must also check the final scheduled duration after proficiency.
 After release, craft 4107 at novice proficiency and check a 15-second base duration before other active speed bonuses.
+
+## Paid construction progress in issue 463
+
+House construction saves its changed `current_step` and `current_action` with the skill's labor and material payment.
+A known checkpoint failure restores the exact step, action counters, model, and dirty flag.
+Insufficient labor changes no construction state.
+Bound doodad work and progress messages follow the commit.
+The current startup reconciliation creates missing bound doodads for a completed house.
+This covers a process stop after the house commit and before its door or window creation.
+
+Shipyard progress joins the same labor batch and restores its exact state on a known failure.
+Shipyards have no current SQL progress store. This change does not add one.
+The launch action stages its output item before payment commits.
+Only a successful commit starts the ceremony task and sends its progress message.
+A wrong construction skill changes no progress.
+A foreign owner, full bag, or failed checkpoint cannot spend labor for the launch.
+
+The construction tests cover intermediate progress, completion, insufficient labor, failed checkpoints, and ship launch payment.
+The MySQL cases check house progress, labor, and material in one transaction.
+No schema or compact change is needed for construction progress.

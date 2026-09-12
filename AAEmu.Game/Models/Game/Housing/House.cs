@@ -70,66 +70,94 @@ public sealed class House : Unit
     public int CurrentStep
     {
         get => _currentStep;
-        set
-        {
-            _currentStep = value;
-            _isDirty = true;
-            ModelId = _currentStep == -1 ? Template.MainModelId : Template.BuildSteps[_currentStep].ModelId;
-            if (_currentStep == -1) // TODO ...
-            {
-                if (!_isBeingLoadedFromDb)
-                {
-                    foreach (var bindingDoodad in Template.HousingBindingDoodad)
-                    {
-                        var doodad = DoodadManager.Instance.Create(ParentWorld, 0, bindingDoodad.DoodadId, this, true);
-                        if (doodad == null)
-                        {
-                            Logger.Error($"CurrentStep: Failed to create bound doodad templateId={bindingDoodad.DoodadId} for house {Id} — template not found, skipping.");
-                            continue;
-                        }
-                        doodad.AttachPoint = bindingDoodad.AttachPointId;
-                        doodad.ParentObj = this;
-                        doodad.Transform = this.Transform.CloneDetached(doodad);
-                        doodad.Transform.Parent = this.Transform;
-                        doodad.Transform.Local.ApplyWorldSpawnPositionWithDeg(bindingDoodad.Position);
-                        if (AppConfiguration.Instance.World.UsePersistentHouseDoodads)
-                        {
-                            doodad.IsPersistent = true;
-                            doodad.InitDoodad();
-                            doodad.Save();
-                        }
-                        else
-                        {
-                            doodad.InitDoodad();
-                        }
-                        AttachedDoodads.Add(doodad);
-                    }
-                }
-            }
-            else if (AttachedDoodads.Count > 0)
-            {
-                foreach (var doodad in AttachedDoodads)
-                {
-                    if (doodad.IsPersistent)
-                    {
-                        if (doodad.ObjId > 0)
-                            ObjectIdManager.Instance.ReleaseId(doodad.ObjId);
-                        doodad.Delete();
-                    }
-                    else if (doodad.ObjId > 0)
-                        ObjectIdManager.Instance.ReleaseId(doodad.ObjId);
-                }
-                AttachedDoodads.Clear();
-            }
+        set => SetConstructionStep(value, true);
+    }
 
-            if (_currentStep > 0)
-            {
-                BaseAction = 0;
-                for (var i = 0; i < _currentStep; i++)
-                    BaseAction += Template.BuildSteps[i].NumActions;
-            }
+    private void SetConstructionStep(int value, bool updateDoodads)
+    {
+        _currentStep = value;
+        _isDirty = true;
+        ModelId = value == -1 ? Template.MainModelId : Template.BuildSteps[value].ModelId;
+        if (updateDoodads)
+            CompleteConstructionStepChange();
+        if (value > 0)
+        {
+            BaseAction = 0;
+            for (var step = 0; step < value; step++)
+                BaseAction += Template.BuildSteps[step].NumActions;
         }
     }
+
+    internal void CompleteConstructionStepChange()
+    {
+        if (_currentStep == -1) // TODO ...
+        {
+            if (!_isBeingLoadedFromDb)
+            {
+                foreach (var bindingDoodad in Template.HousingBindingDoodad)
+                {
+                    var doodad = DoodadManager.Instance.Create(ParentWorld, 0, bindingDoodad.DoodadId, this, true);
+                    if (doodad == null)
+                    {
+                        Logger.Error($"CurrentStep: Failed to create bound doodad templateId={bindingDoodad.DoodadId} for house {Id} — template not found, skipping.");
+                        continue;
+                    }
+                    doodad.AttachPoint = bindingDoodad.AttachPointId;
+                    doodad.ParentObj = this;
+                    doodad.Transform = this.Transform.CloneDetached(doodad);
+                    doodad.Transform.Parent = this.Transform;
+                    doodad.Transform.Local.ApplyWorldSpawnPositionWithDeg(bindingDoodad.Position);
+                    if (AppConfiguration.Instance.World.UsePersistentHouseDoodads)
+                    {
+                        doodad.IsPersistent = true;
+                        doodad.InitDoodad();
+                        doodad.Save();
+                    }
+                    else
+                    {
+                        doodad.InitDoodad();
+                    }
+                    AttachedDoodads.Add(doodad);
+                }
+            }
+        }
+        else if (AttachedDoodads.Count > 0)
+        {
+            foreach (var doodad in AttachedDoodads)
+            {
+                if (doodad.IsPersistent)
+                {
+                    if (doodad.ObjId > 0)
+                        ObjectIdManager.Instance.ReleaseId(doodad.ObjId);
+                    doodad.Delete();
+                }
+                else if (doodad.ObjId > 0)
+                    ObjectIdManager.Instance.ReleaseId(doodad.ObjId);
+            }
+            AttachedDoodads.Clear();
+        }
+    }
+
+    internal Action CaptureConstructionState()
+    {
+        var step = _currentStep;
+        var baseAction = _baseAction;
+        var numAction = _numAction;
+        var modelId = ModelId;
+        var dirty = _isDirty;
+        return () =>
+        {
+            lock (_lock)
+            {
+                _currentStep = step;
+                _baseAction = baseAction;
+                _numAction = numAction;
+                ModelId = modelId;
+                _isDirty = dirty;
+            }
+        };
+    }
+
     public override int MaxHp => Template.Hp;
 
     public HousingPermission Permission
@@ -171,13 +199,20 @@ public sealed class House : Unit
         Events.OnDeath += OnDeath;
     }
 
-    public void AddBuildAction()
+    public void AddBuildAction() => AddBuildAction(true);
+
+    internal void AddBuildAction(bool updateDoodads)
     {
         if (CurrentStep == -1)
             return;
 
         lock (_lock)
         {
+            if (Template.BuildSteps.Count == 0)
+            {
+                SetConstructionStep(-1, updateDoodads);
+                return;
+            }
             var nextAction = NumAction + 1;
             if (Template.BuildSteps[CurrentStep].NumActions > nextAction)
                 NumAction = nextAction;
@@ -186,10 +221,10 @@ public sealed class House : Unit
                 NumAction = 0;
                 var nextStep = CurrentStep + 1;
                 if (Template.BuildSteps.Count > nextStep)
-                    CurrentStep = nextStep;
+                    SetConstructionStep(nextStep, updateDoodads);
                 else
                 {
-                    CurrentStep = -1;
+                    SetConstructionStep(-1, updateDoodads);
                 }
             }
         }

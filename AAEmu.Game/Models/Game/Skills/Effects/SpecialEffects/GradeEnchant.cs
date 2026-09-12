@@ -183,7 +183,7 @@ public class GradeEnchant : SpecialEffectAction
 
     private static int GoldCost(GradeTemplate gradeTemplate, Item item, int ItemType)
     {
-        var slotTypeId = (ItemType, item.Template) switch
+        uint slotTypeId = (ItemType, item.Template) switch
         {
             (1, WeaponTemplate weapon) => weapon.HoldableTemplate?.SlotTypeId ?? 0,
             (2, ArmorTemplate armor) => armor.SlotTemplate?.SlotTypeId ?? 0,

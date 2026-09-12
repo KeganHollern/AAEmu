@@ -35,6 +35,18 @@ public class SaveManager(
     private SaveTickStartTask saveTask;
     public ShutdownTask ShutdownTask { get; set; } = null;
 
+    internal void FailForConsistency(Exception exception)
+    {
+        lock (PersistenceSyncRoot)
+        {
+            _consistencyFailed = true;
+            _enabled = false;
+            const string message = "Game persistence stopped after an uncertain commit or failed publication. Restart from durable state.";
+            Logger.Fatal(exception, message);
+            StopForConsistencyFailure(message, exception);
+        }
+    }
+
     public void Initialize()
     {
         Logger.Info("Initialising Save Manager...");
@@ -129,6 +141,8 @@ public class SaveManager(
         {
             if (_consistencyFailed)
                 throw new InvalidOperationException("Persistence is stopped after an unconfirmed commit.");
+            if (AAEmu.Game.Models.Game.Skills.SkillLaborBatch.Current is { IsCommitting: false } skillBatch)
+                return skillBatch.Fail();
             if (_isSaving)
                 return false;
             _isSaving = true;
@@ -177,11 +191,7 @@ public class SaveManager(
             }
             catch (Exception exception)
             {
-                _consistencyFailed = true;
-                _enabled = false;
-                const string message = "Game persistence stopped after an unconfirmed commit. Restart from durable state.";
-                Logger.Fatal(exception, message);
-                StopForConsistencyFailure(message, exception);
+                FailForConsistency(exception);
                 throw;
             }
             finally

@@ -14,7 +14,7 @@ using NLog;
 
 namespace AAEmu.Game.Models.Game.Units;
 
-public class Buffs : IBuffs
+public partial class Buffs : IBuffs
 {
     // ReSharper disable once InconsistentNaming
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
@@ -339,6 +339,13 @@ public class Buffs : IBuffs
 
     public void AddBuff(Buff buff, uint index = 0, int forcedDuration = 0)
     {
+        if (!_laborPreview && SkillLaborBatch.Current is { } batch)
+        {
+            SkillLaborBuffMutation.Stage(batch, this, buff, index, forcedDuration);
+            return;
+        }
+        if (_laborPreview)
+            _laborChangedBuffIds.Add(buff.Template.Id);
         var finalToleranceBuffId = 0u;
         lock (_lock)
         {
@@ -449,53 +456,64 @@ public class Buffs : IBuffs
             }
             if (last != null)
             {
-                last.OverwriteWith(buff);
+                if (_laborPreview)
+                    last.ApplyRefreshState(buff, DateTime.UtcNow);
+                else
+                    last.OverwriteWith(buff);
             }
             else
             {
                 _effects.Add(buff);
-                buff.Triggers.SubscribeEvents();
-                buff.Events.OnBuffStarted(buff, new OnBuffStartedArgs());
-
-                if (buff.Template.BuffId > 0)
-                {
-                    var buffTemplate = SkillManager.Instance.GetBuffTemplate(buff.Template.BuffId);
-                    owner.SkillModifiersCache.AddModifiers(buff.Template.BuffId);
-                    owner.BuffModifiersCache.AddModifiers(buff.Template.BuffId);
-                    owner.CombatBuffs.AddCombatBuffs(buff.Template.BuffId);
-
-                    if (owner is Character { IsRiding: true } character && (buffTemplate.Stun || buffTemplate.Sleep || buffTemplate.Root))
-                    {
-                        var mateList = character.ParentWorld.MateManager.GetActiveMates(character.Id);
-                        foreach (var mate in mateList)
-                        {
-                            // TODO: handle passengers
-                            character.ParentWorld.MateManager.UnMountMate(character, mate.TlId, AttachPointKind.Driver, AttachUnitReason.None);
-                        }
-                    }
-
-                    if (buffTemplate.Stun || buffTemplate.Silence || buffTemplate.Sleep)
-                        owner.InterruptSkills();
-                }
-
-                //if (buff.Duration > 0)
-                if (buff.Duration > 0 || buff.Template.TickEffects.Count > 0)
-                    buff.SetInUse(true, false);
-                else
+                if (_laborPreview)
                 {
                     buff.InUse = true;
                     buff.State = EffectState.Acting;
-                    buff.Template.Start(buff.Caster, owner, buff); // TODO поменять на target
                 }
-
-                // If Owner has buffs that prevent it from doing combat, then remove the aggro for it
-                if (buffIds.Contains((uint)TagsEnum.NoFight) || buffIds.Contains((uint)TagsEnum.Returning))
+                else
                 {
-                    // Unit entered a "safe zone"
-                    if (owner is Unit unit)
+                    buff.Triggers.SubscribeEvents();
+                    buff.Events.OnBuffStarted(buff, new OnBuffStartedArgs());
+
+                    if (buff.Template.BuffId > 0)
                     {
-                        unit.ClearAllAggro();
-                        unit.IsInBattle = false;
+                        var buffTemplate = SkillManager.Instance.GetBuffTemplate(buff.Template.BuffId);
+                        owner.SkillModifiersCache.AddModifiers(buff.Template.BuffId);
+                        owner.BuffModifiersCache.AddModifiers(buff.Template.BuffId);
+                        owner.CombatBuffs.AddCombatBuffs(buff.Template.BuffId);
+
+                        if (owner is Character { IsRiding: true } character && (buffTemplate.Stun || buffTemplate.Sleep || buffTemplate.Root))
+                        {
+                            var mateList = character.ParentWorld.MateManager.GetActiveMates(character.Id);
+                            foreach (var mate in mateList)
+                            {
+                                // TODO: handle passengers
+                                character.ParentWorld.MateManager.UnMountMate(character, mate.TlId, AttachPointKind.Driver, AttachUnitReason.None);
+                            }
+                        }
+
+                        if (buffTemplate.Stun || buffTemplate.Silence || buffTemplate.Sleep)
+                            owner.InterruptSkills();
+                    }
+
+                    //if (buff.Duration > 0)
+                    if (buff.Duration > 0 || buff.Template.TickEffects.Count > 0)
+                        buff.SetInUse(true, false);
+                    else
+                    {
+                        buff.InUse = true;
+                        buff.State = EffectState.Acting;
+                        buff.Template.Start(buff.Caster, owner, buff); // TODO поменять на target
+                    }
+
+                    // If Owner has buffs that prevent it from doing combat, then remove the aggro for it
+                    if (buffIds.Contains((uint)TagsEnum.NoFight) || buffIds.Contains((uint)TagsEnum.Returning))
+                    {
+                        // Unit entered a "safe zone"
+                        if (owner is Unit unit)
+                        {
+                            unit.ClearAllAggro();
+                            unit.IsInBattle = false;
+                        }
                     }
                 }
             }
@@ -617,6 +635,11 @@ public class Buffs : IBuffs
 
     public void RemoveBuffs(BuffKind kind, int count, uint buffTagId = 0)
     {
+        if (!_laborPreview && SkillLaborBatch.Current is { } batch)
+        {
+            SkillLaborBuffMutation.StageRemoval(batch, this, GetOwner(), kind, count, buffTagId);
+            return;
+        }
         var own = GetOwner();
         if (own == null)
             return;
@@ -648,7 +671,13 @@ public class Buffs : IBuffs
                 if (buffTagId > 0 && !taggedBuffs.Contains(buffTemplate.Id))
                     continue;
 
-                buff.Exit();
+                if (_laborPreview)
+                {
+                    _laborChangedBuffIds.Add(buff.Template.Id);
+                    _effects.Remove(buff);
+                }
+                else
+                    buff.Exit();
                 count--;
                 if (count == 0)
                     return;
@@ -943,7 +972,11 @@ public class Buffs : IBuffs
     /// Saves all persistable active buffs to the database.
     /// Called during Character.Save().
     /// </summary>
-    public void SaveActiveBuffs(MySqlConnection connection, MySqlTransaction transaction, uint characterId)
+    public void SaveActiveBuffs(MySqlConnection connection, MySqlTransaction transaction, uint characterId) =>
+        SaveActiveBuffs(connection, transaction, characterId, null);
+
+    internal void SaveActiveBuffs(MySqlConnection connection, MySqlTransaction transaction, uint characterId,
+        IReadOnlySet<uint> changedBuffIds)
     {
         try
         {
@@ -954,6 +987,13 @@ public class Buffs : IBuffs
                 deleteCmd.Transaction = transaction;
                 deleteCmd.CommandText = "DELETE FROM `character_active_buffs` WHERE `character_id` = @characterId";
                 deleteCmd.Parameters.AddWithValue("@characterId", characterId);
+                if (changedBuffIds != null)
+                {
+                    var parameters = changedBuffIds.Select((id, index) => (id, name: "@buffId" + index)).ToArray();
+                    deleteCmd.CommandText += " AND `buff_id` IN (" + string.Join(",", parameters.Select(value => value.name)) + ")";
+                    foreach (var (id, name) in parameters)
+                        deleteCmd.Parameters.AddWithValue(name, id);
+                }
                 deleteCmd.ExecuteNonQuery();
             }
 
@@ -967,7 +1007,7 @@ public class Buffs : IBuffs
             var savedCount = 0;
             foreach (var buff in effects)
             {
-                if (!ShouldPersistBuff(buff))
+                if (!ShouldPersistBuff(buff) || (changedBuffIds != null && !changedBuffIds.Contains(buff.Template.Id)))
                     continue;
 
                 var timeLeft = (int)buff.GetTimeLeft();

@@ -36,6 +36,8 @@ public sealed class InventoryMutation : IDisposable
     }
 
     public IReadOnlyList<Item> RemovedItems => _removed;
+    internal bool HasFailed => _failed;
+    internal bool HasChanges => _containers.Count > 0 || _wallets.Count > 0;
 
     public bool TryChangeMoney(Character character, int delta, SlotType location = SlotType.Inventory)
     {

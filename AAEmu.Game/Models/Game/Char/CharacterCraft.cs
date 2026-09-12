@@ -22,6 +22,7 @@ public class CharacterCraft(Character owner)
 
     private int Count { get; set; }
     private Craft CurrentCraft { get; set; }
+    internal bool HasCurrentCraft => CurrentCraft != null;
     /// <summary>
     /// Crafter doodad Id
     /// </summary>
@@ -208,6 +209,7 @@ public class CharacterCraft(Character owner)
             }
         }
         */
+        skill.BaseCastingTime = CraftDuration.GetBaseMilliseconds(craft, skill.Template);
         skill.CastTimeMultiplier = speedMultiplier;
         if (skill.Use(Owner, caster, target, null, false, out _) != SkillResult.Success)
             CancelCraft();
@@ -244,15 +246,13 @@ public class CharacterCraft(Character owner)
 
     private void EndCraftCore()
     {
-        Count--;
-
         if (CurrentCraft == null)
         {
             CancelCraft();
             return;
         }
 
-        if (Owner.LaborPower < ConsumeLaborPower)
+        if (SkillLaborBatch.For(Owner) == null && Owner.LaborPower < ConsumeLaborPower)
         {
             Owner.SendDebugMessage("|cFFFFFF00[Craft] Not enough Labor Powers for crafting! Performing a fictitious crafting step...|r");
             // TODO not verified
@@ -436,7 +436,8 @@ public class CharacterCraft(Character owner)
                 if (actualGrade < 0)
                     actualGrade = 0;
 
-                Owner.Achievements?.Increment(
+                void RecordProduct() =>
+Owner.Achievements?.Increment(
                 [
                     new AchievementProgressEvent(
                         CharRecordKind.MakeItemType,
@@ -451,6 +452,10 @@ public class CharacterCraft(Character owner)
                         (uint)product.Amount,
                         true)
                 ]);
+                if (SkillLaborBatch.For(Owner) is { } productBatch)
+                    productBatch.AfterCommit(RecordProduct);
+                else
+                    RecordProduct();
             }
         }
 
@@ -468,7 +473,11 @@ public class CharacterCraft(Character owner)
         //        QuestManager.Instance.DoOnCraftEvents(Owner, _craft.Id);
         //    }
         //});
-        QuestManager.Instance.DoOnCraftEvents(Owner, CurrentCraft.Id);
+        var completedCraftId = CurrentCraft.Id;
+        void CompleteCraft()
+        {
+        Count--;
+        QuestManager.Instance.DoOnCraftEvents(Owner, completedCraftId);
 
         if (Count > 0)
         {
@@ -479,6 +488,11 @@ public class CharacterCraft(Character owner)
         {
             CancelCraft();
         }
+        }
+        if (SkillLaborBatch.For(Owner) is { } batch)
+            batch.AfterCommit(CompleteCraft);
+        else
+            CompleteCraft();
     }
 
     private bool ValidateCraftLocation(Craft craft, uint doodadId)
@@ -524,6 +538,12 @@ public class CharacterCraft(Character owner)
 
     private void CraftOrCancel()
     {
+        if (SkillLaborBatch.For(Owner) is { } batch)
+        {
+            batch.Fail();
+            CancelCraft();
+            return;
+        }
         if (Count > 0)
         {
             ScheduleCraft();
@@ -546,6 +566,7 @@ public class CharacterCraft(Character owner)
 
     private void CancelCraft()
     {
+        SkillLaborBatch.For(Owner)?.Fail();
         lock (SaveManager.PersistenceSyncRoot)
         {
             IsCrafting = false;

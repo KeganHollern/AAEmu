@@ -29,7 +29,13 @@ public class Plot
         await Tree.ExecuteAsync(state);
 
         if (skill.Template.PlotOnly && !state.CancellationRequested())
-            skill.RecordUseSkillAchievement(caster);
+        {
+            if (caster is Character laborOwner && skill.Template.ConsumeLaborPower > 0 && !skill.LaborSettled &&
+                !SkillLaborBatch.Run(laborOwner, skill, true, () => { }))
+                state.RequestCancellation();
+            if (!state.CancellationRequested())
+                skill.RecordUseSkillAchievement(caster);
+        }
 
         if (casterCaster is SkillItem skillItem && caster is Character player)
         {

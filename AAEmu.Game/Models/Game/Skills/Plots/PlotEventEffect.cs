@@ -81,6 +81,15 @@ public class PlotEventEffect
                 return;
             }
 
+            if (SkillLaborBatch.Current is { } batch && template is SpawnFishEffect or SpawnEffect or
+                NpcSpawnerSpawnEffect or NpcSpawnerDespawnEffect or KillNpcWithoutCorpseEffect)
+            {
+                var deferredTarget = target;
+                batch.AfterCommit(() => template.Apply(source, state.CasterCaster, deferredTarget, state.TargetCaster,
+                    new CastPlot(evt.PlotId, state.ActiveSkill.TlId, evt.Id, state.ActiveSkill.Template.Id),
+                    new EffectSource(state.ActiveSkill), state.SkillObject, DateTime.UtcNow));
+                continue;
+            }
             template.Apply(
                 source,
                 state.CasterCaster,
