@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Text;
 
 using AAEmu.Commons.Conversion;
+using AAEmu.Commons.Exceptions;
 using AAEmu.Commons.Utils;
 
 using NLog;
@@ -452,6 +453,14 @@ public class PacketStream : ICloneable, IComparable
 
     #endregion // GetBytes
 
+    private void RequireBytes(int count)
+    {
+        // An incomplete read must stop the decoder. Returning zero without advancing
+        // Pos lets a framing or payload loop read the same exhausted stream forever.
+        if (count < 0 || Pos < 0 || Pos > Count || count > Count - Pos)
+            throw new MarshalException($"Cannot read {count} bytes at offset {Pos} from a {Count}-byte packet.");
+    }
+
     #region Read Primitive Types
 
     /// <summary>
@@ -469,11 +478,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The byte read from the stream.</returns>
     public byte ReadByte()
     {
-        if (Pos + 1 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return 0; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(1);
         return this[Pos++];
     }
 
@@ -483,11 +488,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The signed byte read from the stream.</returns>
     public sbyte ReadSByte()
     {
-        if (Pos + 1 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return 0; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(1);
         return (sbyte)this[Pos++];
     }
 
@@ -498,11 +499,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>A byte array containing the bytes read from the stream.</returns>
     public byte[] ReadBytes(int count)
     {
-        if (Pos + count > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return []; // Возвращаем пустой массив
-        }
+        RequireBytes(count);
 
         var result = new byte[count];
         SBuffer.BlockCopy(Buffer, Pos, result, 0, count);
@@ -518,11 +515,7 @@ public class PacketStream : ICloneable, IComparable
     {
         var count = ReadInt16();
 
-        if (Pos + count > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return []; // Возвращаем пустой массив
-        }
+        RequireBytes(count);
 
         var result = new byte[count];
         SBuffer.BlockCopy(Buffer, Pos, result, 0, count);
@@ -536,11 +529,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The character read from the stream.</returns>
     public char ReadChar()
     {
-        if (Pos + 2 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return '\0'; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(2);
 
         var result = Converter.ToChar(Buffer, Pos);
         Pos += 2;
@@ -555,11 +544,9 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>A character array containing the characters read from the stream.</returns>
     public char[] ReadChars(int count)
     {
-        if (Pos + 2 * count > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return []; // Возвращаем пустой массив
-        }
+        if (count < 0 || count > int.MaxValue / sizeof(char))
+            throw new MarshalException();
+        RequireBytes(sizeof(char) * count);
 
         var result = new char[count];
         for (var i = 0; i < count; i++)
@@ -574,11 +561,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The 16-bit signed integer read from the stream.</returns>
     public short ReadInt16()
     {
-        if (Pos + 2 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return 0; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(2);
 
         var result = Converter.ToInt16(Buffer, Pos);
         Pos += 2;
@@ -592,11 +575,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The 32-bit signed integer read from the stream.</returns>
     public int ReadInt32()
     {
-        if (Pos + 4 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return 0; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(4);
 
         var result = Converter.ToInt32(Buffer, Pos);
         Pos += 4;
@@ -610,11 +589,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The 64-bit signed integer read from the stream.</returns>
     public long ReadInt64()
     {
-        if (Pos + 8 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return 0; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(8);
 
         var result = Converter.ToInt64(Buffer, Pos);
         Pos += 8;
@@ -628,11 +603,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The 16-bit unsigned integer read from the stream.</returns>
     public ushort ReadUInt16()
     {
-        if (Pos + 2 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return 0; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(2);
 
         var result = Converter.ToUInt16(Buffer, Pos);
         Pos += 2;
@@ -646,11 +617,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The 32-bit unsigned integer read from the stream.</returns>
     public uint ReadUInt32()
     {
-        if (Pos + 4 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return 0; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(4);
 
         var result = Converter.ToUInt32(Buffer, Pos);
         Pos += 4;
@@ -664,11 +631,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The 24-bit unsigned integer read from the stream.</returns>
     public uint ReadBc()
     {
-        if (Pos + 3 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return 0; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(3);
 
         var result = ReadUInt16() + (ReadByte() << 16);
 
@@ -681,11 +644,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The 64-bit unsigned integer read from the stream.</returns>
     public ulong ReadUInt64()
     {
-        if (Pos + 8 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return 0; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(8);
 
         var result = Converter.ToUInt64(Buffer, Pos);
         Pos += 8;
@@ -699,11 +658,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The single-precision floating-point number read from the stream.</returns>
     public float ReadSingle()
     {
-        if (Pos + 4 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return 0; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(4);
 
         var result = Converter.ToSingle(Buffer, Pos);
         Pos += 4;
@@ -717,11 +672,7 @@ public class PacketStream : ICloneable, IComparable
     /// <returns>The double-precision floating-point number read from the stream.</returns>
     public double ReadDouble()
     {
-        if (Pos + 8 > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return 0; // Возвращаем значение по умолчанию
-        }
+        RequireBytes(8);
 
         var result = Converter.ToDouble(Buffer, Pos);
         Pos += 8;
@@ -740,11 +691,7 @@ public class PacketStream : ICloneable, IComparable
     public PacketStream ReadPacketStream()
     {
         var i = ReadInt16();
-        if (Pos + i > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return new PacketStream(); // Возвращаем пустой PacketStream
-        }
+        RequireBytes(i);
         var newStream = new PacketStream(Buffer, Pos, i);
         Pos += i;
         return newStream;
@@ -758,11 +705,7 @@ public class PacketStream : ICloneable, IComparable
     public PacketStream Read(PacketStream stream)
     {
         var i = ReadInt16();
-        if (Pos + i > Count)
-        {
-            Logger.Error("Attempted to read beyond the end of the stream.");
-            return this; // Возвращаем текущий PacketStream
-        }
+        RequireBytes(i);
         stream.Replace(Buffer, Pos, i);
         Pos += i;
         return this;
@@ -778,7 +721,7 @@ public class PacketStream : ICloneable, IComparable
         {
             paramMarshal.Read(this);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MarshalException)
         {
             Logger.Error(ex, "Error reading PacketMarshaler.");
         }
@@ -796,7 +739,7 @@ public class PacketStream : ICloneable, IComparable
         {
             Read(t);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MarshalException)
         {
             Logger.Error(ex, "Error reading PacketMarshaler.");
         }
@@ -820,7 +763,7 @@ public class PacketStream : ICloneable, IComparable
                 Read(t);
                 collection.Add(t);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not MarshalException)
             {
                 Logger.Error(ex, "Error reading PacketMarshaler collection.");
             }
@@ -839,7 +782,7 @@ public class PacketStream : ICloneable, IComparable
         {
             return Helpers.UnixTime(ReadInt64());
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MarshalException)
         {
             Logger.Error(ex, "Error reading DateTime.");
             return DateTime.MinValue; // Возвращаем значение по умолчанию
@@ -869,7 +812,7 @@ public class PacketStream : ICloneable, IComparable
                     result[index / 2] = ReadByte();
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MarshalException)
         {
             Logger.Error(ex, "Error reading PISC array.");
         }
@@ -937,7 +880,7 @@ public class PacketStream : ICloneable, IComparable
                         }
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not MarshalException)
             {
                 Logger.Error(ex, "Error reading PISC array.");
             }
@@ -959,7 +902,7 @@ public class PacketStream : ICloneable, IComparable
             var position = ReadBytes(9);
             return Helpers.ConvertPosition(position);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MarshalException)
         {
             Logger.Error(ex, "Error reading position.");
             return (0, 0, 0); // Возвращаем значение по умолчанию
@@ -989,7 +932,7 @@ public class PacketStream : ICloneable, IComparable
 
             return quat;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MarshalException)
         {
             Logger.Error(ex, "Error reading quaternion.");
             return Quaternion.Identity; // Возвращаем значение по умолчанию
@@ -1010,7 +953,7 @@ public class PacketStream : ICloneable, IComparable
             var temp = new Vector3(x, y, z);
             return temp;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MarshalException)
         {
             Logger.Error(ex, "Error reading Vector3.");
             return Vector3.Zero; // Возвращаем значение по умолчанию
@@ -1032,7 +975,7 @@ public class PacketStream : ICloneable, IComparable
 
             return temp;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MarshalException)
         {
             Logger.Error(ex, "Error reading Vector3.");
             return Vector3.Zero; // Возвращаем значение по умолчанию
@@ -1055,7 +998,7 @@ public class PacketStream : ICloneable, IComparable
             var strBuf = ReadBytes(i);
             return Encoding.UTF8.GetString(strBuf).Trim('\u0000');
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MarshalException)
         {
             Logger.Error(ex, "Error reading string.");
             return string.Empty; // Возвращаем значение по умолчанию
@@ -1074,7 +1017,7 @@ public class PacketStream : ICloneable, IComparable
             var strBuf = ReadBytes(len);
             return Encoding.UTF8.GetString(strBuf).Trim('\u0000');
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MarshalException)
         {
             Logger.Error(ex, "Error reading string.");
             return string.Empty; // Возвращаем значение по умолчанию

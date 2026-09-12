@@ -15,7 +15,6 @@ public class LoginProtocolHandler : BaseProtocolHandler
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     private readonly ConcurrentDictionary<uint, Type> _packets = new();
-    private PacketStream _lastPacket;
     private LoadTask _loadTask;
 
     public override void OnConnect(ISession session)
@@ -47,63 +46,75 @@ public class LoginProtocolHandler : BaseProtocolHandler
 
     public override void OnReceive(ISession session, byte[] buf, int offset, int bytes)
     {
-        var stream = new PacketStream();
-        var connection = LoginNetwork.Instance.GetConnection();
-        if (_lastPacket != null)
+        OnReceive(LoginNetwork.Instance.GetConnection(), buf, offset, bytes);
+    }
+
+    public void OnReceive(LoginConnection connection, byte[] buf, int offset, int bytes)
+    {
+        try
         {
-            stream.Insert(0, _lastPacket);
-            _lastPacket = null;
-        }
-        stream.Insert(stream.Count, buf, offset, bytes);
-        while (stream != null && stream.Count > 0)
-        {
-            ushort len;
-            try
+            var stream = new PacketStream();
+            if (connection.LastPacket != null)
             {
-                len = stream.ReadUInt16();
+                stream.Insert(0, connection.LastPacket);
+                connection.LastPacket = null;
             }
-            catch (MarshalException)
+            stream.Insert(stream.Count, buf, offset, bytes);
+            while (stream != null && stream.Count > 0)
             {
-                //Logger.Warn("Error on reading type {0}", type);
-                stream.Rollback();
-                connection.LastPacket = stream;
-                stream = null;
-                continue;
-            }
-            var packetLen = len + stream.Pos;
-            if (packetLen <= stream.Count)
-            {
-                stream.Rollback();
-                var stream2 = new PacketStream();
-                stream2.Replace(stream, 0, packetLen);
-                if (stream.Count > packetLen)
+                ushort len;
+                try
                 {
-                    var stream3 = new PacketStream();
-                    stream3.Replace(stream, packetLen, stream.Count - packetLen);
-                    stream = stream3;
+                    len = stream.ReadUInt16();
                 }
-                else
+                catch (MarshalException)
+                {
+                    //Logger.Warn("Error on reading type {0}", type);
+                    stream.Rollback();
+                    connection.LastPacket = stream;
                     stream = null;
-                stream2.ReadUInt16(); //len
-                var type = stream2.ReadUInt16();
-                _packets.TryGetValue(type, out var classType);
-                if (classType == null)
+                    continue;
+                }
+                var packetLen = len + stream.Pos;
+                if (packetLen <= stream.Count)
                 {
-                    HandleUnknownPacket(connection, type, stream2);
+                    stream.Rollback();
+                    var stream2 = new PacketStream();
+                    stream2.Replace(stream, 0, packetLen);
+                    if (stream.Count > packetLen)
+                    {
+                        var stream3 = new PacketStream();
+                        stream3.Replace(stream, packetLen, stream.Count - packetLen);
+                        stream = stream3;
+                    }
+                    else
+                        stream = null;
+                    stream2.ReadUInt16(); //len
+                    var type = stream2.ReadUInt16();
+                    _packets.TryGetValue(type, out var classType);
+                    if (classType == null)
+                    {
+                        HandleUnknownPacket(connection, type, stream2);
+                    }
+                    else
+                    {
+                        var packet = (LoginPacket)Activator.CreateInstance(classType);
+                        packet.Connection = connection;
+                        packet.Decode(stream2);
+                    }
                 }
                 else
                 {
-                    var packet = (LoginPacket)Activator.CreateInstance(classType);
-                    packet.Connection = connection;
-                    packet.Decode(stream2);
+                    stream.Rollback();
+                    connection.LastPacket = stream;
+                    stream = null;
                 }
             }
-            else
-            {
-                stream.Rollback();
-                connection.LastPacket = stream;
-                stream = null;
-            }
+        }
+        catch (MarshalException e)
+        {
+            connection.Close();
+            Logger.Error(e, "Login protocol failed on connection {0} from {1}", connection.Id, connection.Ip);
         }
     }
 
