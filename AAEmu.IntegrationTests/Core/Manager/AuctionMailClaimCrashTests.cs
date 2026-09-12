@@ -57,7 +57,7 @@ public sealed partial class AuctionMailClaimStoreTests
                     // It is private test state and never appears in production SQL.
                     await ExecuteAsync("CREATE TABLE auction_claim_crash_probe (entered INT NOT NULL) ENGINE=MyISAM");
                     await ExecuteAsync($"""
-                        CREATE TRIGGER pause_auction_claim BEFORE UPDATE ON mails FOR EACH ROW
+                        CREATE TRIGGER pause_auction_claim BEFORE INSERT ON mails FOR EACH ROW
                         BEGIN
                             INSERT INTO auction_claim_crash_probe VALUES (1);
                             DO GET_LOCK('{gateName}', 30);
