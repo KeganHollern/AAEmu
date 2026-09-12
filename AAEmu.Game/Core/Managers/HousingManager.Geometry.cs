@@ -19,9 +19,9 @@ public partial class HousingManager
     internal HousingGeometryAssets GeometryAssets { get; set; } = new();
 
     private HousingGeometryWorld GeometryWorld(WorldInstance world, Func<Doodad, bool> ignoreDoodad = null,
-        bool construction = false, bool includeStatic = true) =>
+        bool construction = false, bool includeStatic = true, DateTime? utcNow = null) =>
         new(GeometryAssets, world, () => construction ? [] : _houses.Values,
-            bounds => OtherGeometry(world, bounds, construction), ignoreDoodad, includeStatic);
+            bounds => OtherGeometry(world, bounds, construction), ignoreDoodad, includeStatic, utcNow);
 
     private IEnumerable<CryGeometryInstance> OtherGeometry(WorldInstance world, CryBounds bounds, bool construction)
     {
@@ -50,7 +50,7 @@ public partial class HousingManager
                 asset = GeometryAssets.LoadModel(unit.ModelId);
                 transform = HousingGeometryAssets.Transform(unit);
             }
-            if (asset.Bounds.Transform(transform).Intersects(bounds))
+            if (HousingGeometryAssets.CollisionBounds(asset, transform).Intersects(bounds))
                 yield return new CryGeometryInstance(0, asset, transform, entityType);
         }
     }
@@ -62,16 +62,19 @@ public partial class HousingManager
         {
             var template = doodadManager.GetTemplate(design.DoodadId);
             var decoration = template == null ? null : GeometryAssets.LoadDoodad(template);
-            if (decoration == null)
+            if (decoration?.HasModelBounds != true)
                 return ErrorMessageType.HouseCannotDecorateSurface;
-            var houseAsset = GeometryAssets.LoadHouse(house.Template, house.CurrentStep);
+            var utcNow = DateTime.UtcNow;
+            var houseAsset = GeometryAssets.LoadHouse(house, utcNow);
+            if (!houseAsset.HasModelBounds)
+                return ErrorMessageType.HouseCannotDecorateSurface;
             var houseTransform = HousingGeometryAssets.Transform(house);
             var transform = Matrix4x4.CreateFromQuaternion(localRotation) *
                 Matrix4x4.CreateTranslation(localPosition) * houseTransform;
             var garden = HousingGeometryAssets.GardenBounds(house.Template, houseAsset.Bounds, houseTransform);
             if (!HousingDecorationGeometry.IsWithinSelectionRange(garden, player.Transform.World.Position))
                 return ErrorMessageType.TooFarAway;
-            var scene = GeometryWorld(house.ParentWorld);
+            var scene = GeometryWorld(house.ParentWorld, utcNow: utcNow);
             // Native3903da00 aligns local +Z with the ray-hit surface normal. The packet sends its exact pivot.
             // One centimetre allows float coordinate composition at world scale, without a placement offset.
             const float surfaceTolerance = 0.01f;
@@ -110,10 +113,13 @@ public partial class HousingManager
             if (template.CategoryId is 2 or 3 or 4 or 5 or 14)
                 return new(position, yaw, ErrorMessageType.HouseCannotLocateNotDominatedZone);
             var asset = GeometryAssets.LoadHouse(template);
+            if (!asset.HasModelBounds)
+                return new(position, yaw, ErrorMessageType.HouseCannotLocateInvalidArea);
+            var utcNow = DateTime.UtcNow;
             bool IgnoreDoodad(Doodad doodad) => doodad.ParentObjId != 0 ||
                 CommonFarmGameData.Instance.IsRemovedByHouse(doodad.Template.GroupId) ||
-                GetHouseAtLocation(player.ParentWorld, doodad.Transform.World.Position) != null;
-            var scene = GeometryWorld(player.ParentWorld, IgnoreDoodad, construction: true);
+                GetHouseAtLocation(player.ParentWorld, doodad.Transform.World.Position, utcNow) != null;
+            var scene = GeometryWorld(player.ParentWorld, IgnoreDoodad, construction: true, utcNow: utcNow);
             var (_, _, encodedYaw) = PositionAndRotation.ToRollPitchYawSBytes(new Vector3(0, 0, yaw));
             yaw = PositionAndRotation.FromRollPitchYawSBytes(0, 0, encodedYaw).Z;
             var pose = HousingConstructionGeometry.Resolve(template, position, yaw, player.Transform.World.Position,
@@ -147,7 +153,9 @@ public partial class HousingManager
             }
             foreach (var neighbor in _houses.Values.Where(neighbor => ReferenceEquals(neighbor.ParentWorld, player.ParentWorld)))
             {
-                var neighborAsset = GeometryAssets.LoadHouse(neighbor.Template, neighbor.CurrentStep);
+                var neighborAsset = GeometryAssets.LoadHouse(neighbor, utcNow);
+                if (!neighborAsset.HasModelBounds)
+                    return pose with { Error = ErrorMessageType.HouseCannotLocateInvalidArea };
                 if (HousingConstructionGeometry.OverlapsHouse(template, asset.Bounds, transform,
                         neighbor.Template, neighborAsset.Bounds, HousingGeometryAssets.Transform(neighbor)))
                     return pose with { Error = ErrorMessageType.HouseCannotLocateOverlapHouse };
@@ -160,7 +168,7 @@ public partial class HousingManager
                 var garden = HousingGeometryAssets.GardenBounds(template, asset.Bounds, transform);
                 // Native39180530 checks logical units and unbound doodads in the garden cells.
                 // Static world geometry participates in the model OBB query above, not this cell query.
-                var gardenScene = GeometryWorld(player.ParentWorld, IgnoreDoodad, construction: true, includeStatic: false);
+                var gardenScene = GeometryWorld(player.ParentWorld, IgnoreDoodad, construction: true, includeStatic: false, utcNow: utcNow);
                 if (gardenScene.IntersectBox(new CryBox(garden.Center, garden.HalfSize, Matrix4x4.Identity)) != CryIntersection.Clear)
                     return pose with { Error = ErrorMessageType.HouseCannotLocateOverlapUnit };
             }

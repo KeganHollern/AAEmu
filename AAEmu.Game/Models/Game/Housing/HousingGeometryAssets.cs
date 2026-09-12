@@ -42,20 +42,25 @@ public sealed class HousingGeometryAssets
 
     public CryGeometryAsset LoadStatic(CryWorldObjectInstance instance) => _staticResolver.Load(instance);
 
-    public CryGeometryAsset LoadModel(uint id) => _models.GetOrAdd(id, modelId =>
+    public CryGeometryAsset LoadModel(uint id) => _models.GetOrAdd(id, modelId => LoadModelPose(modelId, null));
+
+    private CryGeometryAsset LoadModelPose(uint id, double? elapsedSeconds)
     {
-        var paths = _modelPaths(modelId, 1);
+        var paths = _modelPaths(id, 1);
         if (paths.Count == 0)
-            throw new InvalidDataException($"No authored placement model for model {modelId}.");
-        var assets = paths.Select(Load).ToArray();
-        return new CryGeometryAsset(assets.Select(asset => asset.Bounds).Aggregate((left, right) => left.Union(right)),
+            throw new InvalidDataException($"No authored placement model for model {id}.");
+        var assets = paths.Select(path => elapsedSeconds.HasValue ? _resolver.LoadPose(path, elapsedSeconds.Value) : Load(path)).ToArray();
+        var bounds = assets.Where(asset => asset.HasModelBounds).Select(asset => (CryBounds?)asset.Bounds)
+            .Aggregate((CryBounds?)null, (left, right) => left?.Union(right.Value) ?? right);
+        return new CryGeometryAsset(bounds ?? new CryBounds(Vector3.Zero, Vector3.Zero),
             assets.SelectMany(asset => asset.Parts).ToArray())
         {
+            HasModelBounds = bounds.HasValue,
             HasAnimatedCollision = assets.Any(asset => asset.HasAnimatedCollision),
             Helpers = assets.SelectMany(asset => asset.Helpers).ToArray(),
             PoseRequirements = assets.SelectMany(asset => asset.PoseRequirements).ToArray()
         };
-    });
+    }
 
     public CryGeometryAsset LoadHouse(HousingTemplate template, int step = -1)
     {
@@ -64,18 +69,36 @@ public sealed class HousingGeometryAssets
         return LoadModel(modelId);
     }
 
+    public CryGeometryAsset LoadHouse(House house, DateTime utcNow)
+    {
+        var modelId = house.CurrentStep >= 0 && house.Template.BuildSteps.TryGetValue(house.CurrentStep, out var step)
+            ? step.ModelId : house.Template.MainModelId;
+        var asset = LoadModel(modelId);
+        if (!asset.PoseRequirements.Any(pose => pose.Playing))
+            return asset;
+        return LoadModelPose(modelId, ElapsedSeconds(house.PlaceDate, utcNow));
+    }
+
     public CryGeometryAsset LoadDoodad(DoodadTemplate template, uint phase = 0)
     {
-        var path = phase == 0 ? null : template.FuncGroups.FirstOrDefault(group => group.Id == phase)?.Model;
-        if (string.IsNullOrEmpty(path))
-            path = template.Model;
+        var path = DoodadModelPath(template, phase);
         // Native393b03b0 returns no model when both the requested path and base path are empty.
         return string.IsNullOrEmpty(path) ? null : Load(path);
     }
 
-    public CryGeometryAsset LoadDoodad(Doodad doodad)
+    private static string DoodadModelPath(DoodadTemplate template, uint phase)
     {
-        var asset = LoadDoodad(doodad.Template, doodad.FuncGroupId);
+        var path = phase == 0 ? null : template.FuncGroups.FirstOrDefault(group => group.Id == phase)?.Model;
+        if (string.IsNullOrEmpty(path))
+            path = template.Model;
+        return path;
+    }
+
+    public CryGeometryAsset LoadDoodad(Doodad doodad, DateTime utcNow)
+    {
+        var elapsedSeconds = ElapsedSeconds(doodad.PhaseTime, utcNow);
+        var path = DoodadModelPath(doodad.Template, doodad.FuncGroupId);
+        var asset = string.IsNullOrEmpty(path) ? null : _resolver.LoadPose(path, elapsedSeconds);
         if (asset?.CharacterBones.Count is not > 0)
             return asset;
         var animations = doodad.CurrentPhaseFuncs
@@ -84,15 +107,15 @@ public sealed class HousingGeometryAssets
             .OfType<DoodadFuncAnimate>().OrderBy(animation => animation.Id).ToArray();
         if (animations.Length == 0)
             return asset;
-        var path = doodad.Template.FuncGroups.FirstOrDefault(group => group.Id == doodad.FuncGroupId)?.Model;
-        if (string.IsNullOrEmpty(path))
-            path = doodad.Template.Model;
         // The client picks one phase clip at random. Server collision uses the first authored ID.
         var animation = animations[0];
         // Native393a4360 uses CA_LOOP_ANIMATION (2) or CA_REPEAT_LAST_KEY (4).
         return _resolver.LoadCharacterPose(path, animation.Name,
-            Math.Max(0, (DateTime.UtcNow - doodad.PhaseTime).TotalSeconds), !animation.PlayOnce);
+            elapsedSeconds, !animation.PlayOnce);
     }
+
+    private static double ElapsedSeconds(DateTime start, DateTime utcNow) =>
+        start == DateTime.MinValue ? 0 : Math.Max(0, (utcNow - start).TotalSeconds);
 
     public CryWorldObjectIndex GetWorld(WorldTemplate world) => _worlds.GetOrAdd(world,
         template => new Lazy<CryWorldObjectIndex>(() => CryWorldObjectIndex.Load(template, _openFile,
@@ -141,6 +164,10 @@ public sealed class HousingGeometryAssets
         orientation.Translation = Vector3.Zero;
         return new CryBox(Vector3.Transform(localBounds.Center, transform), localBounds.HalfSize, orientation);
     }
+
+    public static CryBounds CollisionBounds(CryGeometryAsset asset, Matrix4x4 transform) =>
+        asset.Parts.Aggregate(asset.Bounds.Transform(transform),
+            (bounds, part) => bounds.Union(CryGeometryQueries.GetBounds(part, transform)));
 
     public static CryBounds GardenBounds(HousingTemplate template, CryBounds localBounds,
         Matrix4x4 transform, bool reserveAlley = true)

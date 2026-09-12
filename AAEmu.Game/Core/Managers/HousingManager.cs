@@ -1720,7 +1720,9 @@ public partial class HousingManager(
     /// <param name="world"></param>
     /// <param name="position"></param>
     /// <returns>Target House or Null</returns>
-    public House GetHouseAtLocation(WorldInstance world, Vector3 position)
+    public House GetHouseAtLocation(WorldInstance world, Vector3 position) => GetHouseAtLocation(world, position, DateTime.UtcNow);
+
+    private House GetHouseAtLocation(WorldInstance world, Vector3 position, DateTime utcNow)
     {
         if (world == null || !HousingAreaPolygon.IsFinite(position))
             return null;
@@ -1735,7 +1737,9 @@ public partial class HousingManager(
                     continue;
                 try
                 {
-                    var asset = GeometryAssets.LoadHouse(house.Template, house.CurrentStep);
+                    var asset = GeometryAssets.LoadHouse(house, utcNow);
+                    if (!asset.HasModelBounds)
+                        continue;
                     var bounds = HousingGeometryAssets.GardenBounds(house.Template, asset.Bounds, HousingGeometryAssets.Transform(house));
                     if (position.X >= bounds.Min.X && position.X < bounds.Max.X &&
                         position.Y >= bounds.Min.Y && position.Y < bounds.Max.Y &&

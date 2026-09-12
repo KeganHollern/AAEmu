@@ -11,14 +11,25 @@ namespace AAEmu.Game.Models.Game.Housing;
 /// <summary>Combines authored world geometry and the current persisted world objects.</summary>
 public sealed class HousingGeometryWorld(HousingGeometryAssets assets, WorldInstance world,
     Func<IEnumerable<House>> houses, Func<CryBounds, IEnumerable<CryGeometryInstance>> otherInstances,
-    Func<Doodad, bool> ignoreDoodad = null, bool includeStatic = true)
+    Func<Doodad, bool> ignoreDoodad = null, bool includeStatic = true, DateTime? utcNow = null)
 {
-    private readonly CryGeometryScene _scene = new(bounds => QueryInstances(assets, world, houses,
-        otherInstances, ignoreDoodad, includeStatic, bounds), _ => true);
+    private readonly CryGeometryScene _scene = CreateScene(assets, world, houses,
+        otherInstances, ignoreDoodad, includeStatic, utcNow ?? DateTime.UtcNow);
+
+    private static CryGeometryScene CreateScene(HousingGeometryAssets geometry, WorldInstance instance,
+        Func<IEnumerable<House>> getHouses, Func<CryBounds, IEnumerable<CryGeometryInstance>> getOtherInstances,
+        Func<Doodad, bool> ignored, bool includeStatic, DateTime utcNow)
+    {
+        // All support rays and overlap boxes in one placement use the same object poses.
+        var current = new Lazy<(CryGeometryInstance Instance, CryBounds Bounds)[]>(() =>
+            CurrentInstances(geometry, instance, getHouses, ignored, utcNow)
+                .Select(item => (item, HousingGeometryAssets.CollisionBounds(item.Asset, item.Transform))).ToArray());
+        return new CryGeometryScene(bounds => QueryInstances(geometry, instance, getOtherInstances,
+            includeStatic, bounds).Concat(current.Value.Where(item => item.Bounds.Intersects(bounds)).Select(item => item.Instance)), _ => true);
+    }
 
     private static IEnumerable<CryGeometryInstance> QueryInstances(HousingGeometryAssets geometry,
-        WorldInstance instance, Func<IEnumerable<House>> getHouses,
-        Func<CryBounds, IEnumerable<CryGeometryInstance>> getOtherInstances, Func<Doodad, bool> ignored,
+        WorldInstance instance, Func<CryBounds, IEnumerable<CryGeometryInstance>> getOtherInstances,
         bool includeStatic, CryBounds bounds)
     {
         foreach (var authored in includeStatic
@@ -37,26 +48,28 @@ public sealed class HousingGeometryWorld(HousingGeometryAssets assets, WorldInst
                 IsVegetation = authored.Kind == ObjectDataType.Vegetation
             };
         }
+        foreach (var other in getOtherInstances(bounds))
+            yield return other;
+    }
+
+    private static IEnumerable<CryGeometryInstance> CurrentInstances(HousingGeometryAssets geometry,
+        WorldInstance instance, Func<IEnumerable<House>> getHouses, Func<Doodad, bool> ignored, DateTime utcNow)
+    {
         foreach (var house in getHouses().Where(house => ReferenceEquals(house.ParentWorld, instance)))
         {
-            var asset = geometry.LoadHouse(house.Template, house.CurrentStep);
-            var transform = HousingGeometryAssets.Transform(house);
-            if (asset.Bounds.Transform(transform).Intersects(bounds))
-                yield return new CryGeometryInstance(0, asset, transform);
+            var asset = geometry.LoadHouse(house, utcNow);
+            if (asset.HasModelBounds)
+                yield return new CryGeometryInstance(0, asset, HousingGeometryAssets.Transform(house));
         }
         foreach (var doodad in instance.GetAllDoodads())
         {
             if (doodad.Template == null || ignored?.Invoke(doodad) == true)
                 continue;
-            var asset = geometry.LoadDoodad(doodad);
-            if (asset == null)
+            var asset = geometry.LoadDoodad(doodad, utcNow);
+            if (asset?.HasModelBounds != true)
                 continue;
-            var transform = HousingGeometryAssets.Transform(doodad);
-            if (asset.Bounds.Transform(transform).Intersects(bounds))
-                yield return new CryGeometryInstance(doodad.ObjId, asset, transform, 1, doodad.Template.NoCollision);
+            yield return new CryGeometryInstance(doodad.ObjId, asset, HousingGeometryAssets.Transform(doodad), 1, doodad.Template.NoCollision);
         }
-        foreach (var other in getOtherInstances(bounds))
-            yield return other;
     }
 
     private CryTerrainGrid GetTerrain(int x, int y) => assets.GetTerrain(world.Template, x, y);
