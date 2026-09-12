@@ -38,7 +38,7 @@ The client receives the account dates through the current `SCAccountInfoPacket`.
 
 The server compact SHA-256 is `636ca9ecfe777bc86542e4b828f930c7861d2b4639b1bcfff670c064fee9c1ac`.
 The client compact SHA-256 is `4f1ac86b2ae79fd35886d0cd7b1e5cccc3287a011a200667d97eb1c5bc4d79a4`.
-`PremiumGameData` reads `premium_benefits` at startup.
+`PremiumGameData` reads `premium_benefits` and `premium_grades` at startup.
 
 | Grade | State | Online labor | Offline labor | Labor cap |
 | --- | --- | --- | --- | --- |
@@ -54,6 +54,7 @@ This change prevents another award for time that already received online labor.
 The current labor cap limits new awards. A date expiry does not remove labor above the lower cap.
 
 `premium_grades` maps point 0 to grade 1 and point 1 to grade 2.
+The NetUnit premium field uses this point value for the active account state.
 `premium_configs` describes connect and disconnect points. These tables do not define a purchased account period.
 They do not authorize a patron grant or establish a sale price.
 The premium purchase route remains disabled under issue 316.

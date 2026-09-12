@@ -1509,17 +1509,15 @@ public partial class Character : Unit, ICharacter
             AddExpLocked(expDelta, shouldAddAbilityExp);
     }
 
-    private void AddExpLocked(int expDelta, bool shouldAddAbilityExp)
+    private void AddExpLocked(int expDelta, bool shouldAddAbilityExp, bool labor = false, bool applyModifiers = true)
     {
         if (expDelta == 0)
             return;
 
-        if (expDelta > 0)
-        {
-            expDelta = (int)(expDelta * AppConfiguration.Instance.World.ExpRate);
-        }
+        if (applyModifiers)
+            expDelta = CalculateExperienceGain(expDelta, labor);
         
-        var newExperience = Experience + expDelta;
+        var newExperience = (int)Math.Clamp((long)Experience + expDelta, 0, int.MaxValue);
         var newLevel = ExperienceManager.Instance.GetLevelFromExp(newExperience, Level, out var overflow);
         var leveledUp = newLevel > Level;
         
@@ -1730,7 +1728,7 @@ public partial class Character : Unit, ICharacter
             };
             var formula = FormulaManager.Instance.GetFormula((uint)FormulaKind.ExpByLaborPower);
             var xpToAdd = (int)(formula.Evaluate(parameters) * expMultiplier);
-            AddExp(xpToAdd, true);
+            AddExpLocked(xpToAdd, true, labor: true);
         }
 
         LaborPower += change;

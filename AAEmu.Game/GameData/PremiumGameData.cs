@@ -13,6 +13,8 @@ public class PremiumGameData : Singleton<PremiumGameData>, IGameDataLoader
     {
         [1] = new(5, 0, 2000), [2] = new(10, 5, 5000)
     };
+    private Dictionary<uint, int> _points = new() { [1] = 0, [2] = 1 };
+    public int GetPoint(bool patron) => _points[patron ? 2u : 1u];
     public PremiumBenefits Get(bool patron) => _benefits[patron ? 2u : 1u];
 
     public void Load(SqliteConnection connection)
@@ -31,7 +33,21 @@ public class PremiumGameData : Singleton<PremiumGameData>, IGameDataLoader
         }
         if (!benefits.ContainsKey(1) || !benefits.ContainsKey(2))
             throw new InvalidDataException("The non-patron and patron benefit rows are required");
+        sqlite.Close();
+        command.CommandText = "SELECT grade_id, point FROM premium_grades";
+        using var grades = command.ExecuteReader();
+        var points = new Dictionary<uint, int>();
+        while (grades.Read())
+        {
+            var point = grades.GetInt32(1);
+            if (point < 0)
+                throw new InvalidDataException("Invalid premium grade point");
+            points.Add(checked((uint)grades.GetInt64(0)), point);
+        }
+        if (!points.ContainsKey(1) || !points.ContainsKey(2))
+            throw new InvalidDataException("The non-patron and patron point rows are required");
         _benefits = benefits;
+        _points = points;
     }
     public void PostLoad() { }
 }

@@ -73,7 +73,7 @@ public class RecoverExpEffect : EffectTemplate
             return;
         }
         player.SendPacket(new SCRecoverableExpPacket(player.ObjId, 0, 0, 1));
-        player.AddExp(player.RecoverableExp, false);
+        player.RestoreExperience(player.RecoverableExp);
         player.RecoverableExp = 0;
         player.LastExpLoss = 0;
     }

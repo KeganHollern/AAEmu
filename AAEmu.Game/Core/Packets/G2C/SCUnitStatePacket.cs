@@ -2,6 +2,7 @@
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Housing;
@@ -316,7 +317,7 @@ public class SCUnitStatePacket : GamePacket
             //character.VisualOptions.Write(stream, 31);
             character.VisualOptions.WriteOptions(stream); // cosplay_visual
 
-            stream.Write(1); // premium
+            stream.Write(PremiumGameData.Instance.GetPoint(character.Connection?.Payment.PremiumState == true)); // premium point
 
             for (var i = 0; i < 6; i++)
             {
@@ -330,7 +331,7 @@ public class SCUnitStatePacket : GamePacket
         var badBuffs = new List<Buff>();
         var hiddenBuffs = new List<Buff>();
 
-        // TODO: Fix the patron and auction house license buff issue
+        // TODO: Move the auction house license buff to its authored entitlement path.
         if (character is not null)
         {
             character.RefreshPatronBuff();

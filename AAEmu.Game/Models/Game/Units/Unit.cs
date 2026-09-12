@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Numerics;
 
 using AAEmu.Commons.Network;
@@ -92,6 +92,14 @@ public class Unit : BaseUnit, IUnit
     protected List<int> HpTriggerPointsPercent { get; set; } = [];
 
     #region Attributes
+
+    [UnitAttribute(UnitAttribute.ExpMul)]
+    public double ExperienceMultiplier => ExperienceModifierGameData.Instance.Clamp(UnitAttribute.ExpMul,
+        CalculateWithBonuses(100d, UnitAttribute.ExpMul)) / 100d;
+
+    [UnitAttribute(UnitAttribute.ExpByLaborPowerMul)]
+    public double LaborExperienceMultiplier => ExperienceModifierGameData.Instance.Clamp(UnitAttribute.ExpByLaborPowerMul,
+        CalculateWithBonuses(100d, UnitAttribute.ExpByLaborPowerMul)) / 100d;
 
     [UnitAttribute(UnitAttribute.MoveSpeedMul)]
     public virtual float MoveSpeedMul { get => (float)CalculateWithBonuses(1000f, UnitAttribute.MoveSpeedMul) / 1000f; }

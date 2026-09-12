@@ -72,17 +72,17 @@ public class CharacterAbilities
         var maxLevelExp = ExperienceManager.Instance.GetExpForLevel(ExperienceManager.Instance.MaxPlayerLevel);
         if (Owner.Ability1 != AbilityType.None)
         {
-            Abilities[Owner.Ability1].Exp = Math.Min(Abilities[Owner.Ability1].Exp + exp, maxLevelExp);
+            Abilities[Owner.Ability1].Exp = (int)Math.Clamp((long)Abilities[Owner.Ability1].Exp + exp, 0, maxLevelExp);
             Owner.Achievements?.UpdateAbilityLevel(Owner.Ability1, GetAbilityLevel(Owner.Ability1));
         }
         if (Owner.Ability2 != AbilityType.None)
         {
-            Abilities[Owner.Ability2].Exp = Math.Min(Abilities[Owner.Ability2].Exp + exp, maxLevelExp);
+            Abilities[Owner.Ability2].Exp = (int)Math.Clamp((long)Abilities[Owner.Ability2].Exp + exp, 0, maxLevelExp);
             Owner.Achievements?.UpdateAbilityLevel(Owner.Ability2, GetAbilityLevel(Owner.Ability2));
         }
         if (Owner.Ability3 != AbilityType.None)
         {
-            Abilities[Owner.Ability3].Exp = Math.Min(Abilities[Owner.Ability3].Exp + exp, maxLevelExp);
+            Abilities[Owner.Ability3].Exp = (int)Math.Clamp((long)Abilities[Owner.Ability3].Exp + exp, 0, maxLevelExp);
             Owner.Achievements?.UpdateAbilityLevel(Owner.Ability3, GetAbilityLevel(Owner.Ability3));
         }
     }

@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils.DB;
@@ -552,10 +552,9 @@ internal sealed class AuctionMailClaimManager : IAuctionMailClaimManager
         };
         var formula = FormulaManager.Instance.GetFormula((uint)FormulaKind.ExpByLaborPower);
         var experienceChange = (int)(formula.Evaluate(parameters) * commerce.GetExpMultiplier());
-        if (experienceChange > 0)
-            experienceChange = (int)(experienceChange * AppConfiguration.Instance.World.ExpRate);
+        experienceChange = character.CalculateExperienceGain(experienceChange, labor: true);
 
-        var experienceAfter = checked(character.Experience + experienceChange);
+        var experienceAfter = (int)Math.Clamp((long)character.Experience + experienceChange, 0, int.MaxValue);
         var levelAfter = ExperienceManager.Instance.GetLevelFromExp(
             experienceAfter,
             character.Level,
@@ -571,9 +570,9 @@ internal sealed class AuctionMailClaimManager : IAuctionMailClaimManager
         {
             if (abilityId == AbilityType.None)
                 continue;
-            abilityExperienceAfter[abilityId] = Math.Min(
-                checked(abilityExperienceAfter[abilityId] + experienceChange),
-                maximumAbilityExperience);
+            abilityExperienceAfter[abilityId] = (int)Math.Clamp(
+                (long)abilityExperienceAfter[abilityId] + experienceChange,
+                0, maximumAbilityExperience);
         }
 
         var abilityLevelsAfter = abilityExperienceAfter.ToDictionary(

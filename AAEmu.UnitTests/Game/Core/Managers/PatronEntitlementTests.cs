@@ -94,12 +94,14 @@ public class PatronEntitlementTests
         using var connection = new SqliteConnection("Data Source=:memory:");
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "CREATE TABLE premium_benefits(grade_id INTEGER,online_labor INTEGER,offline_labor INTEGER,max_labor INTEGER); INSERT INTO premium_benefits VALUES(1,5,0,2000),(2,10,5,5000)";
+        command.CommandText = "CREATE TABLE premium_benefits(grade_id INTEGER,online_labor INTEGER,offline_labor INTEGER,max_labor INTEGER); INSERT INTO premium_benefits VALUES(1,5,0,2000),(2,10,5,5000); CREATE TABLE premium_grades(grade_id INTEGER,point INTEGER); INSERT INTO premium_grades VALUES(1,0),(2,1)";
         command.ExecuteNonQuery();
         var data = new PremiumGameData();
         data.Load(connection);
         await Assert.That(data.Get(false)).IsEqualTo(new PremiumBenefits(5, 0, 2000));
         await Assert.That(data.Get(true)).IsEqualTo(new PremiumBenefits(10, 5, 5000));
+        await Assert.That(data.GetPoint(false)).IsEqualTo(0);
+        await Assert.That(data.GetPoint(true)).IsEqualTo(1);
     }
 
     [Test]
