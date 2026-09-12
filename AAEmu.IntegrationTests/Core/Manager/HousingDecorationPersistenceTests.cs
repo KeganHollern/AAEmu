@@ -38,6 +38,11 @@ public sealed partial class PlayerMailSendPersistenceTests
     [InlineData(false, false, "cross_world")]
     [InlineData(false, false, "cap_full")]
     [InlineData(false, false, "unfinished")]
+    [InlineData(false, false, "range")]
+    [InlineData(false, false, "outside_bounds")]
+    [InlineData(false, false, "overlap")]
+    [InlineData(false, false, "no_support")]
+    [InlineData(false, false, "forged_parent")]
     public void HouseDecoration_OnlyCommitsExactItemAndDoodadTogether(bool stackable, bool coffer, string outcome)
     {
         using var graph = new SendGraph();
@@ -66,7 +71,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             var alternative = stackable ? graph.AddItem(1) : graph.AddEquipment(1);
             var alternativeCount = alternative.Count;
             SetField(HousingGameData.Instance, "_housingDecorations", new Dictionary<uint, HousingDecoration>
-                { [1] = new() { Id = 1, DoodadId = 1 } });
+                { [1] = new() { Id = 1, DoodadId = 1, AllowOnFloor = true } });
             SetField(HousingGameData.Instance, "_housingItemHousingDecorations", new List<ItemHousingDecoration>
                 { new() { DesignId = 1, ItemId = item.TemplateId } });
             if (outcome == "bank")
@@ -83,13 +88,15 @@ public sealed partial class PlayerMailSendPersistenceTests
             var world = HousingPlacementWorld();
             SetParentWorld(player, world);
             player.Transform.Local.Position = new Vector3(100, 200, 300);
+            if (outcome == "range")
+                player.Transform.Local.Position = new Vector3(113, 200, 300);
             player.Transform.ZoneId = 10;
             var house = new House
             {
                 Id = player.Id + 30, TlId = 7, ObjId = player.Id + 31,
                 OwnerId = outcome is "family" or "guild" ? graph.Receiver.Id : player.Id,
                 AccountId = outcome is "family" or "guild" ? graph.Receiver.AccountId : player.AccountId,
-                Template = new HousingTemplate { HousingBindingDoodad = [], DecoLimit = 10,
+                Template = new HousingTemplate { MainModelId = 1, HousingBindingDoodad = [], DecoLimit = 10,
                     AbsoluteDecoLimit = outcome == "cap_full" ? 1u : 10u }, CurrentStep = -1,
                 Permission = outcome == "family" ? HousingPermission.Family :
                     outcome == "guild" ? HousingPermission.Guild : HousingPermission.Private
@@ -119,12 +126,14 @@ public sealed partial class PlayerMailSendPersistenceTests
             var doodads = new DoodadManager(objectIds.Object, doodadIds.Object, graph.Items,
                 new Lazy<IHousingManager>(() => housing), null);
             DoodadTemplate template = coffer ? new DoodadCofferTemplate { Id = 1, Capacity = 10 } : new DoodadTemplate { Id = 1 };
+            template.Model = "cgf://housing-test-decoration.cgf";
             SetField(doodads, "_templates", new Dictionary<uint, DoodadTemplate> { [1] = template });
             var oldDoodads = SwapSingleton(doodads);
             housing = new HousingManager(objectIds.Object, Mock.Of<IFactionManager>(), Mock.Of<ILocalizationManager>(),
                 Mock.Of<IWorldManager>(), Mock.Of<ITaskManager>(), Mock.Of<ISkillManager>(), Mock.Of<IHousingIdManager>(),
                 Mock.Of<IHousingTldManager>(), graph.Items, graph.Mails, Mock.Of<INameManager>(), zones, doodads,
                 Mock.Of<IUccManager>(), new Lazy<ISaveManager>(() => graph.Save), doodadIds.Object);
+            ConfigureHousingGeometry(housing, outcome != "no_support", outcome == "overlap");
             SetField(housing, "_houses", new Dictionary<uint, House> { [house.Id] = house });
             SetField(housing, "_housesTl", new Dictionary<ushort, House> { [house.TlId] = house });
             var oldHousing = SwapSingleton(housing);
@@ -144,7 +153,8 @@ public sealed partial class PlayerMailSendPersistenceTests
             try
             {
                 var result = housing.DecorateHouse(player, house.TlId, outcome == "wrong_design" ? 2u : 1u,
-                    new Vector3(1, 2, 3), Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 0.5f), house.ObjId, item.Id);
+                    outcome == "outside_bounds" ? new Vector3(9.75f, 2, 3) : new Vector3(1, 2, 3),
+                    Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 0.5f), outcome == "forged_parent" ? house.ObjId : 0, item.Id);
                 var success = outcome == "success";
                 Assert.Equal(success, result);
                 Assert.Equal(success ? 1 : 0, publications);
@@ -211,7 +221,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                 {
                     Execute($"DROP TRIGGER {trigger}");
                     Assert.True(housing.DecorateHouse(player, house.TlId, 1,
-                        new Vector3(1, 2, 3), Quaternion.Identity, house.ObjId, item.Id));
+                        new Vector3(1, 2, 3), Quaternion.Identity, 0, item.Id));
                     Assert.Equal(1, publications);
                     Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM doodads WHERE id={dbId}"));
                     Assert.Equal(stackable ? 1 : (long)SlotType.System,
@@ -243,7 +253,8 @@ public sealed partial class PlayerMailSendPersistenceTests
             for (var y = 0; y < regionCount; y++)
                 zones[x, y] = 10;
         var world = new WorldInstance(new WorldTemplate { Id = 0, Name = "placement", CellX = 1, CellY = 1,
-            ZoneKeyByRegions = zones }, 0, true, instanceId);
+            Cells = new WorldCell[1, 1], OceanLevel = -100, ZoneKeyByRegions = zones }, 0, true, instanceId);
+        world.Water.OceanLevel = -100;
         var worlds = (ConcurrentDictionary<uint, WorldInstance>)typeof(WorldManager)
             .GetField("_worlds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(WorldManager.Instance)!;
         worlds[world.Id] = world;

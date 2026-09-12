@@ -66,9 +66,9 @@ public sealed partial class PlayerMailSendPersistenceTests
             Assert.True(graph.Save.TryCommitEconomy([player]));
             var houseTemplate = new HousingTemplate
             {
-                Id = 100, CategoryId = 16, GardenRadius = 4, HousingBindingDoodad = [],
+                Id = 100, MainModelId = 1, CategoryId = 16, GardenRadius = 4, HousingBindingDoodad = [],
                 Taxation = new Taxation { Tax = 100 },
-                BuildSteps = { [0] = new HousingBuildStep { HousingId = 100, Step = 0, NumActions = 1 } }
+                BuildSteps = { [0] = new HousingBuildStep { HousingId = 100, Step = 0, NumActions = 1, ModelId = 1 } }
             };
             SetField(housingData, "_housingTemplates", new Dictionary<uint, HousingTemplate> { [100] = houseTemplate });
             SetField(housingData, "_housingItemHousings", new List<HousingItemHousings>
@@ -107,6 +107,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                 Mock.Of<IWorldManager>(), Mock.Of<ITaskManager>(), Mock.Of<ISkillManager>(), houseIds.Object,
                 houseTlds.Object, graph.Items, graph.Mails, Mock.Of<INameManager>(), zones,
                 Mock.Of<IDoodadManager>(), Mock.Of<IUccManager>(), new Lazy<ISaveManager>(() => graph.Save));
+            ConfigureHousingGeometry(housing, construction: true);
             var oldHousing = SwapSingleton(housing);
             var trigger = $"house_build_fail_{player.Id}";
             // House writes follow crop deletion in this transaction. The trigger fails only after
