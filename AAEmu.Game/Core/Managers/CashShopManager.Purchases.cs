@@ -11,8 +11,8 @@ namespace AAEmu.Game.Core.Managers;
 
 public partial class CashShopManager
 {
-    internal Func<IReadOnlyCollection<Character>, Action<PersistenceSaveContext>, bool> CommitPurchase { get; set; } =
-        (participants, write) => SaveManager.Instance.TryCommitEconomy(participants, write);
+    internal Func<IReadOnlyCollection<Character>, Action<PersistenceSaveContext>, Action<PersistenceSaveContext>, bool> CommitPurchase { get; set; } =
+        (participants, write, validate) => SaveManager.Instance.TryCommitEconomy(participants, write, validate);
 
     public ErrorMessageType Purchase(Character buyer, uint receiverId, uint receiverAccountId,
         string receiverName, IReadOnlyList<uint> skuIds)
@@ -139,14 +139,25 @@ public partial class CashShopManager
                     failure = rejection.Error;
                     throw;
                 }
+            }, context =>
+            {
+                try
+                {
+                    ValidatePurchaseReceiver(context, receiverId, receiverAccountId);
+                }
+                catch (PurchaseRejectedException rejection)
+                {
+                    failure = rejection.Error;
+                    throw;
+                }
             });
         }
         catch
         {
-            // A lost commit acknowledgement is not a known rollback. Stop new carts until restart.
+            // A lost commit acknowledgement is not a known rollback. SaveManager stops persistence and the process.
             inventory.PreservePreparedState();
             mails.PreservePreparedState();
-            DisableShop();
+            Enabled = false;
             throw;
         }
         if (!committed)
@@ -179,6 +190,18 @@ public partial class CashShopManager
         buyer.SendPacket(new SCICSCashPointPacket(details.Credits));
         buyer.SendPacket(new SCBmPointPacket(details.Loyalty));
         return ErrorMessageType.NoErrorMessage;
+    }
+
+    private static void ValidatePurchaseReceiver(PersistenceSaveContext context, uint receiverId, uint receiverAccountId)
+    {
+        using var command = context.Connection.CreateCommand();
+        command.Transaction = context.Transaction;
+        // The name cache can outlive a deleted character. Check its durable identity in this transaction.
+        command.CommandText = "SELECT `account_id` FROM `characters` WHERE `id` = @receiver AND `deleted` = 0 FOR UPDATE";
+        command.Parameters.AddWithValue("@receiver", receiverId);
+        var receiverAccount = command.ExecuteScalar();
+        if (receiverAccount == null || Convert.ToUInt32(receiverAccount) != receiverAccountId)
+            throw new PurchaseRejectedException(ErrorMessageType.IngameShopFindCharacterNameFail);
     }
 
     internal static void WritePurchase(PersistenceSaveContext context, Character buyer, uint receiverId,

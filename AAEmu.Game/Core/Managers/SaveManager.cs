@@ -9,6 +9,7 @@ using AAEmu.Game.Models.Tasks;
 using AAEmu.Game.Models.Tasks.SaveTask;
 
 using NLog;
+using MySql.Data.MySqlClient;
 
 namespace AAEmu.Game.Core.Managers;
 
@@ -27,6 +28,9 @@ public class SaveManager(
     private double Delay = 1;
     private bool _enabled = false;
     private bool _isSaving = false;
+    private bool _consistencyFailed;
+    internal Action<MySqlTransaction> CommitTransaction { get; set; } = transaction => transaction.Commit();
+    internal Action<string, Exception> StopForConsistencyFailure { get; set; } = Environment.FailFast;
     internal static object PersistenceSyncRoot { get; } = new();
     private SaveTickStartTask saveTask;
     public ShutdownTask ShutdownTask { get; set; } = null;
@@ -83,8 +87,7 @@ public class SaveManager(
         }
         catch (Exception exception)
         {
-            // Autosave has no prepared feature mutation to undo. Keep economic
-            // dirty state queued if Commit itself failed.
+            // The consistency latch prevents any retry after an unconfirmed commit.
             Logger.Error(exception, "Database save did not complete.");
             return false;
         }
@@ -105,6 +108,14 @@ public class SaveManager(
         return CommitPersistence(participants, writeSettlement);
     }
 
+    internal bool TryCommitEconomy(IReadOnlyCollection<Character> participants,
+        Action<PersistenceSaveContext> writeSettlement, Action<PersistenceSaveContext> validateSource)
+    {
+        ArgumentNullException.ThrowIfNull(participants);
+        ArgumentNullException.ThrowIfNull(validateSource);
+        return CommitPersistence(participants, writeSettlement, validateSource);
+    }
+
     internal bool TryCommitMailArchive(Action<PersistenceSaveContext> validateSource, Action<PersistenceSaveContext> writeArchive)
     {
         ArgumentNullException.ThrowIfNull(validateSource);
@@ -116,6 +127,8 @@ public class SaveManager(
     {
         lock (PersistenceSyncRoot)
         {
+            if (_consistencyFailed)
+                throw new InvalidOperationException("Persistence is stopped after an unconfirmed commit.");
             if (_isSaving)
                 return false;
             _isSaving = true;
@@ -147,7 +160,7 @@ public class SaveManager(
 
                     writeSettlement?.Invoke(context);
                     commitAttempted = true;
-                    transaction.Commit();
+                    CommitTransaction(transaction);
                     context.AcknowledgeCommit();
                     return true;
                 }
@@ -161,6 +174,15 @@ public class SaveManager(
             {
                 Logger.Error(exception, "Database checkpoint was aborted before commit; pending saves remain queued.");
                 return false;
+            }
+            catch (Exception exception)
+            {
+                _consistencyFailed = true;
+                _enabled = false;
+                const string message = "Game persistence stopped after an unconfirmed commit. Restart from durable state.";
+                Logger.Fatal(exception, message);
+                StopForConsistencyFailure(message, exception);
+                throw;
             }
             finally
             {

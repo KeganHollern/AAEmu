@@ -117,6 +117,45 @@ public sealed class CashShopPurchasePersistenceTests
         Assert.Equal(10, Scalar($"SELECT remaining FROM ics_shop_items WHERE shop_id={graph.Id}"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UnknownCommit_StopsAllLaterPersistenceAndReloadsOnlyDurableState(bool committed)
+    {
+        using var graph = new PurchaseGraph();
+        var manager = Shop(graph);
+        Assert.True(graph.Save.TryCommitEconomy([graph.Buyer]));
+        var stops = 0;
+        graph.Save.StopForConsistencyFailure = (_, _) => stops++;
+        graph.Save.CommitTransaction = transaction =>
+        {
+            if (committed) transaction.Commit();
+            else transaction.Rollback();
+            throw new IOException("Injected lost commit acknowledgement");
+        };
+        Assert.Throws<IOException>(() => Buy(graph, manager));
+        Assert.Equal(1, stops);
+        Assert.False(graph.Save.DoSave());
+        Assert.Throws<InvalidOperationException>(() => graph.Save.TryCommitEconomy([graph.Buyer]));
+        Assert.Equal(committed ? 3 : 10, ReadAccount(graph.Buyer.AccountId, "credits"));
+        Assert.Equal(committed ? 1 : 0, Scalar($"SELECT COUNT(*) FROM mails WHERE receiver_id={graph.Other.Id}"));
+        using var restored = new PurchaseGraph(graph.Id);
+        Assert.Equal(committed ? 1 : 0, restored.OwnMails().Length);
+    }
+
+    [Fact]
+    public void DeletedRecipient_WithStaleLiveObject_RejectsBeforeCharacterSave()
+    {
+        using var graph = new PurchaseGraph();
+        var manager = Shop(graph);
+        Execute($"UPDATE characters SET deleted=1 WHERE id={graph.Other.Id}");
+        Assert.Equal(ErrorMessageType.IngameShopFindCharacterNameFail, Buy(graph, manager));
+        Assert.Equal(1, Read("characters", "deleted", graph.Other.Id));
+        Assert.Equal(10, ReadAccount(graph.Buyer.AccountId, "credits"));
+        Assert.Empty(graph.OwnMails());
+        Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM mails WHERE receiver_id={graph.Other.Id}"));
+    }
+
     [Fact]
     public void AccountDebits_AreConditionalAcrossManagerInstances()
     {
@@ -137,10 +176,11 @@ public sealed class CashShopPurchasePersistenceTests
     {
         Execute($"INSERT INTO accounts(account_id,credits,loyalty) VALUES ({graph.Buyer.AccountId},10,0)");
         Execute($"INSERT INTO ics_shop_items(shop_id,remaining) VALUES ({graph.Id},10)");
+        Assert.True(graph.Save.TryCommitEconomy([graph.Buyer]));
         var sku = new IcsSku { Sku = graph.Id + 40, ShopId = graph.Id, ItemId = 100, ItemCount = 2, Price = 10, DiscountPrice = 7 };
         var manager = new CashShopManager(Mock.Of<IWorldManager>(), Accounts(), Mock.Of<ILocalizationManager>())
         {
-            CommitPurchase = (participants, write) => graph.Save.TryCommitEconomy(participants, write)
+            CommitPurchase = (participants, write, validate) => graph.Save.TryCommitEconomy(participants, write, validate)
         };
         manager.SKUs[sku.Sku] = sku;
         manager.ShopItems[graph.Id] = new IcsItem { ShopId = graph.Id, Remaining = 10, Name = "Cash item", Skus = { [sku.Sku] = sku } };

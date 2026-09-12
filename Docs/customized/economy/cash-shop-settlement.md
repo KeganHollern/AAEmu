@@ -11,7 +11,8 @@ The SQL transaction stores mail, exact attachment IDs, coin balances, account ch
 Conditional account updates prevent a negative credit or loyalty balance.
 Offer row locks make the purchase-limit check and stock update safe across concurrent SQL transactions.
 A failed preparation or SQL write restores all prepared mail, items, coin balances, and stock.
-A lost commit acknowledgement preserves the prepared state and closes the shop until restart.
+A lost commit acknowledgement stops all persistence and the Game process.
+A new process reads the durable state before it accepts more purchases.
 The server does not send a success response before commit.
 
 ## Schema effects
