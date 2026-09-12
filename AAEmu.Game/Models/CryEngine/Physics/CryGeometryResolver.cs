@@ -37,7 +37,7 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
         var uri = Normalize(modelUri);
         var separator = uri.IndexOf("://", StringComparison.Ordinal);
         var path = separator < 0 ? uri : uri[(separator + 3)..];
-        var animationPath = FindCharacterAnimation(path, animationName) ??
+        var animationPath = FindCharacterAnimation(ResolveCharacterModelPath(path), animationName) ??
             throw new NotSupportedException($"Character animation '{animationName}' is not in the model CAL file.");
         var animation = _animations.GetOrAdd(animationPath, file =>
         {
@@ -60,13 +60,20 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
             throw new NotSupportedException("Entity model geometry needs its native entity definition.");
         if (scheme is not ("cgf" or "vegetation" or "cga" or "cga_loop"))
             return Load("objects/box_nodraw.cgf");
-        using var stream = OpenFile(AssetPath(path));
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
-        var asset = ReadCgf(buffer.ToArray(), AssetPath(path));
+        CryGeometryAsset asset;
+        if (path.EndsWith(".cdf", StringComparison.Ordinal))
+            asset = LoadCharacterDefinition(path);
+        else
+        {
+            using var stream = OpenFile(AssetPath(path));
+            using var buffer = new MemoryStream();
+            stream.CopyTo(buffer);
+            asset = ReadCgf(buffer.ToArray(), AssetPath(path));
+        }
         var startsAnimation = scheme is "cga" or "cga_loop";
-        if (path.EndsWith(".chr", StringComparison.Ordinal))
-            startsAnimation &= FindCharacterAnimation(path, "Default") != null;
+        var characterPath = ResolveCharacterModelPath(path);
+        if (characterPath.EndsWith(".chr", StringComparison.Ordinal))
+            startsAnimation &= FindCharacterAnimation(characterPath, "Default") != null;
         if (startsAnimation)
             asset = asset with { PoseRequirements = [new CryGeometryPoseRequirement(uri, "", Matrix4x4.Identity, "", true, true)
                 { AffectsCollision = asset.HasAnimatedCollision }] };
@@ -118,8 +125,8 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
             var animation = obj.Element("Properties")?.Element("Animation");
             var active = animation != null && (string)animation.Attribute("bPlaying") == "1";
             var child = Load(childPath);
-            if (active && childPath.EndsWith(".chr", StringComparison.OrdinalIgnoreCase) &&
-                FindCharacterAnimation(Normalize(childPath), (string)animation.Attribute("Animation") ?? "Default") == null)
+            if (active && ResolveCharacterModelPath(Normalize(childPath)).EndsWith(".chr", StringComparison.Ordinal) &&
+                FindCharacterAnimation(ResolveCharacterModelPath(Normalize(childPath)), (string)animation.Attribute("Animation") ?? "Default") == null)
                 active = false;
             if (elapsedSeconds.HasValue && active)
             {

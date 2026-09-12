@@ -252,3 +252,16 @@ It adds `0.2` meters to each side of any dimension smaller than `0.4` meters.
 The CGA sampler applies this rule after the node hierarchy transforms.
 It returns both sampled physical proxies and sampled rigid mesh bounds.
 All 30 extracted CGA fixtures passed samples at `0`, `0.5`, and `2` seconds.
+
+## Character definitions
+
+Native `315d28b0` reads the `Model` element from a `CharacterDefinition` XML file.
+It keeps the `File` and optional `Material` references separate.
+The loader also reads attachment and shape deformation data.
+
+The 12 affected shop pet prefabs reference CDF files with one CHR model and one material.
+They contain no attachments, and all 8 shape deformation values equal zero.
+The resolver loads the referenced skeleton and replaces the part material paths.
+It resolves animation names through that skeleton's CAL file.
+An attachment or nonzero shape deformation still needs its own authored geometry rules.
+The reader does not discard those fields to accept an unsupported definition.
