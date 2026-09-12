@@ -17,14 +17,17 @@ public partial class AuctionManager
         if (!ValidPrices(startPrice, buyoutPrice, duration))
             return ErrorMessageType.AuctionInvalidStartPrice;
 
-        var item = itemManager.GetItemByItemId(itemId);
         var bag = player.Inventory?.Bag;
+        var item = bag?.GetItemByItemId(itemId);
         if (player.Id == 0 || !IsHeldBy(item, bag, player.Id) ||
+            !ReferenceEquals(itemManager.GetItemByItemId(itemId), item) ||
             item.Template == null || item.Count > item.Template.MaxCount ||
-            (item.ItemFlags & (ItemFlag.SoulBound | ItemFlag.Secure)) != 0 ||
-            item.Template.BindType is ItemBindType.BindOnPickup or ItemBindType.BindOnPickupPack ||
+            item.HasFlag(ItemFlag.Secure) ||
             !item.CanDestroy())
             return ErrorMessageType.AuctionUpdateInventory;
+        if (item.HasFlag(ItemFlag.SoulBound) ||
+            item.Template.BindType is ItemBindType.BindOnPickup or ItemBindType.BindOnPickupPack)
+            return ErrorMessageType.AucSoulBoundItem;
 
         var fee = ListingFee(buyoutPrice, duration);
         if (player.Money < fee)

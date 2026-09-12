@@ -12,6 +12,7 @@ public interface IMailManager : ILoadable
     uint GetNewMailId();
     bool Send(BaseMail mail);
     MailMutation BeginMutation();
+    bool ReturnDeletedCharacterMail(uint receiverId);
     [Obsolete]
     void SendMail(MailType type, string receiverName, string senderName, string title, string text, byte attachments, int[] moneyAmounts, long extra, List<Item> items);
     bool DeleteMail(long id);

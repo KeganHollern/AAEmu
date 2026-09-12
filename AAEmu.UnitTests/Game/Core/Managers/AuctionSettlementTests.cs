@@ -10,6 +10,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Auction;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
@@ -129,6 +130,9 @@ public sealed class AuctionSettlementTests
     [Arguments("bound")]
     [Arguments("secure")]
     [Arguments("oversize")]
+    [Arguments("foreignbag")]
+    [Arguments("bank")]
+    [Arguments("unregistered")]
     public async Task InvalidSource_CannotCreateListingOrChargeFee(string invalid)
     {
         var item = Item();
@@ -140,11 +144,42 @@ public sealed class AuctionSettlementTests
             case "bound": item.ItemFlags |= ItemFlag.SoulBound; break;
             case "secure": item.ItemFlags |= ItemFlag.Secure; break;
             case "oversize": item.Count = item.Template.MaxCount + 1; break;
+            case "foreignbag":
+                _seller.Inventory.Bag.Items.Remove(item);
+                _other.Inventory.Bag.Items.Add(item);
+                item.OwnerId = _other.Id;
+                item._holdingContainer = _other.Inventory.Bag;
+                break;
+            case "bank":
+                _seller.Inventory.Bag.Items.Remove(item);
+                _seller.Inventory.Warehouse.Items.Add(item);
+                item.SlotType = SlotType.Bank;
+                item._holdingContainer = _seller.Inventory.Warehouse;
+                break;
+            case "unregistered": _allItems.Remove(item.Id); break;
         }
         Post(item);
         await Assert.That(_commits).IsEqualTo(0);
         await Assert.That(_seller.Money).IsEqualTo(10000L);
         await Assert.That(_auctions.AuctionLots).IsEmpty();
+        if (invalid == "bound")
+        {
+            var error = _sessions[_seller.Id].Packets.Single(packet => Opcode(packet) == SCOffsets.SCErrorMsgPacket);
+            await Assert.That(BitConverter.ToInt16(error, 8)).IsEqualTo((short)ErrorMessageType.AucSoulBoundItem);
+        }
+    }
+
+    [Test]
+    [Arguments(ItemBindType.Normal)]
+    [Arguments(ItemBindType.BindOnEquip)]
+    public async Task UnboundItemWithoutBuyout_PostsAtTheStartingPrice(ItemBindType bindType)
+    {
+        var item = Item();
+        item.Template.BindType = bindType;
+        _auctions.PostLotOnAuction(_seller, 0, 0, item.Id, 100, 0, AuctionDuration.AuctionDuration6Hours);
+        await Assert.That(_auctions.AuctionLots.Values.Single().Item).IsSameReferenceAs(item);
+        await Assert.That(_commits).IsEqualTo(1);
+        await Assert.That(_seller.Money).IsEqualTo(10000L);
     }
 
     [Test]

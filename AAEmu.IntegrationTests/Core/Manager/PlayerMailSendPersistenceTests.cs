@@ -239,7 +239,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             _oldMails = SwapSingleton(Mails);
             _oldNames = SwapSingleton(_names);
             _oldSave = SwapSingleton(Save);
-            Assert.True(Save.TryCommitEconomy([Sender]));
+            Assert.True(Save.TryCommitEconomy([Sender, Receiver]));
         }
 
         public Item AddItem(byte slot)
@@ -442,7 +442,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         private static Character Character(uint id, string prefix) => new(new UnitCustomModelParams())
         {
             Id = id, AccountId = id, Name = $"{prefix}{id}", Faction = new SystemFaction(), FactionName = "",
-            Slots = [], Created = DateTime.UtcNow, NumInventorySlots = 10, NumBankSlots = 10, Money = 10000
+            Slots = [], Created = DateTime.UtcNow, NumInventorySlots = 10, NumBankSlots = 10, Money = 10000, Level = 50
         };
     }
 

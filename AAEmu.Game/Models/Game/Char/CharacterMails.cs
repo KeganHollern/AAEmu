@@ -1,6 +1,7 @@
 ﻿using AAEmu.Commons.Exceptions;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
@@ -88,6 +89,9 @@ public class CharacterMails
 
     public MailResult SendMailToPlayer(MailType mailType, string receiverName, string title, string text, byte attachments, int money0, int money1, int money2, long extra, List<(SlotType, byte)> itemSlots)
     {
+        if (!LevelRestrictionConfig.Check(Self, AppConfiguration.Instance.LevelRestrictions.Mail,
+                ErrorMessageType.MailCannotSendSinceLevelLow))
+            return MailResult.MailErrorOccurred;
         // Header attachment count and Extra are derived from validated server state.
         return PlayerMailSendExecutor.Execute(Self, mailType, receiverName, title, text,
             money0, money1, money2, itemSlots, MailManager.Instance, ItemManager.Instance,
@@ -120,14 +124,16 @@ public class CharacterMails
                         Self.SendErrorMessage(ErrorMessageType.NotEnoughLaborPower);
                         takeMoney = false;
                     }
-                    else
-                    {
-                        Self.ChangeLabor(-1, (int)ActabilityType.Commerce);
-                    }
                 }
                 if (thisMail.Body.CopperCoins > 0 && takeMoney)
                 {
-                    Self.ChangeMoney(SlotType.Inventory, thisMail.Body.CopperCoins);
+                    if (!Self.ChangeMoney(SlotType.Inventory, thisMail.Body.CopperCoins))
+                    {
+                        Self.SendErrorMessage(ErrorMessageType.MailTooMuchMoney);
+                        return false;
+                    }
+                    if (thisMail.MailType == MailType.AucOffSuccess)
+                        Self.ChangeLabor(-1, (int)ActabilityType.Commerce);
                     thisMail.Body.CopperCoins = 0;
                     thisMail.Header.Attachments -= 1;
                     tookMoney = true;

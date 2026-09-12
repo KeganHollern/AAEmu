@@ -96,7 +96,7 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     public void InviteToFamily(Character inviter, string invitedCharacterName, string title)
     {
         var invited = worldManager.GetCharacter(invitedCharacterName);
-        if (invited is { Family: 0 })
+        if (invited is { Family: 0 } && !CharacterBlocked.IsBlockedBy(invited, inviter.Id))
             invited.SendPacket(new SCFamilyInvitationPacket(inviter.Id, inviter.Name, 1, title));
     }
 
@@ -109,7 +109,8 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
     /// <param name="title"></param>
     public void ReplyToInvite(uint invitorId, Character invitedChar, bool join, string title)
     {
-        if (!join || invitedChar == null || invitedChar.Family != 0 || invitedChar.Id == invitorId)
+        if (!join || invitedChar == null || invitedChar.Family != 0 || invitedChar.Id == invitorId ||
+            CharacterBlocked.IsBlockedBy(invitedChar, invitorId))
             return;
 
         var invitor = worldManager.GetCharacterById(invitorId);

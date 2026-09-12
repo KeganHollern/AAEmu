@@ -607,6 +607,16 @@ public class CharacterManager(
     /// <param name="fullWipe">Do owned items need to be actually deleted</param>
     public void DeleteCharacterAssets(Character character, bool fullWipe)
     {
+        if (!mailManager.ReturnDeletedCharacterMail(character.Id))
+        {
+            Logger.Warn("DeleteCharacterAssets - Mail cleanup remains pending for character {0}", character.Id);
+            return;
+        }
+        DeleteCharacterWorldAssets(character, fullWipe);
+    }
+
+    private void DeleteCharacterWorldAssets(Character character, bool fullWipe)
+    {
         // Demolish owned houses
         var myHouses = new Dictionary<uint, House>();
         if (housingManager.GetByCharacterId(myHouses, character.Id) > 0)
@@ -637,18 +647,6 @@ public class CharacterManager(
         // TODO: Remove from player nation
         // TODO: Delete leadership
 
-        // Return all mails to sender (if needed)
-        // The main reason we do this is so other people's items wouldn't get delete if fullWipe is enabled
-        foreach (var (mailId, mail) in mailManager.AllPlayerMails)
-        {
-            if (mail.Header.ReceiverId == character.Id && mail.CanReturnMail() && !mail.ReturnToSender())
-                Logger.Warn(
-                    "DeleteCharacterAssets - Unable to return mail to sender for mail: {0}, deleted char: {1}({2}), sender: {3}({4})",
-                    mail.Id,
-                    mail.Header.ReceiverName, mail.Header.ReceiverId,
-                    mail.Header.SenderName, mail.Header.SenderId);
-        }
-
         if (!fullWipe)
             return;
 
@@ -666,8 +664,28 @@ public class CharacterManager(
     /// <returns>Returns true if a character was marked deleted, otherwise false</returns>
     public bool CheckForDeletedCharactersDeletion(Character character, GameConnection gameConnection, MySqlConnection dbConnection)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+            return CompleteCharacterDeletion(character, gameConnection, dbConnection);
+    }
+
+    private bool CompleteCharacterDeletion(Character character, GameConnection gameConnection, MySqlConnection dbConnection)
+    {
         if (character.DeleteTime > DateTime.MinValue && character.DeleteTime <= DateTime.UtcNow)
         {
+            using (var pending = dbConnection.CreateCommand())
+            {
+                pending.CommandText = "SELECT 1 FROM characters WHERE id=@id AND account_id=@account AND deleted=0 AND delete_time>@minimum AND delete_time<=@now";
+                pending.Parameters.AddWithValue("@id", character.Id);
+                pending.Parameters.AddWithValue("@account", character.AccountId);
+                pending.Parameters.AddWithValue("@minimum", DateTime.MinValue);
+                pending.Parameters.AddWithValue("@now", DateTime.UtcNow);
+                if (pending.ExecuteScalar() == null)
+                    return false;
+            }
+            // Each mail return is durable. A partial failure keeps deletion pending so
+            // the next check or restart retries only the sources that still exist.
+            if (!mailManager.ReturnDeletedCharacterMail(character.Id))
+                return false;
             Logger.Info("CheckForDeletedCharactersDeletion - Deleting Account:{0} Id:{1} Name:{2}", character.AccountId, character.Id, character.Name);
             using (var command = dbConnection.CreateCommand())
             {
@@ -675,22 +693,26 @@ public class CharacterManager(
                 if (AppConfiguration.Instance.Account.DeleteReleaseName)
                 {
                     deletedName = "!" + character.Name;
-                    nameManager.RemoveCharacterId(character.Id);
-                    nameManager.AddCharacter(character.Id, deletedName, character.AccountId);
                 }
 
                 command.Connection = dbConnection;
-                command.CommandText = "UPDATE `characters` SET `deleted`='1', `delete_time`=@new_delete_time, `name`=@deletedname WHERE `id`=@char_id and `account_id`=@account_id;";
+                command.CommandText = "UPDATE `characters` SET `deleted`='1', `delete_time`=@new_delete_time, `name`=@deletedname WHERE `id`=@char_id AND `account_id`=@account_id AND `deleted`=0 AND `delete_time`>@new_delete_time AND `delete_time`<=@now;";
                 command.Parameters.AddWithValue("@new_delete_time", DateTime.MinValue);
                 command.Parameters.AddWithValue("@char_id", character.Id);
                 command.Parameters.AddWithValue("@account_id", character.AccountId);
+                command.Parameters.AddWithValue("@now", DateTime.UtcNow);
                 command.Parameters.AddWithValue("@deletedname", deletedName);
 
                 var res = command.ExecuteNonQuery();
                 // Send update to current connection
                 if (res > 0)
                 {
-                    DeleteCharacterAssets(character, false);
+                    if (AppConfiguration.Instance.Account.DeleteReleaseName)
+                    {
+                        nameManager.RemoveCharacterId(character.Id);
+                        nameManager.AddCharacter(character.Id, deletedName, character.AccountId);
+                    }
+                    DeleteCharacterWorldAssets(character, false);
 
                     // Send delete packet to the player if online
                     if (gameConnection != null)
@@ -754,8 +776,13 @@ public class CharacterManager(
                     if (CheckForDeletedCharactersDeletion(character, accountConnection, connection))
                         Logger.Info("CheckForDeletedCharacters - Delete charId:{0}", charId);
                     else
+                    {
                         // Failed to delete character from DB
                         Logger.Error("CheckForDeletedCharacters - Failed to delete character for deletion charId:{0}", charId);
+                        var retryTime = DateTime.UtcNow.AddMinutes(1);
+                        if (retryTime < nextCheckTime)
+                            nextCheckTime = retryTime;
+                    }
                 }
                 else
                 {
@@ -827,6 +854,12 @@ public class CharacterManager(
     }
 
     public void SetRestoreCharacter(GameConnection gameConnection, uint characterId)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+            RestoreCharacter(gameConnection, characterId);
+    }
+
+    private static void RestoreCharacter(GameConnection gameConnection, uint characterId)
     {
         if (gameConnection.Characters.TryGetValue(characterId, out var character))
         {

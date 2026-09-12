@@ -307,6 +307,7 @@ public class ExpeditionManager(IExpeditionIdManager expeditionIdManager, ITeamMa
 
         var invited = worldManager.GetCharacter(invitedName);
         if (invited == null) return;
+        if (CharacterBlocked.IsBlockedBy(invited, inviter.Id)) return;
         if (invited.Expedition != null) return;
 
         invited.SendPacket(

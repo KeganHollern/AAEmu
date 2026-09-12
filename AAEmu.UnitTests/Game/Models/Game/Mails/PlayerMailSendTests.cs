@@ -23,6 +23,7 @@ public sealed class PlayerMailSendTests
     private ItemManager _items;
     private MailManager _mails;
     private NameManager _names;
+    private Mock<IWorldManager> _world;
     private MailIds _ids;
     private CharacterMock _sender;
     private CharacterMock _receiver;
@@ -69,11 +70,13 @@ public sealed class PlayerMailSendTests
         _names.AddCharacter(1, "Sender", 1);
         _names.AddCharacter(2, "Receiver", 2);
         _ids = new MailIds();
-        var world = Mock.Of<IWorldManager>();
-        world.GetCharacter("Receiver").Returns(_receiver);
+        _world = Mock.Of<IWorldManager>();
+        _world.GetCharacter("Receiver").Returns(_receiver);
+        _world.GetCharacterById(_receiver.Id).Returns(_receiver);
+        _world.GetCharacterById(_sender.Id).Returns(_sender);
         _mails = new MailManager(_ids, _names, _items, Mock.Of<ITaskManager>().Object,
-            world.Object, new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>().Object),
-            Mock.Of<ILocalizationManager>().Object) { _allPlayerMails = [] };
+            _world.Object, new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>().Object),
+            Mock.Of<ILocalizationManager>().Object) { _allPlayerMails = [], ActiveMailSender = _ => true };
         _commitCalls = 0;
         _commit = () => true;
     }
@@ -83,6 +86,62 @@ public sealed class PlayerMailSendTests
     {
         SwapSingleton(_previousItems);
         SwapSingleton(_previousQuests);
+    }
+
+    [Test]
+    public async Task LowLevelSender_RejectsBeforeMailOrFeeChanges()
+    {
+        _sender.Level = 9;
+        var result = _sender.Mails.SendMailToPlayer(MailType.Express, _receiver.Name, "Title", "Text", 0,
+            100, 0, 0, 0, []);
+        await Assert.That(result).IsEqualTo(MailResult.MailErrorOccurred);
+        await Assert.That(_sender.Money).IsEqualTo(1000L);
+        await Assert.That(_mails._allPlayerMails).IsEmpty();
+        await Assert.That(_commitCalls).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RecipientBlock_RejectsOnlineAndOfflineMailBeforeAnyMutation(bool offline)
+    {
+        var item = AddItem(1, 0);
+        _receiver.Blocked = new CharacterBlocked(_receiver);
+        _receiver.Blocked.BlockedList[_sender.Id] = new BlockedTemplate { Owner = _receiver.Id, BlockedId = _sender.Id };
+        _mails.OfflineReceiverBlocks = (receiver, sender) => receiver == _receiver.Id && sender == _sender.Id;
+        if (offline)
+            _world.GetCharacterById(_receiver.Id).Returns((Character)null);
+        var result = Send(copper: 100, slots: [(SlotType.Inventory, 0)]);
+        await Assert.That(result).IsEqualTo(MailResult.CanNotBeMailed);
+        await Assert.That(_sender.Money).IsEqualTo(1000L);
+        await Assert.That(_sender.Inventory.Bag.Items.Single()).IsSameReferenceAs(item);
+        await Assert.That(_mails._allPlayerMails).IsEmpty();
+        await Assert.That(_commitCalls).IsEqualTo(0);
+        _receiverSession.SendPacket(Any<byte[]>()).WasCalled(Times.Never);
+    }
+
+    [Test]
+    public async Task OnlineReceiver_UsesCurrentBlockListBeforeItsNextSave()
+    {
+        _mails.OfflineReceiverBlocks = (_, _) => true;
+        _receiver.Blocked = new CharacterBlocked(_receiver);
+        _sender.Blocked = new CharacterBlocked(_sender);
+        _sender.Blocked.BlockedList[_receiver.Id] = new BlockedTemplate { Owner = _sender.Id, BlockedId = _receiver.Id };
+        await Assert.That(Send()).IsEqualTo(MailResult.Success);
+        _receiver.Blocked.BlockedList[_sender.Id] = new BlockedTemplate { Owner = _receiver.Id, BlockedId = _sender.Id };
+        await Assert.That(Send()).IsEqualTo(MailResult.CanNotBeMailed);
+        await Assert.That(_commitCalls).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(null)]
+    public async Task DeletedOrUnreadableRecipient_RejectsDespiteNameCache(bool? active)
+    {
+        _mails.ActiveMailSender = _ => active;
+        await Assert.That(Send()).IsEqualTo(active == false ? MailResult.UnableToFindRecipient : MailResult.MailErrorOccurred);
+        await Assert.That(_sender.Money).IsEqualTo(1000L);
+        await Assert.That(_commitCalls).IsEqualTo(0);
     }
 
     [Test]
@@ -189,6 +248,8 @@ public sealed class PlayerMailSendTests
         }
         var result = Send(slots: [(SlotType.Inventory, (byte)0)]);
         await Assert.That(result).IsNotEqualTo(MailResult.Success);
+        if (invalid == "bound")
+            await Assert.That(result).IsEqualTo(MailResult.BoundItem);
         await Assert.That(_sender.Inventory.Bag.Items.Single()).IsSameReferenceAs(item);
         await Assert.That(_sender.Money).IsEqualTo(1000L);
         await Assert.That(_commitCalls).IsEqualTo(0);
@@ -393,7 +454,7 @@ public sealed class PlayerMailSendTests
 
     private static CharacterMock Character(uint id, string name, Mock<ISession> session)
     {
-        var character = new CharacterMock { Id = id, Name = name, Money = 1000,
+        var character = new CharacterMock { Id = id, Name = name, Money = 1000, Level = 50,
             NumInventorySlots = 10, NumBankSlots = 10, Connection = new GameConnection(session.Object) };
         character.Mails = new CharacterMails(character);
         return character;

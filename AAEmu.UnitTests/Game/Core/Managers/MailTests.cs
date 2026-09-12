@@ -8,12 +8,15 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Features;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Mails;
+using AAEmu.Game.Models.Game.World;
 using AAEmu.UnitTests.Utils.Mocks;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -220,18 +223,41 @@ public sealed class MailTests
     [Test]
     public async Task TakeAllAttachment_ClaimsThenRemovesMailAndSendsBothReceipts()
     {
-        var mail = AddReceivedMail(copperCoins: 25);
-        var stream = new PacketStream().Write(mail.Id);
-        stream.Rollback();
+        var worldField = typeof(Singleton<WorldManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousWorlds = worldField.GetValue(null);
+        try
+        {
+            var worlds = new WorldManager(Mock.Of<ITickManager>().Object, Mock.Of<IWorldIdManager>().Object,
+                new Lazy<IZoneManager>(() => Mock.Of<IZoneManager>().Object),
+                new Lazy<IIndunManager>(() => Mock.Of<IIndunManager>().Object),
+                new Lazy<IFamilyManager>(() => Mock.Of<IFamilyManager>().Object));
+            worldField.SetValue(null, worlds);
+            var world = new WorldInstance(new WorldTemplate { Id = 1 }, 1, true, 1);
+            var instances = (IDictionary<uint, WorldInstance>)typeof(WorldManager)
+                .GetField("_worlds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(worlds)!;
+            instances.Add(world.Id, world);
+            var mailbox = new Doodad { ObjId = 99, ParentWorld = world };
+            mailbox.CurrentFuncs.Add(new DoodadFunc { FuncType = "DoodadFuncNaviOpenMailbox" });
+            world.AddObject(mailbox);
+            _character.ParentWorld = world;
+            _character.CurrentInteractionObject = mailbox;
+            var mail = AddReceivedMail(copperCoins: 25);
+            var stream = new PacketStream().Write(mail.Id);
+            stream.Rollback();
 
-        var packet = new CSTakeAllAttachmentItemPacket { Connection = _character.Connection };
-        packet.Read(stream);
+            var packet = new CSTakeAllAttachmentItemPacket { Connection = _character.Connection };
+            packet.Read(stream);
 
-        await Assert.That(_mailManager.AllPlayerMails.ContainsKey(mail.Id)).IsFalse();
-        _senderSession.SendPacket(Is<byte[]>(data => IsPacket(data, SCOffsets.SCMailReceiverOpenedPacket, mail.Id)))
-            .WasCalled(Times.Once);
-        _senderSession.SendPacket(Is<byte[]>(data => IsMailRemovedPacket(data, mail.Id)))
-            .WasCalled(Times.Once);
+            await Assert.That(_mailManager.AllPlayerMails.ContainsKey(mail.Id)).IsFalse();
+            _senderSession.SendPacket(Is<byte[]>(data => IsPacket(data, SCOffsets.SCMailReceiverOpenedPacket, mail.Id)))
+                .WasCalled(Times.Once);
+            _senderSession.SendPacket(Is<byte[]>(data => IsMailRemovedPacket(data, mail.Id)))
+                .WasCalled(Times.Once);
+        }
+        finally
+        {
+            worldField.SetValue(null, previousWorlds);
+        }
     }
 
     [Test]
@@ -300,6 +326,25 @@ public sealed class MailTests
         await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
         _senderSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailBodyPacket)))
             .WasCalled(Times.Once);
+    }
+
+    [Test]
+    public async Task GetAttached_WalletOverflow_PreservesMoneyAttachmentAndReportsFailure()
+    {
+        var mail = AddReceivedMail(copperCoins: 25);
+        mail.IsDirty = false;
+        _character.Money = long.MaxValue;
+        var attachments = mail.Header.Attachments;
+        await Assert.That(_mails.GetAttached(mail.Id, true, false, true)).IsFalse();
+        await Assert.That(_character.Money).IsEqualTo(long.MaxValue);
+        await Assert.That(mail.Body.CopperCoins).IsEqualTo(25);
+        await Assert.That(mail.Header.Attachments).IsEqualTo(attachments);
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        await Assert.That(mail.IsDirty).IsFalse();
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCAttachmentTakenPacket)))
+            .WasCalled(Times.Never);
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCErrorMsgPacket) &&
+            BitConverter.ToInt16(packet, 8) == (short)ErrorMessageType.MailTooMuchMoney)).WasCalled(Times.Once);
     }
 
     [Test]

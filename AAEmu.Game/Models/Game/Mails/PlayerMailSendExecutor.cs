@@ -26,6 +26,9 @@ internal static class PlayerMailSendExecutor
             var receiverId = names.GetCharacterId(receiverName);
             if (receiverId == 0)
                 return MailResult.UnableToFindRecipient;
+            var receiverAccess = mails.CheckPlayerReceiver(receiverId, sender.Id);
+            if (receiverAccess != MailResult.Success)
+                return receiverAccess;
             var canonicalReceiver = names.GetCharacterName(receiverId);
 
             var selected = new List<Item>();

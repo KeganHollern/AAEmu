@@ -35,6 +35,27 @@ public partial class MailManager
             return TransitionMail(source, null, true, DateTime.UtcNow);
     }
 
+    public bool ReturnDeletedCharacterMail(uint receiverId)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (receiverId == 0)
+                return false;
+            var sources = _allPlayerMails.Values
+                .Where(mail => mail.Header.ReceiverId == receiverId && mail.CanReturnMail())
+                .OrderBy(mail => mail.Id).ToArray();
+            foreach (var source in sources)
+            {
+                if (!_allPlayerMails.TryGetValue(source.Id, out var current) || !ReferenceEquals(source, current))
+                    continue;
+                if (source.Header.ReceiverId != receiverId ||
+                    !TransitionMail(source, null, true, DateTime.UtcNow))
+                    return false;
+            }
+            return true;
+        }
+    }
+
     private bool CanReturnToExistingSender(BaseMail mail)
     {
         var senderName = nameManager.GetCharacterName(mail.Header.SenderId);

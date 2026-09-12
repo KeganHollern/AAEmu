@@ -14,6 +14,7 @@ using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
@@ -275,6 +276,59 @@ public sealed class TradeSettlementTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LowLevelParticipant_CannotStartTrade(bool target)
+    {
+        (target ? _target : _owner).Level = 9;
+        Begin();
+        await Assert.That(PacketCount(_target, SCOffsets.SCCanStartTradePacket)).IsEqualTo(0);
+        await Assert.That(PacketCount(_owner, SCOffsets.SCTradeStartedPacket)).IsEqualTo(0);
+        await Assert.That(_save.Calls).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments("before")]
+    [Arguments("invited")]
+    [Arguments("offered")]
+    public async Task RecipientBlock_CancelsTradeAtEveryAcceptanceStage(string stage)
+    {
+        var item = AddItem(_owner, 10, 100, 5);
+        if (stage != "before")
+            _trade.CanStartTrade(_owner, _target);
+        if (stage == "offered")
+        {
+            _trade.StartTrade(_owner, _target);
+            _trade.AddItem(_owner, SlotType.Inventory, 0, 2);
+        }
+        _target.Blocked = new CharacterBlocked(_target);
+        _target.Blocked.BlockedList[_owner.Id] = new BlockedTemplate { Owner = _target.Id, BlockedId = _owner.Id };
+        if (stage == "before")
+            _trade.CanStartTrade(_owner, _target);
+        _trade.StartTrade(_owner, _target);
+        ConfirmBoth();
+        await Assert.That(_save.Calls).IsEqualTo(0);
+        await Assert.That(TradeReservation.GetReservedCount(item)).IsEqualTo(0);
+        await Assert.That(_target.Inventory.Bag.Items).IsEmpty();
+        await Assert.That(PacketCount(_target, SCOffsets.SCTradeMadePacket)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task BoundOffer_ReportsAuthoredErrorWithoutReservingOrTransferring()
+    {
+        var item = AddItem(_owner, 10, 100, 5);
+        item.ItemFlags |= ItemFlag.SoulBound;
+        Begin();
+        _trade.AddItem(_owner, SlotType.Inventory, 0, 2);
+        var error = _sessions[_owner.ObjId].Packets.Single(packet =>
+            BitConverter.ToUInt16(packet, 6) == SCOffsets.SCErrorMsgPacket);
+        await Assert.That(BitConverter.ToInt16(error, 8)).IsEqualTo((short)ErrorMessageType.TradeSoulBoundItem);
+        await Assert.That(TradeReservation.GetReservedCount(item)).IsEqualTo(0);
+        await Assert.That(_save.Calls).IsEqualTo(0);
+        await Assert.That(_target.Inventory.Bag.Items).IsEmpty();
+    }
+
+    [Test]
     public async Task RemovingUnrelatedSlot_DoesNotClearTheRemainingOffer()
     {
         var item = AddItem(_owner, 10, 100, 5);
@@ -482,6 +536,7 @@ public sealed class TradeSettlementTests
     [Arguments("registration")]
     [Arguments("slot")]
     [Arguments("money")]
+    [Arguments("bound")]
     public async Task ChangedOfferBeforeFinalConfirmation_CancelsWithoutCheckpoint(string changed)
     {
         var item = AddItem(_owner, 10, 100, 5);
@@ -497,6 +552,7 @@ public sealed class TradeSettlementTests
             case "registration": _items.Remove(item.Id); break;
             case "slot": item.Slot = 1; break;
             case "money": _owner.Money = 49; break;
+            case "bound": item.ItemFlags |= ItemFlag.SoulBound; break;
         }
         _trade.OkTrade(_target);
         await Assert.That(_save.Calls).IsEqualTo(0);
@@ -715,7 +771,7 @@ public sealed class TradeSettlementTests
         _sessions[id] = session;
         var character = new CharacterMock
         {
-            Id = id, ObjId = id, Name = $"Trader{id}", Money = 100, Hp = 100,
+            Id = id, ObjId = id, Name = $"Trader{id}", Money = 100, Hp = 100, Level = 50,
             NumInventorySlots = 10, NumBankSlots = 10, ParentWorld = _world,
             Faction = new SystemFaction { Id = FactionsEnum.NuiaAlliance, MotherId = FactionsEnum.NuiaAlliance },
             Connection = new GameConnection(session)

@@ -124,6 +124,8 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
 
         var target = targetObj ?? worldManager.GetCharacter(targetName);
         if (target == null) return;
+        if (CharacterBlocked.IsBlockedBy(target, owner.Id))
+            return;
         // TODO - CONFIG INVITE DISABLED
 
         // Only hostile players cannot be invited (friendly and neutral are allowed, supports custom nations)
@@ -203,7 +205,8 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
             return;
         }
 
-        if (isReject || activeInvitation.Time + InvitationLifetime < DateTime.UtcNow)
+        if (isReject || activeInvitation.Time + InvitationLifetime < DateTime.UtcNow ||
+            CharacterBlocked.IsBlockedBy(target, activeInvitation.Owner.Id))
         {
             activeInvitation.Owner.SendPacket(new SCRejectedTeamPacket(activeInvitation.Target.Name, activeInvitation.IsParty));
             _activeInvitations.TryRemove(new KeyValuePair<uint, InvitationTemplate>(target.Id, activeInvitation));
