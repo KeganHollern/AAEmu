@@ -8,6 +8,7 @@ public class CharacterTemplate
     public Race Race { get; set; }
     public Gender Gender { get; set; }
     public uint ModelId { get; set; }
+    public bool Creatable { get; set; }
     public uint ZoneId { get; set; }
     public FactionsEnum FactionId { get; set; }
     public uint ReturnDistrictId { get; set; }

@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Skills;
@@ -15,7 +16,8 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
 {
     public override void Read(PacketStream stream)
     {
-        if (!Connection.IsAuthenticated || Connection.AccountId == 0)
+        if (!Connection.IsAuthenticated || Connection.AccountId == 0 || Connection.IsClosed ||
+            Connection.State != GameState.Lobby || Connection.ActiveChar != null)
         {
             Connection.Shutdown();
             return;
@@ -26,6 +28,11 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
 
         if (Connection.Characters.TryGetValue(characterId, out var character) && character.AccountId == Connection.AccountId)
         {
+            if (!Connection.TrySelectCharacter(character))
+            {
+                Connection.Shutdown();
+                return;
+            }
             // Force player into main_world when coming from character select
             character.Transform.InstanceId = WorldManager.DefaultInstanceId;
             // Despawn any old pets this character might have even before loading it
@@ -38,7 +45,6 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
                 worldInstance.MateManager.RemoveAndDespawnAllActiveOwnedMates(character);
             }
 
-            Connection.ActiveChar = character;
             if (Character.UsedCharacterObjIds.TryGetValue(character.Id, out var oldObjId))
             {
                 Connection.ActiveChar.ObjId = oldObjId;

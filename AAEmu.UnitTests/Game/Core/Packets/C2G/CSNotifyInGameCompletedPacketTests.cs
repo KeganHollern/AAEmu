@@ -99,7 +99,10 @@ public sealed class CSNotifyInGameCompletedPacketTests
         s_achievementsField.SetValue(character, achievements);
         character.Connection = connection;
         character.Cooldowns.AddCooldown(100, 30_000);
+        connection.TryAuthenticate(20);
+        character.AccountId = 20;
         connection.ActiveChar = character;
+        connection.State = GameState.World;
 
         var instanceLoadedPacket = new CSInstanceLoadedPacket { Connection = connection };
         instanceLoadedPacket.Read(new PacketStream());
@@ -115,6 +118,14 @@ public sealed class CSNotifyInGameCompletedPacketTests
         session.SendPacket(Is<byte[]>(HasAchievementsOpcode)).WasCalled(Times.Once);
         session.SendPacket(Is<byte[]>(packet => IsAchievementsPacket(packet, 1000, 1, completedAt.UtcDateTime)))
             .WasCalled(Times.Once);
+        // Instance transitions can send Completed again. Refresh snapshots without
+        // repeating the once-per-selection world join hook.
+        inGameCompletedPacket.Read(new PacketStream());
+        session.SendPacket(Is<byte[]>(IsCooldownPacket)).WasCalled(Times.Exactly(2));
+        session.SendPacket(Is<byte[]>(HasAchievementsOpcode)).WasCalled(Times.Exactly(2));
+        session.SendPacket(Is<byte[]>(packet => packet.Length >= 8 &&
+            BitConverter.ToUInt16(packet, 6) == SCOffsets.SCOnOffSnowPacket)).WasCalled(Times.Once);
+
     }
 
     [Test]

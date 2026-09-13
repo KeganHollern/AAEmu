@@ -56,6 +56,8 @@ public partial class AppConfiguration
         public string Host { get; set; }
         public ushort Port { get; set; }
         public int NumConnections { get; set; }
+        // Disable only when Login and Game ingress do not preserve the same client address.
+        public bool ValidateWorldCookieAddress { get; set; } = true;
     }
 
     /// <summary>

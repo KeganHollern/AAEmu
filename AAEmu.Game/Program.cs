@@ -311,6 +311,7 @@ public static class Program
                 services.AddSingleton<SpecialtyManager>();
                 services.AddSingleton<ISpecialtyManager>(sp => sp.GetRequiredService<SpecialtyManager>());
 
+                services.AddSingleton<ReconnectTokenManager>();
                 services.AddSingleton<StreamManager>();
                 services.AddSingleton<IStreamManager>(sp => sp.GetRequiredService<StreamManager>());
 

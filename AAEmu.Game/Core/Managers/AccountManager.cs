@@ -42,7 +42,8 @@ public class AccountManager(
         var rewardDate = DateOnly.FromDateTime(loginTime);
         if (!_accounts.TryAdd(connection.AccountId, connection))
         {
-            timedRewardsManager.DoDailyAccountLogin(connection.AccountId, rewardDate);
+            if (!IsCurrent(connection))
+                connection.Shutdown();
             return;
         }
 
@@ -67,6 +68,17 @@ public class AccountManager(
     {
         _accounts.TryRemove(id, out _);
     }
+
+    public void Remove(GameConnection connection)
+    {
+        ((ICollection<KeyValuePair<uint, GameConnection>>)_accounts).Remove(
+            new KeyValuePair<uint, GameConnection>(connection.AccountId, connection));
+    }
+
+    public GameConnection GetConnection(uint accountId) => _accounts.GetValueOrDefault(accountId);
+
+    public bool IsCurrent(GameConnection connection) =>
+        ReferenceEquals(GetConnection(connection.AccountId), connection);
 
     public bool Contains(uint id)
     {

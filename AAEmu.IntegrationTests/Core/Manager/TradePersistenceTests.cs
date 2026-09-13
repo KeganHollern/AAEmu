@@ -199,6 +199,41 @@ public sealed class TradePersistenceTests
         AssertLoadedItem(reloaded, returnItem.Id, graph.Target, 1, returnItem.Grade);
     }
 
+    [Fact]
+    public void DuplicateLogin_CommitsDepartingWalletAndPendingItemBeforeOfferingCookie()
+    {
+        using var graph = new TradeGraph();
+        var accounts = new AccountManager(Mock.Of<ITickManager>(), Mock.Of<ITimedRewardsManager>(), TimeProvider.System);
+        graph.SetInstance(accounts);
+        graph.SetInstance(graph.Save);
+        var old = graph.Owner.Connection;
+        Assert.True(old.TryAuthenticate(graph.Owner.AccountId));
+        accounts.Add(old);
+        Assert.True(graph.Save.TryCommitEconomy([graph.Owner, graph.Target]));
+        var pendingItem = graph.AddItem(graph.Owner, 30, 300, 7);
+        graph.Owner.Money = 4321;
+        Assert.Equal(0, CountItem(pendingItem.Id));
+        Assert.Equal(100, ReadWallet(graph.Owner.Id));
+        var moderation = new Mock<IModerationManager>();
+        moderation.Setup(value => value.TryAdmit(It.IsAny<uint>(), It.IsAny<Action>()))
+            .Returns((uint _, Action admit) => { admit(); return true; });
+        var admission = new EnterWorldManager(accounts, Mock.Of<IStreamManager>(), Mock.Of<IQuestManager>(),
+            Mock.Of<IChatManager>(), Mock.Of<IFamilyManager>(), Mock.Of<IWorldManager>());
+
+        Assert.True(admission.PreparePendingAccount(old.AccountId, 87654321, new AAEmu.Game.Models.AccountPayment(),
+            IPAddress.Loopback, moderation.Object));
+
+        Assert.True(old.IsClosed);
+        Assert.True(old.DisconnectSaveSucceeded);
+        Assert.Null(old.ActiveChar);
+        Assert.Null(accounts.GetConnection(old.AccountId));
+        Assert.Equal(4321, ReadWallet(graph.Owner.Id));
+        Assert.Equal(1, CountItem(pendingItem.Id));
+        var reloaded = graph.ReloadItems();
+        AssertLoadedItem(reloaded, pendingItem.Id, graph.Owner, 7, pendingItem.Grade);
+        Assert.Equal(PendingWorldAccountResult.Consumed, admission.ConsumePendingAccount(87654321, old.AccountId));
+    }
+
     private static void AssertLoadedItem(ItemManager manager, ulong id, Character owner, int count, byte grade)
     {
         var item = manager.GetItemByItemId(id);
@@ -398,7 +433,7 @@ public sealed class TradePersistenceTests
             BindType = ItemBindType.Normal, FixedGrade = -1, Gradable = true
         };
 
-        private void SetInstance<T>(T instance) where T : class
+        public void SetInstance<T>(T instance) where T : class
         {
             var field = typeof(Singleton<T>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             _previousInstances.TryAdd(field, field.GetValue(null));

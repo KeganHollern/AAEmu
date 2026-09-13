@@ -1,10 +1,10 @@
-using AAEmu.Game.Core.Network.Connections;
+﻿using AAEmu.Game.Core.Network.Connections;
 
 namespace AAEmu.Game.Core.Managers.World;
 
 public interface IStreamManager
 {
-    void AddToken(uint accountId, uint connectionId);
-    void RemoveToken(uint token);
+    uint AddToken(GameConnection connection);
+    void RemoveToken(GameConnection connection);
     void Login(StreamConnection connection, uint accountId, uint token);
 }

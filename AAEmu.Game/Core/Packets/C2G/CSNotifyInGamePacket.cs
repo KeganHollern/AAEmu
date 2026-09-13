@@ -1,6 +1,7 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Chat;
 
@@ -15,6 +16,21 @@ public class CSNotifyInGamePacket() : GamePacket(CSOffsets.CSNotifyInGamePacket,
 
     public override void Execute()
     {
+        // Native world/instance readiness can notify again after local-unit binding.
+        // Reject the repeated spawn action without disconnecting that valid session.
+        if (!Connection.IsClosed && Connection.IsAuthenticated && Connection.State == GameState.World &&
+            Connection.ActiveChar?.AccountId == Connection.AccountId)
+        {
+            if (Connection.StateRejectionEvents.TryConsume())
+                Logger.Warn("Rejected repeated NotifyInGame spawn on connection {ConnectionId}", Connection.Id);
+            return;
+        }
+        if (!Connection.TryAdvanceWorldEntry(GameState.EnteringWorld, GameState.World))
+        {
+            Connection.Shutdown();
+            return;
+        }
+
         Connection.ActiveChar.IsOnline = true;
 
         Connection.ActiveChar.Spawn();

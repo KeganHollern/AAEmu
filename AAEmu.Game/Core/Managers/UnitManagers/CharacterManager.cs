@@ -44,6 +44,7 @@ public class CharacterManager(
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     private readonly Dictionary<byte, CharacterTemplate> _templates = [];
+    private readonly CharacterCreationRules _creationRules = new();
     private readonly Dictionary<byte, AbilityItems> _abilityItems = [];
     private readonly Dictionary<int, List<Expand>> _expands = [];
     private readonly Dictionary<uint, AppellationTemplate> _appellations = [];
@@ -103,6 +104,7 @@ public class CharacterManager(
 
         using (var connection = SQLite.CreateConnection())
         {
+            _creationRules.Load(connection);
             var temp = new Dictionary<uint, byte>();
             using (var command = connection.CreateCommand())
             {
@@ -117,13 +119,14 @@ public class CharacterManager(
                         template.Race = (Race)reader.GetByte("char_race_id");
                         template.Gender = (Gender)reader.GetByte("char_gender_id");
                         template.ModelId = reader.GetUInt32("model_id");
+                        template.Creatable = reader.GetBoolean("creatable", true);
                         template.FactionId = (FactionsEnum)reader.GetUInt32("faction_id");
                         template.ZoneId = reader.GetUInt32("starting_zone_id");
                         template.ReturnDistrictId = reader.GetUInt32("default_return_district_id");
                         template.ResurrectionDistrictId = reader.GetUInt32("default_resurrection_district_id");
                         using (var command2 = connection.CreateCommand())
                         {
-                            command2.CommandText = "SELECT * FROM item_body_parts WHERE model_id=@model_id ORDER BY id";
+                            command2.CommandText = "SELECT * FROM item_body_parts WHERE model_id=@model_id AND npc_only='f' AND beautyshop_only='f' ORDER BY id";
                             command2.Parameters.AddWithValue("model_id", template.ModelId);
                             command2.Prepare();
                             using (var reader2 = new SQLiteWrapperReader(command2.ExecuteReader()))
@@ -132,7 +135,8 @@ public class CharacterManager(
                                 {
                                     var itemId = reader2.GetUInt32("item_id", 0);
                                     var slot = reader2.GetInt32("slot_type_id") - 23;
-                                    template.Items[slot] = itemId;
+                                    if (slot >= 0 && slot < template.Items.Length && template.Items[slot] == 0)
+                                        template.Items[slot] = itemId;
                                 }
                             }
                         }
@@ -461,27 +465,42 @@ public class CharacterManager(
             return;
         }
 
-        // NOTE: This is purely a warning to log potential cheaters
-        // If you have custom starting classes, make sure to comment or adjust this
-        if (ability2 != AbilityType.None || ability3 != AbilityType.None)
+        if (race is <= Race.None or > Race.Warborn || gender is not (Gender.Male or Gender.Female) ||
+            !_templates.TryGetValue((byte)(16 * (byte)gender + (byte)race), out var template) ||
+            !CharacterCreationRules.IsStartingAbility(ability1) || !_abilityItems.ContainsKey((byte)ability1) ||
+            !_creationRules.TrySelectBodyItems(template, customModel, out var selectedBodyItems))
         {
-            Logger.Error($"User tried to make a new character that has 2nd and/or 3rd ability already set. Account {connection.AccountId}, Name {name}, Class {ability1}, {ability2}, {ability3}");
+            connection.SendPacket(new SCCharacterCreationFailedPacket(CharacterCreateError.ServerError));
+            return;
         }
+
+        // The packet's level, extra abilities, and body item IDs never select server state.
+        var result = CharacterCreationSlots.Create(connection.AccountId,
+            () => CreateValidated(connection, name, template, selectedBodyItems, customModel, ability1));
+        if (result != CharacterCreateError.Ok)
+            connection.SendPacket(new SCCharacterCreationFailedPacket(result));
+    }
+
+    private CharacterCreateError CreateValidated(GameConnection connection, string name, CharacterTemplate template,
+        uint[] bodyItems, UnitCustomModelParams customModel, AbilityType ability1)
+    {
+        // A request can wait for an earlier creation on the same account.
+        var nameValidationCode = nameManager.ValidateCharacterName(name);
+        if (nameValidationCode != CharacterCreateError.Ok)
+            return nameValidationCode;
 
         var accountDetails = accountManager.GetAccountDetails(connection.AccountId);
 
         var characterId = characterIdManager.GetNextId();
         nameManager.AddCharacter(characterId, name, connection.AccountId);
-        var template = GetTemplate(race, gender);
-
         var character = new Character(customModel)
         {
             Id = characterId, TemplateId = characterId, AccountId = connection.AccountId, Name = name,
-            Race = race,
-            Gender = gender
+            Race = template.Race,
+            Gender = template.Gender
         };
         character.Transform.ApplyWorldSpawnPosition(template.SpawnPosition);
-        character.Level = level;
+        character.Level = 1;
         character.Faction = factionManager.GetFaction(template.FactionId);
         character.FactionName = "";
         // character.LaborPower = (short)AppConfiguration.Instance.Labor.Default;
@@ -493,8 +512,8 @@ public class CharacterManager(
         character.Created = DateTime.UtcNow;
         character.Updated = DateTime.UtcNow;
         character.Ability1 = ability1;
-        character.Ability2 = ability2;
-        character.Ability3 = ability3;
+        character.Ability2 = AbilityType.None;
+        character.Ability3 = AbilityType.None;
         character.ReturnDistrictId = template.ReturnDistrictId;
         character.ResurrectionDistrictId = template.ResurrectionDistrictId;
         character.Slots = new ActionSlot[Character.MaxActionSlots];
@@ -520,8 +539,6 @@ public class CharacterManager(
         SetEquipItemTemplate(character.Inventory, items.Items.Cosplay, EquipmentItemSlot.Cosplay, items.Items.CosplayGrade);
         for (var i = 0; i < 7; i++)
         {
-            if (bodyItems[i] == 0 && template.Items[i] > 0)
-                bodyItems[i] = template.Items[i];
             SetEquipItemTemplate(character.Inventory, bodyItems[i], (EquipmentItemSlot)(i + 19), 0);
         }
 
@@ -587,16 +604,17 @@ public class CharacterManager(
         {
             connection.Characters.Add(character.Id, character);
             connection.SendPacket(new SCCreateCharacterResponsePacket(character));
+            return CharacterCreateError.Ok;
         }
         else
         {
             // There is no actual response for internal DB saving error for the client.
             // Just send a generic Failed error (Name already in use for pending deletion)
-            connection.SendPacket(new SCCharacterCreationFailedPacket(CharacterCreateError.Failed));
             characterIdManager.ReleaseId(characterId);
             nameManager.RemoveCharacterId(characterId);
             // TODO release items...
             DeleteCharacterAssets(character, true);
+            return CharacterCreateError.Failed;
         }
     }
 

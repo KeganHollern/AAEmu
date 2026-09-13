@@ -46,28 +46,29 @@ public class EnterWorldManagerTests
     [Test]
     [Arguments(10u)]
     [Arguments(20u)]
-    public async Task SetPendingAccount_DuplicateToken_StoresLatestAccount(uint currentAccountId)
+    public async Task SetPendingAccount_DuplicateToken_PreservesOriginalAccount(uint currentAccountId)
     {
         var manager = CreateManager();
         manager.SetPendingAccount(1, 10);
 
-        manager.SetPendingAccount(1, currentAccountId);
+        var added = manager.SetPendingAccount(1, currentAccountId);
 
-        var result = manager.ConsumePendingAccount(1, currentAccountId);
+        await Assert.That(added).IsFalse();
+        var result = manager.ConsumePendingAccount(1, 10);
         await Assert.That(result).IsEqualTo(PendingWorldAccountResult.Consumed);
     }
 
     [Test]
-    public async Task ConsumePendingAccount_StaleClientAfterTokenReuse_PreservesCurrentAccount()
+    public async Task ConsumePendingAccount_NewTokenForSameAccount_RejectsStaleToken()
     {
         var manager = CreateManager();
         manager.SetPendingAccount(1, 10);
-        manager.SetPendingAccount(1, 20);
+        manager.SetPendingAccount(2, 10);
 
         var staleResult = manager.ConsumePendingAccount(1, 10);
-        var currentResult = manager.ConsumePendingAccount(1, 20);
+        var currentResult = manager.ConsumePendingAccount(2, 10);
 
-        await Assert.That(staleResult).IsEqualTo(PendingWorldAccountResult.AccountMismatch);
+        await Assert.That(staleResult).IsEqualTo(PendingWorldAccountResult.NotFound);
         await Assert.That(currentResult).IsEqualTo(PendingWorldAccountResult.Consumed);
     }
 

@@ -19,8 +19,9 @@ public class StreamProtocolHandler : BaseProtocolHandler
         try
         {
             var con = new StreamConnection(session);
+            if (!StreamConnectionTable.Instance.AddConnection(con))
+                return;
             StreamConnection.OnConnect();
-            StreamConnectionTable.Instance.AddConnection(con);
         }
         catch (Exception e)
         {
@@ -33,11 +34,10 @@ public class StreamProtocolHandler : BaseProtocolHandler
     {
         try
         {
-            var con = StreamConnectionTable.Instance.GetConnection(session.SessionId);
+            var con = StreamConnectionTable.Instance.RemoveConnection(session);
             if (con != null)
             {
                 AAEmu.Game.Core.Managers.Stream.UccManager.Instance.RemoveConnection(con);
-                StreamConnectionTable.Instance.RemoveConnection(session.SessionId);
             }
         }
         catch (Exception e)
@@ -53,7 +53,7 @@ public class StreamProtocolHandler : BaseProtocolHandler
     {
         try
         {
-            var connection = StreamConnectionTable.Instance.GetConnection(session.SessionId);
+            var connection = StreamConnectionTable.Instance.GetConnection(session);
             if (connection == null)
                 return;
             OnReceive(connection, buf, offset, bytes);

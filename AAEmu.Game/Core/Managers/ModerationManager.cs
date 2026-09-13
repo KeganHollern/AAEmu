@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using AAEmu.Commons.Utils;
@@ -140,9 +140,11 @@ public class ModerationManager : Singleton<ModerationManager>, IModerationManage
             _states[state.AccountId] = state;
             if (!state.IsBanned(_time.GetUtcNow()))
                 return;
-            foreach (var connection in _connections().Where(connection => connection.AccountId == state.AccountId))
-                DisconnectSafely(connection, "This account is banned.");
         }
+        // Disconnect can wait for an active packet. Do not hold the state lock,
+        // because that packet can need moderation state before it completes.
+        foreach (var connection in _connections().Where(connection => connection.AccountId == state.AccountId))
+            DisconnectSafely(connection, "This account is banned.");
     }
 
     public bool TryAdmit(uint accountId, Action admit)

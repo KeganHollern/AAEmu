@@ -13,20 +13,11 @@ public class CSSpawnCharacterPacket() : GamePacket(CSOffsets.CSSpawnCharacterPac
 {
     public override void Read(PacketStream stream)
     {
-        if (!Connection.IsAuthenticated || Connection.AccountId == 0 ||
-            Connection.ActiveChar?.AccountId != Connection.AccountId)
+        if (!Connection.TryAdvanceWorldEntry(GameState.CharacterSelected, GameState.EnteringWorld))
         {
             Connection.Shutdown();
             return;
         }
-        if (Connection.ActiveChar == null)
-        {
-            Logger.Error("CSSpawnCharacterPacket: ActiveChar is null for account {0} — no character was selected. Disconnecting.", Connection.AccountId);
-            Connection.Shutdown();
-            return;
-        }
-
-        Connection.State = GameState.World;
 
         Connection.ActiveChar.VisualOptions = new CharacterVisualOptions();
         Connection.ActiveChar.VisualOptions.Read(stream);
