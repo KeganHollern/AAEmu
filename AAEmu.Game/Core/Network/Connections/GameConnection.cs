@@ -223,7 +223,7 @@ public class GameConnection
                 catch (Exception exception)
                 {
                     DisconnectSaveSucceeded = false;
-                    Logger.Error(exception, "Could not save departing account {AccountId}", AccountId);
+                    Logger.Error(exception, "Could not save departing session {ConnectionId}", Id);
                 }
             }
             finally

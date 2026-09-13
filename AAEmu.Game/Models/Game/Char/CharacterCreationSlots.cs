@@ -54,7 +54,7 @@ internal static class CharacterCreationSlots
             {
                 // Closing a failed physical connection releases its advisory lock.
                 MySql.Data.MySqlClient.MySqlConnection.ClearPool(connection);
-                Logger.Error(exception, "Failed to release character creation lock for account {0}", accountId);
+                Logger.Error(exception, "Failed to release character creation lock");
             }
         }
     }

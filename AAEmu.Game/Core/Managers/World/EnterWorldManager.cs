@@ -71,7 +71,7 @@ public class EnterWorldManager(
         }
         catch (Exception exception)
         {
-            Logger.Error(exception, "Could not authorize pending account {AccountId}", accountId);
+            Logger.Error(exception, "Could not authorize world-entry request {ConnectionId}", connectionId);
             loginConnection?.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, 1));
         }
         finally
