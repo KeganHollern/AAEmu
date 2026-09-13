@@ -33,6 +33,35 @@ public class CharacterCreationRulesTests
     }
 
     [Test]
+    public async Task BodyItems_NullItemDuplicateDoesNotPreventLoadOrReplaceUsableMapping()
+    {
+        var rules = CreateRules(includeIncompleteHairMapping: true);
+        var template = new CharacterTemplate { ModelId = 20, Creatable = true, Items = new uint[7] };
+        var model = new UnitCustomModelParams(UnitCustomModelType.Hair).SetHairColorId(166);
+        await Assert.That(rules.TrySelectBodyItems(template, model, out var items)).IsTrue();
+        await Assert.That(items[1]).IsEqualTo(25263u);
+    }
+
+    [Test]
+    [Explicit]
+    public async Task ActiveR208022Compact_LoadsEveryCreationTableAndKeepsFerreHairMapping()
+    {
+        var path = Environment.GetEnvironmentVariable("AAEMU_CHARACTER_CREATION_TEST_COMPACT");
+        Skip.Unless(!string.IsNullOrEmpty(path), "Set AAEMU_CHARACTER_CREATION_TEST_COMPACT to the read-only r208022 compact.");
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = path, Mode = SqliteOpenMode.ReadOnly
+        }.ToString());
+        connection.Open();
+        var rules = new CharacterCreationRules();
+        rules.Load(connection);
+        var template = new CharacterTemplate { ModelId = 20, Creatable = true, Items = new uint[7] };
+        var model = new UnitCustomModelParams(UnitCustomModelType.Hair).SetHairColorId(166);
+        await Assert.That(rules.TrySelectBodyItems(template, model, out var items)).IsTrue();
+        await Assert.That(items[1]).IsEqualTo(25263u);
+    }
+
+    [Test]
     [Arguments("noncreatable")]
     [Arguments("null")]
     [Arguments("type")]
@@ -242,7 +271,7 @@ public class CharacterCreationRulesTests
         return model;
     }
 
-    private static CharacterCreationRules CreateRules(byte[] loginPreset = null)
+    private static CharacterCreationRules CreateRules(byte[] loginPreset = null, bool includeIncompleteHairMapping = false)
     {
         using var connection = new SqliteConnection("Data Source=:memory:");
         connection.Open();
@@ -265,6 +294,15 @@ public class CharacterCreationRulesTests
             CREATE TABLE total_character_customs(model_id INTEGER, owner_type_id INTEGER, modifier BLOB);
             """;
         command.ExecuteNonQuery();
+        if (includeIncompleteHairMapping)
+        {
+            // Exact r208022 rows: 465 is an incomplete duplicate of usable row 428.
+            command.CommandText = """
+                INSERT INTO hair_colors VALUES(166,20,14436,'f');
+                INSERT INTO item_body_parts VALUES(428,25263,24,20,14436,'f','f'),(465,NULL,24,20,14436,'f','f');
+                """;
+            command.ExecuteNonQuery();
+        }
         if (loginPreset != null)
         {
             command.CommandText = "INSERT INTO total_character_customs VALUES(10,1,@modifier)";

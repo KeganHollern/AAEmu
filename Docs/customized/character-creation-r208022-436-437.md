@@ -174,3 +174,18 @@ Human client validation remains open. Use the published release for these checks
 7. Reconnect and check that the lobby still shows a total limit of 6.
 
 No human client validation is claimed by this change.
+
+## Compact loader correction (2026-09-13)
+
+The first account access rollout failed during `CharacterCreationRules.Load`.
+`item_body_parts` row 465 has a NULL `item_id`, model 20, asset 14436, and slot 24.
+Row 428 supplies item 25263 for the same model and asset. Both rows pass the player and beauty-shop filters.
+The loader now excludes NULL item mappings and keeps the first usable mapping in ID order.
+Both recorded compact snapshots contain these rows. Neither snapshot changes.
+
+The exact-row regression reproduces the NULL exception before the correction.
+It checks successful loading and item 25263 after the correction.
+An explicit test loads every creation table from the complete read-only compact.
+Set `AAEMU_CHARACTER_CREATION_TEST_COMPACT` to the snapshot path and select
+`CharacterCreationRulesTests` to run this check.
+The complete loader audit found no other NULL numeric reads. All 360 preset modifiers contain 128 bytes.
