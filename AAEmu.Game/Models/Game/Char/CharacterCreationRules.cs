@@ -40,7 +40,8 @@ internal sealed class CharacterCreationRules
         ReadMap("face_eyelash_maps", _eyelashMaps);
         Read("SELECT id, model_id, movable FROM face_decal_assets WHERE npc_only='f'", reader =>
             _decals.Add(reader.GetUInt32("id"), (reader.GetUInt32("model_id"), reader.GetBoolean("movable", true))));
-        Read("SELECT item_id, model_id, asset_id FROM item_body_parts WHERE slot_type_id=24 AND npc_only='f' AND beautyshop_only='f' ORDER BY id", reader =>
+        // Incomplete duplicate row 465 has no item; row 428 supplies the usable mapping.
+        Read("SELECT item_id, model_id, asset_id FROM item_body_parts WHERE slot_type_id=24 AND npc_only='f' AND beautyshop_only='f' AND item_id IS NOT NULL ORDER BY id", reader =>
             _hairItems.TryAdd((reader.GetUInt32("model_id"), reader.GetUInt32("asset_id")), reader.GetUInt32("item_id")));
         using var faceLimits = typeof(CharacterCreationRules).Assembly.GetManifestResourceStream("AAEmu.Game.CharacterFaceSliderLimits.json");
         foreach (var limits in JsonSerializer.Deserialize<FaceSliderLimits[]>(faceLimits))
