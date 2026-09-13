@@ -4,7 +4,9 @@
 public enum CharacterCreateError : byte
 {
     Ok = 0,
+    ServerError = 2,
     Failed = 3, // Also generates Name is pending deletion
     NameAlreadyExists = 4,
     InvalidCharacters = 5,
+    WorldCharacterLimit = 9,
 }

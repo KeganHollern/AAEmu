@@ -12,6 +12,7 @@ public class StreamConnection(ISession session)
     private readonly Dictionary<int, Doodad[]> _requests = [];
 
     public uint Id => session.SessionId;
+    internal bool MatchesSession(ISession candidate) => ReferenceEquals(session, candidate);
     public IPAddress Ip => session.Ip;
     public GameConnection GameConnection { get; set; }
     public PacketStream LastPacket { get; set; }

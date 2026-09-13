@@ -23,12 +23,18 @@ public class GameConnection
     private readonly Lock _authenticationLock = new();
     private Timer _authenticationTimer;
     private int _closed;
+    private int _socketClosed;
+    internal bool DisconnectSaveSucceeded { get; private set; } = true;
     private int _disconnected;
+    internal object SessionSyncRoot { get; } = new();
+    internal bool InGameCompleted { get; private set; }
+    internal bool MatchesSession(ISession session) => ReferenceEquals(_session, session);
 
     public uint Id => _session.SessionId;
     public uint AccountId { get; set; }
     public bool IsAuthenticated { get; private set; }
     public bool IsClosed => Volatile.Read(ref _closed) != 0;
+    internal void MarkClosed() => Interlocked.Exchange(ref _closed, 1);
     public IPAddress Ip => _session.Ip;
     public PacketStream LastPacket { get; set; }
     public AccountPayment Payment { get; set; }
@@ -42,6 +48,7 @@ public class GameConnection
     public CancellationTokenSource CancelTokenSource { get; set; }
     public DateTime LastPing { get; set; }
     internal ConnectionEventLimiter UnknownPacketEvents { get; } = new();
+    internal ConnectionEventLimiter StateRejectionEvents { get; } = new();
 
     public GameConnection(ISession session)
     {
@@ -102,9 +109,13 @@ public class GameConnection
     {
         lock (_authenticationLock)
         {
-            if (!IsAuthenticated)
-                Shutdown();
+            if (IsAuthenticated)
+                return;
+            Interlocked.Exchange(ref _closed, 1);
         }
+        // Socket callbacks can wait for an active packet. Release the authentication
+        // lock first so that packet can finish its authentication check.
+        Shutdown();
     }
 
     internal bool TryAuthenticate(uint accountId)
@@ -115,10 +126,56 @@ public class GameConnection
                 return false;
             AccountId = accountId;
             IsAuthenticated = true;
+            State = GameState.Lobby;
+            LastPing = DateTime.UtcNow;
             _authenticationTimer?.Dispose();
             _authenticationTimer = null;
             return true;
         }
+    }
+
+    internal bool TrySelectCharacter(Character character)
+    {
+        lock (SessionSyncRoot)
+        {
+            if (IsClosed || !IsAuthenticated || State != GameState.Lobby || ActiveChar != null ||
+                character == null || character.AccountId != AccountId)
+                return false;
+            ActiveChar = character;
+            State = GameState.CharacterSelected;
+            InGameCompleted = false;
+            return true;
+        }
+    }
+
+    internal bool TryAdvanceWorldEntry(GameState expected, GameState next)
+    {
+        lock (SessionSyncRoot)
+        {
+            if (IsClosed || !IsAuthenticated || State != expected || ActiveChar?.AccountId != AccountId)
+                return false;
+            State = next;
+            return true;
+        }
+    }
+
+    internal bool TryCompleteWorldEntry()
+    {
+        lock (SessionSyncRoot)
+        {
+            if (IsClosed || !IsAuthenticated || State != GameState.World ||
+                ActiveChar?.AccountId != AccountId || InGameCompleted)
+                return false;
+            InGameCompleted = true;
+            return true;
+        }
+    }
+
+    internal void ReturnToLobby()
+    {
+        ActiveChar = null;
+        State = GameState.Lobby;
+        InGameCompleted = false;
     }
 
     /// <summary>
@@ -126,40 +183,76 @@ public class GameConnection
     /// </summary>
     public void OnDisconnect()
     {
-        _authenticationTimer?.Dispose();
-        if (Interlocked.Exchange(ref _disconnected, 1) != 0 || !IsAuthenticated || AccountId == 0)
-            return;
+        CompleteDisconnect(() =>
+        {
+            RunDisconnectStep(() => CancelTokenSource?.Cancel());
+            LeaveTask = null;
+            if (ActiveChar != null)
+            {
+                RunDisconnectStep(() => ChatManager.Instance.LeaveAllChannels(ActiveChar));
+                RunDisconnectStep(() => AreaTriggerManager.Instance.EvictUnit(ActiveChar));
+                RunDisconnectStep(() => TradeManager.Instance.CancelTrade(ActiveChar, 0));
+                RunDisconnectStep(() => ActiveChar.IsOnline = false);
+                foreach (var subscriber in ActiveChar.Subscribers.ToArray())
+                    RunDisconnectStep(subscriber.Dispose);
+                RunDisconnectStep(() => ActiveChar.Events?.OnDisconnect(this, new OnDisconnectArgs { Player = ActiveChar }));
+                RunDisconnectStep(() => ActiveChar.RemoveAndDespawnActiveOwnedMatesSlaves());
+                RunDisconnectStep(() => DoodadManager.Instance.CloseCoffersOpenedBy(ActiveChar));
+            }
+            foreach (var subscriber in Subscribers.ToArray())
+                RunDisconnectStep(subscriber.Dispose);
+        }, () => SaveAndRemoveFromWorld(ActiveChar), () =>
+        {
+            AccountManager.Instance.Remove(this);
+            RunDisconnectStep(() => AccountManager.Instance.UpdateLoginTime(AccountId, DateTime.UtcNow));
+        });
+    }
 
-        try
+    internal bool CompleteDisconnect(Action cleanup, Action save, Action remove)
+    {
+        lock (SessionSyncRoot)
         {
-            CleanupThenSave(() =>
+            _authenticationTimer?.Dispose();
+            Interlocked.Exchange(ref _closed, 1);
+            if (Interlocked.Exchange(ref _disconnected, 1) != 0 || !IsAuthenticated || AccountId == 0)
+                return DisconnectSaveSucceeded;
+            try
             {
-                AccountManager.Instance.Remove(AccountId);
-                if (ActiveChar != null)
+                RunDisconnectStep(cleanup);
+                try { save(); }
+                catch (Exception exception)
                 {
-                    ChatManager.Instance.LeaveAllChannels(ActiveChar);
-                    AreaTriggerManager.Instance.EvictUnit(ActiveChar);
-                    TradeManager.Instance.CancelTrade(ActiveChar, 0);
-                    // The hard-disconnect path must also publish offline team/friend state.
-                    if (ActiveChar.IsOnline)
-                        ActiveChar.IsOnline = false;
-                    foreach (var subscriber in ActiveChar.Subscribers)
-                        subscriber.Dispose();
-                    ActiveChar.Events?.OnDisconnect(this, new OnDisconnectArgs { Player = ActiveChar });
-                    ActiveChar.RemoveAndDespawnActiveOwnedMatesSlaves();
-                    DoodadManager.Instance.CloseCoffersOpenedBy(ActiveChar);
+                    DisconnectSaveSucceeded = false;
+                    Logger.Error(exception, "Could not save departing account {AccountId}", AccountId);
                 }
-                foreach (var subscriber in Subscribers)
-                    subscriber.Dispose();
-            }, () =>
+            }
+            finally
             {
-                SaveAndRemoveFromWorld(ActiveChar);
-                AccountManager.Instance.UpdateLoginTime(AccountId, DateTime.UtcNow);
-            });
+                try { RunDisconnectStep(remove); }
+                finally { ActiveChar = null; }
+            }
+            return DisconnectSaveSucceeded;
         }
-        finally
+    }
+
+    internal static void RunDisconnectStep(Action action)
+    {
+        try { action(); }
+        catch (Exception exception) { Logger.Error(exception, "Disconnect cleanup step failed"); }
+    }
+
+    internal bool KickDuplicate()
+    {
+        lock (SessionSyncRoot)
         {
-            ActiveChar = null;
+            Interlocked.Exchange(ref _closed, 1);
+            try
+            {
+                RunDisconnectStep(() => SendPacket(new SCKickedPacket(KickedReason.KickDuplicateAccount, string.Empty)));
+                OnDisconnect();
+                return DisconnectSaveSucceeded;
+            }
+            finally { Shutdown(); }
         }
     }
 
@@ -169,15 +262,33 @@ public class GameConnection
     public void Shutdown()
     {
         _authenticationTimer?.Dispose();
-        if (Interlocked.Exchange(ref _closed, 1) == 0)
+        Interlocked.Exchange(ref _closed, 1);
+        if (Interlocked.Exchange(ref _socketClosed, 1) == 0)
             _session?.Close();
     }
 
     public void Kick(string reason)
     {
-        DisconnectWithSave(
-            () => SendPacket(new SCKickedPacket(KickedReason.KickByGm, reason)),
-            OnDisconnect, Shutdown);
+        Interlocked.Exchange(ref _closed, 1);
+        // A command can target another session while its packet owns that session's
+        // lock. Queue a busy target to avoid two moderation commands waiting on each other.
+        if (!Monitor.TryEnter(SessionSyncRoot))
+        {
+            _ = Task.Run(() => KickWhenIdle(reason));
+            return;
+        }
+        try { KickWhenIdle(reason); }
+        finally { Monitor.Exit(SessionSyncRoot); }
+    }
+
+    private void KickWhenIdle(string reason)
+    {
+        lock (SessionSyncRoot)
+        {
+            RunDisconnectStep(() => DisconnectWithSave(
+                () => SendPacket(new SCKickedPacket(KickedReason.KickByGm, reason)),
+                OnDisconnect, Shutdown));
+        }
     }
 
     internal static void DisconnectWithSave(Action notify, Action save, Action close)
@@ -230,7 +341,7 @@ public class GameConnection
     /// </summary>
     public void LoadAccount()
     {
-        if (!IsAuthenticated || AccountId == 0)
+        if (!IsAuthenticated || AccountId == 0 || IsClosed || State != GameState.Lobby || ActiveChar != null)
         {
             Shutdown();
             return;
@@ -285,43 +396,17 @@ public class GameConnection
         if (activeChar == null)
             return;
 
-        CleanupThenSave(() =>
+        RunDisconnectStep(() => activeChar.ParentWorld?.SphereQuestManager?.RemoveSphereQuestTriggers(activeChar));
+        RunDisconnectStep(() => TradeManager.Instance.CancelTrade(activeChar, 0));
+        RunDisconnectStep(() => RadarManager.Instance.UnRegister(activeChar));
+        RunDisconnectStep(() => activeChar.Buffs?.CancelAllEffectTasks());
+        RunDisconnectStep(activeChar.Delete);
+        RunDisconnectStep(() =>
         {
-            // Release only this session's triggers before any other cleanup can fail.
-            activeChar.ParentWorld?.SphereQuestManager?.RemoveSphereQuestTriggers(activeChar);
-            TradeManager.Instance.CancelTrade(activeChar, 0);
-
-            // Remove Radars
-            RadarManager.Instance.UnRegister(activeChar);
-
-            // Cancel all running buff effect tasks before removing the character.
-            // The buffs themselves are saved to DB inside SaveDirectlyToDatabase() → Character.Save().
-            activeChar.Buffs?.CancelAllEffectTasks();
-
-            // Hide/Despawn the player
-            activeChar.Delete();
-            // Removed ReleaseId here to try and fix party/raid disconnect and reconnect issues. Replaced with saving the data
-            //ObjectIdManager.Instance.ReleaseId(ActiveChar.ObjId);
-
-            // Also drop the entry from WorldManager._characters. Without this, hard-DC
-            // / crash paths leak a ghost reference at that ObjId (LeaveWorldTask does
-            // the same TryRemoveCharacter explicitly on graceful logout — we have to
-            // mirror it here or the next reconnect will TryAddCharacter on a stale slot
-            // and end up with a divergent _characters[id] = OLD vs _baseUnits[id] = NEW,
-            // so any later operation on the ghost reference Deletes the live character.
-            //
-            // Guard with an identity check so the cleanup stays safe if ObjId recycling
-            // is ever re-enabled: only remove the slot if _characters still maps this
-            // ObjId to OUR character — never evict a freshly-spawned entity that
-            // happened to inherit the recycled ObjId.
             if (WorldManager.Instance.GetCharacterByObjId(activeChar.ObjId) == activeChar)
                 WorldManager.Instance.TryRemoveCharacter(activeChar.ObjId);
-
-        }, () =>
-        {
-            // A cleanup failure must not skip the departing character's save attempt.
-            if (!activeChar.SaveDirectlyToDatabase())
-                throw new IOException($"Could not save departing character {activeChar.Id}.");
         });
+        if (!activeChar.SaveDirectlyToDatabase())
+            throw new IOException($"Could not save departing character {activeChar.Id}.");
     }
 }

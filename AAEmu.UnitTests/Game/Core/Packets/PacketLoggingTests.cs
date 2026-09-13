@@ -146,6 +146,8 @@ public class PacketLoggingTests
             var handler = new GameProtocolHandler();
             var connection = new GameConnection(CreateSession(71, "10.0.0.1").Object);
             connection.TryAuthenticate(101);
+            connection.State = GameState.World;
+            connection.ActiveChar = new Character(new UnitCustomModelParams()) { AccountId = 101 };
             var packet = CreateGamePacket(0x1234, [0xaa, 0xbb]);
 
             for (var i = 0; i < ConnectionEventLimiter.DefaultLimit + 2; i++)
@@ -157,6 +159,8 @@ public class PacketLoggingTests
 
             var freshConnection = new GameConnection(CreateSession(72, "10.0.0.2").Object);
             freshConnection.TryAuthenticate(102);
+            freshConnection.State = GameState.World;
+            freshConnection.ActiveChar = new Character(new UnitCustomModelParams()) { AccountId = 102 };
             handler.OnReceive(freshConnection, packet, 0, packet.Length);
 
             await Assert.That(target.Logs.Count).IsEqualTo(ConnectionEventLimiter.DefaultLimit + 1);

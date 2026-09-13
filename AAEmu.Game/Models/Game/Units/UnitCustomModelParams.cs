@@ -1,4 +1,5 @@
-﻿using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Exceptions;
+using AAEmu.Commons.Network;
 
 namespace AAEmu.Game.Models.Game.Units;
 
@@ -39,6 +40,7 @@ public class FaceModel : PacketMarshaler
     public short MovableDecalMoveY { get; set; }
 
     private FixedDecalAsset[] FixedDecalAsset { get; }
+    internal IReadOnlyList<FixedDecalAsset> FixedDecals => FixedDecalAsset;
 
     public uint DiffuseMapId { get; set; }
     public uint NormalMapId { get; set; }
@@ -74,6 +76,11 @@ public class FaceModel : PacketMarshaler
 
     public override void Read(PacketStream stream)
     {
+        Read(stream, false);
+    }
+
+    internal void Read(PacketStream stream, bool characterCreation)
+    {
         MovableDecalAssetId = stream.ReadUInt32();
         MovableDecalWeight = stream.ReadSingle();
         MovableDecalScale = stream.ReadSingle();
@@ -94,7 +101,14 @@ public class FaceModel : PacketMarshaler
         EyebrowColor = stream.ReadUInt32();
         DecoColor = stream.ReadUInt32();
 
-        Modifier = stream.ReadBytes();
+        if (characterCreation)
+        {
+            if (stream.ReadInt16() != 128)
+                throw new MarshalException("Character face modifier must contain 128 bytes.");
+            Modifier = stream.ReadBytes(128);
+        }
+        else
+            Modifier = stream.ReadBytes();
     }
 
     public override PacketStream Write(PacketStream stream)
@@ -127,9 +141,10 @@ public class FaceModel : PacketMarshaler
 public class UnitCustomModelParams : PacketMarshaler
 {
     private UnitCustomModelType _type;
-    private uint HairColorId { get; set; }
-    private uint SkinColorId { get; set; }
-    private uint ModelId { get; set; }
+    public UnitCustomModelType Type => _type;
+    public uint HairColorId { get; private set; }
+    public uint SkinColorId { get; private set; }
+    public uint ModelId { get; private set; }
     public FaceModel Face { get; private set; }
 
     public UnitCustomModelParams(UnitCustomModelType type = UnitCustomModelType.None)
@@ -170,7 +185,15 @@ public class UnitCustomModelParams : PacketMarshaler
 
     public override void Read(PacketStream stream)
     {
+        Read(stream, false);
+    }
+
+    internal void Read(PacketStream stream, bool characterCreation)
+    {
         SetType((UnitCustomModelType)stream.ReadByte()); // ext
+
+        if (characterCreation && _type > UnitCustomModelType.Face)
+            throw new MarshalException("Invalid character customization type.");
 
         if (_type <= UnitCustomModelType.None)
             return;
@@ -186,7 +209,7 @@ public class UnitCustomModelParams : PacketMarshaler
         if (_type <= UnitCustomModelType.Skin)
             return;
 
-        Face.Read(stream);
+        Face.Read(stream, characterCreation);
     }
 
     public override PacketStream Write(PacketStream stream)

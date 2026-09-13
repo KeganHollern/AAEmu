@@ -2,6 +2,9 @@
 
 public enum GameState
 {
+    Connected,
     Lobby,
+    CharacterSelected,
+    EnteringWorld,
     World
 }

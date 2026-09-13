@@ -205,7 +205,7 @@ public sealed class AccountDailyLoginRewardTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Add_OverlappingAndRemovedReconnects_AlwaysAttemptDurableClaim()
+    public void Add_RejectsDuplicateConnectionAndClaimsAfterRemoval()
     {
         var timedRewards = new Mock<ITimedRewardsManager>();
         var rewardDate = new DateOnly(2026, 8, 31);
@@ -216,14 +216,23 @@ public sealed class AccountDailyLoginRewardTests : IAsyncLifetime
                 new TimeOnly(23, 59),
                 TimeSpan.Zero)));
 
-        manager.Add(new GameConnection(null) { AccountId = FirstAccountId });
-        manager.Add(new GameConnection(null) { AccountId = FirstAccountId });
-        manager.Remove(FirstAccountId);
-        manager.Add(new GameConnection(null) { AccountId = FirstAccountId });
+        var first = new GameConnection(null);
+        first.TryAuthenticate(FirstAccountId);
+        var duplicate = new GameConnection(null);
+        duplicate.TryAuthenticate(FirstAccountId);
+        manager.Add(first);
+        manager.Add(duplicate);
+        Assert.True(duplicate.IsClosed);
+        Assert.True(manager.IsCurrent(first));
+        manager.Remove(first);
+        var replacement = new GameConnection(null);
+        replacement.TryAuthenticate(FirstAccountId);
+        manager.Add(replacement);
+        Assert.True(manager.IsCurrent(replacement));
 
         timedRewards.Verify(
             rewards => rewards.DoDailyAccountLogin(FirstAccountId, rewardDate),
-            Times.Exactly(3));
+            Times.Exactly(2));
     }
 
     private static AccountManager CreateManager(

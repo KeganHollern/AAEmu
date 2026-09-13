@@ -18,22 +18,24 @@ public interface ISession
 
 public class Session : TcpSession, ISession
 {
+    private static long s_nextSessionId;
     private readonly Dictionary<string, object> _attributes = [];
 
     public IBaseProtocolHandler ProtocolHandler { get; private set; }
     public IPEndPoint RemoteEndPoint { get; private set; }
-    public uint SessionId { get; private set; }
+    public uint SessionId { get; }
     public IPAddress Ip { get; private set; }
 
     public Session(Server server) : base(server)
     {
+        // Refuse uint exhaustion instead of reusing a live or stale identity.
+        SessionId = checked((uint)Interlocked.Increment(ref s_nextSessionId));
         ProtocolHandler = server.GetHandler();
     }
 
     protected override void OnConnecting()
     {
         RemoteEndPoint = (IPEndPoint)Socket.RemoteEndPoint;
-        SessionId = (uint)RemoteEndPoint.GetHashCode();
         Ip = RemoteEndPoint.Address;
         ProtocolHandler?.OnConnect(this);
     }
@@ -41,10 +43,6 @@ public class Session : TcpSession, ISession
     protected override void OnConnected()
     {
         // Moved to OnConnecting due to a bug in TcpSession where OnReceived can happen before OnConnected.
-        //_remoteEndPoint = (IPEndPoint)Socket.RemoteEndPoint;
-        //_sessionId = (uint)RemoteEndPoint.GetHashCode();
-        //_ip = RemoteEndPoint.Address;
-        //ProtocolHandler?.OnConnect(this);
     }
 
     protected override void OnDisconnected()

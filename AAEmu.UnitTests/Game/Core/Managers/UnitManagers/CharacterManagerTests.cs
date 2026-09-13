@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Commons.Network.Core;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
@@ -6,6 +7,7 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Char.Templates;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.StaticValues;
 
@@ -61,6 +63,49 @@ public class CharacterManagerTests
     }
 
     #endregion
+
+    [Test]
+    [Arguments(0, 1, 1, true)]
+    [Arguments(9, 1, 1, true)]
+    [Arguments(17, 1, 1, true)]
+    [Arguments(255, 1, 1, true)]
+    [Arguments(1, 0, 1, true)]
+    [Arguments(1, 3, 1, true)]
+    [Arguments(1, 17, 1, true)]
+    [Arguments(1, 255, 1, true)]
+    [Arguments(3, 1, 1, false)]
+    [Arguments(3, 2, 1, false)]
+    [Arguments(8, 1, 1, false)]
+    [Arguments(8, 2, 1, false)]
+    [Arguments(1, 1, 0, true)]
+    [Arguments(1, 1, 2, true)]
+    [Arguments(1, 1, 3, true)]
+    [Arguments(1, 1, 4, true)]
+    [Arguments(1, 1, 9, true)]
+    [Arguments(1, 1, 11, true)]
+    [Arguments(1, 1, 255, true)]
+    public async Task Create_InvalidRaceGenderOrAbilityRejectsBeforeAccountIdsOrItems(int race, int gender, int ability, bool creatable)
+    {
+        var account = Mock.Of<IAccountManager>();
+        var ids = Mock.Of<ICharacterIdManager>();
+        var items = Mock.Of<IItemManager>();
+        var session = Mock.Of<ISession>();
+        var manager = CreateCharacterManager(mockAccountManager: account, mockCharacterIdManager: ids, mockItemManager: items);
+        var template = new CharacterTemplate { Race = Race.Nuian, Gender = Gender.Male, Creatable = creatable };
+        // Populate every byte key so invalid values cannot hide behind a missing template.
+        SetPrivateField(manager, "_templates", Enumerable.Range(0, 256).ToDictionary(value => (byte)value, _ => template));
+        SetPrivateField(manager, "_abilityItems", Enumerable.Range(0, 256).ToDictionary(value => (byte)value, _ => new AbilityItems()));
+        var connection = new GameConnection(session.Object) { AccountId = 42 };
+
+        manager.Create(connection, "Newchar", (Race)race, (Gender)gender, new uint[7],
+            new UnitCustomModelParams(UnitCustomModelType.None), (AbilityType)ability, AbilityType.Love, AbilityType.Death, 255);
+
+        session.SendPacket(Is<byte[]>(packet => packet[^1] == (byte)CharacterCreateError.ServerError)).WasCalled(Times.Once);
+        Mock.VerifyNoOtherCalls(account);
+        Mock.VerifyNoOtherCalls(ids);
+        Mock.VerifyNoOtherCalls(items);
+        await Assert.That(connection.Characters).IsEmpty();
+    }
 
     #region GetTemplate Tests
 

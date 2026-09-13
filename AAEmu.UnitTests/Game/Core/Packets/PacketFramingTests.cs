@@ -6,6 +6,8 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Network.Login;
 using AAEmu.Game.Core.Network.Stream;
+using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.UnitTests.Game.Core.Packets;
 
@@ -144,6 +146,8 @@ public class PacketFramingTests
             {
                 var connection = new GameConnection(session.Object);
                 connection.TryAuthenticate(101);
+                connection.State = GameState.World;
+                connection.ActiveChar = new Character(new UnitCustomModelParams()) { AccountId = 101 };
                 var handler = new GameProtocolHandler();
                 handler.RegisterPacket(ProbeOpcode, 1, typeof(ProbeGamePacket));
                 return new ProtocolProbe(session,

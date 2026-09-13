@@ -37,8 +37,9 @@ public class GameProtocolHandler : BaseProtocolHandler
         try
         {
             var con = new GameConnection(session);
+            if (!GameConnectionTable.Instance.AddConnection(con))
+                return;
             con.OnConnect();
-            GameConnectionTable.Instance.AddConnection(con);
         }
         catch (Exception e)
         {
@@ -53,28 +54,45 @@ public class GameProtocolHandler : BaseProtocolHandler
     /// <param name="session"></param>
     public override void OnDisconnect(ISession session)
     {
-        try
+        var connection = GameConnectionTable.Instance.GetConnection(session);
+        if (connection == null)
+            return;
+        connection.MarkClosed();
+        // NetCoreServer can call OnDisconnected while it owns its send lock.
+        // An active packet can need that lock, so do not wait here for its session lock.
+        if (Monitor.IsEntered(connection.SessionSyncRoot) || !Monitor.TryEnter(connection.SessionSyncRoot))
         {
-            var con = GameConnectionTable.Instance.GetConnection(session.SessionId);
-            if (con != null)
-            {
-                con.OnDisconnect();
-                if (con.IsAuthenticated && con.AccountId > 0)
-                    StreamManager.Instance.RemoveToken(con.Id);
-                GameConnectionTable.Instance.RemoveConnection(session.SessionId);
-            }
-            else
-            {
-                Logger.Error($"{nameof(OnDisconnect)}: connection for session id {session.SessionId} is null");
-            }
+            _ = Task.Run(() => DisconnectWhenIdle(connection, session));
+            return;
         }
-        catch (Exception e)
-        {
-            session.Close();
-            Logger.Error(e);
-        }
+        try { DisconnectWhenIdle(connection, session); }
+        finally { Monitor.Exit(connection.SessionSyncRoot); }
+    }
 
-        Logger.Info($"Client from {session.Ip} disconnected");
+    private static void DisconnectWhenIdle(GameConnection connection, ISession session)
+    {
+        lock (connection.SessionSyncRoot)
+        {
+            try
+            {
+                try { connection.OnDisconnect(); }
+                finally
+                {
+                    try
+                    {
+                        if (connection.IsAuthenticated && connection.AccountId > 0)
+                            StreamManager.Instance.RemoveToken(connection);
+                    }
+                    finally
+                    {
+                        try { ReconnectTokenManager.Instance.Remove(connection); }
+                        finally { GameConnectionTable.Instance.RemoveConnection(session); }
+                    }
+                }
+            }
+            catch (Exception exception) { Logger.Error(exception, "Disconnect failed for session {SessionId}", session.SessionId); }
+        }
+        Logger.Info("Client from {RemoteIp} disconnected", session.Ip);
     }
 
     /// <summary>
@@ -88,7 +106,7 @@ public class GameProtocolHandler : BaseProtocolHandler
     {
         try
         {
-            var connection = GameConnectionTable.Instance.GetConnection(session.SessionId);
+            var connection = GameConnectionTable.Instance.GetConnection(session);
             if (connection == null)
             {
                 Logger.Error($"{nameof(OnReceive)}: connection for session id {session.SessionId} is null");
@@ -112,6 +130,12 @@ public class GameProtocolHandler : BaseProtocolHandler
     /// <param name="offset"></param>
     /// <param name="bytes"></param>
     public void OnReceive(GameConnection connection, byte[] buf, int offset, int bytes)
+    {
+        lock (connection.SessionSyncRoot)
+            ReceiveLocked(connection, buf, offset, bytes);
+    }
+
+    private void ReceiveLocked(GameConnection connection, byte[] buf, int offset, int bytes)
     {
         try
         {
@@ -166,7 +190,7 @@ public class GameProtocolHandler : BaseProtocolHandler
                     var type = stream2.ReadUInt16();
                     if (!CanDispatch(connection, type, level))
                     {
-                        Logger.Warn("Rejected unauthenticated game packet {PacketOpcode} on connection {ConnectionId}", type, connection.Id);
+                        Logger.Warn("Rejected game packet {PacketOpcode} at level {PacketLevel} in state {GameState} on connection {ConnectionId}", type, level, connection.State, connection.Id);
                         connection.Shutdown();
                         return;
                     }
@@ -211,12 +235,45 @@ public class GameProtocolHandler : BaseProtocolHandler
 
     internal static bool CanDispatch(GameConnection connection, uint type, byte level)
     {
-        if (connection.IsClosed)
+        if (connection.IsClosed || level is not (1 or 2))
             return false;
         var authenticated = connection.IsAuthenticated && connection.AccountId > 0;
-        return authenticated
-            ? type != CSOffsets.X2EnterWorldPacket || level != 1
-            : level == 1 && type == CSOffsets.X2EnterWorldPacket;
+        if (!authenticated)
+            return connection.State == GameState.Connected && connection.AccountId == 0 &&
+                connection.ActiveChar == null && level == 1 && type == CSOffsets.X2EnterWorldPacket;
+        if (connection.State == GameState.Connected)
+            return false;
+
+        // CryNetwork transport messages are independent of lobby/world gameplay state.
+        if (level == 2)
+            return type <= 0x16 && type != 3;
+        if (type == CSOffsets.X2EnterWorldPacket)
+            return false;
+
+        var lobbyPacket = type is CSOffsets.CSListCharacterPacket or CSOffsets.CSRefreshInCharacterListPacket or
+            CSOffsets.CSCreateCharacterPacket or CSOffsets.CSEditCharacterPacket or CSOffsets.CSDeleteCharacterPacket or
+            CSOffsets.CSSelectCharacterPacket or CSOffsets.CSCancelCharacterDeletePacket;
+        if (lobbyPacket)
+            return connection.State == GameState.Lobby && connection.ActiveChar == null;
+
+        // Account/UI requests also occur before a character enters the world.
+        if (type is CSOffsets.CSRequestUIDataPacket or CSOffsets.CSRestrictCheckPacket or
+            CSOffsets.CSRequestSecondPasswordKeyTablesPacket or CSOffsets.CSSetupSecondPassword or
+            CSOffsets.CSResturnAddrsPacket or CSOffsets.CSSetLpManageCharacterPacket)
+            return true;
+        if (type == CSOffsets.CSLeaveWorldPacket)
+            return connection.State is GameState.Lobby or GameState.World;
+
+        if (connection.ActiveChar?.AccountId != connection.AccountId)
+            return false;
+        return type switch
+        {
+            CSOffsets.CSSpawnCharacterPacket => connection.State == GameState.CharacterSelected,
+            CSOffsets.CSNotifyInGamePacket => connection.State is GameState.EnteringWorld or GameState.World,
+            CSOffsets.CSNotifyInGameCompletedPacket => connection.State == GameState.World,
+            CSOffsets.CSInstanceLoadedPacket or CSOffsets.CSNotifySubZonePacket => connection.State is GameState.CharacterSelected or GameState.EnteringWorld or GameState.World,
+            _ => connection.State == GameState.World
+        };
     }
 
     /// <summary>

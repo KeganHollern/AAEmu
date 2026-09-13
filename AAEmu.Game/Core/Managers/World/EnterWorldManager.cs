@@ -1,4 +1,6 @@
-﻿using AAEmu.Commons.Utils;
+﻿using System.Net;
+using System.Collections.Concurrent;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Network.Connections;
@@ -16,13 +18,6 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers.World;
 
-internal enum PendingWorldAccountResult
-{
-    NotFound,
-    AccountMismatch,
-    Consumed
-}
-
 public class EnterWorldManager(
     IAccountManager accountManager,
     IStreamManager streamManager,
@@ -34,137 +29,132 @@ public class EnterWorldManager(
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
-    /// <summary>
-    /// List of connected accounts (connection token, accountId)
-    /// </summary>
-    private readonly Dictionary<uint, (uint AccountId, AccountPayment Payment)> _accounts = [];
-    private readonly Lock _accountsLock = new();
+    private readonly PendingWorldAdmissions _pending = new();
+    private readonly ConcurrentDictionary<uint, long> _admissionRequests = new();
+    private long _nextAdmission;
+    private readonly object[] _admissionLocks = Enumerable.Range(0, 256).Select(_ => new object()).ToArray();
 
-    /// <summary>
-    /// Adds an account to the connection list and notifies the login server the client is connected
-    /// </summary>
-    /// <param name="accountId"></param>
-    /// <param name="connectionId"></param>
-    public void AddAccount(uint accountId, uint connectionId)
-    {
-        AddAccount(accountId, connectionId, 0, 0);
-    }
-
-    public void AddAccount(uint accountId, uint connectionId, ulong patronStart, ulong patronEnd)
+    public void AddAccount(uint accountId, uint connectionId, uint token, ulong patronStart, ulong patronEnd, IPAddress address)
     {
         if (!AccountPayment.ValidPeriod(patronStart, patronEnd))
             return;
-        _ = AddAccountAsync(accountId, connectionId, new AccountPayment(patronStart, patronEnd));
+        long request;
+        lock (_admissionLocks[accountId % (uint)_admissionLocks.Length])
+        {
+            request = Interlocked.Increment(ref _nextAdmission);
+            _admissionRequests[accountId] = request;
+        }
+        _ = AddAccountAsync(accountId, connectionId, token, new AccountPayment(patronStart, patronEnd), address, request);
     }
 
-    private async Task AddAccountAsync(uint accountId, uint connectionId, AccountPayment payment)
+    private async Task AddAccountAsync(uint accountId, uint connectionId, uint token, AccountPayment payment, IPAddress address, long request)
     {
-        var connection = LoginNetwork.Instance.GetConnection();
+        var loginConnection = LoginNetwork.Instance.GetConnection();
         var gsId = AppConfiguration.Instance.Id;
-        if (connection == null)
-            return;
         try
         {
+            if (loginConnection == null)
+                return;
             var moderation = moderationManager ?? ModerationManager.Instance;
-            if (accountId == 0 || accountManager.Contains(accountId) || !await moderation.RefreshAccountAsync(accountId))
+            if (accountId == 0 || !await moderation.RefreshAccountAsync(accountId))
             {
-                RemovePendingAccount(connectionId);
-                connection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, 1));
+                loginConnection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, 1));
                 return;
             }
 
-            var admitted = moderation.TryAdmit(accountId, () => SetPendingAccount(connectionId, accountId, payment));
-            connection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, admitted ? (byte)0 : (byte)1));
+            lock (_admissionLocks[accountId % (uint)_admissionLocks.Length])
+            {
+                var admitted = _admissionRequests.GetValueOrDefault(accountId) == request &&
+                    PreparePendingAccount(accountId, token, payment, address, moderation);
+                loginConnection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, admitted ? (byte)0 : (byte)1));
+            }
         }
         catch (Exception exception)
         {
-            RemovePendingAccount(connectionId);
             Logger.Error(exception, "Could not authorize pending account {AccountId}", accountId);
-            connection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, 1));
+            loginConnection?.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, 1));
+        }
+        finally
+        {
+            ((ICollection<KeyValuePair<uint, long>>)_admissionRequests).Remove(new(accountId, request));
         }
     }
 
-    internal void SetPendingAccount(uint connectionId, uint accountId, AccountPayment payment = null)
+    internal bool PreparePendingAccount(uint accountId, uint token, AccountPayment payment, IPAddress address,
+        IModerationManager moderation)
     {
-        if (connectionId == 0 || accountId == 0)
-            return;
-        lock (_accountsLock)
-            _accounts[connectionId] = (accountId, payment ?? new AccountPayment());
+        lock (_admissionLocks[accountId % (uint)_admissionLocks.Length])
+        {
+            var stored = false;
+            if (!moderation.TryAdmit(accountId, () => stored = _pending.TryAdd(token, accountId, payment, address)) || !stored)
+                return false;
+            // The admission lock prevents cookie consumption until the old save completes.
+            try
+            {
+                var previous = accountManager.GetConnection(accountId);
+                if (previous == null || previous.KickDuplicate())
+                    return true;
+                _pending.Remove(token);
+                return false;
+            }
+            catch
+            {
+                _pending.Remove(token);
+                throw;
+            }
+        }
     }
 
-    internal void RemovePendingAccount(uint connectionId)
-    {
-        lock (_accountsLock)
-            _accounts.Remove(connectionId);
-    }
+    internal bool SetPendingAccount(uint token, uint accountId, AccountPayment payment = null) =>
+        _pending.TryAdd(token, accountId, payment, IPAddress.Loopback);
+
+    internal void RemovePendingAccount(uint token) => _pending.Remove(token);
 
     internal PendingWorldAccountResult ConsumePendingAccount(uint token, uint accountId) => ConsumePendingAccount(token, accountId, out _);
 
-    internal PendingWorldAccountResult ConsumePendingAccount(uint token, uint accountId, out AccountPayment payment)
-    {
-        payment = null;
-        if (accountId == 0 || token == 0)
-            return PendingWorldAccountResult.NotFound;
-        lock (_accountsLock)
-        {
-            if (!_accounts.TryGetValue(token, out var expected))
-                return PendingWorldAccountResult.NotFound;
+    internal PendingWorldAccountResult ConsumePendingAccount(uint token, uint accountId, out AccountPayment payment) =>
+        _pending.Consume(token, accountId, IPAddress.Loopback, true, out payment);
 
-            if (expected.AccountId != accountId)
-                return PendingWorldAccountResult.AccountMismatch;
-
-            _accounts.Remove(token);
-            payment = expected.Payment;
-            return PendingWorldAccountResult.Consumed;
-        }
-    }
-
-    /// <summary>
-    /// Performs an enter world event and places the connection in lobby state.
-    /// Also notifies the stream server that a new connection has been made
-    /// </summary>
-    /// <param name="connection"></param>
-    /// <param name="accountId"></param>
-    /// <param name="token"></param>
     public void Login(GameConnection connection, uint accountId, uint token)
     {
-        if (accountId == 0 || connection.IsAuthenticated || connection.IsClosed)
+        if (accountId == 0 || connection.AccountId != 0 || connection.IsAuthenticated || connection.IsClosed ||
+            connection.State != GameState.Connected || connection.ActiveChar != null)
         {
             connection.Shutdown();
             return;
         }
-        switch (ConsumePendingAccount(token, accountId, out var payment))
+        lock (_admissionLocks[accountId % (uint)_admissionLocks.Length])
         {
-            case PendingWorldAccountResult.Consumed:
-                var moderation = moderationManager ?? ModerationManager.Instance;
-                var admitted = moderation.TryAdmit(accountId, () =>
-                {
-                    if (!connection.TryAuthenticate(accountId))
-                        return;
-                    connection.Payment = payment;
-                    connection.State = GameState.Lobby;
-                    accountManager.Add(connection);
-                    streamManager.AddToken(connection.AccountId, connection.Id);
-                });
-                if (!admitted || !connection.IsAuthenticated || connection.IsClosed)
-                {
-                    connection.Shutdown();
-                    return;
-                }
+            var result = _pending.Consume(token, accountId, connection.Ip,
+                AppConfiguration.Instance.Network.ValidateWorldCookieAddress, out var payment);
+            if (result != PendingWorldAccountResult.Consumed)
+            {
+                Logger.Warn("Rejected world cookie ({Result}) from {RemoteIp}", result, connection.Ip);
+                connection.Shutdown();
+                return;
+            }
 
-                var port = AppConfiguration.Instance.StreamNetwork.Port;
-                var gm = connection.GetAttribute("gmFlag") != null;
-                connection.SendPacket(new X2EnterWorldResponsePacket(0, gm, connection.Id, port));
-                connection.SendPacket(new ChangeStatePacket(0));
-                break;
-            case PendingWorldAccountResult.AccountMismatch:
-                Logger.Warn("Login token does not match the expected account. IP: {0}", connection.Ip);
+            var streamToken = 0u;
+            var moderation = moderationManager ?? ModerationManager.Instance;
+            var admitted = moderation.TryAdmit(accountId, () =>
+            {
+                if (accountManager.Contains(accountId) || !connection.TryAuthenticate(accountId))
+                    return;
+                connection.Payment = payment;
+                accountManager.Add(connection);
+                if (accountManager.IsCurrent(connection) && !connection.IsClosed)
+                    streamToken = streamManager.AddToken(connection);
+            });
+            if (!admitted || !connection.IsAuthenticated || connection.IsClosed || streamToken == 0)
+            {
                 connection.Shutdown();
-                break;
-            case PendingWorldAccountResult.NotFound:
-                Logger.Warn("Invalid login token. IP: {0}", connection.Ip);
-                connection.Shutdown();
-                break;
+                return;
+            }
+
+            var port = AppConfiguration.Instance.StreamNetwork.Port;
+            var gm = connection.GetAttribute("gmFlag") != null;
+            connection.SendPacket(new X2EnterWorldResponsePacket(0, gm, streamToken, port));
+            connection.SendPacket(new ChangeStatePacket(0));
         }
     }
 
@@ -206,10 +196,15 @@ public class EnterWorldManager(
 
                     connection.CancelTokenSource = new CancellationTokenSource();
                     var token = connection.CancelTokenSource.Token;
+                    var leavingCharacter = connection.ActiveChar;
                     connection.LeaveTask = Task.Run(async () =>
                     {
                         await Task.Delay(logoutTime, token);
-                        Instance.LeaveWorldTask(connection, leaveWorldTargetType, connection.ActiveChar);
+                        lock (connection.SessionSyncRoot)
+                        {
+                            if (!token.IsCancellationRequested)
+                                LeaveWorldTask(connection, leaveWorldTargetType, leavingCharacter);
+                        }
                     }, token);
                 }
 
@@ -221,7 +216,7 @@ public class EnterWorldManager(
                     LoginNetwork
                         .Instance
                         .GetConnection()
-                        .SendPacket(new GLPlayerReconnectPacket(gsId, connection.AccountId, connection.Id));
+                        .SendPacket(new GLPlayerReconnectPacket(gsId, connection.AccountId, ReconnectTokenManager.Instance.Issue(connection)));
                 }
 
                 break;
@@ -240,66 +235,51 @@ public class EnterWorldManager(
     /// <param name="activeChar"></param>
     public void LeaveWorldTask(GameConnection connection, LeaveWorldTargetType leaveWorldTarget, Character activeChar)
     {
+        if (connection == null)
+        {
+            LeaveWorldCore(null, leaveWorldTarget, activeChar);
+            return;
+        }
+        lock (connection.SessionSyncRoot)
+        {
+            if (connection.IsClosed || connection.State != GameState.World || !ReferenceEquals(connection.ActiveChar, activeChar))
+                return;
+            LeaveWorldCore(connection, leaveWorldTarget, activeChar);
+        }
+    }
+
+    private void LeaveWorldCore(GameConnection connection, LeaveWorldTargetType leaveWorldTarget, Character activeChar)
+    {
         if (activeChar != null)
         {
-            TradeManager.Instance.CancelTrade(activeChar, 0);
+            GameConnection.RunDisconnectStep(() => TradeManager.Instance.CancelTrade(activeChar, 0));
             activeChar.DisabledSetPosition = true;
-            activeChar.IsOnline = false;
+            GameConnection.RunDisconnectStep(() => activeChar.IsOnline = false);
             activeChar.LeaveTime = DateTime.UtcNow;
-
-            // Remove all remaining quest timer tasks
-            questManager.RemoveQuestTimer(activeChar.Id, 0);
-
-            // Despawn and unmount everybody from owned Mates
-            activeChar.ParentWorld.MateManager.RemoveAndDespawnAllActiveOwnedMates(activeChar);
-            activeChar.ParentWorld.SlaveManager.RemoveAndDespawnAllActiveOwnedSlaves(activeChar);
-            DoodadManager.Instance.CloseCoffersOpenedBy(activeChar);
-
-            // Check if still mounted on somebody else's mount and dismount that if needed
-            activeChar.ForceDismount(/*AttachUnitReason.PrefabChanged*/); // Dismounting a mount because of unsummoning sends "10" for this
-
-            // NOTE: do NOT MemberRemoveFromTeam here. Setting IsOnline = false above
-            // already routed through TeamManager.SetOffline, which broadcasts
-            // SCTeamMemberDisconnectedPacket so team-mates see the player as offline
-            // while the TeamMember entry stays in Team.Members[] for a clean reconnect
-            // via UpdateAtLogin. Calling MemberRemoveFromTeam here used to immediately
-            // overwrite the offline indicator with a "left the team" broadcast and
-            // wipe the slot — which is what made every disconnect look like a kick.
-
-            // Remove from all Chat
-            chatManager.LeaveAllChannels(activeChar);
-
-            // Handle Family
+            GameConnection.RunDisconnectStep(() => questManager.RemoveQuestTimer(activeChar.Id, 0));
+            GameConnection.RunDisconnectStep(() => activeChar.ParentWorld.MateManager.RemoveAndDespawnAllActiveOwnedMates(activeChar));
+            GameConnection.RunDisconnectStep(() => activeChar.ParentWorld.SlaveManager.RemoveAndDespawnAllActiveOwnedSlaves(activeChar));
+            GameConnection.RunDisconnectStep(() => DoodadManager.Instance.CloseCoffersOpenedBy(activeChar));
+            GameConnection.RunDisconnectStep(() => activeChar.ForceDismount());
+            GameConnection.RunDisconnectStep(() => chatManager.LeaveAllChannels(activeChar));
             if (activeChar.Family > 0)
-                familyManager.OnCharacterLogout(activeChar);
-
-            // Handle Guild
-            activeChar.Expedition?.OnCharacterLogout(activeChar);
-
-            // Remove player from world (hides and release Id)
-            activeChar.Delete();
-            // ObjectIdManager.Instance.ReleaseId(activeChar.ObjId);
-
-            // Cancel auto-regen
-            //activeChar.StopRegen();
-
-            // Clear Buyback table
-            activeChar.BuyBackItems.Wipe();
-
-            // Remove subscribers
-            foreach (var subscriber in activeChar.Subscribers)
-                subscriber.Dispose();
-
-            // Remove from server
-            worldManager.TryRemoveCharacter(activeChar.ObjId);
+                GameConnection.RunDisconnectStep(() => familyManager.OnCharacterLogout(activeChar));
+            GameConnection.RunDisconnectStep(() => activeChar.Expedition?.OnCharacterLogout(activeChar));
+            GameConnection.RunDisconnectStep(() => activeChar.BuyBackItems.Wipe());
+            foreach (var subscriber in activeChar.Subscribers.ToArray())
+                GameConnection.RunDisconnectStep(subscriber.Dispose);
         }
 
-        GameConnection.SaveAndRemoveFromWorld(activeChar);
-
-        // connection isn't set if we are removing an orphaned Character object
+        try { GameConnection.SaveAndRemoveFromWorld(activeChar); }
+        catch (Exception exception)
+        {
+            Logger.Error(exception, "Could not save character {CharacterId} on return to lobby", activeChar?.Id);
+            connection?.Shutdown();
+            return;
+        }
         if (connection != null)
         {
-            connection.State = GameState.Lobby;
+            connection.ReturnToLobby();
             connection.LeaveTask = null;
             connection.SendPacket(new SCLeaveWorldGrantedPacket(leaveWorldTarget));
             connection.SendPacket(new ChangeStatePacket(0));

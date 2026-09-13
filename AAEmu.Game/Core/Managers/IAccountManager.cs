@@ -1,4 +1,4 @@
-using AAEmu.Game.Core.Network.Connections;
+﻿using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Models.Account;
 
 namespace AAEmu.Game.Core.Managers;
@@ -7,6 +7,9 @@ public interface IAccountManager : IInitializable
 {
     void Add(GameConnection connection);
     void Remove(uint id);
+    void Remove(GameConnection connection);
+    GameConnection GetConnection(uint accountId);
+    bool IsCurrent(GameConnection connection);
     bool Contains(uint id);
     int Count();
     AccountDetails GetAccountDetails(uint accountId);

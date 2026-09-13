@@ -1,4 +1,5 @@
-﻿using AAEmu.Commons.Utils;
+﻿using System.Security.Cryptography;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.S2C;
 using AAEmu.Game.Models.Game.DoodadObj;
@@ -7,42 +8,87 @@ namespace AAEmu.Game.Core.Managers.World;
 
 public class StreamManager : Singleton<StreamManager>, IStreamManager
 {
-    private readonly Dictionary<uint, uint> _accounts = [];
+    private readonly object _tokensLock = new();
+    private readonly Dictionary<uint, GameConnection> _tokens = [];
+    private readonly GameConnectionTable _connections;
+    private readonly Func<uint> _nextToken;
+
+    public StreamManager() : this(GameConnectionTable.Instance,
+        () => BitConverter.ToUInt32(RandomNumberGenerator.GetBytes(sizeof(uint))))
+    {
+    }
+
+    internal StreamManager(GameConnectionTable connections, Func<uint> nextToken)
+    {
+        _connections = connections;
+        _nextToken = nextToken;
+    }
 
     public static void Load()
     {
         // TODO ...
     }
 
-    public void AddToken(uint accountId, uint connectionId)
+    public uint AddToken(GameConnection connection)
     {
-        _accounts.Add(connectionId, accountId);
+        lock (connection.SessionSyncRoot)
+        lock (_tokensLock)
+        {
+            if (!IsCurrent(connection))
+                throw new InvalidOperationException("Stream tokens need a current authenticated game connection.");
+
+            foreach (var entry in _tokens)
+                if (ReferenceEquals(entry.Value, connection))
+                    return entry.Key;
+
+            for (var attempt = 0; attempt < 256; attempt++)
+            {
+                var token = _nextToken();
+                if (token != 0 && _tokens.TryAdd(token, connection))
+                    return token;
+            }
+            throw new InvalidOperationException("Could not allocate a unique stream token.");
+        }
     }
 
-    public void RemoveToken(uint token)
+    public void RemoveToken(GameConnection connection)
     {
-        _accounts.Remove(token);
+        lock (_tokensLock)
+        {
+            foreach (var entry in _tokens.Where(entry => ReferenceEquals(entry.Value, connection)).ToArray())
+                _tokens.Remove(entry.Key);
+        }
     }
 
     public void Login(StreamConnection connection, uint accountId, uint token)
     {
-        if (_accounts.ContainsKey(token))
-        {
-            if (accountId == _accounts[token])
-            {
-                var gCon = GameConnectionTable.Instance.GetConnection(token);
-                connection.GameConnection = gCon;
-                connection.SendPacket(new TCJoinResponsePacket(0));
-            }
-            else
-            {
-                _accounts.Remove(token);
-                connection.SendPacket(new TCJoinResponsePacket(1));
-            }
-        }
-        else
-            connection.SendPacket(new TCJoinResponsePacket(1));
+        connection.SendPacket(new TCJoinResponsePacket(TryJoin(connection, accountId, token) ? (byte)0 : (byte)1));
     }
+
+    internal bool TryJoin(StreamConnection connection, uint accountId, uint token)
+    {
+        GameConnection gameConnection;
+        lock (_tokensLock)
+        {
+            if (accountId == 0 || token == 0 || !_tokens.TryGetValue(token, out gameConnection))
+                return false;
+        }
+
+        lock (gameConnection.SessionSyncRoot)
+        lock (_tokensLock)
+        {
+            if (!_tokens.TryGetValue(token, out var current) || !ReferenceEquals(current, gameConnection) ||
+                !IsCurrent(gameConnection) || gameConnection.AccountId != accountId ||
+                connection.GameConnection != null && !ReferenceEquals(connection.GameConnection, gameConnection))
+                return false;
+
+            connection.GameConnection = gameConnection;
+            return true;
+        }
+    }
+
+    private bool IsCurrent(GameConnection connection) => connection.IsAuthenticated && !connection.IsClosed &&
+        connection.AccountId != 0 && ReferenceEquals(_connections.GetConnection(connection.Id), connection);
 
     public static void RequestCell(StreamConnection connection, uint instanceId, int x, int y)
     {
