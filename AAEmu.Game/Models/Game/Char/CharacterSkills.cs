@@ -78,7 +78,7 @@ public class CharacterSkills(Character owner)
         AbilityType ability2,
         AbilityType ability3)
     {
-        return skillAbility is not AbilityType.General and not AbilityType.None &&
+        return skillAbility is >= AbilityType.Fight and <= AbilityType.Love &&
             (skillAbility == ability1 || skillAbility == ability2 || skillAbility == ability3);
     }
 
@@ -159,13 +159,13 @@ public class CharacterSkills(Character owner)
 
     private void AddBuffLocked(uint buffId)
     {
-        // Check if what we want to learn is part of an active skill tree (or not part of one)
         var template = SkillManager.Instance.GetPassiveBuffTemplate(buffId);
-        if (template.AbilityId > 0 &&
-           template.AbilityId != Owner.Ability1 &&
-           template.AbilityId != Owner.Ability2 &&
-           template.AbilityId != Owner.Ability3)
+        if (template == null ||
+            !IsSelectedPlayerAbility(template.AbilityId, Owner.Ability1, Owner.Ability2, Owner.Ability3))
+        {
+            Owner.SendErrorMessage(ErrorMessageType.InvalidTarget);
             return;
+        }
 
         // Get total skill points for the player's level
         var points = ExperienceManager.Instance.GetSkillPointsForLevel(Owner.Level);
@@ -178,7 +178,8 @@ public class CharacterSkills(Character owner)
             return;
 
         // Check if there are enough points already invested in this tree to allow learning this Passive
-        if (GetUsedSkillPoints(template.AbilityId) < template.ReqPoints)
+        if (Owner.GetAbLevel(template.AbilityId) < template.Level ||
+            GetUsedSkillPoints(template.AbilityId) < template.ReqPoints)
             return;
 
         // Check if we already learned it
@@ -272,19 +273,6 @@ public class CharacterSkills(Character owner)
         return points;
     }
 
-    // TODO : Optimize this by storing a map of derivative skills and their matches
-    public bool IsVariantOfSkill(uint skillId)
-    {
-        var skillTemplate = SkillManager.Instance.GetSkillTemplate(skillId);
-
-        if (skillTemplate is null || SkillManager.Instance.IsComboFollowupSkill(skillId))
-            return false;
-
-        return Skills.Values.Any(skill =>
-            skill.Template.AbilityId == skillTemplate.AbilityId &&
-            skill.Template.AbilityLevel == skillTemplate.AbilityLevel);
-    }
-
     #region database
     public void Load(MySqlConnection connection)
     {
@@ -309,7 +297,11 @@ public class CharacterSkills(Character owner)
                             break;
                         case SkillType.Buff:
                             var buffId = reader.GetUInt32("id");
-                            var buff = new PassiveBuff { Id = buffId, Template = SkillManager.Instance.GetPassiveBuffTemplate(buffId) };
+                            var passiveTemplate = SkillManager.Instance.GetPassiveBuffTemplate(buffId);
+                            if (passiveTemplate == null ||
+                                !IsSelectedPlayerAbility(passiveTemplate.AbilityId, Owner.Ability1, Owner.Ability2, Owner.Ability3))
+                                break;
+                            var buff = new PassiveBuff { Id = buffId, Template = passiveTemplate };
                             PassiveBuffs.Add(buff.Id, buff);
                             buff.Apply(Owner);
                             break;

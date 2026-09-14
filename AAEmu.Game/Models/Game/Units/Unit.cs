@@ -41,6 +41,10 @@ public class Unit : BaseUnit, IUnit
 
     public virtual UnitEvents Events { get; }
     public uint ModelId { get; set; }
+    public uint ActiveMountSkillBuffId { get; internal set; }
+    internal object AttachmentSyncRoot { get; } = new();
+    // Access under AttachmentSyncRoot. Retirement precedes passenger cleanup.
+    internal bool AttachmentsRetired { get; set; }
     public GameStanceType CollisionStance { get; set; } = GameStanceType.Combat;
     public SkillController ActiveSkillController { get; set; }
 
@@ -239,6 +243,7 @@ public class Unit : BaseUnit, IUnit
     public SkillTask SkillTask { get; set; }
     public SkillTask AutoAttackTask { get; set; }
     public DateTime GlobalCooldown { get; set; }
+    internal uint GlobalCooldownDurationMilliseconds { get; set; }
     public bool IsGlobalCooldownDone => GlobalCooldown > DateTime.UtcNow;
     public object GcdLock { get; set; }
     public DateTime SkillLastUsed { get; set; }

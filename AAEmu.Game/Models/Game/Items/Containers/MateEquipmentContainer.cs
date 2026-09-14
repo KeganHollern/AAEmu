@@ -1,4 +1,6 @@
 ﻿using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Items.Containers;
@@ -9,6 +11,26 @@ public class MateEquipmentContainer : EquipmentContainer
     {
         // Fancy way of getting the last enum value + 1 for equipment slots
         ContainerSize = (int)Enum.GetValues<EquipmentItemSlot>().Max() + 1;
+    }
+
+    public override bool CanAccept(Item item, int targetSlot)
+    {
+        if (targetSlot < 0 || targetSlot >= ContainerSize)
+            return false;
+        if (item == null)
+            return true;
+        if (ParentUnit is not Units.Mate mate || mate.Template == null ||
+            !MateGameData.Instance.HasEquipmentSlot(mate.Template.MateEquipSlotPackId, targetSlot))
+            return false;
+        // r208022 uses item tags 29 (mate equipment) and 1259 (underwater mate equipment).
+        var tags = TagsGameData.Instance;
+        if (!tags.GetIdsByTagId(TagsGameData.TagType.Items, 29).Contains(item.TemplateId) ||
+            tags.GetIdsByTagId(TagsGameData.TagType.Items, 1259).Contains(item.TemplateId) !=
+            MateGameData.Instance.IsUnderwaterModel(mate.ModelId))
+            return false;
+        return item is EquipItem && item.Template is ArmorTemplate armor &&
+            mate.Level >= armor.LevelRequirement && (armor.LevelLimit == 0 || mate.Level <= armor.LevelLimit) &&
+            GetAllowedGearSlots(armor).Contains((EquipmentItemSlot)targetSlot);
     }
 
     public override void OnEnterContainer(Item item, ItemContainer lastContainer, byte previousSlot)

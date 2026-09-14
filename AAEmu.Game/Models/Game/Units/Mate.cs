@@ -584,6 +584,8 @@ public sealed class Mate : Unit
             // so cleanup must attempt Delete() in that case.
             var shouldDeleteWorldObject = _worldSpawnAttempted;
             _lifecycleState = MateLifecycleState.Removing;
+            lock (AttachmentSyncRoot)
+                AttachmentsRetired = true;
             try
             {
                 despawnAction(shouldDeleteWorldObject);

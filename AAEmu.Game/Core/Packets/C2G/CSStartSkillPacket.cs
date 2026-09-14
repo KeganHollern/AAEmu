@@ -3,9 +3,6 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
-using AAEmu.Game.GameData;
-using AAEmu.Game.Models.Game.Char;
-using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
@@ -22,23 +19,6 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         // Ignore if there is no active character set
         if (Connection.ActiveChar == null)
             return;
-
-        // Will delay for 150 Milliseconds to eliminate the hanging of the skill
-        using var source = new CancellationTokenSource();
-        var t = Task.Run(async delegate
-        {
-            await Task.Delay(TimeSpan.FromMilliseconds(100), source.Token);
-            return 0;
-        });
-        try
-        {
-            t.Wait();
-        }
-        catch (AggregateException ae)
-        {
-            foreach (var e in ae.InnerExceptions)
-                Logger.Trace("{0}: {1}", e.GetType().Name, e.Message);
-        }
 
         var skillId = stream.ReadUInt32();
 
@@ -86,34 +66,26 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         }
         else if (skillCaster is SkillCasterMount scm)
         {
-            // Mount or Slave skill
-            Logger.Trace($"SkillCasterMount - MountSkillTemplateId {scm.MountSkillTemplateId}");
-            skill = new Skill(SkillManager.Instance.GetSkillTemplate(skillId));
-
-            var caster = world.GetBaseUnit(skillCaster.ObjId);
-            var mate = caster as Mate;
-            var slave = caster as Slave;
-            var mountAttachedSkill = 0u;
-
-            if (mate != null || slave != null)
+            var template = SkillManager.Instance.GetSkillTemplate(skillId);
+            var caster = world?.GetBaseUnit(skillCaster.ObjId);
+            skill = new Skill(template ?? new SkillTemplate { Id = skillId });
+            if (template == null || !MountSkillAuthorization.TryAuthorize(Connection.ActiveChar, caster, scm,
+                    skillId, out var mountAttachedSkill))
             {
-                // check if it's a mate or slave skill and return its rider/operator related skill
-                mountAttachedSkill = MateGameData.Instance.GetMountAttachedSkills(skillId, Connection.ActiveChar?.AttachedPoint ?? AttachPointKind.None);
+                Logger.Warn($"StartSkill: Character {Connection.ActiveChar.ObjId} attempted unauthorized mount skill {skillId}");
+                SendFailure(skillId, skillCaster, skillCastTarget, skill, skillObject, SkillResult.InvalidSkill, 0);
+                return;
             }
+            var slave = caster as Slave;
 
             // Use the main skill on the mate/slave
             var mountPrimaryResult = skill.Use(caster, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
-            if (mountPrimaryResult is SkillResult.SkillReqFail or SkillResult.ZoneBanned)
+            if (mountPrimaryResult != SkillResult.Success)
             {
-                // An authored rejection also prevents the linked rider action.
                 SendFailure(skillId, skillCaster, skillCastTarget, skill, skillObject, mountPrimaryResult, skillResultErrorValue);
                 return;
             }
-            if (mountPrimaryResult != SkillResult.Success)
-            {
-                // skill.Stop(caster, null, skillCaster);
-            }
-            else if (slave != null)
+            if (slave != null)
             {
                 if (skillId == HarpoonMechanicsDebug.ShipLaunchHarpoonSkillId)
                     ShipHarpoonRopeController.OnLaunchSucceeded(slave, skillCastTarget, Connection.ActiveChar);
@@ -140,64 +112,39 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
             skillResult = riderTemplate == null ? SkillResult.InvalidSkill :
                 skill.Use(rider, skillCaster, skillCastTarget, skillObject, true, out skillResultErrorValue);
         }
-        else if (Connection.ActiveChar.IsAutoAttack && skillId == Connection.ActiveChar.AutoAttackTask?.Skill?.Template?.Id)
-        {
-            // Same as already executing auto-skill, just send the success result.
-            skill = Connection.ActiveChar.AutoAttackTask.Skill;
-            skillResult = SkillResult.Success;
-        }
-        else if (SkillManager.Instance.IsDefaultSkill(skillId) || SkillManager.Instance.IsCommonSkill(skillId) && skillCaster is not SkillItem)
-        {
-            // Is it a common skill?
-            skill = new Skill(SkillManager.Instance.GetSkillTemplate(skillId)); // TODO: переделать / rewrite ...
-            skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
-            if (skillResult == SkillResult.Success && skillId < 5000 && skillCaster.ObjId == Connection.ActiveChar.ObjId)
-            {
-                // All basic combat skills are below ID 5000, only 2 (melee),3 (offhand) and 4 (ranged) exist, next actual skill used is 5001
-                Connection.ActiveChar.IsAutoAttack = true;
-                Connection.ActiveChar.StartAutoSkill(skill);
-            }
-        }
         else if (skillCaster is SkillItem)
         {
-            // Skill.Use validates the actual owned item, its authored skill, and the
-            // exact portal-book exceptions before any costs or effects.
+            // Skill.Use checks the owned item and its exact authored skill before costs.
             var player = Connection.ActiveChar;
             var template = SkillManager.Instance.GetSkillTemplate(skillId);
             skill = new Skill(template ?? new SkillTemplate { Id = skillId });
             skillResult = template == null ? SkillResult.InvalidSkill :
                 skill.Use(player, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
         }
-        else if (Connection.ActiveChar.Skills.Skills.ContainsKey(skillId))
-        {
-            // Is it one of our learned character skills?
-            Connection.ActiveChar.Skills.ComboState.Clear();
-            var template = SkillManager.Instance.GetSkillTemplate(skillId);
-            skill = new Skill(template, Connection.ActiveChar);
-            skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
-        }
-        else if (skillId > 0 && Connection.ActiveChar.Skills.IsVariantOfSkill(skillId))
-        {
-            // Variant of learned skill?
-            Connection.ActiveChar.Skills.ComboState.Clear();
-            skill = new Skill(SkillManager.Instance.GetSkillTemplate(skillId));
-            skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
-        }
         else
         {
-            // No idea what this is
-            Logger.Warn($"StartSkill: Id {skillId}, undefined use type");
-            // If it's a valid skill cast it. This fixes interactions with quest items/doodads.
+            var player = Connection.ActiveChar;
             var template = SkillManager.Instance.GetSkillTemplate(skillId);
-            if (!CanUseUnlearnedSkill(template))
+            skill = new Skill(template ?? new SkillTemplate { Id = skillId }, player);
+            if (!SkillCastAuthorization.CanUseCharacterSkill(player, template, skillCaster, skillCastTarget))
             {
-                skill = new Skill(new SkillTemplate { Id = skillId });
+                Logger.Warn($"StartSkill: Character {player.ObjId} attempted unauthorized skill {skillId}");
                 skillResult = SkillResult.InvalidSkill;
+            }
+            else if (player.IsAutoAttack && skillId == player.AutoAttackTask?.Skill?.Template?.Id)
+            {
+                skill = player.AutoAttackTask.Skill;
             }
             else
             {
-                skill = new Skill(template);
-                skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+                if (player.Skills.Skills.ContainsKey(skillId))
+                    player.Skills.ComboState.Clear();
+                skillResult = skill.Use(player, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+                if (skillResult == SkillResult.Success && skillId is 2 or 3 or 4)
+                {
+                    player.IsAutoAttack = true;
+                    player.StartAutoSkill(skill);
+                }
             }
         }
 
@@ -223,9 +170,4 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         return isOwnUnitCast && state.TryConsume(skillId);
     }
 
-    internal static bool CanUseUnlearnedSkill(SkillTemplate template)
-    {
-        return template is not null &&
-            (!template.NeedLearn || template.AbilityId is AbilityType.General or AbilityType.None);
-    }
 }

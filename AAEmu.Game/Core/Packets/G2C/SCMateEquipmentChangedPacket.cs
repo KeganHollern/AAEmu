@@ -11,7 +11,7 @@ public class SCMateEquipmentChangedPacket : GamePacket
     private readonly uint _passengerId;
     private readonly bool _bts;
     private readonly byte _num;
-    // private readonly bool _success;
+    private readonly bool _success;
     private readonly ItemAndLocation _itemOnPet;
     private readonly ItemAndLocation _itemInBag;
 
@@ -24,7 +24,7 @@ public class SCMateEquipmentChangedPacket : GamePacket
         _passengerId = passengerId;
         _bts = bts;
         _num = 1; // all time == 1
-        // _success = success;
+        _success = success;
     }
 
     public override PacketStream Write(PacketStream stream)
@@ -50,7 +50,7 @@ public class SCMateEquipmentChangedPacket : GamePacket
         stream.Write((byte)_itemInBag.SlotType);
         stream.Write(_itemInBag.SlotNumber);
 
-        stream.Write(true); // success
+        stream.Write(_success);
 
         return stream;
     }

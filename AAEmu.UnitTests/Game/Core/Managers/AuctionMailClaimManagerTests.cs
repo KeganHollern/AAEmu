@@ -35,8 +35,8 @@ public sealed class AuctionMailClaimManagerTests
 {
     private const uint AuctionBuyAchievementId = 1000;
     private const uint AuctionSoldAchievementId = 1001;
-    private static readonly DateTimeOffset ClaimTime =
-        new(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+    // CharacterMails checks expiry with the system clock before the injected claim clock.
+    private readonly DateTimeOffset _claimTime = DateTimeOffset.UtcNow;
 
     private static readonly FieldInfo s_achievementsField =
         typeof(Character).GetField(
@@ -742,7 +742,7 @@ public sealed class AuctionMailClaimManagerTests
     {
         return new AuctionMailClaimManager(
             store,
-            new FakeTimeProvider(ClaimTime),
+            new FakeTimeProvider(_claimTime),
             _ => _accountSyncRoot,
             CreateSalePlan,
             (forgottenItemIds ?? []).Add,
@@ -773,7 +773,7 @@ public sealed class AuctionMailClaimManagerTests
             NumInventorySlots = 10,
             NumBankSlots = 10
         };
-        character.InitializeLaborCache(labor, ClaimTime.UtcDateTime);
+        character.InitializeLaborCache(labor, _claimTime.UtcDateTime);
         character.Actability = new CharacterActability(character);
         character.Actability.Actabilities[(uint)ActabilityType.Commerce] = new Actability(
             new ActabilityTemplate { Id = (uint)ActabilityType.Commerce })
@@ -787,7 +787,7 @@ public sealed class AuctionMailClaimManagerTests
         var achievements = new CharacterAchievements(
             character,
             _achievementData,
-            new FakeTimeProvider(ClaimTime),
+            new FakeTimeProvider(_claimTime),
             () => true,
             unitRequirementsData: _unitRequirementsData);
         s_achievementsField.SetValue(character, achievements);
@@ -854,7 +854,7 @@ public sealed class AuctionMailClaimManagerTests
             Body =
             {
                 CopperCoins = durable.MailCopperCoins,
-                RecvDate = ClaimTime.UtcDateTime
+                RecvDate = _claimTime.UtcDateTime
             }
         };
         mail.IsDirty = false;
@@ -905,7 +905,7 @@ public sealed class AuctionMailClaimManagerTests
             Body =
             {
                 CopperCoins = copperCoins,
-                RecvDate = ClaimTime.UtcDateTime
+                RecvDate = _claimTime.UtcDateTime
             }
         };
         mail.IsDirty = false;
@@ -961,7 +961,7 @@ public sealed class AuctionMailClaimManagerTests
             },
             Body =
             {
-                RecvDate = ClaimTime.UtcDateTime
+                RecvDate = _claimTime.UtcDateTime
             }
         };
         mail.Body.Attachments.Add(item);

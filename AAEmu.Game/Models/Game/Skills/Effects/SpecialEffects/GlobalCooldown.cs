@@ -23,6 +23,6 @@ public class GlobalCooldown : SpecialEffectAction
         // TODO only for server
         if (caster is Character) { Logger.Debug("Special effects: GlobalCooldown value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4); }
 
-        ((Unit)caster).GlobalCooldown = DateTime.UtcNow.AddMilliseconds(value1 * (((Unit)caster).GlobalCooldownMul / 100));
+        SkillCooldowns.StartGlobalCooldown((Unit)caster, value1 == 0 ? 1000 : value1, DateTime.UtcNow);
     }
 }

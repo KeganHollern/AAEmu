@@ -158,6 +158,13 @@ public partial class Skill
             return SkillResult.InvalidSource;
         }
 
+        var casterStateResult = SkillCasterStates.Check(unit, Template, out skillResultValueUInt);
+        if (casterStateResult != SkillResult.Success)
+        {
+            Cancelled = true;
+            return casterStateResult;
+        }
+
         Cancelled = false;
         LaborSettled = false;
         LaborVocationSettled = false;
@@ -183,7 +190,6 @@ public partial class Skill
 
         // Cast character for future reference
         var character = caster as Character;
-        var cooldownOwner = character ?? caster.GetOwnerCharacter();
         if (character != null)
             character.SkillCancelled = false;
 
@@ -232,72 +238,12 @@ public partial class Skill
             return SkillResult.ZoneBanned;
         }
 
-        if (Template.CooldownTime > 0 && cooldownOwner != null && !CanIgnoreCooldowns(cooldownOwner) && unit.Cooldowns.CheckCooldown(Template.Id))
-        {
-            Logger.Trace($"Skill: CooldownTime [{Template.CooldownTime}]!");
-            return SkillResult.CooldownTime;
-        }
-
         _bypassGcd = bypassGcd;
-        if (!_bypassGcd)
-        {
-            lock (unit.GcdLock)
-            {
-                // Commented out the line to eliminate the hanging of the skill
-                // TODO: added for quest Id = 886 - скилл срабатывает часто, что не дает работать квесту - крысы не появляются
-                var delay = 150;
-                if (Id == 2 || Id == 3 || Id == 4)
-                {
-                    delay = character != null ? 500 : 1500;
-                }
+        var cooldownResult = SkillCooldowns.Check(unit, Template, bypassGcd, DateTime.UtcNow);
+        if (cooldownResult != SkillResult.Success)
+            return cooldownResult;
 
-                if (unit.SkillLastUsed.AddMilliseconds(delay) > DateTime.UtcNow)
-                {
-                    // Will delay for 150 Milliseconds to eliminate the hanging of the skill
-                    if (!caster.CheckInterval(delay))
-                    {
-                        Logger.Trace($"Skill: CooldownTime [{delay}]!");
-                        return SkillResult.CooldownTime;
-                    }
-                }
-
-                // Commented out the line to eliminate the hanging of the skill
-                if (unit.GlobalCooldown >= DateTime.UtcNow && !Template.IgnoreGlobalCooldown)
-                {
-                    // Will delay for 50 Milliseconds to eliminate the hanging of the skill
-                    if (!caster.CheckInterval(delay))
-                    {
-                        Logger.Trace($"Skill: CooldownTime [{delay}]!");
-                        return SkillResult.CooldownTime;
-                    }
-                }
-
-                unit.SkillLastUsed = DateTime.UtcNow;
-            }
-        }
-
-        // Cancel buffs if Template asks for it
-        if (Template.CancelOngoingBuffs)
-        {
-            if (caster is Units.Mate)
-                caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.UseSkill, Template.CancelOngoingBuffExceptionTagId);
-            caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.StartSkill, Template.CancelOngoingBuffExceptionTagId);
-        }
-
-        // Create a new skillObject if needed
         skillObject ??= new SkillObject();
-
-        // Unmount character if skill asks for it
-        if (character is { IsRiding: true } && Template.Unmount)
-        {
-            var mateList = character.ParentWorld.MateManager.GetActiveMates(character.Id);
-            foreach (var mate in mateList)
-            {
-                // TODO: Handle this better so it works for passengers as well
-                if (mate.Passengers.GetValueOrDefault(AttachPointKind.Driver)?._objId == character.ObjId)
-                    character.ParentWorld.MateManager.UnMountMate(character, mate.TlId, AttachPointKind.Driver, AttachUnitReason.None);
-            }
-        }
 
         // Check initial mana cost
         if (ManaCost(unit) > unit.Mp)
@@ -307,14 +253,6 @@ public partial class Skill
         TlId = SkillTlIdManager.GetNextId(caster);
         // if (caster is Character)
         Logger.Debug($"Created SkillTlId {TlId} for Skill {Template.Id}, Caster {caster.Name} ({caster.TemplateId}:{caster.ObjId}) with target {target.Name} ({target.TemplateId}:{target.ObjId})");
-
-        // If skill uses Plots, then start the plot
-        if (Template.Plot != null)
-        {
-            _ = SchedulePlot(caster, casterCaster, target, targetCaster, skillObject);
-            if (Template.PlotOnly)
-                return SkillResult.Success;
-        }
 
         // Check if target is within range
         var skillRange = caster.ApplySkillModifiers(this, SkillAttribute.Range, Template.MaxRange);
@@ -408,6 +346,41 @@ public partial class Skill
                     return SkillResult.NoPerm;
                 }
             }
+        }
+
+        if (!SkillCooldowns.TryStartGlobalCooldown(unit, Template, _bypassGcd, DateTime.UtcNow))
+        {
+            SkillTlIdManager.ReleaseId(TlId);
+            TlId = 0;
+            return SkillResult.CooldownTime;
+        }
+
+        // Cancel buffs if Template asks for it
+        if (Template.CancelOngoingBuffs)
+        {
+            if (caster is Units.Mate)
+                caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.UseSkill, Template.CancelOngoingBuffExceptionTagId);
+            caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.StartSkill, Template.CancelOngoingBuffExceptionTagId);
+        }
+
+        // Unmount character if skill asks for it
+        if (character is { IsRiding: true } && Template.Unmount)
+        {
+            var mateList = character.ParentWorld.MateManager.GetActiveMates(character.Id);
+            foreach (var mate in mateList)
+            {
+                // TODO: Handle this better so it works for passengers as well
+                if (mate.Passengers.GetValueOrDefault(AttachPointKind.Driver)?._objId == character.ObjId)
+                    character.ParentWorld.MateManager.UnMountMate(character, mate.TlId, AttachPointKind.Driver, AttachUnitReason.None);
+            }
+        }
+
+        // Plots must pass the same cooldown admission before their effects can run.
+        if (Template.Plot != null)
+        {
+            _ = SchedulePlot(caster, casterCaster, target, targetCaster, skillObject);
+            if (Template.PlotOnly)
+                return SkillResult.Success;
         }
 
         // Calculate casting time if needed
@@ -794,15 +767,6 @@ public partial class Skill
             return;
         }
 
-        if (!_bypassGcd)
-        {
-            var gcd = Template.CustomGcd;
-            if (Template.DefaultGcd)
-                gcd = caster is Npc ? 1500 : 1000;
-
-            unit.GlobalCooldown = DateTime.UtcNow.AddMilliseconds(gcd * (unit.GlobalCooldownMul / 100));
-        }
-
         if (caster is Npc && Template.SkillControllerId != 0)
         {
             var scTemplate = SkillManager.Instance.GetEffectTemplate(Template.SkillControllerId, "SkillController") as SkillControllerTemplate;
@@ -841,7 +805,7 @@ public partial class Skill
         unit.SkillTask = null;
 
         ConsumeMana(caster);
-        unit.Cooldowns.AddCooldown(Template.Id, (uint)Template.CooldownTime);
+        SkillCooldowns.StartCooldown(unit, this, caster.ApplySkillModifiers(this, SkillAttribute.Cooldown, Template.CooldownTime));
 
         // if (Id == 2 || Id == 3 || Id == 4)
         // {
@@ -1690,8 +1654,8 @@ public partial class Skill
 
         if (caster.GetOwnerCharacter() is { } cooldownOwner && CanIgnoreCooldowns(cooldownOwner))
         {
-            cooldownOwner.ResetSkillCooldown(Template.Id, false);
-            unit.Cooldowns.RemoveCooldown(Template.Id);
+            cooldownOwner.ResetSkillCooldown(Template.Id, (uint)Math.Max(0, Template.CooldownTagId), false);
+            unit.Cooldowns.RemoveCooldown(Template);
         }
     }
 
@@ -1724,8 +1688,8 @@ public partial class Skill
 
         if (caster.GetOwnerCharacter() is { } character && CanIgnoreCooldowns(character))
         {
-            character.ResetSkillCooldown(Template.Id, false);
-            unit.Cooldowns.RemoveCooldown(Template.Id);
+            character.ResetSkillCooldown(Template.Id, (uint)Math.Max(0, Template.CooldownTagId), false);
+            unit.Cooldowns.RemoveCooldown(Template);
         }
     }
 

@@ -50,6 +50,7 @@ public class SkillTemplate
     public bool TargetDead { get; set; }
     public uint ChannelingBuffId { get; set; }
     public int ReagentCorpseStatusId { get; set; }
+    public bool SourceAlive { get; set; } = true;
     public bool SourceDead { get; set; }
     public int LevelStep { get; set; }
     public float ValidHeight { get; set; }

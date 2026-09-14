@@ -6,6 +6,7 @@ using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Managers.TowerDefense;
@@ -371,7 +372,7 @@ public partial class Character : Unit, ICharacter
         {
             var res = CalculateWithBonuses(0, UnitAttribute.GlobalCooldownMul);
 
-            return (int)(100000f / (res + 1000f));
+            return GlobalCooldownGameData.Instance.GetMultiplier(res);
         }
     }
 
@@ -1852,9 +1853,20 @@ public partial class Character : Unit, ICharacter
         return ExperienceManager.Instance.GetLevelFromExp(Abilities.Abilities[type].Exp, out _);
     }
 
-    public void ResetSkillCooldown(uint skillId, bool gcd)
+    public void ResetSkillCooldown(uint skillId, uint tagId, bool gcd)
     {
-        SendPacket(new SCSkillCooldownResetPacket(this, skillId, 0, gcd));
+        Cooldowns.RemoveCooldown(skillId);
+        if (tagId != 0)
+            Cooldowns.RemoveTagCooldown(tagId);
+        if (gcd)
+        {
+            lock (GcdLock)
+            {
+                GlobalCooldown = DateTime.MinValue;
+                GlobalCooldownDurationMilliseconds = 0;
+            }
+        }
+        SendPacket(new SCSkillCooldownResetPacket(this, skillId, tagId, gcd));
     }
 
     public void ResetAllSkillCooldowns(bool triggerGcd)
@@ -1865,7 +1877,19 @@ public partial class Character : Unit, ICharacter
         var packets = new CompressedGamePackets();
         foreach (var skillId in skillIds)
         {
-            packets.AddPacket(new SCSkillCooldownResetPacket(this, skillId, 0, triggerGcd));
+            Cooldowns.RemoveCooldown(skillId);
+            var tagId = (uint)Math.Max(0, SkillManager.Instance.GetSkillTemplate(skillId)?.CooldownTagId ?? 0);
+            if (tagId != 0)
+                Cooldowns.RemoveTagCooldown(tagId);
+            packets.AddPacket(new SCSkillCooldownResetPacket(this, skillId, tagId, triggerGcd));
+        }
+        if (triggerGcd)
+        {
+            lock (GcdLock)
+            {
+                GlobalCooldown = DateTime.MinValue;
+                GlobalCooldownDurationMilliseconds = 0;
+            }
         }
         SendPacket(packets);
     }

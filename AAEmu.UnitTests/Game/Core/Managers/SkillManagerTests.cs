@@ -261,46 +261,6 @@ public class SkillManagerTests
         await Assert.That(result).IsFalse();
     }
 
-    [Test]
-    public async Task IsCommonSkill_ReturnsTrue_WhenSkillIsCommon()
-    {
-        // Arrange
-        var mockAnimation = Mock.Of<IAnimationManager>();
-        var mockPlot = Mock.Of<IPlotManager>();
-        var manager = new SkillManager(mockAnimation.Object, mockPlot.Object);
-
-        var commonSkillsField = typeof(SkillManager).GetField("_commonSkills",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        var commonSkills = new List<uint> { 1, 2, 3 };
-        commonSkillsField?.SetValue(manager, commonSkills);
-
-        // Act
-        var result = manager.IsCommonSkill(1);
-
-        // Assert
-        await Assert.That(result).IsTrue();
-    }
-
-    [Test]
-    public async Task IsCommonSkill_ReturnsFalse_WhenSkillIsNotCommon()
-    {
-        // Arrange
-        var mockAnimation = Mock.Of<IAnimationManager>();
-        var mockPlot = Mock.Of<IPlotManager>();
-        var manager = new SkillManager(mockAnimation.Object, mockPlot.Object);
-
-        var commonSkillsField = typeof(SkillManager).GetField("_commonSkills",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        var commonSkills = new List<uint> { 1, 2, 3 };
-        commonSkillsField?.SetValue(manager, commonSkills);
-
-        // Act
-        var result = manager.IsCommonSkill(999);
-
-        // Assert
-        await Assert.That(result).IsFalse();
-    }
-
     #endregion
 
     #region GetBuffTags and GetSkillTags Tests

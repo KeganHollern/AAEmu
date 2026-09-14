@@ -70,7 +70,7 @@ public sealed partial class SkillLaborTests
         SetField(itemManager, "_allItems", _items);
         SetField(itemManager, "_templates", templates);
         SetField(itemManager, "_removedItems", new List<ulong>());
-        _owner = new ExecutionCharacter { Id = 7, ObjId = 70, Name = "Caster", Money = 100, NumInventorySlots = 10 };
+        _owner = new ExecutionCharacter { Id = 7, ObjId = 70, Name = "Caster", Hp = 100, Money = 100, NumInventorySlots = 10 };
         var containers = new Dictionary<ulong, ItemContainer>();
         foreach (var type in Enum.GetValues<SlotType>())
         {

@@ -1,4 +1,4 @@
-
+﻿
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Units;
@@ -140,7 +140,7 @@ public class UnitCooldownsTests
         var cooldowns = new UnitCooldowns();
         var skillId = 100u;
 
-        if (duration > 250) // Only add if it would be considered "active"
+        if (duration > 50) // Only add if it would be considered "active"
         {
             cooldowns.AddCooldown(skillId, duration);
             var result = cooldowns.CheckCooldown(skillId);
@@ -164,10 +164,10 @@ public class UnitCooldownsTests
         var snapshots = cooldowns.GetActiveSnapshots(150);
 
         await Assert.That(snapshots.Count).IsEqualTo(2);
-        await Assert.That(snapshots[0].SkillId).IsEqualTo(100u);
+        await Assert.That(snapshots[0].Id).IsEqualTo(100u);
         await Assert.That(snapshots[0].Duration).IsEqualTo(30000u);
         await Assert.That(snapshots[0].Remaining).IsGreaterThan(0u).And.IsLessThanOrEqualTo(30000u);
-        await Assert.That(snapshots[1].SkillId).IsEqualTo(200u);
+        await Assert.That(snapshots[1].Id).IsEqualTo(200u);
         await Assert.That(snapshots[1].Duration).IsEqualTo(60000u);
         await Assert.That(snapshots[1].Remaining).IsGreaterThan(0u).And.IsLessThanOrEqualTo(60000u);
     }
@@ -194,7 +194,7 @@ public class UnitCooldownsTests
         var snapshots = cooldowns.GetActiveSnapshots(150);
 
         await Assert.That(snapshots.Count).IsEqualTo(150);
-        await Assert.That(snapshots[0].SkillId).IsEqualTo(0u);
-        await Assert.That(snapshots[^1].SkillId).IsEqualTo(149u);
+        await Assert.That(snapshots[0].Id).IsEqualTo(0u);
+        await Assert.That(snapshots[^1].Id).IsEqualTo(149u);
     }
 }

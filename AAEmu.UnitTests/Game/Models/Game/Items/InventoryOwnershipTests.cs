@@ -169,9 +169,9 @@ public sealed class InventoryOwnershipTests
     public async Task MateEquipment_RequestUsesTheActiveCharacterOwner(bool owned)
     {
         var mateOwner = owned ? _owner : _other;
-        var mate = new Mate { TlId = 12, ParentWorld = _world };
+        var mate = new Mate { TlId = 12, ParentWorld = _world, OwnerObjId = mateOwner.ObjId };
         mate.Equipment = new ItemContainer(mateOwner.Id, SlotType.EquipmentMate, false, mate)
-            { Owner = mateOwner };
+            { Owner = mateOwner, ContainerSize = 10 };
         ((Dictionary<uint, List<Mate>>)GetField(_world.MateManager, "_activeMates"))[mateOwner.Id] = [mate];
         var template = new EquipItemTemplate { Id = 200, MaxCount = 1, BindType = ItemBindType.Normal };
         var gear = new EquipItem(1, template, 1)
@@ -189,6 +189,47 @@ public sealed class InventoryOwnershipTests
         await Assert.That(mate.Equipment.Items.Contains(gear)).IsEqualTo(!owned);
         await Assert.That(gear.OwnerId).IsEqualTo(mateOwner.Id);
         await Assert.That(gear._holdingContainer).IsSameReferenceAs(owned ? _owner.Inventory.Bag : mate.Equipment);
+    }
+
+    [Test]
+    [Arguments("valid")]
+    [Arguments("slot")]
+    [Arguments("snapshot")]
+    [Arguments("reserved")]
+    [Arguments("overlap")]
+    public async Task MateEquipment_TwoChangesValidateBeforeEitherMove(string secondChange)
+    {
+        var mate = new Mate { TlId = 12, ParentWorld = _world, OwnerObjId = _owner.ObjId };
+        mate.Equipment = new ItemContainer(_owner.Id, SlotType.EquipmentMate, false, mate)
+            { Owner = _owner, ContainerSize = 10 };
+        _world.MateManager.TrackActiveMate(_owner.Id, mate);
+        var template = new EquipItemTemplate { Id = 200, MaxCount = 1, BindType = ItemBindType.Normal };
+        var first = new EquipItem(1, template, 1)
+        { OwnerId = _owner.Id, SlotType = SlotType.EquipmentMate, Slot = 0, _holdingContainer = mate.Equipment };
+        var second = new EquipItem(2, template, 1)
+        { OwnerId = _owner.Id, SlotType = SlotType.EquipmentMate, Slot = 1, _holdingContainer = mate.Equipment };
+        mate.Equipment.Items.AddRange([first, second]);
+        _items.Add(first.Id, first);
+        _items.Add(second.Id, second);
+        using var reservation = new TradeReservation();
+        if (secondChange == "reserved")
+            await Assert.That(reservation.TryReserve(second, 1)).IsTrue();
+        var body = new PacketStream().Write(_owner.Id).Write(mate.TlId).Write(0u).Write(false).Write((byte)2)
+            .Write(0u).Write(first).Write((byte)SlotType.Inventory).Write((byte)0)
+            .Write((byte)SlotType.EquipmentMate).Write((byte)0)
+            .Write(0u).Write(secondChange == "snapshot" ? first : second)
+            .Write((byte)SlotType.Inventory).Write((byte)(secondChange == "overlap" ? 0 : 1))
+            .Write((byte)SlotType.EquipmentMate).Write((byte)(secondChange == "slot" ? 255 : 1));
+
+        new CSChangeMateEquipmentPacket { Connection = _owner.Connection }.Read(body);
+
+        var valid = secondChange == "valid";
+        await Assert.That(_owner.Inventory.Bag.Items.Count).IsEqualTo(valid ? 2 : 0);
+        await Assert.That(mate.Equipment.Items.Count).IsEqualTo(valid ? 0 : 2);
+        await Assert.That(first._holdingContainer).IsSameReferenceAs(valid ? _owner.Inventory.Bag : mate.Equipment);
+        await Assert.That(second._holdingContainer).IsSameReferenceAs(valid ? _owner.Inventory.Bag : mate.Equipment);
+        await Assert.That(first.Slot).IsEqualTo(0);
+        await Assert.That(second.Slot).IsEqualTo(1);
     }
 
     private CharacterMock AddOwner(uint id)

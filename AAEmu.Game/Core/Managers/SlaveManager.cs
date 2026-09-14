@@ -135,25 +135,23 @@ public class SlaveManager(WorldInstance parentWorldInstance)
     public void UnbindSlave(Character character, uint tlId, AttachUnitReason reason)
     {
         var slave = GetSlaveByTlId(tlId);
-        if (slave == null)
-        {
-            ClearSlaveAttachmentState(character);
-            character.Buffs.TriggerRemoveOn(BuffRemoveOn.Unmount);
-            character.BroadcastPacket(new SCUnitDetachedPacket(character.ObjId, reason), true);
+        if (character == null || slave == null)
             return;
-        }
-
-        var attachPoint = slave.AttachedCharacters.FirstOrDefault(x => x.Value == character).Key;
-        if (attachPoint != default)
+        lock (character.AttachmentSyncRoot)
+        lock (slave.AttachmentSyncRoot)
         {
+            var attachPoint = character.AttachedPoint;
+            if (!ReferenceEquals(character.ParentWorld, slave.ParentWorld) ||
+                !MountSeatAuthorization.IsAttached(character, slave) ||
+                !slave.AttachedCharacters.TryGetValue(attachPoint, out var passenger) ||
+                !ReferenceEquals(passenger, character))
+                return;
+
             slave.AttachedCharacters.Remove(attachPoint);
             ClearSlaveAttachmentState(character);
-            ShipHarpoonRopeController.OnOperatorLeftSlave(slave, character);
         }
-
+        ShipHarpoonRopeController.OnOperatorLeftSlave(slave, character);
         character.Buffs.TriggerRemoveOn(BuffRemoveOn.Unmount);
-        ClearSlaveAttachmentState(character);
-
         character.BroadcastPacket(new SCUnitDetachedPacket(character.ObjId, reason), true);
     }
 
@@ -164,34 +162,43 @@ public class SlaveManager(WorldInstance parentWorldInstance)
     /// <param name="objId"></param>
     /// <param name="attachPoint"></param>
     /// <param name="bondKind"></param>
-    public void BindSlave(Character character, uint objId, AttachPointKind attachPoint, AttachUnitReason bondKind)
+    public void BindSlave(Character character, uint objId, AttachPointKind attachPoint, AttachUnitReason bondKind, Doodad interaction = null)
     {
-        // Check if the target spot is already taken
         var slave = GetSlaveByObjId(objId);
-
-        if (slave == null || slave.AttachedCharacters.ContainsKey(attachPoint))
+        if (character == null || slave == null)
             return;
 
-        // Check if the vehicle has the MasterOwnership buff and if the character is not the owner, block the attachment.
-        if (attachPoint == AttachPointKind.Driver && slave.Buffs.CheckBuff((uint)BuffConstants.OwnersMark) && slave.Summoner?.ObjId != character.ObjId)
+        lock (character.AttachmentSyncRoot)
+        lock (slave.AttachmentSyncRoot)
         {
-            character.SendErrorMessage(ErrorMessageType.SlaveAlreadyHasMaster); // 仅阻止驾驶座附加
-            return;
-        }
+            if (!ReferenceEquals(GetSlaveByObjId(objId), slave) ||
+                !TryGetSeatPosition(slave, attachPoint, interaction, out var position) ||
+                slave.AttachedCharacters.ContainsKey(attachPoint) ||
+                !MountSeatAuthorization.CanEnter(character, slave, position, MountSeatAuthorization.SlaveRange))
+                return;
 
+            if (attachPoint == AttachPointKind.Driver && slave.Buffs.CheckBuff((uint)BuffConstants.OwnersMark) &&
+                slave.Summoner?.ObjId != character.ObjId)
+            {
+                character.SendErrorMessage(ErrorMessageType.SlaveAlreadyHasMaster);
+                return;
+            }
+
+            slave.AttachedCharacters.Add(attachPoint, character);
+            character.AttachedPoint = attachPoint;
+            character.Transform.StickyParent = null;
+            character.Transform.Parent = slave.Transform;
+            var points = SlaveGameData.Instance.GetAttachPointsForSlave(slave.ModelId);
+            var point = points?.GetValueOrDefault(attachPoint);
+            var localPosition = point?.AsPositionVector() ?? Vector3.Transform(
+                position - slave.Transform.World.Position, Quaternion.Inverse(slave.Transform.World.ToQuaternion())) / slave.Scale;
+            character.Transform.Local.SetPosition(localPosition.X, localPosition.Y, localPosition.Z,
+                point?.Roll ?? 0, point?.Pitch ?? 0, point?.Yaw ?? 0);
+        }
         character.BroadcastPacket(new SCUnitAttachedPacket(character.ObjId, attachPoint, bondKind, objId), true);
-        character.AttachedPoint = attachPoint;
-        switch (attachPoint)
-        {
-            case AttachPointKind.Driver:
-                character.BroadcastPacket(new SCSlaveBoundPacket(character.Id, objId), true);
-                break;
-        }
-
-        slave.AttachedCharacters.Add(attachPoint, character);
-        character.Transform.Parent = slave.Transform;
-        // TODO: move to attach point's position
-        character.Transform.Local.SetPosition(0, 0, 0, 0, 0, 0);
+        if (attachPoint == AttachPointKind.Driver)
+            character.BroadcastPacket(new SCSlaveBoundPacket(character.Id, objId), true);
+        character.Buffs.TriggerRemoveOn(BuffRemoveOn.Mount);
     }
 
     /// <summary>
@@ -212,6 +219,53 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         BindSlave(unit, slave.ObjId, AttachPointKind.Driver, AttachUnitReason.NewMaster);
     }
 
+    internal static bool TryGetSeatPosition(Slave slave, AttachPointKind seat, Doodad interaction, out Vector3 position)
+    {
+        position = default;
+        if (slave?.Template?.Mountable != true || seat == AttachPointKind.None ||
+            seat == AttachPointKind.System || !Enum.IsDefined(seat))
+            return false;
+        if (interaction != null && (!slave.AttachedDoodads.Contains(interaction) ||
+            interaction.ParentObjId != slave.ObjId || !ReferenceEquals(interaction.ParentWorld, slave.ParentWorld) ||
+            interaction.Despawn > DateTime.MinValue))
+            return false;
+
+        var points = SlaveGameData.Instance.GetAttachPointsForSlave(slave.ModelId);
+        var point = points?.GetValueOrDefault(seat);
+        // CSBindSlave always selects Driver. Other seats need an authored attachment function
+        // or a seat in this vehicle's own mount skill data.
+        if (seat != AttachPointKind.Driver && interaction == null &&
+            !MateGameData.Instance.HasAttachedSeat(SlaveGameData.Instance.GetSlaveMountSkillList(slave.TemplateId), seat))
+            return false;
+        if (point != null)
+        {
+            var world = slave.Transform.World;
+            position = world.Position + Vector3.Transform(point.AsPositionVector() * slave.Scale, world.ToQuaternion());
+        }
+        else if (interaction != null)
+            position = interaction.Transform.World.Position;
+        else if (seat == AttachPointKind.Driver)
+            position = slave.Transform.World.Position;
+        else
+            return false;
+        return true;
+    }
+
+    internal bool TryBeginAttachmentRemoval(Slave slave, out List<Character> passengers)
+    {
+        passengers = [];
+        if (slave == null)
+            return false;
+        lock (slave.AttachmentSyncRoot)
+        {
+            if (slave.AttachmentsRetired || !ReferenceEquals(GetSlaveByObjId(slave.ObjId), slave))
+                return false;
+            slave.AttachmentsRetired = true;
+            passengers = slave.AttachedCharacters.Values.ToList();
+            return true;
+        }
+    }
+
     // TODO: GameConnection connection
     /// <summary>
     /// Removes a slave from the world
@@ -224,9 +278,6 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         var slaveInfo = GetSlaveByObjId(objId);
         if (slaveInfo == null) return;
         slaveInfo.Save();
-        // Remove passengers
-        foreach (var character in slaveInfo.AttachedCharacters.Values.ToList())
-            UnbindSlave(character, slaveInfo.TlId, AttachUnitReason.SlaveBinding);
 
         // Check if one of the slave doodads is holding an item
         if (ignoreAttachedItemWarning == false)
@@ -239,6 +290,18 @@ public class SlaveManager(WorldInstance parentWorldInstance)
                     return; // don't allow un-summon if some it's holding an item (should be a trade-pack)
                 }
             }
+        }
+
+        if (!TryBeginAttachmentRemoval(slaveInfo, out var passengers))
+            return;
+        foreach (var character in passengers)
+            UnbindSlave(character, slaveInfo.TlId, AttachUnitReason.SlaveBinding);
+        foreach (var attachedSlave in slaveInfo.AttachedSlaves)
+        {
+            if (!TryBeginAttachmentRemoval(attachedSlave, out var childPassengers))
+                continue;
+            foreach (var character in childPassengers)
+                UnbindSlave(character, attachedSlave.TlId, AttachUnitReason.SlaveBinding);
         }
 
         var despawnDelayedTime = DateTime.UtcNow.AddSeconds(slaveInfo.Template.PortalTime - 0.5f);
