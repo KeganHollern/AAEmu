@@ -35,7 +35,7 @@ public class DoodadFuncAttachment : DoodadFuncTemplate
             // Ships // TODO Check how sit on the ship
             else
             {
-                character.ParentWorld.SlaveManager.BindSlave(character, owner.ParentObjId, AttachPointId, AttachUnitReason.BoardTransfer);
+                character.ParentWorld.SlaveManager.BindSlave(character, owner.ParentObjId, AttachPointId, AttachUnitReason.BoardTransfer, owner);
             }
         }
     }

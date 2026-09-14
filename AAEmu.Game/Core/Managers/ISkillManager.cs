@@ -25,7 +25,6 @@ public interface ISkillManager : ILoadable
     List<uint> GetSkillTags(uint skillId);
     SkillTemplate GetSkillTemplate(uint id);
     List<SkillTemplate> GetStartAbilitySkills(AbilityType ability);
-    bool IsCommonSkill(uint id);
     bool IsDefaultSkill(uint id);
     // ushort NextId();
     // void ReleaseId(ushort id);

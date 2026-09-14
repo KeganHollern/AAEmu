@@ -47,7 +47,7 @@ public sealed class ItemSocketingTests
         typeof(ItemManager).GetProperty(nameof(ItemManager.SocketingRules))!.SetValue(_manager, ItemSocketingRulesTests.LoadRules());
         SetField(_manager, "_socketChance", new Dictionary<uint, uint> { [1] = 10000, [2] = 5000, [3] = 5000, [4] = 5000 });
         SetField(_manager, "_removedItems", new List<ulong>());
-        _owner = new SocketCharacter { Id = 7, ObjId = 70, Name = "Socket", Money = 100, Mp = 100, Level = 50, NumInventorySlots = 10, ConditionChance = true };
+        _owner = new SocketCharacter { Id = 7, ObjId = 70, Name = "Socket", Money = 100, Hp = 100, Mp = 100, Level = 50, NumInventorySlots = 10, ConditionChance = true };
         _owner.Actability = new CharacterActability(_owner);
         typeof(Character).GetField("_laborPower", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(_owner, (short)100);
         var containers = new Dictionary<ulong, ItemContainer>();

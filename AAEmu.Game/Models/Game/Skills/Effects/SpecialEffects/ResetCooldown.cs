@@ -27,19 +27,21 @@ public class ResetCooldown : SpecialEffectAction
         var skillId = (uint)value1;
         var tagId = (uint)value2;
         var gcd = value3 == 1;
-        if (caster is Character character)
+        if (caster is not Unit unit)
+            return;
+        if (skillId != 0)
+            unit.Cooldowns.RemoveCooldown(skillId);
+        if (tagId != 0)
+            unit.Cooldowns.RemoveTagCooldown(tagId);
+        if (gcd)
         {
-            if (value1 != 0)
+            lock (unit.GcdLock)
             {
-                character.ResetSkillCooldown(skillId, gcd);
-            }
-            if (value2 != 0)
-            {
-                //unsure if this works..Might need to reset each skill individually
-                character.SendPacket(new SCSkillCooldownResetPacket(character, 0, tagId, gcd));
+                unit.GlobalCooldown = DateTime.MinValue;
+                unit.GlobalCooldownDurationMilliseconds = 0;
             }
         }
-
-        //Maybe do this for NPC's ?
+        if (caster is Character character)
+            character.SendPacket(new SCSkillCooldownResetPacket(character, skillId, tagId, gcd));
     }
 }

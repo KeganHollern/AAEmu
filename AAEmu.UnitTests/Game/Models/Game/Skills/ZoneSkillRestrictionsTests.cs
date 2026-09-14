@@ -48,6 +48,7 @@ public sealed class ZoneSkillRestrictionsTests
     [Before(Test)]
     public void SetUp()
     {
+        SetInstance(new PermissionManager(Mock.Of<IAccountManager>().Object));
         _zones = new ZoneManager(null, null);
         using var connection = CreateData();
         _zones.LoadBannedTags(connection);
@@ -80,7 +81,8 @@ public sealed class ZoneSkillRestrictionsTests
         template.ZoneKeyByRegions[1, 0] = 2000;
         template.ZoneKeyByRegions[2, 0] = 3000;
         var world = new WorldInstance(template, 0, true, 0);
-        _caster = new ProbeUnit { ObjId = 7, Mp = 100 };
+        world.MateManager = new MateManager(world);
+        _caster = new ProbeUnit { ObjId = 7, Hp = 100, Mp = 100 };
         typeof(GameObject).GetField("_parentWorld", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(_caster, world);
         world.AddObject(_caster);
         _caster.Transform.Local.SetPosition(10, 10, 100);
@@ -171,6 +173,7 @@ public sealed class ZoneSkillRestrictionsTests
         SkillRequirementsGameDataTests.Execute(connection, "INSERT INTO skill_reqs VALUES(13, 'f', NULL, 306, 't'); INSERT INTO skill_req_skills VALUES(13, 12373);");
         SetInstance(SkillRequirementsGameDataTests.Load(connection));
         var buffs = Mock.Of<IBuffs>();
+        buffs.GetEffectsByType(typeof(BuffTemplate)).Returns([]);
         buffs.CheckBuffTag(306).Returns(true);
         _caster.Buffs = buffs.Object;
         var skill = NewSkill();
@@ -325,7 +328,6 @@ public sealed class ZoneSkillRestrictionsTests
         SetField(SkillManager.Instance, "_skills", unknownSkill ? new Dictionary<uint, SkillTemplate>() : new() { [500] = template });
         SetField(SkillManager.Instance, "_defaultSkills", defaultRoute
             ? new Dictionary<uint, DefaultSkill> { [500] = new() { Template = template } } : []);
-        SetField(SkillManager.Instance, "_commonSkills", new List<uint>());
         SetField(SkillManager.Instance, "_comboFollowupSkills", new HashSet<uint>());
         var source = new SkillItem(70, item.Id, item.TemplateId);
         var session = Mock.Of<ISession>();
@@ -369,11 +371,17 @@ public sealed class ZoneSkillRestrictionsTests
     {
         var character = CreateItemCharacter(new Item { Id = 700, TemplateId = 150 });
         character.AttachedPoint = AttachPointKind.Driver;
-        var mate = new Mate { ObjId = 8, Mp = 100, Template = new NpcTemplate { Scale = 1 } };
+        var mate = new Mate { ObjId = 8, OwnerObjId = character.ObjId, Hp = 100, Mp = 100, Level = 50, Skills = [1], Template = new NpcTemplate { Scale = 1 } };
         mate.Transform.Local.SetPosition(10, 10, 100);
         typeof(GameObject).GetField("_parentWorld", BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(mate, _caster.ParentWorld);
         _caster.ParentWorld.AddObject(mate);
+        character.Hp = 100;
+        character.Transform.Parent = mate.Transform;
+        character.Transform.Local.SetPosition(0, 0, 0);
+        character.IsRiding = true;
+        mate.Passengers[AttachPointKind.Driver]._objId = character.ObjId;
+        _caster.ParentWorld.MateManager.TrackActiveMate(character.Id, mate);
         var template = new SkillTemplate { Id = 12373, TargetType = SkillTargetType.Self, ManaCost = 50 };
         SetField(SkillManager.Instance, "_skills", new Dictionary<uint, SkillTemplate>
         {
@@ -395,13 +403,14 @@ public sealed class ZoneSkillRestrictionsTests
                 "INSERT INTO skill_reqs VALUES(13, 'f', NULL, 306, 't'); INSERT INTO skill_req_skills VALUES(13, 12373);");
             SetInstance(SkillRequirementsGameDataTests.Load(data));
             var buffs = Mock.Of<IBuffs>();
+            buffs.GetEffectsByType(typeof(BuffTemplate)).Returns([]);
             buffs.CheckBuffTag(306).Returns(true);
             mate.Buffs = buffs.Object;
         }
         var session = Mock.Of<ISession>();
         var connection = new GameConnection(session.Object) { ActiveChar = character };
         character.Connection = connection;
-        var body = new PacketStream().Write(12373u).Write(new SkillCasterMount(8))
+        var body = new PacketStream().Write(12373u).Write(new SkillCasterMount(8) { MountSkillTemplateId = 1 })
             .Write(new SkillCastUnitTarget(8)).Write((byte)0);
         var expected = buffRule ? SkillResult.SkillReqFail : SkillResult.ZoneBanned;
         var expectedDetail = buffRule ? 13u : 21u;
@@ -430,12 +439,18 @@ public sealed class ZoneSkillRestrictionsTests
         character.Transform.InstanceId = world.Id;
         _caster.Transform.InstanceId = world.Id;
         world.AddObject(character);
-        var mate = new Mate { ObjId = 8, Mp = 100, Template = new NpcTemplate { Scale = 1 } };
+        var mate = new Mate { ObjId = 8, OwnerObjId = character.ObjId, Hp = 100, Mp = 100, Level = 50, Skills = [12], Template = new NpcTemplate { Scale = 1 } };
         mate.Transform.Local.SetPosition(10, 10, 100);
         typeof(GameObject).GetField("_parentWorld", BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(mate, world);
         mate.Transform.InstanceId = world.Id;
         world.AddObject(mate);
+        character.Hp = 100;
+        character.Transform.Parent = mate.Transform;
+        character.Transform.Local.SetPosition(0, 0, 0);
+        character.IsRiding = true;
+        mate.Passengers[AttachPointKind.Driver]._objId = character.ObjId;
+        world.MateManager.TrackActiveMate(character.Id, mate);
         var primaryEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var primaryEvent = new PlotEventTemplate { Id = 1, SourceUpdateMethodId = 1, TargetUpdateMethodId = 1 };
         primaryEvent.Effects.AddLast(new PlotEventEffect
@@ -476,13 +491,14 @@ public sealed class ZoneSkillRestrictionsTests
                 "INSERT INTO skill_reqs VALUES(1, 'f', NULL, 27, 't'); INSERT INTO skill_req_skills VALUES(1, 11327);");
             SetInstance(SkillRequirementsGameDataTests.Load(data));
             var buffs = Mock.Of<IBuffs>();
+            buffs.GetEffectsByType(typeof(BuffTemplate)).Returns([]);
             buffs.CheckBuffTag(27).Returns(true);
             character.Buffs = buffs.Object;
         }
         var session = Mock.Of<ISession>();
         var connection = new GameConnection(session.Object) { ActiveChar = character };
         character.Connection = connection;
-        var body = new PacketStream().Write(11328u).Write(new SkillCasterMount(8))
+        var body = new PacketStream().Write(11328u).Write(new SkillCasterMount(8) { MountSkillTemplateId = 12 })
             .Write(new SkillCastUnitTarget(8)).Write((byte)0);
         var expected = new SCSkillStartedPacket(riderSkillId, 0, new SkillCasterUnit(70),
                 new SkillCastUnitTarget(7), new Skill(rider), new SkillObject())
@@ -629,7 +645,7 @@ public sealed class ZoneSkillRestrictionsTests
     private ProbeCharacter CreateItemCharacter(Item item)
     {
         var itemManager = new ItemManager(null, null, null, null, null, null);
-        var character = new ProbeCharacter { Id = 70, ObjId = 70, NumInventorySlots = 10, Mp = 100 };
+        var character = new ProbeCharacter { Id = 70, ObjId = 70, NumInventorySlots = 10, Hp = 100, Mp = 100 };
         var containers = new Dictionary<ulong, ItemContainer>();
         foreach (var slotType in Enum.GetValues<SlotType>())
         {

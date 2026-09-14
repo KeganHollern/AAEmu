@@ -18,18 +18,24 @@ public class SCCooldownsPacket : GamePacket
 
     public override PacketStream Write(PacketStream stream)
     {
-        var skills = _cooldowns.GetActiveSnapshots(MaximumEntriesPerBucket);
+        var snapshot = _cooldowns.GetActiveBuckets(MaximumEntriesPerBucket);
+        var skills = snapshot.Skills;
 
         stream.Write((uint)skills.Count);
         foreach (var skill in skills)
         {
-            stream.Write(skill.SkillId);
+            stream.Write(skill.Id);
             stream.Write(skill.Duration);
             stream.Write(skill.Remaining);
         }
 
-        // AAEmu does not keep an independent cooldown-tag store.
-        stream.Write(0u);
+        stream.Write((uint)snapshot.Tags.Count);
+        foreach (var tag in snapshot.Tags)
+        {
+            stream.Write(tag.Id);
+            stream.Write(tag.Duration);
+            stream.Write(tag.Remaining);
+        }
 
         return stream;
     }

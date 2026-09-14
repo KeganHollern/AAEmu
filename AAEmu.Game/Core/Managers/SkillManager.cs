@@ -24,9 +24,8 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private bool _loaded;
 
-    private Dictionary<uint, SkillTemplate> _skills;
-    private Dictionary<uint, DefaultSkill> _defaultSkills;
-    private List<uint> _commonSkills;
+    private Dictionary<uint, SkillTemplate> _skills = [];
+    private Dictionary<uint, DefaultSkill> _defaultSkills = [];
     private Dictionary<AbilityType, List<SkillTemplate>> _startAbilitySkills;
     private Dictionary<uint, PassiveBuffTemplate> _passiveBuffs;
     private Dictionary<uint, EffectType> _types;
@@ -34,7 +33,7 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
     private Dictionary<uint, BuffTemplate> _buffs;
     private Dictionary<uint, List<uint>> _buffTags;
     private Dictionary<uint, List<uint>> _taggedBuffs;
-    private Dictionary<uint, List<uint>> _skillTags;
+    private Dictionary<uint, List<uint>> _skillTags = [];
     private Dictionary<uint, List<uint>> _taggedSkills;
     private Dictionary<uint, List<SkillModifier>> _skillModifiers;
     private Dictionary<uint, List<BuffTriggerTemplate>> _buffTriggers;
@@ -88,11 +87,6 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
     public bool IsDefaultSkill(uint id)
     {
         return _defaultSkills.ContainsKey(id);
-    }
-
-    public bool IsCommonSkill(uint id)
-    {
-        return _commonSkills.Contains(id);
     }
 
     public bool IsComboFollowupSkill(uint id)
@@ -253,7 +247,6 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
 
         _skills = [];
         _defaultSkills = [];
-        _commonSkills = [];
         _comboFollowupSkills = [];
         _startAbilitySkills = [];
         _passiveBuffs = [];
@@ -378,6 +371,7 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
                         template.TargetDead = reader.GetBoolean("target_dead", true);
                         template.ChannelingBuffId = reader.GetUInt32("channeling_buff_id", 0);
                         template.ReagentCorpseStatusId = reader.GetInt32("reagent_corpse_status_id");
+                        template.SourceAlive = reader.GetBoolean("source_alive", true);
                         template.SourceDead = reader.GetBoolean("source_dead", true);
                         template.LevelStep = reader.GetInt32("level_step");
                         template.ValidHeight = reader.GetFloat("valid_height");
@@ -1824,9 +1818,6 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
 
         foreach (var skillTemplate in _skills.Values.Where(x => x.AutoLearn))
         {
-            if (!skillTemplate.NeedLearn && skillTemplate.AbilityId == 0 &&
-                !_defaultSkills.ContainsKey(skillTemplate.Id))
-                _commonSkills.Add(skillTemplate.Id);
             if (!skillTemplate.NeedLearn || skillTemplate.AbilityId == 0 || skillTemplate.AbilityLevel > 1 ||
                 !skillTemplate.Show)
                 continue;

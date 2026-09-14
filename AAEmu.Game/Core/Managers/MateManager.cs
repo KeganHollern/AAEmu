@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -57,6 +58,23 @@ public class MateManager(WorldInstance parentWorldInstance)
             return _activeMates.GetValueOrDefault(ownerId)?.FirstOrDefault(mate => mate.TlId == tlId);
     }
 
+    internal bool IsOwnedMate(Character owner, Mate mate)
+    {
+        if (owner == null || mate == null || mate.OwnerObjId != owner.ObjId)
+            return false;
+        lock (_activeMatesLock)
+            return _activeMates.TryGetValue(owner.Id, out var mates) && mates.Contains(mate) &&
+                !_matesBeingRemoved.Contains(mate);
+    }
+
+    internal Mate GetOwnedMate(Character owner, uint tlId)
+    {
+        if (owner == null)
+            return null;
+        var mate = GetActiveMateByTlId(owner.Id, tlId);
+        return IsOwnedMate(owner, mate) ? mate : null;
+    }
+
     /// <summary>
     /// Gets an active pet by it's ObjId
     /// </summary>
@@ -98,14 +116,9 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// <param name="newState"></param>
     public void ChangeStateMate(GameConnection connection, uint tlId, byte newState)
     {
-        var owner = connection.ActiveChar;
-        var mateInfoList = GetActiveMates(owner.Id);
-        foreach (var mateInfo in mateInfoList)
-        {
-            if (mateInfo?.TlId != tlId) continue;
-            mateInfo.UserState = newState; // TODO - Maybe verify range
-            // owner.BroadcastPacket(new SCMateStatePacket(mateInfo.ObjId), true);
-        }
+        var mate = GetOwnedMate(connection.ActiveChar, tlId);
+        if (mate != null)
+            mate.UserState = newState;
     }
 
     /// <summary>
@@ -116,10 +129,13 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// <param name="objId"></param>
     public void ChangeTargetMate(GameConnection connection, uint tlId, uint objId)
     {
-        // var owner = connection.ActiveChar;
-        var mateInfo = GetActiveMateByTlId(tlId);
+        var mateInfo = GetOwnedMate(connection.ActiveChar, tlId);
         if (mateInfo == null) return;
-        mateInfo.CurrentTarget = objId > 0 ? World.GetUnit(objId) : null;
+        var target = objId > 0 ? World.GetUnit(objId) : null;
+        if (objId > 0 && (target == null || !ReferenceEquals(target.ParentWorld, mateInfo.ParentWorld) ||
+            target.Transform.InstanceId != mateInfo.Transform.InstanceId))
+            return;
+        mateInfo.CurrentTarget = target;
         mateInfo.BroadcastPacket(new SCTargetChangedPacket(mateInfo.ObjId, mateInfo.CurrentTarget?.ObjId ?? 0), true);
 
         Logger.Debug($"ChangeTargetMate. tlId: {mateInfo.TlId}, objId: {mateInfo.ObjId}, targetObjId: {objId}");
@@ -134,8 +150,8 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// <returns></returns>
     public Mate RenameMount(GameConnection connection, uint tlId, string newName)
     {
-        var mateInfo = GetActiveMateByTlId(tlId);
-        if (mateInfo == null || mateInfo.OwnerObjId != connection.ActiveChar.ObjId)
+        var mateInfo = GetOwnedMate(connection.ActiveChar, tlId);
+        if (mateInfo == null)
             return null;
         if (string.IsNullOrWhiteSpace(newName) || newName.Length == 0 || !_nameRegex.IsMatch(newName)) return null;
         mateInfo.Name = newName.NormalizeName();
@@ -154,41 +170,31 @@ public class MateManager(WorldInstance parentWorldInstance)
     {
         var character = connection.ActiveChar;
         var mateInfo = GetActiveMateByTlId(tlId);
-        if (mateInfo == null) return;
-
-        // Request seat position
-        if (mateInfo.Passengers.TryGetValue(attachPoint, out var seatInfo))
-        {
-            // If first seat, check if it's the owner
-            if (attachPoint == AttachPointKind.Driver && mateInfo.OwnerObjId != character.ObjId)
-            {
-                Logger.Warn($"MountMate. Non-owner {character.Name} ({character.ObjId}) tried to take the first seat on mount {mateInfo.Name} ({mateInfo.ObjId})");
-                return;
-            }
-
-            // Check if seat is empty
-            if (seatInfo._objId == 0)
-            {
-                character.BroadcastPacket(new SCUnitAttachedPacket(character.ObjId, attachPoint, reason, mateInfo.ObjId), true);
-                seatInfo._objId = character.ObjId;
-                seatInfo._reason = reason;
-
-                character.Transform.Parent = mateInfo.Transform;
-                character.Transform.Local.SetPosition(0, 0, 0); // correct the position of the character
-                character.IsRiding = true;
-                character.AttachedPoint = attachPoint;
-
-                character.IsVisible = true; // When we're on a horse, you can see us
-            }
-        }
-        else
-        {
-            Logger.Warn($"MountMate. Player {character.Name} ({character.ObjId}) tried to take a invalid seat {attachPoint} on mount {mateInfo.Name} ({mateInfo.ObjId})");
+        if (mateInfo == null || character == null)
             return;
-        }
 
+        lock (character.AttachmentSyncRoot)
+        lock (mateInfo.AttachmentSyncRoot)
+        {
+            if (!ReferenceEquals(GetActiveMateByTlId(tlId), mateInfo) ||
+                !MountSeatAuthorization.CanEnter(character, mateInfo, mateInfo.Transform.World.Position,
+                    MountSeatAuthorization.MateRange) ||
+                !MateSeatGameData.Instance.HasSeat(mateInfo.ModelId, attachPoint) ||
+                !mateInfo.Passengers.TryGetValue(attachPoint, out var seatInfo) || seatInfo._objId != 0 ||
+                (attachPoint == AttachPointKind.Driver && !IsOwnedMate(character, mateInfo)))
+                return;
+
+            seatInfo._objId = character.ObjId;
+            seatInfo._reason = reason;
+            character.Transform.StickyParent = null;
+            character.Transform.Parent = mateInfo.Transform;
+            character.Transform.Local.SetPosition(0, 0, 0);
+            character.IsRiding = true;
+            character.AttachedPoint = attachPoint;
+            character.IsVisible = true;
+        }
+        character.BroadcastPacket(new SCUnitAttachedPacket(character.ObjId, attachPoint, reason, mateInfo.ObjId), true);
         character.Buffs.TriggerRemoveOn(BuffRemoveOn.Mount);
-        Logger.Debug($"MountMate. mountTlId: {mateInfo.TlId}, attachPoint: {attachPoint}, reason: {reason}, seats: {string.Join(", ", mateInfo.Passengers.Values.ToList())}");
     }
 
     /// <summary>
@@ -204,50 +210,74 @@ public class MateManager(WorldInstance parentWorldInstance)
         if (mateInfo == null)
             return;
 
-        UnMountMate(character, mateInfo, attachPoint, reason);
+        UnMountMate(character, mateInfo, attachPoint, reason, checkRequest: true);
     }
 
-    private void UnMountMate(Character character, Mate mateInfo, AttachPointKind attachPoint, AttachUnitReason reason)
+    internal bool CanRequestUnmount(Character actor, Mate mate, AttachPointKind seat)
     {
+        if (actor == null || mate == null || !ReferenceEquals(actor.ParentWorld, mate.ParentWorld) ||
+            actor.Transform.InstanceId != mate.Transform.InstanceId ||
+            !mate.Passengers.TryGetValue(seat, out var passenger) || passenger._objId == 0)
+            return false;
 
-        mateInfo.StopUpdateXp();
-
-        // Request seat position
-        Character targetObj = null;
-        if (mateInfo.Passengers.TryGetValue(attachPoint, out var seatInfo))
-        {
-            // Check if seat is taken by player
-            if (seatInfo._objId != 0)
-            {
-                targetObj = WorldManager.Instance.GetCharacterByObjId(seatInfo._objId);
-                seatInfo._objId = 0;
-                seatInfo._reason = reason;
-            }
-        }
-
-        if (targetObj != null)
-        {
-            //targetObj.Transform.StickyParent = null;
-            targetObj.Transform.Parent = null;
-            targetObj.SetPosition(mateInfo.Transform.World.Position.X, mateInfo.Transform.World.Position.Y, mateInfo.Transform.World.Position.Z,
-                mateInfo.Transform.World.Rotation.X, mateInfo.Transform.World.Rotation.Y, mateInfo.Transform.World.Rotation.Z);
-            // character.Transform = mateInfo.Transform.CloneDetached(character);
-            targetObj.IsRiding = false;
-            targetObj.AttachedPoint = AttachPointKind.None;
-
-            targetObj.BroadcastPacket(new SCUnitDetachedPacket(targetObj.ObjId, reason), true);
-
-            targetObj.Events.OnUnmount(character, new OnUnmountArgs());
-
-            mateInfo.Buffs.TriggerRemoveOn(BuffRemoveOn.Unmount);
-            targetObj.Buffs.TriggerRemoveOn(BuffRemoveOn.Unmount);
-            Logger.Debug($"UnMountMate. mountTlId: {mateInfo.TlId}, targetObjId: {targetObj.ObjId}, attachPoint: {attachPoint}, reason: {reason}");
-        }
-        else
-        {
-            Logger.Debug($"UnMountMate. No valid seat entry, mountTlId: {mateInfo.TlId}, characterObjId: {0}, attachPoint: {attachPoint}, reason: {reason}");
-        }
+        // The client allows an occupant to leave and the owner to remove a passenger.
+        return (passenger._objId == actor.ObjId && actor.AttachedPoint == seat &&
+                MountSeatAuthorization.IsAttached(actor, mate)) ||
+            (seat == AttachPointKind.Passenger0 && IsOwnedMate(actor, mate));
     }
+
+    private void UnMountMate(Character actor, Mate mate, AttachPointKind seat, AttachUnitReason reason,
+        bool checkRequest = false)
+    {
+        Character occupant;
+        uint occupantId;
+        lock (mate.AttachmentSyncRoot)
+        {
+            if (!mate.Passengers.TryGetValue(seat, out var passenger) || passenger._objId == 0 ||
+                checkRequest && !CanRequestUnmount(actor, mate, seat))
+                return;
+            occupantId = passenger._objId;
+            occupant = World?.GetUnit(occupantId) as Character;
+        }
+
+        if (occupant == null)
+        {
+            lock (mate.AttachmentSyncRoot)
+                if (mate.Passengers[seat]._objId == occupantId)
+                    mate.Passengers[seat]._objId = 0;
+            return;
+        }
+
+        lock (occupant.AttachmentSyncRoot)
+        lock (mate.AttachmentSyncRoot)
+        {
+            var passenger = mate.Passengers[seat];
+            if (passenger._objId != occupantId || checkRequest && !CanRequestUnmount(actor, mate, seat))
+                return;
+            passenger._objId = 0;
+            passenger._reason = reason;
+            if (!IsCurrentOccupant(occupant, mate, seat))
+                return;
+
+            occupant.Transform.Parent = null;
+            var position = mate.Transform.World;
+            occupant.SetPosition(position.Position.X, position.Position.Y, position.Position.Z,
+                position.Rotation.X, position.Rotation.Y, position.Rotation.Z);
+            occupant.IsRiding = false;
+            occupant.AttachedPoint = AttachPointKind.None;
+        }
+
+        mate.StopUpdateXp();
+        occupant.BroadcastPacket(new SCUnitDetachedPacket(occupant.ObjId, reason), true);
+        occupant.Events.OnUnmount(actor, new OnUnmountArgs());
+        mate.Buffs.TriggerRemoveOn(BuffRemoveOn.Unmount);
+        occupant.Buffs.TriggerRemoveOn(BuffRemoveOn.Unmount);
+    }
+
+    internal static bool IsCurrentOccupant(Character occupant, Mate mate, AttachPointKind seat) =>
+        ReferenceEquals(occupant.ParentWorld, mate.ParentWorld) &&
+        occupant.Transform.InstanceId == mate.Transform.InstanceId && occupant.AttachedPoint == seat &&
+        MountSeatAuthorization.IsAttached(occupant, mate);
 
     /// <summary>
     /// Adds a new pet (or despawns the previous one)

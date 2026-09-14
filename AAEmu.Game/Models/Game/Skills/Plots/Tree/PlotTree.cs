@@ -3,6 +3,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Units;
 
 using NLog;
@@ -253,12 +254,15 @@ public class PlotTree(uint plotId)
 
         if (ShouldStartCooldown(state.CancellationRequested(), state.IsCasting))
         {
-            state.Caster?.Cooldowns.AddCooldown(state.ActiveSkill.Template.Id, (uint)state.ActiveSkill.Template.CooldownTime);
+            if (state.Caster != null)
+                SkillCooldowns.StartCooldown(state.Caster, state.ActiveSkill,
+                    state.Caster.ApplySkillModifiers(state.ActiveSkill, SkillAttribute.Cooldown, state.ActiveSkill.Template.CooldownTime));
 
             if (state.Caster?.GetOwnerCharacter() is { } character && Skill.CanIgnoreCooldowns(character))
             {
-                character.ResetSkillCooldown(state.ActiveSkill.Template.Id, false);
-                state.Caster.Cooldowns.RemoveCooldown(state.ActiveSkill.Template.Id);
+                character.ResetSkillCooldown(state.ActiveSkill.Template.Id,
+                    (uint)Math.Max(0, state.ActiveSkill.Template.CooldownTagId), false);
+                state.Caster.Cooldowns.RemoveCooldown(state.ActiveSkill.Template);
             }
         }
 

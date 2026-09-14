@@ -1,8 +1,9 @@
-using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Skills.Buffs;
@@ -12,6 +13,7 @@ using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.StaticValues;
 using NLog;
 // ReSharper disable UnusedAutoPropertyAccessor.Global
+
 
 namespace AAEmu.Game.Models.Game.Skills.Templates;
 
@@ -227,6 +229,8 @@ public class BuffTemplate
     public void Start(BaseUnit caster, BaseUnit owner, Buff buff)
     {
         RemoveBonuses(owner, buff);
+        if (owner is Unit mount && MateGameData.Instance.IsMountSkillBuff(Id))
+            mount.ActiveMountSkillBuffId = Id;
 
         foreach (var template in Bonuses)
         {
@@ -474,6 +478,9 @@ public class BuffTemplate
 
     private void DispelCore(BaseUnit caster, BaseUnit owner, Buff buff, bool replaced)
     {
+        // The r208022 client clears the replacement list when any granting buff ends.
+        if (owner is Unit mount && MateGameData.Instance.IsMountSkillBuff(Id))
+            mount.ActiveMountSkillBuffId = 0;
         RemoveBonuses(owner, buff);
         var requiringBuffs = owner.Buffs.GetBuffsRequiring(buff.Template.Id);
         foreach (var requiringBuff in requiringBuffs.ToList())
