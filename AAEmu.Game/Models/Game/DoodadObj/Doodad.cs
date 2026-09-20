@@ -781,15 +781,16 @@ public class Doodad : BaseUnit
         // Post-phase work must use a live doodad. RatioRespawn can replace and delete this instance.
         if (!_deleted)
         {
+            // Capture this client-visible phase before another phase can change the doodad in the same batch.
+            var phasePacket = new SCDoodadPhaseChangedPacket(this);
             void NotifyPhase()
             {
-            BroadcastPacket(new SCDoodadPhaseChangedPacket(this), true); // change the phase to display doodad
+                BroadcastPacket(phasePacket, true); // change the phase to display doodad
 
-            // aaemu-cluster#92 / #95: re-arm the per-instance DoodadFuncAreaTrigger sensors for the phase
-            // we settled in, then notify world subscribers (dungeon scripts) with the NEW FuncGroupId.
-            // Null-conditional because the initial InitDoodad settle can run before ParentWorld is assigned.
-            ParentWorld?.DoodadAreaTriggers.OnDoodadPhaseChanged(this);
-            ParentWorld?.RaiseDoodadPhaseChanged(this, FuncGroupId);
+                // World sensors and scripts continue to observe the current committed state.
+                // Null-conditional because the initial InitDoodad settle can run before ParentWorld is assigned.
+                ParentWorld?.DoodadAreaTriggers.OnDoodadPhaseChanged(this);
+                ParentWorld?.RaiseDoodadPhaseChanged(this, FuncGroupId);
             }
             if (SkillLaborBatch.Current is { } batch)
                 batch.AfterCommit(NotifyPhase);
