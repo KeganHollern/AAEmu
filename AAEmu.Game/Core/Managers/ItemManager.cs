@@ -1876,9 +1876,13 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
                     if (containerId > 0 && _allPersistentContainers.TryGetValue(containerId, out var container))
                     {
-                        // Move item to its container (if defined)
-                        if (container.AddOrMoveExistingItem(ItemTaskType.Invalid, item, item.Slot,
-                                notifyInventory: container.ContainerType != SlotType.Auction))
+                        // Mate equipment exists before its summoned mate. Restore its saved
+                        // state without treating startup as a new gameplay equip operation.
+                        var restored = container is MateEquipmentContainer mateEquipment
+                            ? mateEquipment.RestorePersistedItem(item)
+                            : container.AddOrMoveExistingItem(ItemTaskType.Invalid, item, item.Slot,
+                                notifyInventory: container.ContainerType != SlotType.Auction);
+                        if (restored)
                         {
                             // Older auction winner mail can keep the seller's Auction container.
                             // Preserve the persisted buyer owner, including a foreign owner for validation.
@@ -1887,7 +1891,17 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                             item.IsDirty = false;
                         }
                         else
+                        {
+                            if (container is MateEquipmentContainer)
+                            {
+                                // A partial load must not save this item with container_id=0.
+                                // Keep the stored row and stop startup with its exact identity.
+                                _allItems.Remove(item.Id);
+                                throw new InvalidOperationException(
+                                    $"Failed to restore mate equipment item {item.Id} in container {container.ContainerId}, slot {item.Slot}.");
+                            }
                             Logger.Fatal($"Failed to add item {item} to existing container {container.ContainerId} !");
+                        }
                     }
                     else
                     {

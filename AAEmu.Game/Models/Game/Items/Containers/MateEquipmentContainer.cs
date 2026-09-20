@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Core.Packets.G2C;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -31,6 +32,28 @@ public class MateEquipmentContainer : EquipmentContainer
         return item is EquipItem && item.Template is ArmorTemplate armor &&
             mate.Level >= armor.LevelRequirement && (armor.LevelLimit == 0 || mate.Level <= armor.LevelLimit) &&
             GetAllowedGearSlots(armor).Contains((EquipmentItemSlot)targetSlot);
+    }
+
+    /// <summary>
+    /// Restores saved equipment before CharacterMates attaches the summoned mate.
+    /// This does not equip a new item or apply gameplay eligibility and bind rules.
+    /// </summary>
+    internal bool RestorePersistedItem(Item item)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (ParentUnit != null || ContainerId == 0 || item == null || item._holdingContainer != null ||
+                item.SlotType != ContainerType || item.Slot < 0 || item.Slot >= ContainerSize ||
+                GetItemBySlot(item.Slot) != null)
+                return false;
+
+            // Keep the saved owner, slot, flags, and details. Mate creation later
+            // attaches this container and updates gear bonuses once the mate exists.
+            item._holdingContainer = this;
+            Items.Insert(0, item);
+            UpdateFreeSlotCount();
+            return true;
+        }
     }
 
     public override void OnEnterContainer(Item item, ItemContainer lastContainer, byte previousSlot)

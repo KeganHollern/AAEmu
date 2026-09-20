@@ -16,6 +16,7 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.World.Transform;
@@ -271,6 +272,82 @@ public class MountSkillAuthorizationTests
         // An old invalid item must still be removable from a valid container slot.
         await Assert.That(container.CanAccept(null, (int)EquipmentItemSlot.Chest)).IsTrue();
         await Assert.That(container.CanAccept(null, container.ContainerSize)).IsFalse();
+    }
+
+    [Test]
+    public async Task SavedMateEquipment_RestoresBeforeMateCreationAndKeepsGameplayChecks()
+    {
+        Set(_data, "_equipmentSlots", new Dictionary<int, HashSet<EquipmentItemSlot>>
+        { [1] = [EquipmentItemSlot.Head] });
+        _mate.Template.MateEquipSlotPackId = 1;
+        var container = new MateEquipmentContainer(_actor.Id, SlotType.EquipmentMate, false, null)
+        { ContainerId = 700, MateId = _mate.Id, IsDirty = false };
+        var template = new ArmorTemplate { LevelRequirement = 35,
+            WearableTemplate = new Wearable { SlotTypeId = (uint)EquipmentItemSlotType.Head } };
+        var item = new Armor { Id = 701, TemplateId = 200, Template = template, OwnerId = _actor.Id,
+            SlotType = SlotType.EquipmentMate, Slot = (int)EquipmentItemSlot.Head, Count = 1,
+            Grade = 6, Durability = 29, RuneId = 35, IsDirty = false };
+
+        // An ordinary equip must still fail while no authenticated mate exists.
+        await Assert.That(container.AddOrMoveExistingItem(ItemTaskType.Invalid, item, item.Slot)).IsFalse();
+        await Assert.That(container.RestorePersistedItem(item)).IsTrue();
+        await Assert.That(container.GetItemBySlot(item.Slot)).IsSameReferenceAs(item);
+        await Assert.That(item._holdingContainer).IsSameReferenceAs(container);
+        await Assert.That(item.OwnerId).IsEqualTo((ulong)_actor.Id);
+        await Assert.That(item.Slot).IsEqualTo((int)EquipmentItemSlot.Head);
+        await Assert.That(item.Grade).IsEqualTo((byte)6);
+        await Assert.That(item.Durability).IsEqualTo((byte)29);
+        await Assert.That(item.RuneId).IsEqualTo(35u);
+        await Assert.That(item.IsDirty).IsFalse();
+        await Assert.That(container.IsDirty).IsFalse();
+        await Assert.That(container.FreeSlotCount).IsEqualTo(container.ContainerSize - 1);
+
+        var manager = new ItemManager(null, null, null, null, null, null);
+        Set(manager, "_allPersistentContainers", new Dictionary<ulong, ItemContainer> { [container.ContainerId] = container });
+        _mate.Equipment = manager.GetItemContainerForCharacter(_actor.Id, SlotType.EquipmentMate, _mate, _mate.Id);
+        await Assert.That(_mate.Equipment).IsSameReferenceAs(container);
+        await Assert.That(container.ParentUnit).IsSameReferenceAs(_mate);
+        await Assert.That(container.GetItemBySlot(item.Slot)).IsSameReferenceAs(item);
+        await Assert.That(container.CanAccept(item, item.Slot)).IsTrue();
+        _mate.Level = 34;
+        await Assert.That(container.CanAccept(item, item.Slot)).IsFalse();
+        await Assert.That(container.CanAccept(new Item(), item.Slot)).IsFalse();
+        await Assert.That(container.CanAccept(null, item.Slot)).IsTrue();
+    }
+
+    [Test]
+    public async Task SavedMateEquipment_RestoresOldGearWithoutGrantingNewEquipPermission()
+    {
+        var container = new MateEquipmentContainer(_actor.Id, SlotType.EquipmentMate, false, null)
+        { ContainerId = 700 };
+        var item = new Armor { Id = 701, TemplateId = 999, OwnerId = _actor.Id,
+            SlotType = SlotType.EquipmentMate, Slot = (int)EquipmentItemSlot.Head,
+            Template = new ArmorTemplate { LevelRequirement = 50,
+                WearableTemplate = new Wearable { SlotTypeId = (uint)EquipmentItemSlotType.Head } } };
+        await Assert.That(container.RestorePersistedItem(item)).IsTrue();
+        container.ParentUnit = _mate;
+        await Assert.That(container.CanAccept(item, item.Slot)).IsFalse();
+        await Assert.That(container.CanAccept(null, item.Slot)).IsTrue();
+        await Assert.That(container.GetItemBySlot(item.Slot)).IsSameReferenceAs(item);
+    }
+
+    [Test]
+    public async Task SavedMateEquipment_RejectsDuplicateSlotAndRestoreAfterMateAttachment()
+    {
+        var container = new MateEquipmentContainer(_actor.Id, SlotType.EquipmentMate, false, null)
+        { ContainerId = 700 };
+        var item = new Armor { Id = 701, SlotType = SlotType.EquipmentMate, Slot = 0 };
+        var duplicate = new Armor { Id = 702, SlotType = SlotType.EquipmentMate, Slot = 0 };
+        await Assert.That(container.RestorePersistedItem(item)).IsTrue();
+        await Assert.That(container.RestorePersistedItem(item)).IsFalse();
+        await Assert.That(container.RestorePersistedItem(duplicate)).IsFalse();
+        await Assert.That(duplicate._holdingContainer).IsNull();
+        duplicate.Slot = container.ContainerSize;
+        await Assert.That(container.RestorePersistedItem(duplicate)).IsFalse();
+        duplicate.Slot = 1;
+        container.ParentUnit = _mate;
+        await Assert.That(container.RestorePersistedItem(duplicate)).IsFalse();
+        await Assert.That(container.Items).HasSingleItem();
     }
 
     [Test]
