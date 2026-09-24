@@ -32,7 +32,7 @@ public sealed partial class SkillLaborTests
         var callbacks = new List<uint>();
         doodad.ParentWorld.DoodadPhaseChanged += (current, phase) =>
         {
-            // World subscribers still observe the final committed state, not a replayed historical state.
+            // The event identifies each completed transition; the doodad retains its committed state.
             callbacks.Add(phase);
             callbacks.Add(current.FuncGroupId);
         };
@@ -68,7 +68,7 @@ public sealed partial class SkillLaborTests
             await Assert.That(doodad.Phases[1].GroupId).IsEqualTo(17070u);
             await Assert.That(doodad.Phases[0].TimeLeft).IsGreaterThan(170000u).And.IsLessThanOrEqualTo(180000u);
             await Assert.That(doodad.Phases[1].TimeLeft).IsGreaterThan(0u).And.IsLessThanOrEqualTo(3000u);
-            await Assert.That(callbacks).IsEquivalentTo(new uint[] { 17070, 17070, 17070, 17070 });
+            await Assert.That(callbacks.SequenceEqual(new uint[] { 3150, 17070, 17070, 17070 })).IsTrue();
             await Assert.That(TaskManager.Instance.GetQueueCount()).IsEqualTo(1);
         }
         else
