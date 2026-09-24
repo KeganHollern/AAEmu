@@ -783,14 +783,15 @@ public class Doodad : BaseUnit
         {
             // Capture this client-visible phase before another phase can change the doodad in the same batch.
             var phasePacket = new SCDoodadPhaseChangedPacket(this);
+            var changedPhase = FuncGroupId;
             void NotifyPhase()
             {
                 BroadcastPacket(phasePacket, true); // change the phase to display doodad
 
-                // World sensors and scripts continue to observe the current committed state.
+                // Sensors observe the committed state. Events identify the transition that produced this packet.
                 // Null-conditional because the initial InitDoodad settle can run before ParentWorld is assigned.
                 ParentWorld?.DoodadAreaTriggers.OnDoodadPhaseChanged(this);
-                ParentWorld?.RaiseDoodadPhaseChanged(this, FuncGroupId);
+                ParentWorld?.RaiseDoodadPhaseChanged(this, changedPhase);
             }
             if (SkillLaborBatch.Current is { } batch)
                 batch.AfterCommit(NotifyPhase);
