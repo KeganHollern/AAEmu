@@ -79,7 +79,7 @@ public sealed class SubZoneVisitPersistenceTests
         private readonly List<(FieldInfo Field, object Previous)> _fields = [];
         public Character Owner { get; }
         public WorldInstance World { get; }
-        
+
 
         public SubZoneScope(uint ownerId)
         {

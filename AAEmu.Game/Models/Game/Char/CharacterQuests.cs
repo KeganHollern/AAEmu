@@ -1108,7 +1108,7 @@ public class CharacterQuests(Character owner, IGameScheduleManager schedules = n
     /// <param name="sendPacketsIfChanged"></param>
     public void ResetDailyQuests(bool sendPacketsIfChanged)
     {
-        ResetDailyQuests(sendPacketsIfChanged, QuestManager.Instance.GetTemplate);
+        ResetDailyQuests(sendPacketsIfChanged, id => QuestManager.Instance.GetTemplate(id));
     }
 
     internal void ResetDailyQuests(bool sendPacketsIfChanged, Func<uint, QuestTemplate> getTemplate)
