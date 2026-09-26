@@ -1,7 +1,5 @@
 ﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
-using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Units;
 
@@ -9,6 +7,11 @@ namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 
 public class Dyeing : SpecialEffectAction
 {
+    protected override SpecialType SpecialEffectActionType => SpecialType.Dyeing;
+
+    internal static bool IsDyeingSkill(Skill skill) => skill.Template?.Effects.Any(effect =>
+        effect.Template is SpecialEffect { SpecialEffectTypeId: SpecialType.Dyeing }) == true;
+
     public override void Execute(BaseUnit caster,
         SkillCaster casterObj,
         BaseUnit target,
@@ -22,27 +25,41 @@ public class Dyeing : SpecialEffectAction
         int value3,
         int value4)
     {
-        if (caster is Character) { Logger.Debug("Special effects: Dyeing value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4); }
-
-        // TODO: Should check whether the item being dyed is actually dyeable (listed in dyeable_items table).
-
-        var owner = (Character)caster;
-        var skillItem = casterObj as SkillItem;
-        var skillTargetItem = (SkillCastItemTarget)targetObj;
-        var targetItem = owner.Inventory.GetItemById(skillTargetItem.Id);
-        var equipItem = (EquipItem)targetItem;
-
-        // Check the item used is in the Dye (33) category.
-        // Could alternatively look up the item template ID in the item_dyeings table to verify it can be used as a dye.
-        var template = ItemManager.Instance.GetTemplate(skillItem.ItemTemplateId);
-        if (template.CategoryId != 33)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            Logger.Warn($"{owner.Name} tried to dye with a non-dye item - item id {skillItem.ItemId} and template id {skillItem.ItemTemplateId}");
-            return;
+            if (caster is not Character owner)
+                return;
+            var batch = SkillLaborBatch.For(owner);
+            if (batch == null)
+            {
+                skill.Cancelled = true;
+                return;
+            }
+            if (casterObj is not SkillItem source || targetObj is not SkillCastItemTarget destination ||
+                owner.Inventory.GetItemById(destination.Id) is not EquipItem equipment ||
+                owner.Inventory.GetItemById(source.ItemId) is not { Template.CategoryId: 33 } dye ||
+                equipment.OwnerId != owner.Id || dye.OwnerId != owner.Id ||
+                dye.SlotType != SlotType.Inventory || dye.Count <= 0 || equipment.Count <= 0 ||
+                source.ItemTemplateId != dye.TemplateId || dye.Template.UseSkillId != skill.Template.Id ||
+                !ItemManager.Instance.IsDyeableItem(equipment.TemplateId) ||
+                TradeReservation.GetReservedCount(dye) != 0)
+            {
+                batch.Fail();
+                owner.SendErrorMessage(ErrorMessageType.InvalidTarget);
+                return;
+            }
+            if (equipment.SlotType != SlotType.Inventory)
+            {
+                batch.Fail();
+                owner.SendErrorMessage(ErrorMessageType.CannotDyeingWhenEquipped);
+                return;
+            }
+            if (!batch.Inventory.TryChangeDye(owner.Inventory.Bag, equipment, dye.TemplateId))
+            {
+                batch.Fail();
+                owner.SendErrorMessage(ErrorMessageType.InvalidTarget);
+            }
+            // Skill.Apply consumes the dye in this same batch after the effect.
         }
-
-        equipItem.DyeItemId = skillItem.ItemTemplateId;
-
-        owner.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.Dyeing, [new ItemUpdate(equipItem)], []));
     }
 }

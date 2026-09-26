@@ -24,6 +24,7 @@ public class ItemTemplate
     public ItemImplEnum ImplId { get; set; }
     public uint BuffId { get; set; }
     public bool Gradable { get; set; }
+    public bool GradeEnchantable { get; set; }
     public bool LootMulti { get; set; }
     public uint LootQuestId { get; set; }
     public int HonorPrice { get; set; }

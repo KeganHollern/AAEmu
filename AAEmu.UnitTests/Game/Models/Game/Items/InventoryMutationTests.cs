@@ -979,7 +979,7 @@ public sealed class InventoryMutationTests
             var scroll = AddItem(1, 100, 2);
             _templates[200] = new WeaponTemplate
             {
-                Id = 200, MaxCount = 1, BindType = ItemBindType.Normal,
+                Id = 200, MaxCount = 1, BindType = ItemBindType.Normal, Gradable = true, GradeEnchantable = true,
                 HoldableTemplate = new Holdable { SlotTypeId = 1 }
             };
             var equipment = AddItem(2, 200, 1);

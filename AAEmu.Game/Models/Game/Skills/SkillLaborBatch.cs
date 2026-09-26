@@ -138,8 +138,9 @@ internal sealed class SkillLaborBatch
         return 0;
     }
 
-    public static bool Run(Character owner, Skill skill, bool chargeLabor, Action effects) =>
-        RunCore(owner, skill, chargeLabor, effects, null, ItemTaskType.SkillEffectGainItem);
+    public static bool Run(Character owner, Skill skill, bool chargeLabor, Action effects,
+        ItemTaskType itemTaskType = ItemTaskType.SkillEffectGainItem) =>
+        RunCore(owner, skill, chargeLabor, effects, null, itemTaskType);
 
     internal static bool RunPlacement(Character owner, Skill skill, int laborCost, Action effects,
         ItemTaskType itemTaskType = ItemTaskType.DoodadCreate)

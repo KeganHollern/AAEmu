@@ -84,6 +84,31 @@ public sealed class InventoryMutation : IDisposable
         return true;
     }
 
+    public bool TryChangeAppearance(ItemContainer source, EquipItem item, uint imageTemplateId)
+    {
+        RequireActive();
+        if (_failed || !IsHeldBy(item, source) || TradeReservation.GetReservedCount(item) != 0)
+            return Fail();
+        Capture(source);
+        Capture(item);
+        item.ImageItemTemplateId = imageTemplateId;
+        AddTask(source.Owner, new ItemUpdate(item));
+        return true;
+    }
+
+    public bool TryChangeDye(ItemContainer source, EquipItem item, uint dyeTemplateId)
+    {
+        RequireActive();
+        if (_failed || !IsHeldBy(item, source) || TradeReservation.GetReservedCount(item) != 0)
+            return Fail();
+        Capture(source);
+        Capture(item);
+        item.DyeItemId = dyeTemplateId;
+        item.IsDirty = true;
+        AddTask(source.Owner, new ItemUpdate(item));
+        return true;
+    }
+
     public bool TryConsume(ItemContainer source, Item item, int count)
     {
         RequireActive();
@@ -470,6 +495,8 @@ public sealed class InventoryMutation : IDisposable
         private readonly int _count = item.Count;
         private readonly ItemFlag _flags = item.ItemFlags;
         private readonly byte _grade = item.Grade;
+        private readonly uint _imageTemplateId = item.ImageItemTemplateId;
+        private readonly uint _dyeTemplateId = (item as EquipItem)?.DyeItemId ?? 0;
         private readonly bool _dirty = item.IsDirty;
 
         public void Restore()
@@ -481,6 +508,9 @@ public sealed class InventoryMutation : IDisposable
             item.Count = _count;
             item.ItemFlags = _flags;
             item.Grade = _grade;
+            item.ImageItemTemplateId = _imageTemplateId;
+            if (item is EquipItem equipment)
+                equipment.DyeItemId = _dyeTemplateId;
             item.IsDirty = _dirty;
         }
     }
