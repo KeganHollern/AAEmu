@@ -49,6 +49,10 @@ Failed commits and cancelled skills do not publish the event.
 Team delivery preserves the complete event and the existing single-delivery marker.
 The existing team eligibility and distance checks remain in force.
 
+Some existing `Doodad.Use` refusals return without a cancellation result.
+This change does not classify every such refusal as a failed interaction.
+The confirmed rejection checks cover the configured fields, cancellation, and failed transaction commits.
+
 These conclusions concern the server event contract and the authored compact fields.
 This work does not claim a new native packet contract or completed human client tests.
 
@@ -71,7 +75,7 @@ These checks need the published release. None is complete from automated test re
 A GM-prepared test character can use a quest when normal prerequisites prevent access.
 Do not reset Kegan's saved quests or remove his items to prepare a test.
 
-- [ ] **HV265-1.** Accept quest `5490` in Mirage Isle. Collect 10 total group-9 items across available member types. The objective reaches 10 and permits completion. Completion removes only 10 matching items.
+- [ ] **HV265-1.** Use quest `5490` on a GM-prepared test character. Its authored 2013 schedule prevents normal acceptance. Collect 10 total group-9 items across available member types. The objective reaches 10 and permits completion. Completion removes only 10 matching items.
 - [ ] **HV265-2.** Accept quest `6578`. Acquire 1 item from `34602` through `34618`. The objective completes and keeps the item after turn-in.
 - [ ] **HV265-3.** Accept quest `6600`. Acquire 1 item from `34619` through `34635`. The objective completes and keeps the item after turn-in.
 - [ ] **HV265-4.** Accept quest `6615`. Acquire 1 item from `34636` through `34652`. The objective completes and keeps the item after turn-in.
