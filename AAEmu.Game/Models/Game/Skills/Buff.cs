@@ -26,6 +26,7 @@ public class Buff
 
     public uint Index { get; set; }
     public Skill Skill { get; set; }
+    internal AAEmu.Game.Models.Game.Duels.Duel DuelContext { get; private set; }
     // public EffectTemplate Template { get; set; }
     public BuffTemplate Template { get; set; }
     public Unit Caster { get; set; }
@@ -51,6 +52,7 @@ public class Buff
         SkillCaster = skillCaster;
         Template = template;
         Skill = skill;
+        DuelContext = skill?.DuelContext ?? DuelManager.Instance.GetActiveDuel(Caster);
         StartTime = time;
         EndTime = DateTime.MinValue;
         AbLevel = 1;
@@ -165,6 +167,7 @@ public class Buff
         AbLevel = newBuff.AbLevel;
         Caster = newBuff.Caster;
         SkillCaster = newBuff.SkillCaster;
+        DuelContext = newBuff.DuelContext;
         StartTime = now;
         Duration = Template.StackRule == BuffStackRule.Extend
             ? newBuff.Duration + (int)remaining : newBuff.Duration;

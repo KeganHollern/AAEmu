@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -29,12 +30,6 @@ public partial class Character
     /// <summary>War-zone death honor penalty (clamped to victim's current honor).</summary>
     private const int WarZoneHonorLoss = 10;
 
-    /// <summary>Escalating death respawn wait times in seconds. Resets after 5 min without dying.</summary>
-    private static readonly int[] DeathWaitTimesSeconds = [15, 30, 60, 90, 120, 150, 180, 210, 240];
-    private const int DeathCountResetMinutes = 5;
-    private int _consecutiveDeathCount;
-    private DateTime _lastDeathTime = DateTime.MinValue;
-
     /// <summary>True if last death was a PvP kill in a War zone (Leech debuff on temple-revive).</summary>
     public bool DiedInPvpWarZone { get; set; }
     /// <summary>True if last death was a PvP kill (any zone — skips Weakened Body debuff on temple-revive).</summary>
@@ -59,8 +54,9 @@ public partial class Character
 
     public override void DoDie(BaseUnit killer, KillReason killReason)
     {
+        DuelManager.Instance.CancelForCharacter(this);
         // Escalating respawn timer — runs BEFORE base.DoDie sends SCUnitDeathPacket
-        ComputeDeathWaitTime();
+        ComputeDeathWaitTime(DateTime.UtcNow, killReason, ResurrectionGameData.Instance);
         ClearResurrectionOffer();
         var priestResurrection = FindPriestResurrectionBuff(DateTime.UtcNow);
 
@@ -192,30 +188,6 @@ public partial class Character
                 TrialManager.Instance.ArrestCriminal(this, arrestor);
             }
         }
-    }
-
-    /// <summary>
-    /// Computes the escalating death wait time and stores it in RezWaitDuration.
-    /// After 5 minutes without dying, the counter resets.
-    /// </summary>
-    private void ComputeDeathWaitTime()
-    {
-        if (_lastDeathTime != DateTime.MinValue &&
-            (DateTime.UtcNow - _lastDeathTime).TotalMinutes >= DeathCountResetMinutes)
-        {
-            _consecutiveDeathCount = 0;
-        }
-
-        var index = Math.Min(_consecutiveDeathCount, DeathWaitTimesSeconds.Length - 1);
-        var waitSeconds = DeathWaitTimesSeconds[index];
-
-        RezWaitDuration = waitSeconds * 1000;
-        DeadTime = DateTime.UtcNow;
-
-        _consecutiveDeathCount++;
-        _lastDeathTime = DateTime.UtcNow;
-
-        Logger.Debug($"Death #{_consecutiveDeathCount} for {Name}: respawn wait = {waitSeconds}s");
     }
 
     internal static ZoneConflictType RecordZoneConflictKill(ZoneConflict conflictData, bool qualifyingKill)

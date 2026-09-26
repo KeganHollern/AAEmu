@@ -285,9 +285,9 @@ public sealed class PeaceProtectionTests
     {
         _targetConflict.SetState(ZoneConflictType.Peace);
         var duel = new Duel(_attacker, _target);
-        SetField(_duels, "_duels", new ConcurrentDictionary<uint, Duel>(new Dictionary<uint, Duel> { [1] = duel, [2] = duel }));
+        SetField(_duels, "_duels", new Dictionary<uint, Duel> { [1] = duel, [2] = duel });
         await Assert.That(PeaceProtection.PreventsAttack(_attacker, _target)).IsTrue();
-        duel.DuelEndTimerTask = new DuelEndTimerTask(duel, 1);
+        duel.Active = true;
         await Assert.That(PeaceProtection.PreventsAttack(_attacker, _target)).IsFalse();
         var mate = new Mate { ObjId = 20, OwnerObjId = _target.ObjId, Faction = _target.Faction };
         var slave = new Slave { ObjId = 21, OwnerId = _target.Id, Summoner = _target, Faction = _target.Faction };
@@ -298,7 +298,7 @@ public sealed class PeaceProtectionTests
         await Assert.That(PeaceProtection.PreventsAttack(_attacker, slave)).IsTrue();
         var other = CreateCharacter(3, 100, FactionsEnum.NuiaAlliance);
         await Assert.That(PeaceProtection.PreventsAttack(other, _target)).IsTrue();
-        duel.DuelEndTimerTask = null;
+        duel.Active = false;
         await Assert.That(PeaceProtection.PreventsAttack(_attacker, _target)).IsTrue();
     }
 

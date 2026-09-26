@@ -1,11 +1,13 @@
-using AAEmu.Game.Models.Game.Skills.Templates;
+﻿using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Skills.Plots.Tree;
+
 
 namespace AAEmu.Game.Models.Game.Skills.Effects;
 
 public class EffectSource
 {
     public Skill Skill { get; set; }
+    internal AAEmu.Game.Models.Game.Duels.Duel DuelContext { get; set; }
     public BuffTemplate Buff { get; set; }
     public int Amount { get; set; }
     public bool IsTrigger { get; set; }

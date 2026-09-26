@@ -13,6 +13,7 @@ namespace AAEmu.Game.Models.Game.Char;
 public partial class Character
 {
     private ResurrectionOffer _resurrectionOffer;
+    internal static readonly TimeSpan ResurrectionOfferLifetime = TimeSpan.FromSeconds(300);
 
     public bool BuyPriestBuff(uint offerId, Npc npc)
     {
@@ -92,31 +93,37 @@ public partial class Character
         buff != null && buff.State == EffectState.Acting && buff.Duration > 0 &&
         now < buff.StartTime.AddMilliseconds(buff.Duration) && buff.Template.ResurrectionHealth > 0;
 
-    internal void OfferResurrection(SkillCaster caster, int health, int mana, bool percent = true, int restoreExperience = 0)
+    internal void OfferResurrection(SkillCaster caster, int health, int mana, bool percent = true, int restoreExperience = 0, DateTime? offeredAt = null)
     {
         lock (StorePurchaseSyncRoot)
         {
             if (Hp > 0 || health <= 0 || mana < 0 || (percent && (health > 100 || mana > 100)))
                 return;
-            if (_resurrectionOffer?.DeathTime == DeadTime)
+            var now = offeredAt ?? DateTime.UtcNow;
+            if (_resurrectionOffer?.DeathTime == DeadTime && now < _resurrectionOffer.ExpiresAt)
                 restoreExperience = Math.Max(restoreExperience, _resurrectionOffer.RestoreExperience);
             _resurrectionOffer = new ResurrectionOffer(DeadTime, Transform.World.Position, Transform.World.Rotation.Z,
-                health, mana, percent, Math.Max(0, restoreExperience));
+                health, mana, percent, Math.Max(0, restoreExperience), now + ResurrectionOfferLifetime);
             SendPacket(new SCNotifyResurrectionPacket(caster));
         }
     }
 
-    internal bool TryTakeResurrectionOffer(out ResurrectionOffer offer)
+    internal bool TryTakeResurrectionOffer(out ResurrectionOffer offer, DateTime? requestedAt = null)
     {
         lock (StorePurchaseSyncRoot)
         {
             offer = _resurrectionOffer;
             _resurrectionOffer = null;
-            return Hp <= 0 && offer != null && offer.DeathTime == DeadTime;
+            return Hp <= 0 && offer != null && offer.DeathTime == DeadTime &&
+                   (requestedAt ?? DateTime.UtcNow) < offer.ExpiresAt;
         }
     }
 
-    internal void ClearResurrectionOffer() => _resurrectionOffer = null;
+    internal void ClearResurrectionOffer()
+    {
+        lock (StorePurchaseSyncRoot)
+            _resurrectionOffer = null;
+    }
 
     internal void RestorePriestExperience(ResurrectionOffer offer)
     {
@@ -131,7 +138,7 @@ public partial class Character
     }
 
     internal sealed record ResurrectionOffer(DateTime DeathTime, Vector3 Position, float Rotation,
-        int Health, int Mana, bool Percent, int RestoreExperience)
+        int Health, int Mana, bool Percent, int RestoreExperience, DateTime ExpiresAt)
     {
         public int GetHealth(int maximum) => Math.Max(1, Percent ? (int)((long)maximum * Health / 100) : Math.Min(maximum, Health));
         public int GetMana(int maximum) => Percent ? (int)((long)maximum * Mana / 100) : Math.Min(maximum, Mana);
