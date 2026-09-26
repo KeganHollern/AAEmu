@@ -63,7 +63,7 @@ This change does not claim to solve those contact and movement-authority limits.
 A follow-up must add actor support/contact queries for static geometry and current world objects.
 It must define contact tolerances from native actor physics and check accepted vertical trajectories.
 It must also check packet timing, sparse falls, forged contact events, and roofs without the native contact report.
-This work belongs with the broader movement-authority work in #131.
+This work needs a separate follow-up issue. It relates to the movement-authority work in closed issue #131.
 
 Water, active gliding, authored immunity, server skill controllers, current impulses, and attachments clear fall history.
 Teleport position locks, world changes, parent changes, direct transform transfers, death, and despawn also clear it.
