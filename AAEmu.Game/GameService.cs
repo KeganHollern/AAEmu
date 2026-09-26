@@ -136,14 +136,15 @@ public sealed class GameService : IHostedService, IDisposable
         _healthState.MarkNotReady();
         Logger.Info("Stopping daemon...");
 
-        await SaveManager.Instance.StopAsync();
+        // Stop admission and drain packet/disconnect work before the final checkpoint.
+        GameNetwork.Instance.Stop();
+        StreamNetwork.Instance.Stop();
+        LoginNetwork.Instance.Stop();
 
         // SpawnManager.Instance.Stop(); Moved to World Instance
         TowerDefenseManager.Instance.Dispose();
         TaskManager.Instance.Stop();
-        GameNetwork.Instance.Stop();
-        StreamNetwork.Instance.Stop();
-        LoginNetwork.Instance.Stop();
+        await SaveManager.Instance.StopAsync();
 
         /*
         HousingManager.Instance.Save();

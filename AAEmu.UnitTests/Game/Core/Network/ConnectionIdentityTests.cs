@@ -82,6 +82,28 @@ public class ConnectionIdentityTests
         await Assert.That(table.GetConnection(nextSession)).IsSameReferenceAs(next);
     }
 
+    [Test]
+    public async Task Shutdown_ClosesAdmissionAndMarksEveryAcceptedConnectionClosed()
+    {
+        var table = new GameConnectionTable();
+        var first = new GameConnection(new RecordingSession(7));
+        var second = new GameConnection(new RecordingSession(8));
+        table.AddConnection(first);
+        table.AddConnection(second);
+
+        var draining = table.BeginShutdown();
+        var lateSession = new RecordingSession(9);
+        var late = new GameConnection(lateSession);
+
+        await Assert.That(draining.Count).IsEqualTo(2);
+        await Assert.That(first.IsClosed).IsTrue();
+        await Assert.That(second.IsClosed).IsTrue();
+        await Assert.That(table.AddConnection(late)).IsFalse();
+        await Assert.That(lateSession.Closes).IsEqualTo(1);
+        await Assert.That(table.GetConnection(lateSession)).IsNull();
+        await Assert.That(table.GetConnections().Count).IsEqualTo(2);
+    }
+
     private sealed class RecordingSession(uint id) : ISession
     {
         public int Closes { get; private set; }
