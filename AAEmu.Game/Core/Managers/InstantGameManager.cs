@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.InstantGame;
 using AAEmu.Game.Models.Game.InstantGame.Static;
 
@@ -31,39 +32,57 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
 
     public void ApplyToBattlefield(uint battlefieldId, InstantCorps corps, Character character)
     {
-        lock (_lock)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            ref var applicants =
-                ref CollectionsMarshal.GetValueRefOrAddDefault(_matchmakingQueue, battlefieldId, out var exists);
+            if (!PrisonerAccess.CanEnter(character, true))
+                return;
 
-            if (!exists)
+            lock (_lock)
             {
-                if (BattlefieldGameData.Instance.GetBattlefield(battlefieldId) is not null)
+                ref var applicants =
+                    ref CollectionsMarshal.GetValueRefOrAddDefault(_matchmakingQueue, battlefieldId, out var exists);
+
+                if (!exists)
                 {
-                    applicants = [];
+                    if (BattlefieldGameData.Instance.GetBattlefield(battlefieldId) is not null)
+                    {
+                        applicants = [];
+                    }
+                    else
+                    {
+                        _log.Warn(
+                            "[Matchmaking] Failed to add player {0} to matchmaking queue for battlefield {1}; battlefield does not exist",
+                            character.Name, battlefieldId);
+                        _matchmakingQueue.Remove(battlefieldId);
+                        return;
+                    }
                 }
-                else
+
+                if (applicants.Any(applicant => applicant.CharObj == character))
                 {
-                    _log.Warn(
-                        "[Matchmaking] Failed to add player {0} to matchmaking queue for battlefield {1}; battlefield does not exist",
-                        character.Name, battlefieldId);
-                    _matchmakingQueue.Remove(battlefieldId);
                     return;
                 }
+
+                applicants.Add(new MatchmakingApplicant(character));
             }
 
-            if (applicants.Any(applicant => applicant.CharObj == character))
-            {
-                return;
-            }
+            _log.Trace("[Matchmaking] Added player " + character.Name + " to matchmaking queue for battlefield " +
+                       battlefieldId);
 
-            applicants.Add(new MatchmakingApplicant(character));
+            character.SendPacket(new SCAppliedToInstantGamePacket(battlefieldId, corps));
+
         }
+    }
 
-        _log.Trace("[Matchmaking] Added player " + character.Name + " to matchmaking queue for battlefield " +
-                   battlefieldId);
-
-        character.SendPacket(new SCAppliedToInstantGamePacket(battlefieldId, corps));
+    internal void CancelAdmissions(Character character)
+    {
+        lock (_lock)
+        {
+            foreach (var applicants in _matchmakingQueue.Values)
+                applicants?.RemoveAll(applicant => applicant.CharObj == character);
+            foreach (var game in _instantGames.Concat(_queueList).Append(character.CurrentInstantGame).Distinct().ToArray())
+                game?.CancelAdmission(character);
+        }
     }
 
     public void WithdrawFromBattlefield(Character character)
@@ -119,7 +138,7 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
         }
 
         // Remove offline players in the queue list
-        var offlinePlayers = applicants.Where(a => a.CharObj == null).ToList();
+        var offlinePlayers = applicants.Where(a => !PrisonerAccess.CanEnter(a.CharObj, true)).ToList();
         if (offlinePlayers.Count > 0)
         {
             foreach (var players in offlinePlayers)
@@ -217,9 +236,11 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
 
     public bool PlayerCanEnter(Character character)
     {
+        if (!PrisonerAccess.CanEnter(character, true))
+            return false;
         if (character != null)
         {
-            // TODO: Not in jury, not in duel, not in jail conditions
+            // TODO: Not in jury, not in duel conditions
             if (character.IsInBattle)
                 return false; // In Combat
             else if (character.Transform.InstanceId != WorldManager.DefaultInstanceId)
@@ -240,12 +261,16 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
 
     public void BattlefieldTick(TimeSpan delta)
     {
-        lock (_lock)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            foreach (var (bfId, players) in _matchmakingQueue)
+            lock (_lock)
             {
-                CheckMatchmakingQueue(bfId);
+                foreach (var (bfId, players) in _matchmakingQueue)
+                {
+                    CheckMatchmakingQueue(bfId);
+                }
             }
+
         }
     }
 

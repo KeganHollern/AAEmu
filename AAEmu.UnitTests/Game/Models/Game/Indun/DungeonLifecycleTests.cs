@@ -35,6 +35,9 @@ public sealed class DungeonLifecycleTests
     [Before(Test)]
     public void SetUp()
     {
+        var skills = new SkillManager(null, null);
+        SetField(skills, "_taggedBuffs", new Dictionary<uint, List<uint>>());
+        SetSingleton(skills);
         var tick = new TickManager();
         _worldManager = new WorldManager(tick, Mock.Of<IWorldIdManager>().Object,
             new Lazy<IZoneManager>(() => Mock.Of<IZoneManager>().Object),
@@ -387,6 +390,59 @@ public sealed class DungeonLifecycleTests
         await Assert.That(ev.GetRoomDoodad(first.Id)).IsNull();
         await Assert.That(ev.GetRoomDoodad(second.Id)).IsSameReferenceAs(secondDoodad);
         await Assert.That(ev.GetRoomPlayerCount(second.Id)).IsEqualTo(7u);
+    }
+
+    [Test]
+    public async Task QueuePlayer_Prisoner_DoesNotConsumeOrQueue()
+    {
+        var world = CreateWorld();
+        var dungeon = new Dungeon(new IndunZone { ZoneGroupId = ZoneGroupId }, world);
+        var player = CreatePlayer();
+        player.OfflineGuiltyTime = 1;
+        var consumed = false;
+
+        var accepted = dungeon.QueuePlayer(player, () => { consumed = true; return true; });
+
+        await Assert.That(accepted).IsFalse();
+        await Assert.That(consumed).IsFalse();
+        await Assert.That(dungeon.EnterRequests).IsEmpty();
+        await Assert.That(world.HasCharacter(player.Id)).IsFalse();
+    }
+
+    [Test]
+    public async Task CompleteLoading_SentenceAfterQueue_DoesNotMovePrisoner()
+    {
+        var world = CreateWorld();
+        var dungeon = new Dungeon(new IndunZone { ZoneGroupId = ZoneGroupId }, world);
+        var player = CreatePlayer();
+        dungeon.EnterRequests.Add(player);
+        player.OfflineGuiltyTime = 1;
+        var before = player.Transform.InstanceId;
+
+        dungeon.CompleteLoading(world);
+
+        await Assert.That(dungeon.FinishedLoading).IsTrue();
+        await Assert.That(dungeon.EnterRequests).IsEmpty();
+        await Assert.That(world.HasCharacter(player.Id)).IsFalse();
+        await Assert.That(player.Transform.InstanceId).IsEqualTo(before);
+    }
+
+    [Test]
+    public async Task CancelAdmission_QueuedAndEntered_RemovesBothWithoutRestoringOldPosition()
+    {
+        var world = CreateWorld();
+        var dungeon = new Dungeon(new IndunZone { ZoneGroupId = ZoneGroupId }, world);
+        var player = CreatePlayer();
+        dungeon.EnterRequests.Add(player);
+        world.AddObject(player);
+        var before = player.Transform.World.Position;
+
+        dungeon.CancelAdmission(player);
+        dungeon.CompleteLoading(world);
+
+        await Assert.That(dungeon.EnterRequests).IsEmpty();
+        await Assert.That(world.HasCharacter(player.Id)).IsFalse();
+        await Assert.That(player.Transform.World.Position).IsEqualTo(before);
     }
 
     private WorldInstance CreateWorld()

@@ -5,6 +5,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.Indun.Events;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.World;
@@ -278,47 +279,54 @@ public class Dungeon
     /// </remarks>
     internal bool QueuePlayer(Character character, Func<bool> consumeEntryRequirement)
     {
-        var addImmediately = false;
-        lock (_lock)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            // aaemu-cluster#92 (#102): refuse entry into a dungeon that is being destroyed by the
-            // abandoned-instance sweep; the caller falls through to creating a fresh instance.
-            if (IsDestroyed)
-                return false;
-
-            if (EnterRequests.Contains(character))
-                return true;
-
-            // Block players who are part of a court case
-            if (TrialManager.Instance.IsPlayerInCourt(character.Id))
+            var addImmediately = false;
+            lock (_lock)
             {
-                character.SendErrorMessage(ErrorMessageType.CannotUsePortalInTrial);
-                return false;
+                // aaemu-cluster#92 (#102): refuse entry into a dungeon that is being destroyed by the
+                // abandoned-instance sweep; the caller falls through to creating a fresh instance.
+                if (IsDestroyed)
+                    return false;
+
+                if (!PrisonerAccess.CanEnter(character))
+                    return false;
+
+                if (EnterRequests.Contains(character))
+                    return true;
+
+                // Block players who are part of a court case
+                if (TrialManager.Instance.IsPlayerInCourt(character.Id))
+                {
+                    character.SendErrorMessage(ErrorMessageType.CannotUsePortalInTrial);
+                    return false;
+                }
+
+                if (consumeEntryRequirement != null && !consumeEntryRequirement())
+                    return false;
+
+                // aaemu-cluster#92 (#102, review): disarm the abandoned sweep only once the player has
+                // actually passed every refusal check. Clearing the stamp earlier let a refused
+                // attempt pin a never-entered instance until the 24h expiry.
+                _emptySince = null;
+
+                PlayersWithAccess.Add(character.Id);
+                addImmediately = FinishedLoading;
+                if (!addImmediately)
+                    EnterRequests.Add(character);
             }
 
-            if (consumeEntryRequirement != null && !consumeEntryRequirement())
-                return false;
+            if (addImmediately)
+            {
+                AddPlayer(character);
+            }
+            else
+            {
+                character.SendPacket(new SCProcessingInstancePacket((int)_zoneInstanceId.ZoneId));
+            }
+            return true;
 
-            // aaemu-cluster#92 (#102, review): disarm the abandoned sweep only once the player has
-            // actually passed every refusal check. Clearing the stamp earlier let a refused
-            // attempt pin a never-entered instance until the 24h expiry.
-            _emptySince = null;
-
-            PlayersWithAccess.Add(character.Id);
-            addImmediately = FinishedLoading;
-            if (!addImmediately)
-                EnterRequests.Add(character);
         }
-
-        if (addImmediately)
-        {
-            AddPlayer(character);
-        }
-        else
-        {
-            character.SendPacket(new SCProcessingInstancePacket((int)_zoneInstanceId.ZoneId));
-        }
-        return true;
     }
 
     /// <summary>
@@ -327,34 +335,53 @@ public class Dungeon
     /// <param name="character"></param>
     public void AddPlayer(Character character)
     {
-        Logger.Info($"[Dungeon] Adding player {character.Name} to dungeon {_zoneInstanceId.InstanceId}, {_zoneInstanceId.ZoneId}");
-
-        lock (_lock)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            // aaemu-cluster#92 (#102): someone is (re)entering, so the instance is no longer
-            // eligible for the empty-instance sweep.
-            _emptySince = null;
+            if (!PrisonerAccess.CanEnter(character))
+                return;
+            Logger.Info($"[Dungeon] Adding player {character.Name} to dungeon {_zoneInstanceId.InstanceId}, {_zoneInstanceId.ZoneId}");
 
-            if (!World.HasCharacter(character.Id))
+            lock (_lock)
             {
-                World.AddObject(character);
+                // aaemu-cluster#92 (#102): someone is (re)entering, so the instance is no longer
+                // eligible for the empty-instance sweep.
+                _emptySince = null;
+
+                if (!World.HasCharacter(character.Id))
+                {
+                    World.AddObject(character);
+                }
+                else
+                {
+                    Logger.Info($"[Dungeon] Player {character.Name} already exists in dungeon {_zoneInstanceId.InstanceId}, {_zoneInstanceId.ZoneId}. Most likely an error in logic?");
+                }
+            }
+
+            // Force despawn all mates of the player in the old world
+            character.ParentWorld?.MateManager?.RemoveAndDespawnAllActiveOwnedMates(character);
+
+            if (IsSystem)
+            {
+                MoveCharacterToSystemInstance(character);
             }
             else
             {
-                Logger.Info($"[Dungeon] Player {character.Name} already exists in dungeon {_zoneInstanceId.InstanceId}, {_zoneInstanceId.ZoneId}. Most likely an error in logic?");
+                MoveCharacterToDungeon(character);
             }
-        }
 
-        // Force despawn all mates of the player in the old world
-        character.ParentWorld?.MateManager?.RemoveAndDespawnAllActiveOwnedMates(character);
-
-        if (IsSystem)
-        {
-            MoveCharacterToSystemInstance(character);
         }
-        else
+    }
+
+    internal void CancelAdmission(Character character)
+    {
+        lock (_lock)
         {
-            MoveCharacterToDungeon(character);
+            EnterRequests.Remove(character);
+            _leaveRequests.TryRemove(character.Id, out _);
+            if (World?.HasCharacter(character.Id) == true)
+                RemovePlayer(character);
+            character.Events.OnDungeonLeave -= OnDungeonLeave;
+            character.Events.OnDisconnect -= OnDisconnect;
         }
     }
 
@@ -412,7 +439,7 @@ public class Dungeon
 
         WorldManager.Instance.RemoveWorld(World.Id);
         WorldIdManager.Instance.ReleaseId(World.Id);
-        
+
         World = null;
     }
 
@@ -786,24 +813,28 @@ public class Dungeon
 
     internal void CompleteLoading(WorldInstance loadedWorld)
     {
-        lock (_lock)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (IsDestroyed || FinishedLoading || World != loadedWorld)
-                return;
-
-            // Room events resolve their doodads here, after every spawn task has completed.
-            RegisterIndunEvents();
-            FinishedLoading = true;
-            Logger.Info($"[{World}] Dungeon instance ready!");
-
-            // QueuePlayer uses the same lock, so no request can be lost between publishing
-            // readiness and draining the queue, or modify it during enumeration.
-            foreach (var player in EnterRequests)
+            lock (_lock)
             {
-                if (player?.IsOnline == true)
-                    AddPlayer(player);
+                if (IsDestroyed || FinishedLoading || World != loadedWorld)
+                    return;
+
+                // Room events resolve their doodads here, after every spawn task has completed.
+                RegisterIndunEvents();
+                FinishedLoading = true;
+                Logger.Info($"[{World}] Dungeon instance ready!");
+
+                // QueuePlayer uses the same lock, so no request can be lost between publishing
+                // readiness and draining the queue, or modify it during enumeration.
+                foreach (var player in EnterRequests)
+                {
+                    if (player?.IsOnline == true)
+                        AddPlayer(player);
+                }
+                EnterRequests.Clear();
             }
-            EnterRequests.Clear();
+
         }
     }
 
