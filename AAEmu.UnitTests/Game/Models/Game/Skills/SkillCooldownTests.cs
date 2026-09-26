@@ -175,7 +175,9 @@ public sealed class SkillCooldownTests
     {
         var unit = new ProbeUnit();
         var skill = new Skill(new SkillTemplate { Id = 11715, CooldownTagId = 30, CooldownTime = 90000 });
-        var state = new PlotState(unit, null, unit, null, null, skill) { IsCasting = casting };
+        var state = new PlotState(unit, null, unit, null, null, skill);
+        if (casting)
+            state.RegisterCastWait(new PlotNextEvent { Casting = true }, DateTime.UtcNow.AddSeconds(1));
         if (cancelled)
             state.RequestCancellation();
         typeof(PlotTree).GetMethod("DoPlotEnd", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [state]);

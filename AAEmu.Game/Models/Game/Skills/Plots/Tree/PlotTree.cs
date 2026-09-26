@@ -28,10 +28,10 @@ public class PlotTree(uint plotId)
             var stopWatch = new Stopwatch();
             stopWatch.Start();
 
-            var queue = new Queue<(PlotNode node, DateTime timestamp, PlotTargetInfo targetInfo)>();
+            var queue = new Queue<(PlotNode node, DateTime timestamp, PlotTargetInfo targetInfo, CastWindow castWindow)>();
             var executeQueue = new Queue<(PlotNode node, PlotTargetInfo targetInfo)>();
 
-            queue.Enqueue((RootNode, DateTime.UtcNow, new PlotTargetInfo(state)));
+            queue.Enqueue((RootNode, DateTime.UtcNow, new PlotTargetInfo(state), null));
             byte lastEvent = 1;
             while (queue.Count > 0)
             {
@@ -54,18 +54,22 @@ public class PlotTree(uint plotId)
                             new SCPlotCastingStoppedPacket(state.ActiveSkill.TlId, 0, lastEvent),
                             true
                         );
-                        state.Caster.BroadcastPacket(
-                        new SCPlotChannelingStoppedPacket(state.ActiveSkill.TlId, 0, 1),
-                        true
-                        );
                     }
+                    if (state.IsChanneling)
+                        state.Caster.BroadcastPacket(new SCPlotChannelingStoppedPacket(state.ActiveSkill.TlId, 0, 1), true);
 
                     DoPlotEnd(state);
                     return;
                 }
 
-                if (now >= item.timestamp)
+                if (now >= (item.castWindow?.Deadline ?? item.timestamp))
                 {
+                    if (item.castWindow != null && !item.castWindow.TryComplete(now, out _))
+                    {
+                        if (item.castWindow.Active)
+                            queue.Enqueue(item);
+                        continue;
+                    }
                     if (state.Tickets.TryGetValue(node.Event.Id, out var value))
                         state.Tickets[node.Event.Id] = ++value;
                     else
@@ -98,38 +102,28 @@ public class PlotTree(uint plotId)
                                 foreach (var target in item.targetInfo.EffectedTargets)
                                 {
                                     var targetInfo = new PlotTargetInfo(item.targetInfo.Source, target);
-                                    queue.Enqueue(
-                                        (
-                                        child,
-                                        now.AddMilliseconds(child.ComputeDelayMs(state, targetInfo)),
-                                        targetInfo
-                                        )
-                                    );
+                                    EnqueueEvent(queue, state, child,
+                                        now.AddMilliseconds(child.ComputeDelayMs(state, targetInfo)), targetInfo);
                                 }
                             }
                             else
                             {
                                 var targetInfo = new PlotTargetInfo(item.targetInfo.Source, item.targetInfo.Target);
-                                queue.Enqueue(
-                                    (
-                                    child,
-                                    now.AddMilliseconds(child.ComputeDelayMs(state, targetInfo)),
-                                    targetInfo
-                                    )
-                                );
+                                EnqueueEvent(queue, state, child,
+                                    now.AddMilliseconds(child.ComputeDelayMs(state, targetInfo)), targetInfo);
                             }
                         }
                     }
                 }
                 else
                 {
-                    queue.Enqueue((node, item.timestamp, item.targetInfo));
+                    queue.Enqueue(item);
                     FlushExecutionQueue(executeQueue, state);
                 }
 
                 if (queue.Count > 0)
                 {
-                    var delay = (int)queue.Min(o => (o.timestamp - DateTime.UtcNow).TotalMilliseconds);
+                    var delay = (int)queue.Min(o => ((o.castWindow?.Deadline ?? o.timestamp) - DateTime.UtcNow).TotalMilliseconds);
                     delay = Math.Max(delay, 0);
 
                     // await Task.Delay(delay).ConfigureAwait(false);
@@ -151,7 +145,14 @@ public class PlotTree(uint plotId)
         DoPlotEnd(state);
         Logger.Trace($"Tree with ID {PlotId} has finished executing took {treeWatch.ElapsedMilliseconds}ms");
     }
-    private void HandleChannelingFinish(PlotNode node, PlotState state, Queue<(PlotNode node, DateTime timestamp, PlotTargetInfo targetInfo)> queue, (PlotNode node, DateTime timestamp, PlotTargetInfo targetInfo) item)
+    private static void EnqueueEvent(
+        Queue<(PlotNode node, DateTime timestamp, PlotTargetInfo targetInfo, CastWindow castWindow)> queue,
+        PlotState state, PlotNode node, DateTime timestamp, PlotTargetInfo targetInfo)
+    {
+        queue.Enqueue((node, timestamp, targetInfo, state.RegisterCastWait(node.ParentNextEvent, timestamp)));
+    }
+
+    private void HandleChannelingFinish(PlotNode node, PlotState state, Queue<(PlotNode node, DateTime timestamp, PlotTargetInfo targetInfo, CastWindow castWindow)> queue, (PlotNode node, DateTime timestamp, PlotTargetInfo targetInfo, CastWindow castWindow) item)
     {
         if (node == null || state == null || queue == null || item.targetInfo == null)
         {
@@ -160,6 +161,7 @@ public class PlotTree(uint plotId)
         }
 
         // Stop all active channeling or casting nodes
+        item.castWindow?.TryCancel();
         EndPlotChannel(state);
 
         // Check if ParentNextEvent is null
@@ -202,14 +204,14 @@ public class PlotTree(uint plotId)
                         {
 
                             var targetInfo = new PlotTargetInfo(item.targetInfo.Source, target);
-                            queue.Enqueue((child, DateTime.UtcNow, targetInfo));
+                            queue.Enqueue((child, DateTime.UtcNow, targetInfo, null));
                             queuedNodeIds.Add(child.Event.Id); // Mark this node as queued
                         }
                     }
                     else
                     {
                         var targetInfo = new PlotTargetInfo(item.targetInfo.Source, item.targetInfo.Target);
-                        queue.Enqueue((child, DateTime.UtcNow, targetInfo));
+                        queue.Enqueue((child, DateTime.UtcNow, targetInfo, null));
                         queuedNodeIds.Add(child.Event.Id); // Mark this node as queued
                     }
 

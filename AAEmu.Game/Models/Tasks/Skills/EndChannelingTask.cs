@@ -23,6 +23,9 @@ public class EndChannelingTask(
 
     public override void Execute()
     {
+        if (Skill.Cancelled || caster is not Unit unit || !ReferenceEquals(unit.SkillTask, this) ||
+            (CastWindow != null && !CastWindow.TryComplete(DateTime.UtcNow, out _)))
+            return;
         // Skill.ScheduleEffects(_caster, _casterCaster, _target, _targetCaster, _skillObject);
         Skill.EndChanneling(caster, _channelDoodad, casterCaster);
     }
