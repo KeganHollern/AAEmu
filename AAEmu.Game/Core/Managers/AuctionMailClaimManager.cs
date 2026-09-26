@@ -470,6 +470,8 @@ internal sealed class AuctionMailClaimManager : IAuctionMailClaimManager
             return false;
 
         var bag = character.Inventory?.Bag;
+        if (bag != null && !ItemPickupPolicy.CanAcquire(bag, sourceItem.Template, sourceItem.Count))
+            return false;
         if (bag == null || bag.SpaceLeftForItem(sourceItem, out var foundItems) < sourceItem.Count)
         {
             character.SendErrorMessage(ErrorMessageType.BagFull);
