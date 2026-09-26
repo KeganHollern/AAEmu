@@ -249,7 +249,17 @@ public class Unit : BaseUnit, IUnit
     public bool ForceAttack { get; set; }
     public bool Invisible { get; set; }
     public uint OwnerId { get; set; }
-    public SkillTask SkillTask { get; set; }
+    private SkillTask _skillTask;
+    public SkillTask SkillTask
+    {
+        get => Volatile.Read(ref _skillTask);
+        set
+        {
+            var previous = Interlocked.Exchange(ref _skillTask, value);
+            if (!ReferenceEquals(previous, value))
+                previous?.CastWindow?.TryCancel();
+        }
+    }
     public SkillTask AutoAttackTask { get; set; }
     public DateTime GlobalCooldown { get; set; }
     internal uint GlobalCooldownDurationMilliseconds { get; set; }
@@ -377,6 +387,7 @@ public class Unit : BaseUnit, IUnit
         }
 
         Hp = Math.Max(Hp - value, GetMinimumHealthAfterDamage(attacker, killReason));
+        SkillCastReactions.OnDamage(this, oldHp - Hp, DateTime.UtcNow);
 
         BroadcastPacket(new SCUnitPointsPacket(ObjId, Hp, Hp > 0 ? Mp : 0), true);
 

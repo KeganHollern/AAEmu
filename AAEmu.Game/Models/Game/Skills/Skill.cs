@@ -98,6 +98,7 @@ public partial class Skill
     internal uint SourceItemTemplateId { get; private set; }
     private bool _bypassGcd;
     private int _achievementUseRecorded;
+    private int _stopRequested;
     public bool Cancelled { get; set; } = false;
     public Action Callback { get; set; }
 
@@ -167,6 +168,7 @@ public partial class Skill
         }
 
         Cancelled = false;
+        Interlocked.Exchange(ref _stopRequested, 0);
         LaborSettled = false;
         LaborVocationSettled = false;
         _normalLaborEffectsCompleted = false;
@@ -357,6 +359,15 @@ public partial class Skill
             return SkillResult.CooldownTime;
         }
 
+        // Failed admission leaves the current cast intact. A successful replacement
+        // must close its old timeline before the new cast is published.
+        var previousTask = unit.SkillTask;
+        if (previousTask?.CastWindow?.Active == true && previousTask.Skill != this)
+            previousTask.Skill.Stop(unit, (previousTask as EndChannelingTask)?._channelDoodad);
+        var previousPlot = unit.ActivePlotState;
+        if (previousPlot != null && previousPlot.ActiveSkill != this)
+            previousPlot.CancelCastWaits();
+
         // Cancel buffs if Template asks for it
         if (Template.CancelOngoingBuffs)
         {
@@ -417,7 +428,10 @@ public partial class Skill
                 RealCastTimeDiv10 = (ushort)(castTime / 10), // calculate with adjustments
             }, true);
 
-            unit.SkillTask = new CastTask(this, caster, casterCaster, target, targetCaster, skillObject);
+            unit.SkillTask = new CastTask(this, caster, casterCaster, target, targetCaster, skillObject)
+            {
+                CastWindow = new CastWindow(DateTime.UtcNow.AddMilliseconds(castTime), true, false, Template.CastingDelayable)
+            };
             TaskManager.Instance.Schedule(unit.SkillTask, TimeSpan.FromMilliseconds(castTime));
         }
         else
@@ -764,7 +778,8 @@ public partial class Skill
         if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
         {
             Cancelled = true;
-            unit.SkillTask = null;
+            if (unit.SkillTask?.Skill == this)
+                unit.SkillTask = null;
             EndSkill(caster);
             return;
         }
@@ -804,7 +819,8 @@ public partial class Skill
 #pragma warning restore CA1508 // Avoid dead conditional code
             }
         }
-        unit.SkillTask = null;
+        if (unit.SkillTask?.Skill == this)
+            unit.SkillTask = null;
 
         ConsumeMana(caster);
         SkillCooldowns.StartCooldown(unit, this, caster.ApplySkillModifiers(this, SkillAttribute.Cooldown, Template.CooldownTime));
@@ -946,7 +962,10 @@ public partial class Skill
         }
 
         caster.BroadcastPacket(new SCSkillFiredPacket(Id, TlId, casterCaster, targetCaster, this, skillObject), true);
-        unit.SkillTask = new EndChannelingTask(this, caster, casterCaster, target, targetCaster, skillObject, doodad);
+        unit.SkillTask = new EndChannelingTask(this, caster, casterCaster, target, targetCaster, skillObject, doodad)
+        {
+            CastWindow = new CastWindow(DateTime.UtcNow.AddMilliseconds(Template.ChannelingTime), false, true, false)
+        };
         TaskManager.Instance.Schedule(unit.SkillTask, TimeSpan.FromMilliseconds(Template.ChannelingTime));
     }
 
@@ -955,7 +974,8 @@ public partial class Skill
         if (caster is not Unit unit) { return; }
         if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
             Cancelled = true;
-        unit.SkillTask = null;
+        if (unit.SkillTask?.Skill == this)
+            unit.SkillTask = null;
         if (Template.ChannelingBuffId != 0)
         {
             caster.Buffs.RemoveEffect(Template.ChannelingBuffId, Template.Id);
@@ -1670,30 +1690,21 @@ public partial class Skill
     public void Stop(BaseUnit caster, Doodad channelDoodad = null, SkillCaster casterCaster = null)
     {
         if (caster is not Unit unit) { return; }
+        if (Interlocked.Exchange(ref _stopRequested, 1) != 0)
+            return;
         Cancelled = true;
+        if (unit.SkillTask?.Skill == this)
+            unit.SkillTask.CastWindow?.TryCancel();
         (caster as Character)?.Craft?.CancelFromSkill(Template.Id);
-        if (Template.ChannelingTime > 0)
-        {
-            EndChanneling(caster, channelDoodad, casterCaster);
-        }
-
         if (Template.ToggleBuffId != 0)
-        {
             caster.Buffs.RemoveEffect(Template.ToggleBuffId, Template.Id);
-        }
         caster.BroadcastPacket(new SCCastingStoppedPacket(TlId, 0), true);
-        caster.BroadcastPacket(new SCSkillEndedPacket(TlId), true);
-        Callback?.Invoke();
-        unit.OnSkillEnd(this);
-        unit.SkillTask = null;
-        SkillTlIdManager.ReleaseId(TlId);
-        TlId = 0;
-
-        if (caster.GetOwnerCharacter() is { } character && CanIgnoreCooldowns(character))
-        {
-            character.ResetSkillCooldown(Template.Id, (uint)Math.Max(0, Template.CooldownTagId), false);
-            unit.Cooldowns.RemoveCooldown(Template);
-        }
+        if (unit.SkillTask?.Skill == this)
+            unit.SkillTask = null;
+        if (Template.ChannelingTime > 0)
+            EndChanneling(caster, channelDoodad, casterCaster);
+        else
+            EndSkill(caster);
     }
 
     internal static bool CanIgnoreCooldowns(Character character)

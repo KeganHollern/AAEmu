@@ -83,16 +83,6 @@ public class PlotNode
         castTime = state.Caster.ApplySkillModifiers(state.ActiveSkill, SkillAttribute.CastTime, castTime) * state.Caster.CastTimeMul;
         castTime = Math.Max(castTime, 0);
 
-        if (castTime > 0)
-            state.IsCasting = true;
-        if (ParentNextEvent?.Casting ?? false)
-            state.IsCasting = false;
-
-        if (ParentNextEvent?.Channeling ?? false)
-            state.IsChanneling = false;
-        else
-            state.IsChanneling = true;
-
         if (Event.HasSpecialEffects() || castTime > 0 || Event.Conditions.Count > 0)
         {
             var skill = state.ActiveSkill;
