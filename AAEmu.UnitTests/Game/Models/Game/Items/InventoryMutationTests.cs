@@ -1257,6 +1257,146 @@ public sealed class InventoryMutationTests
         await Assert.That(_bag.Items).IsEmpty();
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PickupLimit_QuestItemAndBackpackRejectASecondItem(bool backpack)
+    {
+        ItemTemplate template = backpack ? new BackpackTemplate() : new ItemTemplate();
+        template.Id = 100;
+        template.ImplId = backpack
+            ? AAEmu.Game.Models.StaticValues.ItemImplEnum.Backpack
+            : AAEmu.Game.Models.StaticValues.ItemImplEnum.AcceptQuest;
+        template.PickupLimit = 1;
+        template.MaxCount = 1;
+        _templates.Add(template.Id, template);
+        bool first;
+        bool second;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using (var mutation = new InventoryMutation(ItemTaskType.Invalid))
+                first = mutation.TryGrant(_bag, template.Id, 1) && mutation.Complete();
+            using (var mutation = new InventoryMutation(ItemTaskType.Invalid))
+                second = mutation.TryGrant(_bag, template.Id, 1) && mutation.Complete();
+        }
+        await Assert.That(first).IsTrue();
+        await Assert.That(second).IsFalse();
+        await Assert.That(_bag.Items.Single().Count).IsEqualTo(1);
+        await Assert.That(_bag.Items.Single().GetType()).IsEqualTo(template.ClassType);
+        await Assert.That(_allItems.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task PickupLimit_CountsBankAndEquipmentBeforeAStackGrant()
+    {
+        Template(100).PickupLimit = 5;
+        var banked = AddItem(1, 100, 2);
+        var equipped = AddItem(2, 100, 2);
+        _owner.Inventory.Warehouse.AddOrMoveExistingItem(ItemTaskType.Invalid, banked);
+        _owner.Inventory.Equipment.AddOrMoveExistingItem(ItemTaskType.Invalid, equipped);
+        bool result;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.Invalid);
+            mutation.TryChangeMoney(_owner, -10);
+            result = mutation.TryGrant(_bag, 100, 2);
+        }
+        await Assert.That(result).IsFalse();
+        await Assert.That(_owner.Money).IsEqualTo(100L);
+        await Assert.That(_bag.Items).IsEmpty();
+        await Assert.That(banked.Count + equipped.Count).IsEqualTo(4);
+        await Assert.That(_allItems.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task PickupLimit_UsesPreparedCountsAndRestoresAnEarlierGrantOnFailure()
+    {
+        Template(100).PickupLimit = 2;
+        var existing = AddItem(1, 100, 1);
+        bool first;
+        bool second;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.Invalid);
+            first = mutation.TryGrant(_bag, 100, 1);
+            second = mutation.TryGrant(_bag, 100, 1);
+        }
+        await Assert.That(first).IsTrue();
+        await Assert.That(second).IsFalse();
+        await Assert.That(existing.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task PickupLimit_ConsumedIngredientPermitsOneReplacement()
+    {
+        Template(100).PickupLimit = 1;
+        var existing = AddItem(1, 100, 1);
+        bool result;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.Invalid);
+            result = mutation.TryConsume(_bag, existing, 1) && mutation.TryGrant(_bag, 100, 1) && mutation.Complete();
+        }
+        await Assert.That(result).IsTrue();
+        await Assert.That(_bag.Items.Single().Count).IsEqualTo(1);
+        await Assert.That(_bag.Items.Single().Id).IsNotEqualTo(existing.Id);
+    }
+
+    [Test]
+    public async Task PickupLimit_InternalBankMoveAtLimitDoesNotAcquireAgain()
+    {
+        Template(100).PickupLimit = 1;
+        var existing = AddItem(1, 100, 1);
+        bool result;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.Invalid);
+            result = mutation.TryMove(existing, _owner.Inventory.Warehouse) && mutation.Complete();
+        }
+        await Assert.That(result).IsTrue();
+        await Assert.That(_owner.Inventory.Warehouse.Items.Single()).IsSameReferenceAs(existing);
+        await Assert.That(_bag.Items).IsEmpty();
+    }
+
+    [Test]
+    public async Task PickupLimit_MailAttachmentStaysUnclaimedWhenHeldLimitIsReached()
+    {
+        Template(100).PickupLimit = 1;
+        var held = AddItem(1, 100, 1);
+        var mailed = AddItem(2, 100, 1);
+        _owner.Inventory.MailAttachments.AddOrMoveExistingItem(ItemTaskType.Invalid, mailed);
+        bool result;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            using var mutation = new InventoryMutation(ItemTaskType.Invalid);
+            result = mutation.TryMove(mailed, _bag);
+        }
+        await Assert.That(result).IsFalse();
+        await Assert.That(_bag.Items.Single()).IsSameReferenceAs(held);
+        await Assert.That(_owner.Inventory.MailAttachments.Items.Single()).IsSameReferenceAs(mailed);
+    }
+
+    [Test]
+    public async Task PickupLimit_LegacyGrantAndCofferTransferRejectWithoutChangingEitherStack()
+    {
+        Template(100).PickupLimit = 1;
+        var held = AddItem(1, 100, 1);
+        var coffer = new ItemContainer(999, SlotType.Trade, false, null) { ContainerId = 999, ContainerSize = 10 };
+        var stored = new ItemMock(2, Template(100), 1)
+        {
+            OwnerId = coffer.OwnerId, SlotType = coffer.ContainerType, Slot = 0, _holdingContainer = coffer
+        };
+        coffer.Items.Add(stored);
+        _allItems.Add(stored.Id, stored);
+        await Assert.That(_bag.AcquireDefaultItem(ItemTaskType.Invalid, 100, 1)).IsFalse();
+        await Assert.That(_bag.AddOrMoveExistingItem(ItemTaskType.Invalid, stored)).IsFalse();
+        await Assert.That(_owner.Inventory.SplitOrMoveItemEx(ItemTaskType.Invalid,
+            coffer, _bag, stored.Id, coffer.ContainerType, 0, 0, SlotType.Inventory, 1, 1)).IsFalse();
+        await Assert.That(held.Count).IsEqualTo(1);
+        await Assert.That(coffer.Items.Single()).IsSameReferenceAs(stored);
+        await Assert.That(_bag.Items.Single()).IsSameReferenceAs(held);
+    }
+
     private static ItemAction TaskAction(ItemTask task) =>
         (ItemAction)new PacketStream(task.Write(new PacketStream()).GetBytes()).ReadByte();
 

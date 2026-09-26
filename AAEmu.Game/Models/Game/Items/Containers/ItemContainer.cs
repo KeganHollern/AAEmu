@@ -349,6 +349,8 @@ public class ItemContainer
         }
 
         var sourceContainer = item._holdingContainer;
+        if (!ItemPickupPolicy.CanAcquire(this, item.Template, item.Count, item))
+            return false;
         var sourceSlot = (byte)item.Slot;
         var sourceSlotType = item.SlotType;
         var sourceOwnerId = item.OwnerId;
@@ -813,6 +815,9 @@ public class ItemContainer
         {
             return false; // Invalid item templateId
         }
+
+        if (!ItemPickupPolicy.CanAcquire(this, template, amountToAdd))
+            return false;
 
         var totalFreeSpaceForThisItem = currentItems.Count * template.MaxCount - currentTotalItemCount + FreeSlotCount * template.MaxCount;
 

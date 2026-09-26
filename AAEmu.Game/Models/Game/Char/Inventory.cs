@@ -460,6 +460,15 @@ public class Inventory
                 action = SwapAction.doSwap;
         }
 
+        // Check both sides before an item, an offhand, or a stack changes container.
+        var swaps = action is SwapAction.doSwap or SwapAction.doEquipInEmptySlot;
+        if (fromItem != null && !ItemPickupPolicy.CanAcquire(targetContainer, fromItem.Template,
+                action == SwapAction.doSwap ? fromItem.Count : count, fromItem, swaps ? itemInTargetSlot : null))
+            return false;
+        if (swaps && itemInTargetSlot != null && !ItemPickupPolicy.CanAcquire(sourceContainer,
+                itemInTargetSlot.Template, itemInTargetSlot.Count, itemInTargetSlot, fromItem))
+            return false;
+
         var doUnEquipOffhand = false;
         var doUnEquipMainHand = false;
         Item mainHandWeapon = null;

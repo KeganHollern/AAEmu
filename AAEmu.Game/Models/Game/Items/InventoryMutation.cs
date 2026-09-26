@@ -217,6 +217,8 @@ public sealed class InventoryMutation : IDisposable
         var template = ItemManager.Instance.GetTemplate(templateId);
         if (template == null || template.MaxCount <= 0)
             return Fail();
+        if (!ItemPickupPolicy.CanAcquire(destination, template, count))
+            return Fail();
         if (template.FixedGrade >= 0 && (!template.Gradable || grade < 0))
             grade = template.FixedGrade;
         if (grade < 0)
@@ -342,6 +344,8 @@ public sealed class InventoryMutation : IDisposable
     private bool Move(Item item, ItemContainer source, ItemContainer destination, int preferredSlot, bool created,
         bool sourceDetached = false)
     {
+        if (!ItemPickupPolicy.CanAcquire(destination, item.Template, item.Count, item))
+            return Fail();
         // Container callbacks describe one transition. Do not queue intermediate
         // transitions whose item slot could change again before publication.
         if (!_moved.Add(item))
