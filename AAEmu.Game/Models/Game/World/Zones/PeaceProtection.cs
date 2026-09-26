@@ -27,7 +27,9 @@ public static class PeaceProtection
             return false;
 
         if (attacker is Character or Units.Mate && target is Character or Units.Mate &&
-            DuelManager.Instance.AreActiveOpponents(attacker.GetOwnerCharacter(), target.GetOwnerCharacter()))
+            attacker.GetOwnerCharacter() is { } attackerOwner && attackerOwner.Id == attackerOwnerId &&
+            target.GetOwnerCharacter() is { } targetOwner && targetOwner.Id == targetOwnerId &&
+            DuelManager.Instance.AreActiveOpponents(attackerOwner, targetOwner))
             return false;
 
         // Instance rules also apply when a zone has no faction or conflict row.

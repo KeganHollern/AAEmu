@@ -605,6 +605,21 @@ public sealed class PeaceProtectionTests
         await Assert.That(PeaceProtection.PreventsAttack(mate, _target)).IsTrue();
     }
 
+    [Test]
+    public async Task MateOwnerObjectIdReuse_CannotBorrowAnotherPlayersDuel()
+    {
+        var mate = new Mate { ObjId = 3, OwnerId = _attacker.Id, OwnerObjId = _attacker.ObjId };
+        var reusedObject = CreateCharacter(4, 100, FactionsEnum.NuiaAlliance);
+        reusedObject.ObjId = _attacker.ObjId;
+        MakeWorld(reusedObject, mate, _target);
+        SetInstanceRule(_target.ParentWorld, 70, false);
+        var duel = new Duel(reusedObject, _target) { Active = true };
+        SetField(_duels, "_duels", new Dictionary<uint, Duel> { [4] = duel, [2] = duel });
+        await Assert.That(PeaceProtection.PreventsAttack(reusedObject, _target)).IsFalse();
+        await Assert.That(PeaceProtection.PreventsAttack(mate, _target)).IsTrue();
+        await Assert.That(PeaceProtection.PreventsAttack(_target, mate)).IsTrue();
+    }
+
     private static void SetInstanceRule(WorldInstance world, uint zoneGroup, bool pvp)
     {
         world.DungeonInstance = new Dungeon(new IndunZone { ZoneGroupId = zoneGroup, PvP = pvp }, null);

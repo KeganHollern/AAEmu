@@ -44,7 +44,7 @@ All 15 `SkillRangeTests` passed.
 They cover boundary distances, 3D separation, rotation, scale, hull corners, repair points, missing attachment data, weapon range, and skill modifiers.
 The `SkillLaborTests` suite passed, including 2 new public `Skill.Use` cases for remote doodads and vehicles.
 Those cases check that rejected interactions do not spend labor, mana, or materials, and do not start a cast.
-All 49 `PeaceProtectionTests` also passed.
+All 50 `PeaceProtectionTests` also passed.
 The combined release tests follow integration with the other combat fixes.
 
 Missing attachment catalogue entries are tracked in [cluster issue 36](https://github.com/KeganHollern/aaemu-cluster/issues/36#issuecomment-5849949159).

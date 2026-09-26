@@ -36,7 +36,7 @@ This fix remains downstream until a separate upstream submission receives author
 ## Automated validation
 
 The Release unit-test build passed.
-All 49 `PeaceProtectionTests` passed, including 15 new instance cases.
+All 50 `PeaceProtectionTests` passed, including 16 new instance cases.
 Tests cover absent zone protection, forced attack, retaliation, Retribution, null factions, owned objects, and child vehicle ownership.
 They also cover pet ownership after logout or travel, reused owner object IDs, instance entry and exit, active duel boundaries, PvE, self effects, hostile buffs, mana damage, and cast interruption.
 The combined release tests follow integration with the other combat fixes.
