@@ -46,7 +46,18 @@ public class Unit : BaseUnit, IUnit
     // Access under AttachmentSyncRoot. Retirement precedes passenger cleanup.
     internal bool AttachmentsRetired { get; set; }
     public GameStanceType CollisionStance { get; set; } = GameStanceType.Combat;
-    public SkillController ActiveSkillController { get; set; }
+    private SkillController _activeSkillController;
+    public SkillController ActiveSkillController
+    {
+        get => _activeSkillController;
+        set
+        {
+            if (ReferenceEquals(_activeSkillController, value))
+                return;
+            FallMovement.Reset();
+            _activeSkillController = value;
+        }
+    }
 
     // Set after a knockback/impulse so AI movement is suppressed until expiry,
     // giving the displacement animation time to play on clients.
@@ -485,6 +496,7 @@ public class Unit : BaseUnit, IUnit
 
     public virtual void DoDie(BaseUnit killer, KillReason killReason)
     {
+        FallMovement.Reset();
         InterruptSkills();
 
         IsInBattle = false;
@@ -943,54 +955,74 @@ public class Unit : BaseUnit, IUnit
 
     }
 
+    internal FallMovement FallMovement { get; } = new();
+
+    internal bool HasFallDamageImmunity => Buffs.HasEffectsMatchingCondition(buff =>
+        buff.InUse && !buff.IsEnded() && buff.Template.FallDamageImmune);
+
+    internal void ObserveFallMovement(bool reportedLanding, double? time = null)
+    {
+        var controlledFall = Buffs.HasEffectsMatchingCondition(buff => buff.InUse && !buff.IsEnded() &&
+            (buff.Template.FallDamageImmune || buff.Template.Gliding));
+        if (DisabledSetPosition || IsDead || controlledFall || ActiveSkillController != null ||
+            DisplacedUntil > DateTime.UtcNow || Transform.Parent != null || Transform.StickyParent != null ||
+            this is Character { IsRiding: true } || ParentWorld?.IsWater(Transform.World.Position) == true)
+        {
+            FallMovement.Reset();
+            return;
+        }
+
+        var position = Transform.World.Position;
+        var grounded = ParentWorld?.TryGetHeight(position.X, position.Y, out var height) == true &&
+            position.Z <= height + FallMovement.PositionTolerance;
+        var impact = FallMovement.Observe(position.Z, time ?? FallMovement.Now, grounded, reportedLanding);
+        if (impact > 0)
+            DoFallDamage(impact);
+    }
+
     /// <summary>
-    /// Does fall damage based on velocity 
+    /// Applies an impact derived from accepted movement. The value uses the native
+    /// actor.fallVel encoding (0..65535 represents 0..128 metres per second).
     /// </summary>
-    /// <param name="fallVel">Velocity value from MoveType</param>
-    /// <returns>The damage that was dealt</returns>
     public virtual int DoFallDamage(ushort fallVel)
     {
-        // aaemu-cluster#92 / #93: landing in water breaks the fall — no damage and no FallStun.
-        // Dungeon pools are real server-side water now (see WaterBodies instance ingest), and the
-        // client never showed fall damage for water landings.
-        if (ParentWorld?.IsWater(Transform.World.Position) == true)
+        if (Hp <= 0 || MaxHp <= 0 || HasFallDamageImmunity ||
+            ParentWorld?.IsWater(Transform.World.Position) == true)
             return 0;
 
-        var fallDmg = Math.Min(MaxHp, (int)(MaxHp * ((fallVel - 8600) / 15000f)));
+        // Preserve the established server damage curve and lethal threshold. The
+        // movement observer, not the optional client value, supplies the impact.
         var multiplier = CalculateWithBonuses(0d, UnitAttribute.FallDamageMul) / 100d;
-        var minHpLeft = MaxHp / 20; //5% of hp 
-        var maxDmgLeft = Hp - minHpLeft; // Max damage one can take 
+        var baseDamage = Math.Clamp(MaxHp * ((fallVel - 8600) / 15000d), 0, MaxHp);
+        var damage = (int)Math.Clamp(baseDamage * Math.Max(0, 1 + multiplier), 0, MaxHp);
+        if (damage == 0 && fallVel < 32000)
+            return 0;
 
-        fallDmg = (int)(fallDmg + fallDmg * multiplier);
-
+        var oldHp = Hp;
+        var minimumHp = Math.Max(1, MaxHp / 20);
+        var availableHp = Math.Max(0, Hp - minimumHp);
         if (fallVel >= 32000)
         {
-            ReduceCurrentHp(this, Hp); // This is instant death so should be first
-            // This will also kill anybody riding this if this is a mount
+            ReduceCurrentHp(this, Hp, KillReason.Fall);
+        }
+        else if (damage < availableHp)
+        {
+            ReduceCurrentHp(this, damage, KillReason.Fall);
         }
         else
         {
-            if (fallDmg < maxDmgLeft)
-            {
-                ReduceCurrentHp(this, fallDmg); //If you can take the hit without reaching 5% hp left take it
-            }
-            else
-            {
-                var duration = 500 * (fallDmg / minHpLeft);
-
-                var buff = SkillManager.Instance.GetBuffTemplate((uint)BuffConstants.FallStun);
-                var casterObj = new SkillCasterUnit(ObjId);
-                Buffs.AddBuff(new Buff(this, this, casterObj, buff, null, DateTime.UtcNow), 0, duration);
-
-                if (Hp > minHpLeft)
-                    ReduceCurrentHp(this, maxDmgLeft); // Leaves you at 5% hp no matter what
-            }
+            var duration = 500 * (damage / minimumHp);
+            var template = SkillManager.Instance.GetBuffTemplate((uint)BuffConstants.FallStun);
+            if (template != null)
+                Buffs.AddBuff(new Buff(this, this, new SkillCasterUnit(ObjId), template, null, DateTime.UtcNow), 0, duration);
+            if (availableHp > 0)
+                ReduceCurrentHp(this, availableHp, KillReason.Fall);
         }
 
-        BroadcastPacket(new SCEnvDamagePacket(EnvSource.Falling, ObjId, (uint)fallDmg), true);
-        //SendPacket(new SCEnvDamagePacket(EnvSource.Falling, ObjId, (uint)fallDmg));
-        // TODO: Maybe adjust formula
-        return fallDmg;
+        var dealt = Math.Max(0, oldHp - Hp);
+        if (dealt > 0)
+            BroadcastPacket(new SCEnvDamagePacket(EnvSource.Falling, ObjId, (uint)dealt), true);
+        return dealt;
     }
 
     /// <summary>

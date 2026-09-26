@@ -570,11 +570,12 @@ public sealed class Mate : Unit
 
     public override int DoFallDamage(ushort fallVel)
     {
+        // Death cleanup can detach passengers. Capture them before applying the impact.
+        var riders = Passengers.ToList();
         var fallDmg = base.DoFallDamage(fallVel);
-        if (Hp <= 0)
+        if (fallDmg > 0 && Hp <= 0)
         {
-            var riders = Passengers.ToList();
-            // When fall damage kills a mount, also kill all of it's riders
+            // A lethal mount impact also reaches its riders, with their own immunity checks.
             for (var i = riders.Count - 1; i >= 0; i--)
             {
                 var pos = riders[i].Key;

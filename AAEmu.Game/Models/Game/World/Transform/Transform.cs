@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
@@ -284,6 +284,8 @@ public class Transform : IDisposable
     private void SetParent(Transform parent)
     {
         if (_parentTransform == parent) return;
+        if (_owningObject is Unit unit)
+            unit.FallMovement.Reset();
         lock (_lock)
         {
 
@@ -408,6 +410,8 @@ public class Transform : IDisposable
     /// <param name="keepStickyParent"></param>
     public void ApplyWorldSpawnPosition(WorldSpawnPosition wsp, uint newInstanceId = 0, bool keepStickyParent = false)
     {
+        if (_owningObject is Unit unit)
+            unit.FallMovement.Reset();
         DetachAll(keepStickyParent);
         if (newInstanceId != 0)
             InstanceId = newInstanceId;
@@ -654,6 +658,8 @@ public class Transform : IDisposable
     private void SetStickyParent(Transform stickyParent)
     {
         if (_stickyParentTransform == stickyParent) return;
+        if (_owningObject is Unit unit)
+            unit.FallMovement.Reset();
 
         Parent = null; // detach from parent if on any
 
@@ -715,6 +721,8 @@ public class Transform : IDisposable
 
     public void ApplyWorldTransformToLocalPosition(Transform sourceTransform, uint newInstanceId = 0, bool keepStickyParent = false)
     {
+        if (_owningObject is Unit unit)
+            unit.FallMovement.Reset();
         DetachAll(keepStickyParent);
         InstanceId = newInstanceId != 0 ? newInstanceId : sourceTransform.InstanceId;
         // WorldId = sourceTransform.WorldId;

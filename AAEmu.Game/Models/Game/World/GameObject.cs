@@ -27,6 +27,8 @@ public class GameObject : IGameObject
             _disabledSetPosition = value;
             if (value)
             {
+                if (this is Unit unit)
+                    unit.FallMovement.Reset();
                 if (this is Character character)
                 {
                     SusManager.Instance.ResetAnalyzePlayerDeltaMovement(character.Id);
@@ -72,6 +74,8 @@ public class GameObject : IGameObject
             if (_parentWorld != value)
             {
                 var previousWorld = _parentWorld;
+                if (this is Unit unit)
+                    unit.FallMovement.Reset();
                 _parentWorld = value;
                 if (value != null)
                     Transform.InstanceId = value.Id; // should not loop on itself
@@ -122,6 +126,8 @@ public class GameObject : IGameObject
 
     public virtual void Delete()
     {
+        if (this is Unit unit)
+            unit.FallMovement.Reset();
         Hide();
         Transform?.DetachAll();
         ParentWorld.RemoveObject(this);

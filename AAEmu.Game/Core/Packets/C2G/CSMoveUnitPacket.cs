@@ -313,12 +313,10 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                             ReferenceEquals(previousParent, targetUnit.Transform.Parent),
                             previousRotation != targetUnit.Transform.Local.Rotation);
 
-                    // Handle Fall Velocity
-                    if (dmt.FallVel > 0 && targetUnit is Unit unit)
-                    {
-                        _ = unit.DoFallDamage(dmt.FallVel);
-                        // character.SendMessage("{0} took {1} fall damage {2}/{3} HP left", unit.Name, fallDmg, unit.Hp, unit.MaxHp);
-                    }
+                    // Observe only accepted world movement. The optional native report
+                    // signals contact on roofs/objects, but its number never sets damage.
+                    if (targetUnit is Unit unit)
+                        unit.ObserveFallMovement((dmt.ActorFlags & 0x80) != 0 && dmt.FallVel > 0);
 
                     break;
                 }
