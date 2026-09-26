@@ -256,52 +256,12 @@ public partial class Skill
         // if (caster is Character)
         Logger.Debug($"Created SkillTlId {TlId} for Skill {Template.Id}, Caster {caster.Name} ({caster.TemplateId}:{caster.ObjId}) with target {target.Name} ({target.TemplateId}:{target.ObjId})");
 
-        // Check if target is within range
-        var skillRange = caster.ApplySkillModifiers(this, SkillAttribute.Range, Template.MaxRange);
-        var targetDist = unit.GetDistanceTo(target, true);
-
-        var minRangeCheck = Template.MinRange * 1.0;
-        var maxRangeCheck = skillRange;
-
-        // HackFix: for quest Unblock the Spring ( 3707 ), unable to use the boulder because of being "too close"
-        // The range of skill Remove Stone ( 16462 ) is defined as 100~200 which can't possibly be correct 
-        if (Template.TargetType == SkillTargetType.Doodad && Template.MinRange >= 100)
-        {
-            minRangeCheck = Template.MinRange / 100.0;
-        }
-
-        // HACKFIX : Used mostly for boats, since the actual position of the doodad is the boat's origin, and not where it is displayed
-        // TODO: Do a check based on model size or bounding box instead
-
-        // If weapon is used to calculate range, use that
-        if (Template.WeaponSlotForRangeId > 0)
-        {
-            var minWeaponRange = 0.0f; // Fist default
-            var maxWeaponRange = 3.0f; // Fist default
-            if (unit.Equipment.GetItemBySlot(Template.WeaponSlotForRangeId)?.Template is WeaponTemplate weaponTemplate)
-            {
-                minWeaponRange = weaponTemplate.HoldableTemplate.MinRange;
-                maxWeaponRange = weaponTemplate.HoldableTemplate.MaxRange;
-            }
-
-            minRangeCheck = minWeaponRange;
-            maxRangeCheck = maxWeaponRange;
-        }
-
-        if (targetDist < minRangeCheck)
+        var rangeResult = SkillRange.Check(this, unit, target);
+        if (rangeResult != SkillResult.Success)
         {
             SkillTlIdManager.ReleaseId(TlId);
             TlId = 0;
-            return SkillResult.TooCloseRange;
-        }
-
-        // TODO: Remove exception for doodads
-        // TODO: Remove exceptions for slave initiated by Doodads (needed to fix repair points on ships)
-        if (targetDist > maxRangeCheck && target is not Doodad && target is not Slave)
-        {
-            SkillTlIdManager.ReleaseId(TlId);
-            TlId = 0;
-            return SkillResult.TooFarRange;
+            return rangeResult;
         }
 
         if (character != null && !PermissionManager.Instance.CanUse(character, GamePermission.UseRestrictedPortals))

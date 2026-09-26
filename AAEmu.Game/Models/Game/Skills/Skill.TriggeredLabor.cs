@@ -70,9 +70,7 @@ public partial class Skill
             SkillRequirementsGameData.Instance.GetFailedRequirement(Template, caster, target) != 0 ||
             !ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
             return batch.Fail();
-        var range = caster.ApplySkillModifiers(this, Static.SkillAttribute.Range, Template.MaxRange);
-        var distance = unit.GetDistanceTo(target, true);
-        if (distance < Template.MinRange || distance > range)
+        if (SkillRange.Check(this, unit, target) != SkillResult.Success)
             return batch.Fail();
         var mana = ManaCost(unit);
         if (unit.Mp < mana || (caster is Character && !batch.TryConsumeChildLabor(this)))
