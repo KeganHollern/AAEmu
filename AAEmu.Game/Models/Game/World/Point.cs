@@ -136,43 +136,31 @@ public class Point
     // inside the polygon[] with n vertices
     public static bool IsInside(IReadOnlyList<Vector3> polygon, int n, Vector3 p)
     {
-        // There must be at least 3 vertices in polygon[]
-        if (n < 3)
-        {
+        if (polygon == null || n < 3 || n > polygon.Count || !float.IsFinite(p.X) || !float.IsFinite(p.Y))
             return false;
-        }
 
-        // Create a point for line segment from p to infinite
-        var extreme = new Vector3(1000, p.Y, 0);
-
-        // Count intersections of the above line
-        // with sides of polygon
-        int count = 0, i = 0;
-        do
+        var inside = false;
+        for (int i = 0, j = n - 1; i < n; j = i++)
         {
-            var next = (i + 1) % n;
-
-            // Check if the line segment from 'p' to
-            // 'extreme' intersects with the line
-            // segment from 'polygon[i]' to 'polygon[next]'
-            if (IsLineIntersection(
-                line1: (polygon[i], polygon[next]),
-                line2: (p, extreme)))
+            var a = polygon[j];
+            var b = polygon[i];
+            if (!float.IsFinite(b.X) || !float.IsFinite(b.Y))
+                return false;
+            // Match the r208022 area predicate's half-open ray crossings.
+            // A finite endpoint (previously X=1000) is not a ray for world coordinates.
+            if (a.Y == b.Y || p.Y <= Math.Min(a.Y, b.Y) || p.Y > Math.Max(a.Y, b.Y) ||
+                p.X > Math.Max(a.X, b.X))
+                continue;
+            if (a.X == b.X)
+                inside = !inside;
+            else
             {
-                // If the point 'p' is colinear with line
-                // segment 'i-next', then check if it lies
-                // on segment. If it lies, return true, otherwise false
-                if (FindTripletOrientation(polygon[i], p, polygon[next]) == 0)
-                {
-                    return OnSegment(polygon[i], p,
-                                    polygon[next]);
-                }
-                count++;
+                var slope = (b.Y - a.Y) / (b.X - a.X);
+                var intercept = a.Y - a.X * slope;
+                if (p.X < (p.Y - intercept) / slope)
+                    inside = !inside;
             }
-            i = next;
-        } while (i != 0);
-
-        // Return true if count is odd, false otherwise
-        return count % 2 == 1; // Same as (count%2 == 1)
+        }
+        return inside;
     }
 }

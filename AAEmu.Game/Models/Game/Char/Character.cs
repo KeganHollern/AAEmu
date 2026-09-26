@@ -2128,10 +2128,7 @@ public partial class Character : Unit, ICharacter
         if (item is { Count: > 0 })
         {
             // Trigger event
-            Events?.OnItemUse(this, new OnItemUseArgs
-            {
-                ItemId = item.TemplateId
-            });
+            QuestManager.Instance.DoItemUseEvents(this, item.TemplateId);
             Achievements?.Increment(CharRecordKind.UseItem, item.TemplateId, 0);
         }
     }
@@ -2145,10 +2142,7 @@ public partial class Character : Unit, ICharacter
         if (item is not null)
         {
             // Trigger event
-            Events?.OnItemUse(this, new OnItemUseArgs
-            {
-                ItemId = item.TemplateId
-            });
+            QuestManager.Instance.DoItemUseEvents(this, item.TemplateId);
             Achievements?.Increment(CharRecordKind.UseItem, item.TemplateId, 0);
         }
     }
@@ -2162,10 +2156,7 @@ public partial class Character : Unit, ICharacter
         if (itemTemplate > 0)
         {
             // Trigger event
-            Events?.OnItemUse(this, new OnItemUseArgs
-            {
-                ItemId = itemTemplate
-            });
+            QuestManager.Instance.DoItemUseEvents(this, itemTemplate);
             Achievements?.Increment(CharRecordKind.UseItem, itemTemplate, 0);
         }
     }

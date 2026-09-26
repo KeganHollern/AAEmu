@@ -333,7 +333,7 @@ public sealed class QuestRewardDeliveryTests
         SetField(_items, "_allPersistentContainers", containers);
         owner.Inventory = new Inventory(owner);
         owner.Inventory.Bag.ContainerSize = bagSize;
-        owner.Quests = new CharacterQuests(owner, _ => true, _ => { });
+        owner.Quests = new CharacterQuests(owner, _ => true, _ => { }, schedules: new GameScheduleManager(null, TimeProvider.System));
         return owner;
     }
 

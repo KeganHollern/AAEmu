@@ -83,13 +83,7 @@ public class CraftEffect : EffectTemplate
                     break;
             }
 
-            //character.Quests.OnInteraction(WorldInteraction, target);
-            // инициируем событие
-            //Task.Run(() => QuestManager.Instance.DoInteractionEvents((Character)caster, target.TemplateId));
-            if (SkillLaborBatch.Current is { } batch)
-                batch.AfterCommit(() => QuestManager.Instance.DoDoodadInteractionEvents((Character)caster, (Character)caster, target.TemplateId));
-            else
-                QuestManager.Instance.DoDoodadInteractionEvents((Character)caster, (Character)caster, target.TemplateId);
+            InteractionEffect.PublishQuestInteraction(character, target, WorldInteraction, source.Skill);
         }
     }
 

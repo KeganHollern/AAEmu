@@ -16,6 +16,7 @@ using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Team;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.UnitTests.Utils.Mocks;
 using Microsoft.Extensions.DependencyInjection;
@@ -118,12 +119,16 @@ public sealed class QuestTeamShareTests
         {
             Count = 5,
             DoodadId = doodadId,
+            WorldInteractionId = (WorldInteractionType)19,
+            Phase = 5522,
             TeamShare = true
         });
 
         var args = new OnInteractionArgs
         {
             DoodadId = doodadId,
+            WorldInteractionId = (WorldInteractionType)19,
+            Phase = 5522,
             SourcePlayer = fixture.Source
         };
 

@@ -14,6 +14,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.OpenPortal;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Teleport;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.StaticValues;
@@ -345,7 +346,7 @@ public class PortalManager(ILocalizationManager localizationManager, IWorldManag
             Level = template.Level,
             Name = portalInfo.Name,
             TeleportPosition = portalPointDestination,
-            Transform = { ZoneId = portalInfo.ZoneId }
+            Transform = { ZoneId = isExit ? portalInfo.ZoneId : owner.Transform.ZoneId }
         };
 
         if (isExit)
@@ -373,9 +374,24 @@ public class PortalManager(ILocalizationManager localizationManager, IWorldManag
         return portalNpc;
     }
 
-    public void OpenPortal(Character owner, SkillObjectPortalInfo portalEffectObj)
+    public void OpenPortal(Character owner, SkillObjectPortalInfo portalEffectObj, float distance)
     {
-        var portalInfo = owner.Portals.GetPortalInfo((uint)portalEffectObj.Id);
+        if (owner?.Portals == null || portalEffectObj == null)
+            return;
+
+        var portalInfo = portalEffectObj.Id > 0 ? owner.Portals.GetPortalInfo((uint)portalEffectObj.Id) : null;
+        if (portalInfo == null)
+        {
+            owner.SendErrorMessage(ErrorMessageType.InvalidPortal);
+            return;
+        }
+
+        if (!IsValidEntrancePosition(owner, portalEffectObj, distance))
+        {
+            owner.SendErrorMessage(ErrorMessageType.NotNearToTarget);
+            return;
+        }
+
         if (!CheckCanOpenPortal(owner, portalInfo.ZoneId)) return;
 
         var entrance = MakePortal(owner, false, portalInfo, portalEffectObj);   // Entrance (green)
@@ -385,11 +401,40 @@ public class PortalManager(ILocalizationManager localizationManager, IWorldManag
         exit.LinkedPortal = entrance;
     }
 
-    public static void UsePortal(Character character, uint objId)
+    internal static bool IsValidEntrancePosition(Character owner, SkillObjectPortalInfo portalEffectObj, float distance)
     {
-        // TODO - Cooldown between portals
-        var portalInfo = (Models.Game.Units.Portal)character.ParentWorld.GetNpc(objId);
-        if (portalInfo == null) return;
+        if (owner?.ParentWorld == null || owner.Transform == null || portalEffectObj == null ||
+            !float.IsFinite(distance) || distance <= 0 ||
+            !float.IsFinite(portalEffectObj.X) || !float.IsFinite(portalEffectObj.Y) || !float.IsFinite(portalEffectObj.Z))
+            return false;
+
+        var position = new Vector3(portalEffectObj.X, portalEffectObj.Y, portalEffectObj.Z);
+        return Vector3.DistanceSquared(owner.Transform.World.Position, position) <= distance * distance;
+    }
+
+    public static void UsePortal(Character character, uint objId, bool onlyMyPortal)
+    {
+        UsePortal(character, objId, onlyMyPortal, DateTimeOffset.UtcNow);
+    }
+
+    internal static void UsePortal(Character character, uint objId, bool onlyMyPortal, DateTimeOffset now)
+    {
+        if (character?.Portals == null)
+            return;
+
+        if (character.ParentWorld?.GetNpc(objId) is not Models.Game.Units.Portal portal ||
+            !portal.CanUseFrom(character) || portal.TeleportPosition == null)
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidPortal);
+            return;
+        }
+
+        // This is the visitor's auto_use_only_my_portal preference, not an owner privacy setting.
+        if (onlyMyPortal && portal.OwnerId != character.Id)
+        {
+            character.SendErrorMessage(ErrorMessageType.NotMyPortal);
+            return;
+        }
 
         //have Overburdened buff cannot UsePortal
         if (character.Buffs.CheckBuffTag((uint)BuffConstants.TagOverburdened))
@@ -404,42 +449,53 @@ public class PortalManager(ILocalizationManager localizationManager, IWorldManag
             return;
         }
 
-        character.DisabledSetPosition = true;
-        // TODO - UnitPortalUsed
-        // TODO - Maybe need unitState?
-        if (portalInfo.TeleportPosition.InstanceId != character.Transform.InstanceId)
+        var destination = portal.TeleportPosition;
+        var changesInstance = destination.InstanceId != character.Transform.InstanceId;
+        var slaveManager = character.ParentWorld.SlaveManager;
+        if (changesInstance)
         {
-            var slaveManager = character.ParentWorld?.SlaveManager;
             var activeSlave = slaveManager?.GetActiveSlaveByOwnerObjId(character.ObjId);
             if (activeSlave?.AttachedDoodads.Any(doodad => doodad.ItemId != 0 || doodad.ItemTemplateId != 0) == true)
             {
                 character.SendErrorMessage(ErrorMessageType.SlaveEquipmentLoadedItem);
                 return;
             }
+        }
 
-            character.ParentWorld?.MateManager?.RemoveAndDespawnAllActiveOwnedMates(character);
+        if (character.DisabledSetPosition || !character.Portals.UseState.TryBeginTeleport(now))
+        {
+            character.SendErrorMessage(ErrorMessageType.CannotReusePortalInDelayTime);
+            return;
+        }
+
+        character.DisabledSetPosition = true;
+        character.BroadcastPacket(new SCUnitPortalUsedPacket(character.ObjId), true);
+        if (changesInstance)
+        {
+            character.ParentWorld.MateManager?.RemoveAndDespawnAllActiveOwnedMates(character);
             slaveManager?.RemoveAndDespawnAllActiveOwnedSlaves(character);
+        }
 
+        character.Transform.ApplyWorldTransformToLocalPosition(destination);
+        if (changesInstance)
+        {
             character.SendPacket(
                 new SCLoadInstancePacket(
-                    portalInfo.TeleportPosition.WorldId,
-                    portalInfo.TeleportPosition.ZoneId,
-                    portalInfo.TeleportPosition.World.Position.X,
-                    portalInfo.TeleportPosition.World.Position.Y,
-                    portalInfo.TeleportPosition.World.Position.Z,
-                    portalInfo.TeleportPosition.World.Rotation.X.DegToRad(),
-                    portalInfo.TeleportPosition.World.Rotation.Y.DegToRad(),
-                    portalInfo.TeleportPosition.World.Rotation.Z.DegToRad()
+                    destination.InstanceId,
+                    destination.ZoneId,
+                    destination.World.Position.X,
+                    destination.World.Position.Y,
+                    destination.World.Position.Z,
+                    destination.World.Rotation.X.DegToRad(),
+                    destination.World.Rotation.Y.DegToRad(),
+                    destination.World.Rotation.Z.DegToRad()
                 )
             );
-
-            character.Transform = portalInfo.TeleportPosition.Clone(character);
-            character.Transform.InstanceId = portalInfo.TeleportPosition.WorldId;
         }
-        // TODO - Reason, ErrorMessage
-        character.SendPacket(new SCTeleportUnitPacket(0, 0, portalInfo.TeleportPosition.World.Position.X,
-            portalInfo.TeleportPosition.World.Position.Y, portalInfo.TeleportPosition.World.Position.Z,
-            portalInfo.TeleportPosition.World.Rotation.Z.DegToRad()));
+
+        character.SendPacket(new SCTeleportUnitPacket(TeleportReason.Portal, 0, destination.World.Position.X,
+            destination.World.Position.Y, destination.World.Position.Z,
+            destination.World.Rotation.Z.DegToRad()));
     }
 
     public static void DeletePortal(Character owner, byte type, uint id)

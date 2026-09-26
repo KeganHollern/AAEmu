@@ -18,6 +18,7 @@ public class CharacterPortals(Character owner)
     public Dictionary<uint, Portal> PrivatePortals { get; set; } = [];
     public Dictionary<uint, Portal> DistrictPortals { get; set; } = [];
     public Character Owner { get; set; } = owner;
+    internal PortalUseState UseState { get; } = new();
 
     public Portal GetPortalInfo(uint id)
     {
@@ -46,27 +47,40 @@ public class CharacterPortals(Character owner)
         }
     }
 
-    public void NotifySubZone(uint subZoneId)
+    public void NotifySubZone(uint requestedSubZoneId)
     {
-        if (VisitedDistricts.ContainsKey(subZoneId)) { return; }
+        var world = Owner.ParentWorld;
+        var transform = Owner.Transform;
+        if (world?.Template == null || transform == null || transform.InstanceId != world.Id)
+            return;
+        var position = transform.World.Position;
+        if (!float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z))
+            return;
 
-        var portals = PortalManager.Instance.GetRecallBySubZoneId(subZoneId);
-        if (portals == null) { return; }
+        var subZones = SubZoneManager.Instance.GetSubZoneByPosition(world.Template, position);
+        // The client can select a containing polygon where authored areas overlap.
+        // A stale or forged hint cannot select an area outside the server position.
+        var subZoneId = subZones.Contains(requestedSubZoneId) ? requestedSubZoneId :
+            subZones.Contains(Owner.SubZoneId) ? Owner.SubZoneId : subZones.FirstOrDefault();
+        Owner.SubZoneId = subZoneId;
+        if (subZoneId == 0)
+            return;
 
-        foreach (var portal in portals)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (!VisitedDistricts.ContainsKey(subZoneId))
+            if (VisitedDistricts.ContainsKey(subZoneId))
+                return;
+            var portals = PortalManager.Instance.GetRecallBySubZoneId(subZoneId);
+            if (portals == null || portals.Count == 0)
+                return;
+
+            VisitedDistricts.Add(subZoneId, new VisitedDistrict
             {
-                var newVisitedDistrict = new VisitedDistrict
-                {
-                    Id = VisitedSubZoneIdManager.Instance.GetNextId(), SubZone = subZoneId, Owner = Owner.Id
-                };
-                VisitedDistricts.Add(subZoneId, newVisitedDistrict);
-            }
+                Id = VisitedSubZoneIdManager.Instance.GetNextId(), SubZone = subZoneId, Owner = Owner.Id
+            });
             PopulateDistrictPortals();
             Send();
-            Logger.Debug($"{Owner.Name} - {portal.Name}:{subZoneId} added to return district list");
-            Owner.SendDebugMessage($"{portal.Name}:{subZoneId} added to visited district list in the portal book");
+            Logger.Debug("Character {OwnerId} visited subzone {SubZoneId} at {Position}", Owner.Id, subZoneId, position);
         }
     }
 

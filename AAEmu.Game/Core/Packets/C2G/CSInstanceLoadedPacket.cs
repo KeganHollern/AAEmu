@@ -19,6 +19,7 @@ public class CSInstanceLoadedPacket() : GamePacket(CSOffsets.CSInstanceLoadedPac
             TimeManager.Instance.ClientSpeed));
 
         Connection.ActiveChar.DisabledSetPosition = false;
+        Connection.ActiveChar.Portals?.UseState.CompleteTeleport(DateTimeOffset.UtcNow);
         TowerDefenseManager.SendSnapshotIfAvailable(Connection.ActiveChar);
 
         Logger.Debug("InstanceLoaded.");

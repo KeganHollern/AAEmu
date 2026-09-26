@@ -19,7 +19,7 @@ using NLog;
 
 namespace AAEmu.Game.Models.Game.Char;
 
-public class CharacterQuests(Character owner)
+public class CharacterQuests(Character owner, IGameScheduleManager schedules = null)
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private readonly Func<CompletedQuest, bool> _completedQuestPersistenceOverride;
@@ -35,8 +35,9 @@ public class CharacterQuests(Character owner)
         Character owner,
         Func<CompletedQuest, bool> completedQuestPersistenceOverride,
         Action<uint> removedQuestPersistenceOverride,
-        Action<Quest> activeQuestPersistenceOverride = null)
-        : this(owner)
+        Action<Quest> activeQuestPersistenceOverride = null,
+        IGameScheduleManager schedules = null)
+        : this(owner, schedules)
     {
         ArgumentNullException.ThrowIfNull(completedQuestPersistenceOverride);
         ArgumentNullException.ThrowIfNull(removedQuestPersistenceOverride);
@@ -96,6 +97,9 @@ public class CharacterQuests(Character owner)
                 failed.Template.DetailId != QuestDetail.Main || !failed.Template.RestartOnFail ||
                 HasQuestCompleted(questId) ||
                 !failed.QuestSteps.TryGetValue(QuestComponentKind.Start, out var start) || start.Components.Count == 0)
+                return false;
+
+            if (!CanStartInSchedule(questId))
                 return false;
 
             // Keep the failed attempt and its supplies intact until the new Start row commits.
@@ -203,6 +207,9 @@ public class CharacterQuests(Character owner)
         if (!forcibly && !IsValidQuestAcceptor(template, questAcceptorType, acceptorId))
             return RejectQuestAcceptor(questId, questAcceptorType, 0, acceptorId, "template_mismatch");
 
+        if (!forcibly && !CanStartInSchedule(questId))
+            return false;
+
         if (!forcibly && !CanAcceptSupplyItems(template))
             return false;
 
@@ -278,6 +285,16 @@ public class CharacterQuests(Character owner)
 
         quest.QuestInitialized();
         return true;
+    }
+
+    private bool CanStartInSchedule(uint questId)
+    {
+        if ((schedules ?? GameScheduleManager.Instance).CanAcceptQuest(questId))
+            return true;
+
+        // r208022 has no quest error 37. Use the established system-chat packet.
+        Owner.SendMessage("This quest is not available at this time.");
+        return false;
     }
 
     internal bool TryStartQuest(Quest quest, IQuestIdManager questIdManager)
@@ -709,23 +726,26 @@ public class CharacterQuests(Character owner)
     {
         ArgumentNullException.ThrowIfNull(persistBlock);
 
-        // Calculate block and index
-        var completedQuestBlockId = (ushort)(questId / 64);
-        var completedQuestBlockIndex = (ushort)(questId % 64);
-        // Grab or create block
-        if (!CompletedQuests.TryGetValue(completedQuestBlockId, out var completedBlock))
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            completedBlock = new CompletedQuest(completedQuestBlockId);
-            CompletedQuests.Add(completedQuestBlockId, completedBlock);
+            // Calculate block and index
+            var completedQuestBlockId = (ushort)(questId / 64);
+            var completedQuestBlockIndex = (ushort)(questId % 64);
+            // Grab or create block
+            if (!CompletedQuests.TryGetValue(completedQuestBlockId, out var completedBlock))
+            {
+                completedBlock = new CompletedQuest(completedQuestBlockId);
+                CompletedQuests.Add(completedQuestBlockId, completedBlock);
+            }
+            var previousValue = completedBlock.Body[completedQuestBlockIndex];
+            firstCompletion = isCompleted && !previousValue;
+            // Set quest flag to (not) completed
+            completedBlock.Body.Set(completedQuestBlockIndex, isCompleted);
+            persisted = persistBlock(completedBlock);
+            if (!persisted)
+                completedBlock.Body.Set(completedQuestBlockIndex, previousValue);
+            return completedBlock;
         }
-        var previousValue = completedBlock.Body[completedQuestBlockIndex];
-        firstCompletion = isCompleted && !previousValue;
-        // Set quest flag to (not) completed
-        completedBlock.Body.Set(completedQuestBlockIndex, isCompleted);
-        persisted = persistBlock(completedBlock);
-        if (!persisted)
-            completedBlock.Body.Set(completedQuestBlockIndex, previousValue);
-        return completedBlock;
     }
 
     internal IEnumerable<uint> GetCompletedQuestIds()
@@ -802,34 +822,48 @@ public class CharacterQuests(Character owner)
     /// </summary>
     /// <param name="questDetail"></param>
     /// <param name="sendIfChanged"></param>
-    private void ResetQuests(QuestDetail[] questDetail, bool sendIfChanged = true)
+    private void ResetQuests(QuestDetail[] questDetail, bool sendIfChanged, Func<uint, QuestTemplate> getTemplate)
     {
-        foreach (var (completeBlockId, completeBlock) in CompletedQuests)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            for (var blockIndex = 0; blockIndex < 64; blockIndex++)
+            foreach (var (completeBlockId, completeBlock) in CompletedQuests)
             {
-                var questId = (uint)(completeBlockId * 64) + (uint)blockIndex;
-                var q = QuestManager.Instance.GetTemplate(questId);
-                // Skip unused Ids
-                if (q == null)
-                    continue;
-                // Skip if quest still active
-                if (HasQuest(questId))
+                var changedQuestIds = new List<uint>();
+                var candidate = new CompletedQuest(completeBlockId) { Body = new BitArray(completeBlock.Body) };
+                for (var blockIndex = 0; blockIndex < 64; blockIndex++)
+                {
+                    if (!candidate.Body[blockIndex])
+                        continue;
+
+                    var questId = (uint)completeBlockId * 64 + (uint)blockIndex;
+                    var template = getTemplate(questId);
+                    if (template == null || HasQuest(questId) || !questDetail.Contains(template.DetailId))
+                        continue;
+
+                    candidate.Body.Set(blockIndex, false);
+                    changedQuestIds.Add(questId);
+                }
+
+                if (changedQuestIds.Count == 0)
                     continue;
 
-                foreach (var qd in questDetail)
+                // Keep the previous completion flags until this entire block reaches the database.
+                // The save lock prevents a periodic save from restoring stale flags after this write.
+                if (!(_completedQuestPersistenceOverride ?? FlushCompletedQuestBlock)(candidate))
                 {
-                    if (q.DetailId == qd && completeBlock.Body[blockIndex])
-                    {
-                        completeBlock.Body.Set(blockIndex, false);
-                        Logger.Info($"QuestReset by {Owner.Name}, reset {questId}");
-                        if (sendIfChanged)
-                        {
-                            var body = new byte[8];
-                            completeBlock.Body.CopyTo(body, 0);
-                            Owner.SendPacket(new SCQuestContextResetPacket(questId, body, completeBlockId));
-                        }
-                    }
+                    Logger.Warn("Daily quest reset kept completion block {BlockId} for character {OwnerId} after a failed write",
+                        completeBlockId, Owner.Id);
+                    continue;
+                }
+
+                completeBlock.Body = candidate.Body;
+                var body = new byte[8];
+                candidate.Body.CopyTo(body, 0);
+                foreach (var questId in changedQuestIds)
+                {
+                    Logger.Info("QuestReset by {OwnerId}, reset {QuestId}", Owner.Id, questId);
+                    if (sendIfChanged)
+                        Owner.SendPacket(new SCQuestContextResetPacket(questId, body, completeBlockId));
                 }
             }
         }
@@ -1074,11 +1108,16 @@ public class CharacterQuests(Character owner)
     /// <param name="sendPacketsIfChanged"></param>
     public void ResetDailyQuests(bool sendPacketsIfChanged)
     {
+        ResetDailyQuests(sendPacketsIfChanged, id => QuestManager.Instance.GetTemplate(id));
+    }
+
+    internal void ResetDailyQuests(bool sendPacketsIfChanged, Func<uint, QuestTemplate> getTemplate)
+    {
         ResetQuests(
             [
                 QuestDetail.Daily, QuestDetail.DailyGroup, QuestDetail.DailyHunt,
                 QuestDetail.DailyLivelihood
-            ], sendPacketsIfChanged
+            ], sendPacketsIfChanged, getTemplate
         );
     }
 

@@ -14,9 +14,12 @@ using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
+using AAEmu.Game.Models.Game.Schedules;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.UnitTests.Utils.Mocks;
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
@@ -86,6 +89,87 @@ public sealed class QuestItemGainStarterTests
     }
 
     [Test]
+    [Arguments("2026-09-26T09:59:59Z", false)]
+    [Arguments("2026-09-26T10:00:00Z", true)]
+    [Arguments("2026-09-26T11:59:59Z", true)]
+    [Arguments("2026-09-26T12:00:00Z", false)]
+    public async Task ItemGainStarter_ScheduleGateRunsBeforeAcceptanceOrPersistence(string now, bool expected)
+    {
+        InitializeQuestStartDependencies();
+        var template = CreateScheduledHunt();
+        RegisterTemplate(template);
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse(now));
+        var schedules = CreateSchedules(clock);
+        var (owner, items) = CreateOwnerWithItems(7, (ItemTemplateId, 5));
+        var saved = new List<Quest>();
+        owner.Quests = new CharacterQuests(owner, _ => true, _ => { }, saved.Add, schedules);
+        var initialId = QuestIdManager.Instance.GetNextId();
+        QuestIdManager.Instance.ReleaseId(initialId);
+
+        owner.Inventory.OnAcquiredItem(items[ItemTemplateId], 1, true);
+        _questManager.DoQueuedEvaluations();
+
+        await Assert.That(owner.Quests.HasQuest(QuestId)).IsEqualTo(expected);
+        await Assert.That(saved.Count).IsEqualTo(expected ? 1 : 0);
+        await Assert.That(items[ItemTemplateId].Count).IsEqualTo(5);
+        await Assert.That(owner.Quests.IsQuestComplete(QuestId)).IsFalse();
+        if (!expected)
+            await Assert.That(QuestIdManager.Instance.GetNextId()).IsEqualTo(initialId);
+    }
+
+    [Test]
+    public async Task AcceptedQuest_WindowCloses_StillReceivesProgressAndCompletes()
+    {
+        InitializeQuestStartDependencies();
+        var template = CreateScheduledHunt();
+        var reward = new QuestComponentTemplate(template) { Id = 1013, KindId = QuestComponentKind.Reward };
+        template.Components.Add(reward.Id, reward);
+        RegisterTemplate(template);
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-09-26T11:59:59Z"));
+        var schedules = CreateSchedules(clock);
+        var (owner, items) = CreateOwnerWithItems(7, (ItemTemplateId, 5));
+        owner.Quests = new CharacterQuests(owner, _ => true, _ => { }, _ => { }, schedules);
+        owner.Inventory.OnAcquiredItem(items[ItemTemplateId], 1, true);
+        _questManager.DoQueuedEvaluations();
+        var accepted = owner.Quests.ActiveQuests[QuestId];
+        await Assert.That(accepted.Step).IsEqualTo(QuestComponentKind.Progress);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Assert.That(schedules.CanAcceptQuest(QuestId)).IsFalse();
+        owner.Events.OnMonsterHunt(owner, new OnMonsterHuntArgs { NpcId = 60_001, Count = 1 });
+        _questManager.DoQueuedEvaluations();
+
+        await Assert.That(owner.Quests.IsQuestComplete(QuestId)).IsTrue();
+        await Assert.That(owner.Quests.HasQuest(QuestId)).IsFalse();
+    }
+
+    private static QuestTemplate CreateScheduledHunt()
+    {
+        var template = CreateTemplate(QuestId, false, (ItemTemplateId, 5));
+        var progress = new QuestComponentTemplate(template) { Id = 1012, KindId = QuestComponentKind.Progress };
+        progress.ActTemplates.Add(new QuestActObjMonsterHunt(progress)
+        {
+            ActId = 10102, NpcId = 60_001, Count = 1, ThisComponentObjectiveIndex = 0
+        });
+        template.Components.Add(progress.Id, progress);
+        return template;
+    }
+
+    private static GameScheduleManager CreateSchedules(TimeProvider clock)
+    {
+        var schedules = new GameScheduleManager(null, clock);
+        schedules.LoadGameSchedules(new Dictionary<int, GameSchedules>
+        {
+            [1] = new() { Id = 1, StartTime = 10, EndTime = 12 }
+        });
+        schedules.LoadGameScheduleQuests(new Dictionary<int, GameScheduleQuests>
+        {
+            [1] = new() { Id = 1, QuestId = (int)QuestId, GameScheduleId = 1 }
+        });
+        return schedules;
+    }
+
+    [Test]
     public async Task OnAcquiredItem_StackReachesThreshold_StartsQuestOnceWithMatchingAcceptor()
     {
         InitializeQuestStartDependencies();
@@ -106,7 +190,7 @@ public sealed class QuestItemGainStarterTests
         RegisterTemplate(template);
         var (owner, items) = CreateOwnerWithItems(7, (ItemTemplateId, 3));
         var persistedQuests = new List<Quest>();
-        owner.Quests = new CharacterQuests(owner, _ => true, _ => { }, persistedQuests.Add);
+        owner.Quests = new CharacterQuests(owner, _ => true, _ => { }, persistedQuests.Add, new GameScheduleManager(null, TimeProvider.System));
         var item = items[ItemTemplateId];
 
         item.Count++;
@@ -372,7 +456,7 @@ public sealed class QuestItemGainStarterTests
         SetPrivateField(_itemManager, "_allPersistentContainers", containers);
 
         owner.Inventory = new Inventory(owner);
-        owner.Quests = new CharacterQuests(owner);
+        owner.Quests = new CharacterQuests(owner, new GameScheduleManager(null, TimeProvider.System));
 
         var items = new Dictionary<uint, ItemMock>();
         ulong itemId = 100;

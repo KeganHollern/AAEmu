@@ -6,5 +6,6 @@ public interface IGameScheduleManager : ILoadable
 {
     void LoadGameSchedules(Dictionary<int, GameSchedules> gameSchedules);
     void LoadGameScheduleSpawners(Dictionary<int, GameScheduleSpawners> gameScheduleSpawners);
+    bool CanAcceptQuest(uint questId);
     void LoadGameScheduleDoodads(Dictionary<int, GameScheduleDoodads> gameScheduleDoodads);
 }
