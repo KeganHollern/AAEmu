@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
@@ -731,6 +731,81 @@ public sealed class AuctionMailClaimManagerTests
         await Assert.That(character.Money).IsEqualTo(1000L);
         await Assert.That(character.Achievements.GetAmount(sale ? AuctionSoldAchievementId : AuctionBuyAchievementId)).IsEqualTo(0u);
         await Assert.That(session.Packets.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(SlotType.Inventory, (byte)0)]
+    [Arguments(SlotType.Inventory, (byte)1)]
+    [Arguments(SlotType.Bank, (byte)0)]
+    [Arguments(SlotType.Equipment, (byte)0)]
+    public async Task GetAttached_PickupLimitRejectsBeforeAnyCheckpointAndLeavesClaimAvailable(SlotType heldLocation, byte grade)
+    {
+        var store = new InMemoryAuctionMailClaimStore();
+        var checkpoints = 0;
+        var manager = CreateManager(store, persistSourceState: _ => { checkpoints++; return true; });
+        var session = new RecordingSession();
+        var (character, mails) = CreateCharacter(manager, session);
+        var (mail, source) = AddBuyMail(character, 20, 5);
+        source.Template.PickupLimit = 10;
+        var heldContainer = heldLocation == SlotType.Inventory
+            ? character.Inventory.Bag
+            : new ItemContainer(character.Id, heldLocation, false, character) { Owner = character, ContainerSize = 10 };
+        if (heldLocation != SlotType.Inventory)
+        {
+            var property = heldLocation == SlotType.Bank ? nameof(Inventory.Warehouse) : nameof(Inventory.Equipment);
+            typeof(Inventory).GetProperty(property)!.SetValue(character.Inventory, heldContainer);
+        }
+        var held = new Item(30_002, source.Template, 7)
+        {
+            OwnerId = character.Id, SlotType = heldLocation, Slot = 0, Grade = grade, _holdingContainer = heldContainer
+        };
+        heldContainer.Items.Add(held);
+        heldContainer.UpdateFreeSlotCount();
+
+        await Assert.That(mails.GetAttached(mail.Id, false, true, true)).IsFalse();
+
+        await Assert.That(checkpoints).IsEqualTo(0);
+        await Assert.That(store.PersistCalls).IsEqualTo(0);
+        await Assert.That(store.CommitAttempts).IsEqualTo(0);
+        await Assert.That(store.ReceiptCount).IsEqualTo(0);
+        await Assert.That(mail.Body.Attachments.Single()).IsSameReferenceAs(source);
+        await Assert.That(mail.Header.Attachments).IsEqualTo((byte)1);
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        await Assert.That(source.Count).IsEqualTo(5);
+        await Assert.That(source.SlotType).IsEqualTo(SlotType.Mail);
+        await Assert.That(held.Count).IsEqualTo(7);
+        await Assert.That(character.Money).IsEqualTo(1000L);
+        await Assert.That(character.LaborPower).IsEqualTo((short)10);
+        await Assert.That(character.Achievements.GetAmount(AuctionBuyAchievementId)).IsEqualTo(0u);
+        await Assert.That(session.Packets.Any(packet => HasOpcode(packet, SCOffsets.SCAttachmentTakenPacket))).IsFalse();
+
+        // Once held inventory has room under the limit, the same mail can be claimed once.
+        heldContainer.Items.Clear();
+        heldContainer.UpdateFreeSlotCount();
+        await Assert.That(mails.GetAttached(mail.Id, false, true, true)).IsTrue();
+        await Assert.That(checkpoints).IsEqualTo(1);
+        await Assert.That(store.PersistCalls).IsEqualTo(1);
+        await Assert.That(store.ReceiptCount).IsEqualTo(1);
+        await Assert.That(mail.Body.Attachments).IsEmpty();
+        await Assert.That(character.Inventory.Bag.Items.Single()).IsSameReferenceAs(source);
+        await Assert.That(character.Money).IsEqualTo(1000L);
+    }
+
+    [Test]
+    public async Task GetAttached_PickupLimitAllowsTheExactLimitWithoutCountingTheMailSourceTwice()
+    {
+        var store = new InMemoryAuctionMailClaimStore();
+        var session = new RecordingSession();
+        var (character, mails) = CreateCharacter(CreateManager(store), session);
+        var (mail, source) = AddBuyMail(character, 20, 5);
+        source.Template.PickupLimit = 5;
+
+        await Assert.That(mails.GetAttached(mail.Id, false, true, true)).IsTrue();
+
+        await Assert.That(store.PersistCalls).IsEqualTo(1);
+        await Assert.That(source.Count).IsEqualTo(5);
+        await Assert.That(character.Inventory.Bag.Items.Single()).IsSameReferenceAs(source);
+        await Assert.That(mail.Body.Attachments).IsEmpty();
     }
 
     private AuctionMailClaimManager CreateManager(

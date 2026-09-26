@@ -1,4 +1,6 @@
-﻿using AAEmu.Game.Core.Packets.G2C;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Units;
 
@@ -160,6 +162,16 @@ public class EquipmentContainer : ItemContainer
             return false; // must be in equipment slot range
         }
 
+        if (Owner is Character character)
+        {
+            var error = GetEquipRequirementError(item.Template, character);
+            if (error != ErrorMessageType.NoErrorMessage)
+            {
+                character.SendErrorMessage(error);
+                return false;
+            }
+        }
+
         var slotTypeId = (EquipmentItemSlotType)255; // Dummy value for invalid
 
         if (item.Template is BodyPartTemplate bodyPartTemplate)
@@ -195,6 +207,36 @@ public class EquipmentContainer : ItemContainer
         }
 
         return true;
+    }
+
+    internal static ErrorMessageType GetEquipRequirementError(ItemTemplate template, Character character)
+    {
+        if (template == null)
+            return ErrorMessageType.InvalidTarget;
+        if (character.Level < template.LevelRequirement)
+            return ErrorMessageType.LevelLowToEquip;
+        if (template.LevelLimit > 0 && character.Level > template.LevelLimit)
+            return ErrorMessageType.LevelHighToEquip;
+        if (template.CharGender != 0 && template.CharGender != (byte)character.Gender)
+            return ErrorMessageType.NoMatchGenderToEquip;
+        return ErrorMessageType.NoErrorMessage;
+    }
+
+    /// <summary>Restores saved equipment before its unit exists, without a new equip or bind operation.</summary>
+    internal bool RestorePersistedItem(Item item)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (ParentUnit != null || ContainerId == 0 || item == null || item._holdingContainer != null ||
+                item.SlotType != ContainerType || item.Slot < 0 || item.Slot >= ContainerSize ||
+                GetItemBySlot(item.Slot) != null)
+                return false;
+
+            item._holdingContainer = this;
+            Items.Insert(0, item);
+            UpdateFreeSlotCount();
+            return true;
+        }
     }
 
     public override void OnEnterContainer(Item item, ItemContainer lastContainer, byte previousSlot)

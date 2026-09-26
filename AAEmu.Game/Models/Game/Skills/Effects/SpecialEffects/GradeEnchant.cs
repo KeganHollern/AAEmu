@@ -64,11 +64,18 @@ public class GradeEnchant : SpecialEffectAction
             batch.Fail();
             return;
         }
+        if (item.Template is not { Gradable: true, GradeEnchantable: true })
+        {
+            batch.Fail();
+            character.SendErrorMessage(ErrorMessageType.InvalidTarget);
+            return;
+        }
         var initialGrade = item.Grade;
         var gradeTemplate = ItemManager.Instance.GetGradeTemplate(initialGrade);
         var cost = gradeTemplate == null ? -1 : GoldCost(gradeTemplate, item, value3);
         if (cost < 0)
         {
+            character.SendErrorMessage(ErrorMessageType.InvalidTarget);
             batch.Fail();
             return;
         }

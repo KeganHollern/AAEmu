@@ -359,6 +359,8 @@ public class CharacterManager(
                             ExpertLimitCount = reader.GetByte("expert_limit"),
                             Advantage = reader.GetInt32("advantage"),
                             CastAdvantage = reader.GetInt32("cast_adv"),
+                            ExpMultiplier = reader.GetInt32("exp_mul"),
+                            Show = reader.GetBoolean("show"),
                             UpCurrencyId = reader.GetUInt32("up_currency_id", 0),
                             UpPrice = reader.GetInt32("up_price"),
                             DownCurrencyId = reader.GetUInt32("down_currency_id", 0),

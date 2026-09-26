@@ -69,7 +69,7 @@ public class GameProtocolHandler : BaseProtocolHandler
         finally { Monitor.Exit(connection.SessionSyncRoot); }
     }
 
-    private static void DisconnectWhenIdle(GameConnection connection, ISession session)
+    internal static void DisconnectWhenIdle(GameConnection connection, ISession session)
     {
         lock (connection.SessionSyncRoot)
         {

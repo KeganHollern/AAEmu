@@ -1085,7 +1085,7 @@ public partial class Skill
             if (_triggeredLaborBatch != null && ReferenceEquals(_triggeredLaborBatch, SkillLaborBatch.Current))
                 ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
             else if (caster is Character laborOwner && (Template.ConsumeLaborPower > 0 ||
-                     Template.Effects.Any(effect => effect.Template is RecoverExpEffect)))
+                     Template.Effects.Any(effect => effect.Template is RecoverExpEffect) || Dyeing.IsDyeingSkill(this)))
             {
                 lock (SaveManager.PersistenceSyncRoot)
                 {
@@ -1096,7 +1096,8 @@ public partial class Skill
                     _laborObject = skillObject;
                     _normalLaborEffectsCompleted = true;
                     SkillLaborBatch.Run(laborOwner, this, true,
-                        () => ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject));
+                        () => ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject),
+                        Dyeing.IsDyeingSkill(this) ? ItemTaskType.Dyeing : ItemTaskType.SkillEffectGainItem);
                 }
             }
             else if (casterCaster is SkillItem || ItemSocketing.IsSocketingSkill(this))

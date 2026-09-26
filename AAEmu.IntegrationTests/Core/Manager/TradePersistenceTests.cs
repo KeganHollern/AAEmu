@@ -234,6 +234,59 @@ public sealed class TradePersistenceTests
         Assert.Equal(PendingWorldAccountResult.Consumed, admission.ConsumePendingAccount(87654321, old.AccountId));
     }
 
+    [Fact]
+    public async Task NetworkStop_DrainsAnActivePacketAndSavesItsFinalWalletAndItemState()
+    {
+        using var graph = new TradeGraph();
+        var accounts = new AccountManager(Mock.Of<ITickManager>(), Mock.Of<ITimedRewardsManager>(), TimeProvider.System);
+        var connections = new GameConnectionTable();
+        graph.SetInstance(accounts);
+        graph.SetInstance(graph.Save);
+        graph.SetInstance(connections);
+        graph.SetInstance(new StreamManager());
+        graph.SetInstance(new ReconnectTokenManager());
+        var departing = graph.Owner.Connection;
+        Assert.True(departing.TryAuthenticate(graph.Owner.AccountId));
+        Assert.True(connections.AddConnection(departing));
+        accounts.Add(departing);
+        var item = graph.AddItem(graph.Owner, 30, 300, 1);
+        Assert.True(graph.Save.TryCommitEconomy([graph.Owner, graph.Target]));
+        using var entered = new ManualResetEventSlim();
+        using var finishPacket = new ManualResetEventSlim();
+        var packet = Task.Run(() =>
+        {
+            lock (departing.SessionSyncRoot)
+            {
+                entered.Set();
+                Assert.True(finishPacket.Wait(TimeSpan.FromSeconds(10)));
+                graph.Owner.Money = 4321;
+                item.Count = 7;
+            }
+        });
+        Task stopping = null;
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+            stopping = Task.Run(GameNetwork.Instance.Stop);
+            Assert.True(SpinWait.SpinUntil(() => departing.IsClosed, TimeSpan.FromSeconds(10)));
+            Assert.False(stopping.IsCompleted);
+        }
+        finally
+        {
+            finishPacket.Set();
+            await packet.WaitAsync(TimeSpan.FromSeconds(10));
+            if (stopping != null)
+                await stopping.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+
+        Assert.True(departing.DisconnectSaveSucceeded);
+        Assert.Null(departing.ActiveChar);
+        Assert.Empty(connections.GetConnections());
+        Assert.Equal(4321, ReadWallet(graph.Owner.Id));
+        var reloaded = graph.ReloadItems();
+        AssertLoadedItem(reloaded, item.Id, graph.Owner, 7, item.Grade);
+    }
+
     private static void AssertLoadedItem(ItemManager manager, ulong id, Character owner, int count, byte grade)
     {
         var item = manager.GetItemByItemId(id);

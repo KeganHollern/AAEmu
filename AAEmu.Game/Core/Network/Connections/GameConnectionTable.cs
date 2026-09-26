@@ -7,6 +7,8 @@ namespace AAEmu.Game.Core.Network.Connections;
 public class GameConnectionTable : Singleton<GameConnectionTable>
 {
     private readonly ConcurrentDictionary<uint, GameConnection> _connections;
+    private readonly object _admissionLock = new();
+    private bool _stopping;
 
     internal GameConnectionTable()
     {
@@ -15,11 +17,26 @@ public class GameConnectionTable : Singleton<GameConnectionTable>
 
     public bool AddConnection(GameConnection con)
     {
-        if (_connections.TryAdd(con.Id, con))
-            return true;
+        lock (_admissionLock)
+        {
+            if (!_stopping && _connections.TryAdd(con.Id, con))
+                return true;
+        }
 
         con.Shutdown();
         return false;
+    }
+
+    internal List<GameConnection> BeginShutdown()
+    {
+        lock (_admissionLock)
+        {
+            _stopping = true;
+            var connections = GetConnections();
+            foreach (var connection in connections)
+                connection.MarkClosed();
+            return connections;
+        }
     }
 
     public GameConnection GetConnection(uint id)

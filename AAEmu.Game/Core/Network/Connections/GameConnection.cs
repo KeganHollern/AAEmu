@@ -29,6 +29,7 @@ public class GameConnection
     internal object SessionSyncRoot { get; } = new();
     internal bool InGameCompleted { get; private set; }
     internal bool MatchesSession(ISession session) => ReferenceEquals(_session, session);
+    internal ISession Session => _session;
 
     public uint Id => _session.SessionId;
     public uint AccountId { get; set; }

@@ -1,4 +1,4 @@
-namespace AAEmu.Game.Models.Game.Char;
+﻿namespace AAEmu.Game.Models.Game.Char;
 
 public class ExpertLimit
 {
@@ -7,6 +7,8 @@ public class ExpertLimit
     public byte ExpertLimitCount { get; set; }
     public int Advantage { get; set; }
     public int CastAdvantage { get; set; }
+    public int ExpMultiplier { get; set; }
+    public bool Show { get; set; }
     public uint UpCurrencyId { get; set; }
     public int UpPrice { get; set; }
     public uint DownCurrencyId { get; set; }

@@ -1,6 +1,8 @@
-﻿using AAEmu.Game.Core.Managers.UnitManagers;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Achievement.Enums;
+using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.StaticValues;
 using MySql.Data.MySqlClient;
@@ -47,29 +49,42 @@ public class CharacterActability(Character owner)
 
     private void RegradeLocked(uint id, bool isUpgrade)
     {
-        var actability = Actabilities[id];
-
-        // TODO add validation to expert limit, if expert_limit = 0 -> infinity
+        if (!Actabilities.TryGetValue(id, out var actability))
+            return;
 
         if (isUpgrade)
         {
-            var template = CharacterManager.Instance.GetExpertLimit(actability.Step);
-            if (template == null)
-                return; // TODO ... send msg error?
-
-            if (actability.Point < template.UpLimit)
-                return; // TODO ... send msg error?
-
+            var current = CharacterManager.Instance.GetExpertLimit(actability.Step);
+            var next = CharacterManager.Instance.GetExpertLimit(actability.Step + 1);
+            if (current == null || next is not { Show: true })
+            {
+                Owner.SendErrorMessage(ErrorMessageType.ActabilityCanUpgradeAnyMore);
+                return;
+            }
+            if (actability.Point < current.UpLimit)
+            {
+                Owner.SendErrorMessage(ErrorMessageType.ActabilityNotEnoughPoint);
+                return;
+            }
+            // Each cap includes all proficiencies at that rank or above it.
+            var count = Actabilities.Values.Count(value => value.Step > actability.Step);
+            if (next.ExpertLimitCount != 0 && count >= next.ExpertLimitCount + Owner.ExpandedExpert)
+            {
+                Owner.SendErrorMessage(ErrorMessageType.ActabilityCanUpgradeSelectionCountLimit);
+                return;
+            }
             actability.Step++;
         }
         else
         {
-            var template = CharacterManager.Instance.GetExpertLimit(actability.Step - 1);
-            if (template == null)
-                return; // TODO ... send msg error?
-
+            var previous = CharacterManager.Instance.GetExpertLimit(actability.Step - 1);
+            if (previous == null)
+            {
+                Owner.SendErrorMessage(ErrorMessageType.ActabilityCanDowngradeAnyMore);
+                return;
+            }
             actability.Step--;
-            actability.Point = template.UpLimit;
+            actability.Point = Math.Min(actability.Point, previous.UpLimit);
         }
 
         Owner.SendPacket(new SCExpertLimitModifiedPacket(isUpgrade, id, actability.Step));
@@ -77,48 +92,74 @@ public class CharacterActability(Character owner)
 
     public void ExpandExpert()
     {
-        var expand = CharacterManager.Instance.GetExpandExpertLimit(Owner.ExpandedExpert);
-        if (expand == null)
-            return; // TODO ... send msg error?
+        TryExpandExpert(() => SaveManager.Instance.TryCommitEconomy([Owner]));
+    }
 
-        if (expand.LifePoint > Owner.VocationPoint)
+    internal bool TryExpandExpert(Func<bool> commit)
+    {
+        lock (Owner.StorePurchaseSyncRoot)
         {
-            Owner.SendErrorMessage(ErrorMessageType.NotEnoughExpandItemAndMoney);
-            return; // TODO ... send msg error?
-        }
-
-        if (expand.ItemId != 0 && expand.ItemCount != 0 && !Owner.Inventory.CheckItems(Items.SlotType.Inventory, expand.ItemId, expand.ItemCount))
-        {
-            Owner.SendErrorMessage(ErrorMessageType.NotEnoughExpandItem);
-            return; // TODO ... send msg error?
-        }
-
-        if (expand.LifePoint > 0)
-        {
-            Owner.ChangeGamePoints(GamePointKind.Vocation, expand.LifePoint);
-        }
-
-        if (expand.ItemId != 0 && expand.ItemCount != 0)
-        {
-            Owner.Inventory.Bag.ConsumeItem(ItemTaskType.ExpandExpert, expand.ItemId, expand.ItemCount, null);
-            /*
-            var items = Owner.Inventory.RemoveItem(expand.ItemId, expand.ItemCount);
-
-            var tasks = new List<ItemTask>();
-            foreach (var (item, count) in items)
+            var expand = CharacterManager.Instance.GetExpandExpertLimit(Owner.ExpandedExpert);
+            if (expand == null || expand.ExpandCount != Owner.ExpandedExpert + 1 ||
+                expand.LifePoint < 0 || expand.ItemCount < 0)
+                return false;
+            if (Owner.VocationPoint < expand.LifePoint)
             {
-                if (item.Count == 0)
-                    tasks.Add(new ItemRemove(item));
-                else
-                    tasks.Add(new ItemCountUpdate(item, -count));
+                Owner.SendErrorMessage(ErrorMessageType.NotEnoughExpandItemAndMoney);
+                return false;
             }
 
-            Owner.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.ExpandExpert, tasks, new List<ulong>()));
-            */
-        }
+            using var inventory = new InventoryMutation(ItemTaskType.ExpandExpert);
+            if (expand.ItemCount > 0)
+            {
+                var needed = expand.ItemCount;
+                var bag = Owner.Inventory.Bag;
+                foreach (var item in bag.Items.Where(item => item.TemplateId == expand.ItemId).OrderBy(item => item.Slot).ToArray())
+                {
+                    var count = Math.Min(needed, item.Count - TradeReservation.GetReservedCount(item));
+                    if (count <= 0)
+                        continue;
+                    if (!inventory.TryConsume(bag, item, count))
+                        break;
+                    needed -= count;
+                    if (needed == 0)
+                        break;
+                }
+                if (needed != 0)
+                {
+                    Owner.SendErrorMessage(ErrorMessageType.NotEnoughExpandItem);
+                    return false;
+                }
+            }
 
-        Owner.ExpandedExpert = expand.ExpandCount;
-        Owner.SendPacket(new SCExpertExpandedPacket(Owner.ExpandedExpert));
+            var previousVocation = Owner.VocationPoint;
+            var previousExpansion = Owner.ExpandedExpert;
+            Owner.VocationPoint -= expand.LifePoint;
+            Owner.ExpandedExpert = expand.ExpandCount;
+            bool committed;
+            try
+            {
+                committed = commit();
+            }
+            catch
+            {
+                // An unconfirmed commit stops Game. Keep the prepared state for that outcome.
+                inventory.PreservePreparedState();
+                throw;
+            }
+            if (!committed)
+            {
+                Owner.VocationPoint = previousVocation;
+                Owner.ExpandedExpert = previousExpansion;
+                Owner.SendErrorMessage(ErrorMessageType.InternalError);
+                return false;
+            }
+            inventory.Complete();
+            if (expand.LifePoint > 0)
+                Owner.SendPacket(new SCGamePointChangedPacket((byte)GamePointKind.Vocation, -expand.LifePoint));
+            Owner.SendPacket(new SCExpertExpandedPacket(Owner.ExpandedExpert));
+            return true;
+        }
     }
 
     public void Send()

@@ -3,6 +3,7 @@
 using System.Collections.Concurrent;
 using AAEmu.Commons.Utils;
 using NCrontab;
+using NLog;
 using Task = AAEmu.Game.Models.Tasks.Task;
 
 namespace AAEmu.Game.Core.Managers;
@@ -14,6 +15,11 @@ public class TaskManager(ITickManager tickManager) : Singleton<TaskManager>, ITa
     private readonly HashSet<uint> _taskIds = [];
     private readonly object _taskIdLock = new();
     private uint _taskIdIndex = 1;
+    private readonly object _executionLock = new();
+    private readonly AsyncLocal<bool> _executingTask = new();
+    private int _activeExecutions;
+    private bool _stopping;
+    private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     public static readonly CrontabSchedule.ParseOptions s_crontabScheduleParseOptions = new() { IncludingSeconds = true };
 
@@ -25,47 +31,70 @@ public class TaskManager(ITickManager tickManager) : Singleton<TaskManager>, ITa
 
     public void Start()
     {
-        tickManager.OnTick.Subscribe(Tick, TimeSpan.FromMilliseconds(50), true);
+        lock (_executionLock)
+        {
+            if (!_stopping)
+                tickManager.OnTick.Subscribe(Tick, TimeSpan.FromMilliseconds(50), true);
+        }
     }
 
     public void Stop()
     {
-        // TODO: Wait for still running Tasks before returning
+        // The host owns shutdown. A callback cannot wait for its own completion.
+        if (_executingTask.Value)
+            throw new InvalidOperationException("Stop the task manager outside its task callbacks.");
+
+        lock (_executionLock)
+        {
+            _stopping = true;
+            tickManager.OnTick.UnSubscribe(Tick);
+            // Wait releases the gate, so active callbacks can finish and reject
+            // their own follow-up schedules without a shutdown deadlock.
+            while (_activeExecutions != 0)
+                Monitor.Wait(_executionLock);
+        }
     }
 
     private void Tick(TimeSpan delta)
     {
-        var now = DateTime.UtcNow;
-        var toRemove = new List<uint>();
-        foreach (var (id, task) in _queue)
+        lock (_executionLock)
         {
-            if (task.TriggerTime >= now)
-                continue;
+            if (_stopping)
+                return;
 
-            System.Threading.Tasks.Task.Run(task.ExecuteAsync);
-            task.ExecuteCount++;
-
-            // Check if there still needs to be executions done
-            if (task.RepeatCount < 0 || task.ExecuteCount < task.RepeatCount)
+            var now = DateTime.UtcNow;
+            var toRemove = new List<uint>();
+            foreach (var (id, task) in _queue)
             {
-                // If there is a CronSchedule set, use that to calculate the next TriggerTime
-                if (task.CronSchedule != null)
-                    task.TriggerTime = task.CronSchedule.GetNextOccurrence(now);
+                if (task.TriggerTime >= now)
+                    continue;
 
-                // If there is an interval set, add it for the next TriggerTime
-                if (task.RepeatInterval != TimeSpan.Zero)
-                    task.TriggerTime = now + task.RepeatInterval;
+                _activeExecutions++;
+                _ = System.Threading.Tasks.Task.Run(() => ExecuteScheduledAsync(task));
+                task.ExecuteCount++;
 
-                continue; // Don't remove this Task from the queue yet
+                // Check if there still needs to be executions done
+                if (task.RepeatCount < 0 || task.ExecuteCount < task.RepeatCount)
+                {
+                    // If there is a CronSchedule set, use that to calculate the next TriggerTime
+                    if (task.CronSchedule != null)
+                        task.TriggerTime = task.CronSchedule.GetNextOccurrence(now);
+
+                    // If there is an interval set, add it for the next TriggerTime
+                    if (task.RepeatInterval != TimeSpan.Zero)
+                        task.TriggerTime = now + task.RepeatInterval;
+
+                    continue; // Don't remove this Task from the queue yet
+                }
+
+                toRemove.Add(id);
             }
 
-            toRemove.Add(id);
-        }
-
-        foreach (var objId in toRemove)
-        {
-            _queue.Remove(objId, out _);
-            ReleaseId(objId);
+            foreach (var objId in toRemove)
+            {
+                _queue.Remove(objId, out _);
+                ReleaseId(objId);
+            }
         }
     }
 
@@ -79,30 +108,32 @@ public class TaskManager(ITickManager tickManager) : Singleton<TaskManager>, ITa
     /// <returns></returns>
     public bool Schedule(Task task, TimeSpan? startDelay = null, TimeSpan? repeatInterval = null, int count = -1)
     {
-        var taskId = NextId();
-        task.Id = taskId;
-
-        // If it's only supposed to run once and immediately, then don't queue it, and just run now
-        if (startDelay.HasValue && startDelay.Value == TimeSpan.Zero && count >= 0 && count <= 1)
+        lock (_executionLock)
         {
-            task.Execute();
-            ReleaseId(task.Id);
-            return true;
+            if (_stopping)
+                return false;
+            var taskId = NextId();
+            task.Id = taskId;
+
+            // Preserve synchronous execution for an immediate, single invocation.
+            if (startDelay == TimeSpan.Zero && count is >= 0 and <= 1)
+                _activeExecutions++;
+            else
+            {
+                task.TriggerTime = startDelay.HasValue ? DateTime.UtcNow + startDelay.Value : DateTime.UtcNow;
+                if (repeatInterval.HasValue)
+                {
+                    task.RepeatInterval = repeatInterval.Value;
+                    task.RepeatCount = count;
+                }
+                else
+                    task.RepeatCount = 1;
+                return _queue.TryAdd(taskId, task);
+            }
         }
 
-        task.TriggerTime = startDelay.HasValue ? DateTime.UtcNow + startDelay.Value : DateTime.UtcNow;
-
-        if (repeatInterval.HasValue)
-        {
-            task.RepeatInterval = repeatInterval.Value;
-            task.RepeatCount = count;
-        }
-        else
-        {
-            task.RepeatCount = 1;
-        }
-
-        return _queue.TryAdd(taskId, task);
+        ExecuteImmediate(task);
+        return true;
     }
 
     /// <summary>
@@ -115,23 +146,71 @@ public class TaskManager(ITickManager tickManager) : Singleton<TaskManager>, ITa
     /// <returns></returns>
     public bool CronSchedule(Task task, string cronExpression, TimeSpan? startDelay = null, int count = -1)
     {
-        var taskId = NextId();
-        task.Id = taskId;
-
-        if (startDelay.HasValue && startDelay.Value == TimeSpan.Zero)
+        lock (_executionLock)
         {
-            task.Execute();
-            ReleaseId(task.Id);
-            return true;
+            if (_stopping)
+                return false;
+            var taskId = NextId();
+            task.Id = taskId;
+
+            if (startDelay == TimeSpan.Zero)
+                _activeExecutions++;
+            else
+            {
+                var firstPossibleTriggerTime = startDelay.HasValue ? DateTime.UtcNow + startDelay.Value : DateTime.UtcNow;
+                task.CronSchedule = CrontabSchedule.Parse(cronExpression, s_crontabScheduleParseOptions);
+                task.TriggerTime = task.CronSchedule.GetNextOccurrence(firstPossibleTriggerTime);
+                task.RepeatCount = count;
+                return _queue.TryAdd(taskId, task);
+            }
         }
 
-        var firstPossibleTriggerTime = startDelay.HasValue ? DateTime.UtcNow + startDelay.Value : DateTime.UtcNow;
+        ExecuteImmediate(task);
+        return true;
+    }
 
-        task.CronSchedule = CrontabSchedule.Parse(cronExpression, s_crontabScheduleParseOptions);
-        task.TriggerTime = task.CronSchedule.GetNextOccurrence(firstPossibleTriggerTime);
-        task.RepeatCount = count;
+    private void ExecuteImmediate(Task task)
+    {
+        var wasExecuting = _executingTask.Value;
+        _executingTask.Value = true;
+        try
+        {
+            task.Execute();
+        }
+        finally
+        {
+            _executingTask.Value = wasExecuting;
+            ReleaseId(task.Id);
+            FinishExecution();
+        }
+    }
 
-        return _queue.TryAdd(taskId, task);
+    private async System.Threading.Tasks.Task ExecuteScheduledAsync(Task task)
+    {
+        _executingTask.Value = true;
+        try
+        {
+            await task.ExecuteAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(exception, "Scheduled task {TaskName} failed", task.Name);
+        }
+        finally
+        {
+            _executingTask.Value = false;
+            FinishExecution();
+        }
+    }
+
+    private void FinishExecution()
+    {
+        lock (_executionLock)
+        {
+            _activeExecutions--;
+            if (_activeExecutions == 0)
+                Monitor.PulseAll(_executionLock);
+        }
     }
 
     /// <summary>

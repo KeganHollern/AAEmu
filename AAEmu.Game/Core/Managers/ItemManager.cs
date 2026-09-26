@@ -310,6 +310,8 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         return null;
     }
 
+    public bool IsDyeableItem(uint itemId) => _defaultDyeIds.ContainsKey(itemId);
+
     private uint GetDyeableItemDefaultDyeId(uint itemId)
     {
         if (_defaultDyeIds.TryGetValue(itemId, out var dyeItemId))
@@ -999,6 +1001,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                         template.ImplId = (ItemImplEnum)reader.GetInt32("impl_id");
                         template.BuffId = reader.GetUInt32("buff_id");
                         template.Gradable = reader.GetBoolean("gradable", true);
+                        template.GradeEnchantable = reader.GetBoolean("grade_enchantable", false);
                         template.LootMulti = reader.GetBoolean("loot_multi", true);
                         template.LootQuestId = reader.GetUInt32("loot_quest_id");
                         template.HonorPrice = reader.GetInt32("honor_price");
@@ -1876,10 +1879,10 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
                     if (containerId > 0 && _allPersistentContainers.TryGetValue(containerId, out var container))
                     {
-                        // Mate equipment exists before its summoned mate. Restore its saved
-                        // state without treating startup as a new gameplay equip operation.
-                        var restored = container is MateEquipmentContainer mateEquipment
-                            ? mateEquipment.RestorePersistedItem(item)
+                        // Equipment loads before its character or mate. Keep saved state
+                        // separate from the eligibility rules for a new gameplay equip.
+                        var restored = container is EquipmentContainer equipment
+                            ? equipment.RestorePersistedItem(item)
                             : container.AddOrMoveExistingItem(ItemTaskType.Invalid, item, item.Slot,
                                 notifyInventory: container.ContainerType != SlotType.Auction);
                         if (restored)
@@ -1892,13 +1895,13 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                         }
                         else
                         {
-                            if (container is MateEquipmentContainer)
+                            if (container is EquipmentContainer)
                             {
                                 // A partial load must not save this item with container_id=0.
                                 // Keep the stored row and stop startup with its exact identity.
                                 _allItems.Remove(item.Id);
                                 throw new InvalidOperationException(
-                                    $"Failed to restore mate equipment item {item.Id} in container {container.ContainerId}, slot {item.Slot}.");
+                                    $"Failed to restore equipment item {item.Id} in container {container.ContainerId}, slot {item.Slot}.");
                             }
                             Logger.Fatal($"Failed to add item {item} to existing container {container.ContainerId} !");
                         }

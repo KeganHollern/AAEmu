@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils.DB;
@@ -229,7 +229,7 @@ internal static class AchievementRewardManager
         out InventoryDeliveryPlan plan)
     {
         plan = null;
-        if (bag == null)
+        if (bag == null || !ItemPickupPolicy.CanAcquire(bag, stagedItem.Template, stagedItem.Count))
             return false;
 
         bag.SpaceLeftForItem(stagedItem, out var currentItems);

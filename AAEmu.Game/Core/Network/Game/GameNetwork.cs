@@ -4,6 +4,7 @@ using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.Proxy;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Models;
 
 using NLog;
@@ -340,8 +341,17 @@ public class GameNetwork : Singleton<GameNetwork>
 
     public void Stop()
     {
+        var connections = GameConnectionTable.Instance.BeginShutdown();
         if (_server?.IsStarted ?? false)
             _server.Stop();
+
+        // Socket callbacks can queue disconnect work behind an active packet.
+        // Waiting on each session here makes the final save a checkpoint after that work.
+        foreach (var connection in connections)
+        {
+            connection.Shutdown();
+            GameProtocolHandler.DisconnectWhenIdle(connection, connection.Session);
+        }
 
         Logger.Info("Network stopped");
     }
