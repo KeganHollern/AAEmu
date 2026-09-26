@@ -18,6 +18,7 @@ public partial class Buffs : IBuffs
 {
     // ReSharper disable once InconsistentNaming
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+    private const int MinimumBuffDurationToSave = 60000;
 
     // [GEAR-SLOT-FIX] Slot reserved in Unit.Bonuses for gear bonuses (see Unit.UpdateGearBonuses,
     // which does `Bonuses[1] = []`). The buff allocator MUST skip this index, otherwise the first
@@ -783,9 +784,15 @@ public partial class Buffs : IBuffs
             effects = _effects.ToArray();
         }
 
-        foreach (var e in effects.ToList())
-            if (e != null /* && (e.Template.Skill == null || e.Template.Skill.Type != SkillTypes.Passive)*/)
-                e.Exit();
+        foreach (var effect in effects)
+        {
+            if (effect == null)
+                continue;
+            // Arena combat resets must not remove a persistent justice penalty or a report.
+            if (own is Character && (IsJusticePenaltyBuff(effect.Template.Id) || IsBotReportBuff(effect.Template.Id)))
+                continue;
+            effect.Exit();
+        }
     }
 
     public void TriggerRemoveOn(BuffRemoveOn on, uint value = 0)
@@ -941,25 +948,81 @@ public partial class Buffs : IBuffs
     }
 
     #region Buff Persistence
+    private static bool IsPaidBuff(uint id) => SkillManager.Instance.IsPaidSkillBuff(id) ||
+        PriestBuffGameData.Instance.Offers.Any(offer => offer.BuffId == id && offer.CostPerLevel > 0);
+
+    private static bool IsBotReportBuff(uint id) => id is (uint)BuffConstants.SuspectedUser or
+        (uint)BuffConstants.TransformingIntoPrimeSuspect or (uint)BuffConstants.PrimeSuspect;
+
+    private static bool IsJusticePenaltyBuff(uint id) => id is
+        (uint)BuffConstants.Prisoner_Nuian or (uint)BuffConstants.Prisoner_Haranyan or
+        (uint)BuffConstants.Prisoner_Bot or (uint)BuffConstants.ForciblyAwaitingTrial or
+        (uint)BuffConstants.Wanted or 2167u /* Retribution */ or 4424u /* Leech */;
+
     private static bool IsPermanentSavedMarker(uint id, int duration) => duration == 0 &&
         id is (uint)BuffConstants.SuspectedUser or (uint)BuffConstants.Wanted;
 
     /// <summary>
-    /// Honors the authored save rule for timed effects and explicit permanent state markers.
-    /// Passive and race/template buffs are restored by their own systems.
+    /// Determines whether a buff should be saved to the database on logout.
     /// </summary>
     private static bool ShouldPersistBuff(Buff buff)
     {
-        if (buff == null || buff.Template.SaveRuleId == BuffSaveRuleType.DontSave || buff.Passive ||
-            buff.State is EffectState.Finishing or EffectState.Finished)
+        if (buff == null)
             return false;
 
+        // Only save buffs with SaveRuleId > 0
+        if (buff.Template.SaveRuleId == BuffSaveRuleType.DontSave)
+            return false;
+
+        // Passive buffs are restored via the skill system
+        if (buff.Passive)
+            return false;
+
+        // Wanted and the authored report marker are permanent. Other permanent buffs come from race/template data.
         if (IsPermanentSavedMarker(buff.Template.Id, buff.Duration))
+            return buff.State != EffectState.Finishing && buff.State != EffectState.Finished;
+
+        // Permanent buffs (Duration=0) are race/template buffs
+        if (buff.Duration <= 0)
+            return false;
+
+        // Don't save already expired buffs
+        if (buff.GetTimeLeft() <= 0)
+            return false;
+
+        // Don't save buffs in Finishing/Finished state
+        if (buff.State == EffectState.Finishing || buff.State == EffectState.Finished)
+            return false;
+
+        // --- SaveRule differentiation ---
+
+        // Rule 2: Premium/Crafting (Cash-Shop, Mastery, Proficiency) → always save
+        // Rule 3: Special (Inn/Sleep, Battlefield, Cosmetics) → always save
+        if (buff.Template.SaveRuleId >= BuffSaveRuleType.CharacterPersistent)
             return true;
 
-        // Bad effects include prison sentences, penalties, and paid cooldowns. Their kind and
-        // remaining duration do not override a positive save rule, even below one minute.
-        return buff.Duration > 0 && buff.GetTimeLeft() > 0;
+        // Rule 1: Standard buffs — only save beneficial buffs with ≥60s duration.
+        // Filters out short combat debuffs (stuns, bleeds, knockdowns).
+        if (buff.Template.SaveRuleId == BuffSaveRuleType.Normal)
+        {
+            // Authored paid cooldowns can be Bad buffs, such as the four-hour language cooldown.
+            // Authored justice penalties also persist. Ordinary hostile effects need a separate
+            // caster-restoration path, so retain the existing Normal combat-debuff filter.
+            if (buff.Template.Kind == BuffKind.Bad && !IsBotReportBuff(buff.Template.Id) &&
+                !IsPaidBuff(buff.Template.Id) && !IsJusticePenaltyBuff(buff.Template.Id))
+                return false;
+
+            // A restored paid cooldown can have less than one minute left.
+            // Use its authored duration to distinguish it from a short combat buff.
+            var paidLongBuff = IsPaidBuff(buff.Template.Id) &&
+                buff.Template.GetDuration(buff.AbLevel) >= MinimumBuffDurationToSave;
+            if (buff.Duration < MinimumBuffDurationToSave && !IsBotReportBuff(buff.Template.Id) && !IsJusticePenaltyBuff(buff.Template.Id) && !paidLongBuff)
+                return false;
+
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

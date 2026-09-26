@@ -79,7 +79,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         using var graph = new SendGraph();
         using var services = new LaborBuffServices();
         var template = new BuffTemplate { Id = 990001, Kind = BuffKind.Bad, RealTime = true,
-            SaveRuleId = BuffSaveRuleType.Normal, Duration = 30000, StackRule = BuffStackRule.Refresh };
+            SaveRuleId = BuffSaveRuleType.CharacterPersistent, Duration = 30000, StackRule = BuffStackRule.Refresh };
         services.AddTemplate(template);
         var player = graph.Sender;
         player.Buffs.AddBuff(NewLaborBuff(player, template, 1));
@@ -111,11 +111,15 @@ public sealed partial class PlayerMailSendPersistenceTests
         var player = graph.Sender;
         player.AddCrime(50);
         Assert.True(player.Buffs.CheckBuff((uint)BuffConstants.Wanted));
-        var act = new QuestActSupplyCrimePoint(null) { Point = -100 };
+        var act = new QuestActSupplyCrimePoint(new QuestComponentTemplate(null)) { Point = -100 };
         var quest = new Quest(null, player, null, null, null, null, null, initializeQuestActs: false);
         Assert.True(act.RunAct(quest, null, 0));
         Assert.Equal(0, player.CrimePoint);
         Assert.Equal(0, player.InfamyPoint);
+        var combat = services.AddTemplate(990002);
+        player.Buffs.AddBuff(NewLaborBuff(player, combat, 1));
+        player.Buffs.RemoveAllEffects();
+        Assert.False(player.Buffs.CheckBuff(combat.Id));
         Assert.True(player.Buffs.CheckBuff((uint)BuffConstants.Wanted));
         SaveJusticeBuffs(player);
         var restored = new Character(new UnitCustomModelParams()) { Id = player.Id, ObjId = player.ObjId };
@@ -138,11 +142,17 @@ public sealed partial class PlayerMailSendPersistenceTests
         player.Buffs.AddBuff((uint)BuffConstants.Prisoner_Nuian, player, 90000);
         player.SetPendingTrialSentence(newMinutes, CourtRoomRegion.Haranyan);
         Assert.True(player.HasPendingTrial);
+        Assert.True(graph.Save.TryCommitEconomy([player]));
+        Assert.Equal(newMinutes == 0 ? -1 : newMinutes,
+            Scalar($"SELECT offline_guilty_time FROM characters WHERE id={player.Id}"));
+        Assert.Equal((int)CourtRoomRegion.Haranyan,
+            Scalar($"SELECT offline_guilty_region FROM characters WHERE id={player.Id}"));
         Assert.True(player.ApplyPrisonSentence(CourtRoomRegion.Haranyan, newMinutes));
         Assert.False(player.HasPendingTrial);
         Assert.False(player.Buffs.CheckBuff((uint)BuffConstants.Prisoner_Nuian));
         Assert.InRange(player.GetUnservedPrisonMilliseconds(), 80000 + newMilliseconds, 90000 + newMilliseconds);
-        SaveJusticeBuffs(player);
+        Assert.True(graph.Save.TryCommitEconomy([player]));
+        Assert.Equal(0, Scalar($"SELECT offline_guilty_time FROM characters WHERE id={player.Id}"));
         var restored = new Character(new UnitCustomModelParams()) { Id = player.Id, ObjId = player.ObjId };
         restored.Buffs.LoadActiveBuffs(restored);
         Assert.InRange(restored.GetUnservedPrisonMilliseconds(), 80000 + newMilliseconds, 90000 + newMilliseconds);

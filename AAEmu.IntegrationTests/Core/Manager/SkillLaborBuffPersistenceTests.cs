@@ -190,7 +190,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             SaveRuleId = BuffSaveRuleType.Normal, Duration = 14400000, StackRule = BuffStackRule.Refresh };
         buffs.AddTemplate(cooldown);
         var combat = new BuffTemplate { Id = player.Id + 10, Kind = BuffKind.Bad,
-            SaveRuleId = BuffSaveRuleType.DontSave, Duration = 14400000, StackRule = BuffStackRule.Refresh };
+            SaveRuleId = BuffSaveRuleType.Normal, Duration = 14400000, StackRule = BuffStackRule.Refresh };
         buffs.AddTemplate(combat);
         var template = new SkillTemplate { Id = skillId, ConsumeLaborPower = 10 };
         template.Effects.Add(new SkillEffect { Template = new BuffEffect { Buff = cooldown } });
