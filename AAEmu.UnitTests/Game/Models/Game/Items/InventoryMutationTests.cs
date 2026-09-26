@@ -1262,7 +1262,9 @@ public sealed class InventoryMutationTests
     [Arguments(true)]
     public async Task PickupLimit_QuestItemAndBackpackRejectASecondItem(bool backpack)
     {
-        ItemTemplate template = backpack ? new BackpackTemplate() : new ItemTemplate();
+        ItemTemplate template = backpack
+            ? new BackpackTemplate { BackpackType = BackpackType.Glider }
+            : new ItemTemplate();
         template.Id = 100;
         template.ImplId = backpack
             ? AAEmu.Game.Models.StaticValues.ItemImplEnum.Backpack
