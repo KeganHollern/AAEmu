@@ -19,6 +19,20 @@ public class PlotState(
     private readonly List<CastWindow> _castWaits = [];
     private bool _cancelledWhileCasting;
     private bool _cancelledWhileChanneling;
+    private bool _pendingExecution;
+    internal bool CancelledBeforeExecution { get; private set; }
+
+    internal void SetPendingExecution()
+    {
+        lock (_castWaitLock)
+            _pendingExecution = true;
+    }
+
+    internal void CompleteInitialPhase()
+    {
+        lock (_castWaitLock)
+            _pendingExecution = false;
+    }
 
     internal CastWindow RegisterCastWait(PlotNextEvent next, DateTime deadline)
     {
@@ -33,10 +47,16 @@ public class PlotState(
         return wait;
     }
 
-    internal bool CancelCastWaits()
+    internal bool CancelCastWaits(bool includePending = false)
     {
         lock (_castWaitLock)
         {
+            if (includePending && _pendingExecution)
+            {
+                CancelledBeforeExecution = true;
+                _cancellationRequest = true;
+                return true;
+            }
             var active = _castWaits.Where(wait => wait.Active).ToArray();
             if (active.Length == 0)
                 return false;
@@ -66,7 +86,7 @@ public class PlotState(
         get
         {
             lock (_castWaitLock)
-                return _castWaits.Any(wait => wait.Active);
+                return _pendingExecution || _castWaits.Any(wait => wait.Active);
         }
     }
 

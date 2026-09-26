@@ -99,6 +99,9 @@ public partial class Skill
     private bool _bypassGcd;
     private int _achievementUseRecorded;
     private int _stopRequested;
+    private readonly object _timelineLock = new();
+    private int _timelinePaths;
+    private int _completedTimelinePaths;
     public bool Cancelled { get; set; } = false;
     public Action Callback { get; set; }
 
@@ -169,6 +172,8 @@ public partial class Skill
 
         Cancelled = false;
         Interlocked.Exchange(ref _stopRequested, 0);
+        _timelinePaths = Template.Plot == null ? 1 : Template.PlotOnly ? 2 : 3;
+        _completedTimelinePaths = 0;
         LaborSettled = false;
         LaborVocationSettled = false;
         _normalLaborEffectsCompleted = false;
@@ -326,7 +331,7 @@ public partial class Skill
             previousTask.Skill.Stop(unit, (previousTask as EndChannelingTask)?._channelDoodad);
         var previousPlot = unit.ActivePlotState;
         if (previousPlot != null && previousPlot.ActiveSkill != this)
-            previousPlot.CancelCastWaits();
+            previousPlot.CancelCastWaits(includePending: true);
 
         // Cancel buffs if Template asks for it
         if (Template.CancelOngoingBuffs)
@@ -409,22 +414,45 @@ public partial class Skill
         if (!TryEnterExecution(caster as Character, out var execution))
         {
             Cancelled = true;
+            ReleaseTimeline(plot: true);
             return Task.CompletedTask;
         }
+        if (Cancelled)
+        {
+            execution?.Dispose();
+            ReleaseTimeline(plot: true);
+            return Task.CompletedTask;
+        }
+        var state = Plots.Plot.PrepareRun(caster, casterCaster, target, targetCaster, skillObject, this);
         try
         {
             return Task.Run(async () =>
             {
                 using (execution)
                 {
-                    if (!Cancelled)
-                        await Template.Plot.RunAsync(caster, casterCaster, target, targetCaster, skillObject, this);
+                    if (Cancelled)
+                    {
+                        state.RequestCancellation();
+                        state.CompleteInitialPhase();
+                        if (state.Caster.ActivePlotState == state)
+                            state.Caster.ActivePlotState = null;
+                        if (ActivePlotState == state)
+                            ActivePlotState = null;
+                        ReleaseTimeline(plot: true);
+                        return;
+                    }
+                    await Template.Plot.RunAsync(state);
                 }
             });
         }
         catch
         {
             execution?.Dispose();
+            state.RequestCancellation();
+            state.CompleteInitialPhase();
+            if (state.Caster.ActivePlotState == state)
+                state.Caster.ActivePlotState = null;
+            ReleaseTimeline(plot: true);
             throw;
         }
     }
@@ -1632,13 +1660,24 @@ public partial class Skill
         Callback?.Invoke();
         unit.OnSkillEnd(this);
         caster.BroadcastPacket(new SCSkillEndedPacket(TlId), true);
-        SkillTlIdManager.ReleaseId(TlId);
-        TlId = 0;
+        ReleaseTimeline(plot: false);
 
         if (caster.GetOwnerCharacter() is { } cooldownOwner && CanIgnoreCooldowns(cooldownOwner))
         {
             cooldownOwner.ResetSkillCooldown(Template.Id, (uint)Math.Max(0, Template.CooldownTagId), false);
             unit.Cooldowns.RemoveCooldown(Template);
+        }
+    }
+
+    internal void ReleaseTimeline(bool plot)
+    {
+        lock (_timelineLock)
+        {
+            _completedTimelinePaths |= plot ? 2 : 1;
+            if (_timelinePaths != 0 && (_completedTimelinePaths & _timelinePaths) != _timelinePaths)
+                return;
+            SkillTlIdManager.ReleaseId(TlId);
+            TlId = 0;
         }
     }
 

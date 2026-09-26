@@ -18,6 +18,8 @@ using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Tasks.Skills;
+using AAEmu.Game.Utils;
+using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Skills;
 
@@ -404,6 +406,144 @@ public sealed class SkillCastReactionsTests
             await Assert.That(unit.Packets[2] is SCSkillStartedPacket).IsTrue();
         }
         unit.SkillTask.Skill.Stop(unit);
+    }
+
+    [Test]
+    public async Task Rotation_RoundTripDoesNotCountAsAnAuthoredTurn()
+    {
+        var original = new Vector3(0.1f, -0.3f, 1.1f);
+        var encoded = new Vector3(
+            (float)MathUtil.ConvertDirectionToRadian(MathUtil.ConvertRadianToDirection(original.X)),
+            (float)MathUtil.ConvertDirectionToRadian(MathUtil.ConvertRadianToDirection(original.Y)),
+            (float)MathUtil.ConvertDirectionToRadian(MathUtil.ConvertRadianToDirection(original.Z)));
+        await Assert.That(SkillCastReactions.HasTurned(original, encoded)).IsFalse();
+        await Assert.That(SkillCastReactions.HasTurned(original, encoded + Vector3.UnitZ)).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AutoAttack_PausesForAnActiveOrPendingPlotWithoutReplacingIt(bool pending)
+    {
+        var caster = new CharacterMock { Id = 1, ObjId = 1, Hp = 100, IsAutoAttack = true,
+            CurrentTarget = new TestUnit { ObjId = 2, Hp = 100 } };
+        var plotSkill = new Skill(new SkillTemplate { Id = 10752 });
+        var state = Plot.PrepareRun(caster, null, caster, null, null, plotSkill);
+        if (!pending)
+        {
+            state.CompleteInitialPhase();
+            state.RegisterCastWait(new PlotNextEvent { Casting = true }, DateTime.UtcNow.AddMinutes(1));
+        }
+        // A fired auto-attack with this invalid template would read game data and
+        // enter Skill.Use. A paused callback must not do either action.
+        var autoSkill = new Skill(new SkillTemplate { Id = 2 });
+        var auto = new UseAutoAttackSkillTask(autoSkill, caster);
+        caster.AutoAttackTask = auto;
+        auto.Execute();
+        await Assert.That(caster.AutoAttackTask).IsSameReferenceAs(auto);
+        await Assert.That(caster.ActivePlotState).IsSameReferenceAs(state);
+        await Assert.That(state.CancellationRequested()).IsFalse();
+        await Assert.That(autoSkill.TlId).IsEqualTo((ushort)0);
+        await Assert.That(caster.IsAutoAttack).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PendingPlot_ReplacementCancelsBeforeAnyEvent_AndCannotOverwriteTheNextState(bool plotOnly)
+    {
+        var unit = CreateWorldUnit();
+        var oldSkill = new Skill(new SkillTemplate { Id = 10752, PlotOnly = plotOnly })
+        { TlId = SkillTlIdManager.GetNextId(unit) };
+        var plot = new Plot { Tree = new PlotTree(280) { RootNode = new PlotNode { Event = new PlotEventTemplate { Id = 1 } } } };
+        var oldState = Plot.PrepareRun(unit, new SkillCasterUnit(70), unit, new SkillCastUnitTarget(70), null, oldSkill);
+        SkillCastReactions.OnMovement(unit, Vector3.Zero, Vector3.UnitX, true, false);
+        await Assert.That(oldState.CancellationRequested()).IsFalse();
+        var incoming = new Skill(new SkillTemplate { Id = 50, TargetType = SkillTargetType.Self, CastingTime = 5000 });
+        await Assert.That(incoming.Use(unit, new SkillCasterUnit(70), new SkillCastUnitTarget(70), null, false, out _))
+            .IsEqualTo(SkillResult.Success);
+        await Assert.That(oldState.CancelledBeforeExecution).IsTrue();
+        var nextState = new PlotState(unit, null, unit, null, null, incoming);
+        unit.ActivePlotState = nextState;
+        await plot.RunAsync(oldState);
+        await Assert.That(oldState.Tickets.Count).IsEqualTo(0);
+        await Assert.That(unit.ActivePlotState).IsSameReferenceAs(nextState);
+        await Assert.That(unit.SkillTask.Skill).IsSameReferenceAs(incoming);
+        await Assert.That(oldSkill.TlId).IsEqualTo((ushort)0);
+        incoming.Stop(unit);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ImmediatePlot_LeavesAMixedNormalTimelineAllocatedUntilThatPathEnds(bool plotOnly)
+    {
+        var unit = CreateWorldUnit();
+        var plot = new Plot { Tree = new PlotTree(280) { RootNode = new PlotNode
+        { Event = new PlotEventTemplate { Id = 1, SourceUpdateMethodId = 1, TargetUpdateMethodId = 1 } } } };
+        var skill = new Skill(new SkillTemplate
+        { Id = 50, TargetType = SkillTargetType.Self, CastingTime = 5000, Plot = plot, PlotOnly = plotOnly });
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        skill.Callback = () => completed.TrySetResult();
+        await Assert.That(skill.Use(unit, new SkillCasterUnit(70), new SkillCastUnitTarget(70), null, false, out _))
+            .IsEqualTo(SkillResult.Success);
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (plotOnly)
+        {
+            await Assert.That(unit.SkillTask).IsNull();
+            await Assert.That(skill.TlId).IsEqualTo((ushort)0);
+        }
+        else
+        {
+            await Assert.That(unit.SkillTask.Skill).IsSameReferenceAs(skill);
+            await Assert.That(skill.TlId).IsNotEqualTo((ushort)0);
+            var timeline = skill.TlId;
+            var allocated = (bool[])typeof(SkillTlIdManager).GetProperty("AssignedTl", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+            await Assert.That(allocated[timeline]).IsTrue();
+            skill.Stop(unit);
+            await Assert.That(allocated[timeline]).IsFalse();
+            await Assert.That(skill.TlId).IsEqualTo((ushort)0);
+        }
+    }
+
+    [Test]
+    public async Task MixedSkill_NormalCompletionKeepsTheTimelineUntilThePlotEnds()
+    {
+        var unit = CreateWorldUnit();
+        var first = new PlotEventTemplate { Id = 1, SourceUpdateMethodId = 1, TargetUpdateMethodId = 1 };
+        var second = new PlotEventTemplate { Id = 2, SourceUpdateMethodId = 1, TargetUpdateMethodId = 1 };
+        var next = new PlotNextEvent { Casting = true, Delay = 5000, Event = second };
+        first.NextEvents.AddLast(next);
+        var node = new PlotNode { Event = first };
+        node.Children.Add(new PlotNode { Event = second, Parent = node, ParentNextEvent = next });
+        var skill = new Skill(new SkillTemplate { Id = 50, TargetType = SkillTargetType.Self, CastingTime = 5000,
+            Plot = new Plot { Tree = new PlotTree(280) { RootNode = node } } });
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbacks = 0;
+        skill.Callback = () => { if (Interlocked.Increment(ref callbacks) == 2) completed.TrySetResult(); };
+        await Assert.That(skill.Use(unit, new SkillCasterUnit(70), new SkillCastUnitTarget(70), null, false, out _))
+            .IsEqualTo(SkillResult.Success);
+        var timeline = skill.TlId;
+        // Complete the normal path while its plot still owns the same timeline.
+        skill.EndSkill(unit);
+        await Assert.That(skill.TlId).IsEqualTo(timeline);
+        skill.ActivePlotState.RequestCancellation();
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(skill.TlId).IsEqualTo((ushort)0);
+        unit.SkillTask = null;
+    }
+
+    private static TestUnit CreateWorldUnit()
+    {
+        var unit = new TestUnit { ObjId = 70, Hp = 1000, MaxHp = 1000, Mp = 100 };
+        var world = new WorldInstance(new WorldTemplate
+        {
+            Id = 1, CellX = 1, CellY = 1,
+            ZoneKeyByRegions = new uint[WorldManager.SECTORS_PER_CELL, WorldManager.SECTORS_PER_CELL]
+        }, 0, true, 0);
+        typeof(GameObject).GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(unit, world);
+        world.AddObject(unit);
+        return unit;
     }
 
     [Test]

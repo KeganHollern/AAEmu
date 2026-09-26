@@ -49,7 +49,7 @@ public class UseAutoAttackSkillTask : SkillTask
 
         // Skill-pause: while another skill is casting or during GCD, skip this tick.
         // We don't cancel — auto-attack will resume on the next tick after skill ends.
-        if (_caster.SkillTask != null)
+        if (_caster.SkillTask != null || _caster.ActivePlotState?.HasCastWaits == true)
             return;
         if (_caster.GlobalCooldown >= DateTime.UtcNow)
             return;

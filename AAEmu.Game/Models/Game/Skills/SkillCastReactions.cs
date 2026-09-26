@@ -5,6 +5,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Tasks.Skills;
+using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Models.Game.Skills;
 
@@ -34,9 +35,20 @@ internal static class SkillCastReactions
         task.Skill.Stop(unit, (task as EndChannelingTask)?._channelDoodad);
     }
 
+    internal static bool HasTurned(Vector3 oldRotation, Vector3 newRotation)
+    {
+        if (oldRotation == newRotation)
+            return false;
+        var encoded = new Vector3(
+            (float)MathUtil.ConvertDirectionToRadian(MathUtil.ConvertRadianToDirection(oldRotation.X)),
+            (float)MathUtil.ConvertDirectionToRadian(MathUtil.ConvertRadianToDirection(oldRotation.Y)),
+            (float)MathUtil.ConvertDirectionToRadian(MathUtil.ConvertRadianToDirection(oldRotation.Z)));
+        return encoded != newRotation;
+    }
+
     internal static void OnDamage(Unit unit, int damage, DateTime now)
     {
-        if (damage <= 0 || unit.Hp <= 0 || unit.MaxHp <= 0)
+        if (damage <= 0 || unit.Hp <= 0)
             return;
         var task = unit.SkillTask;
         var plot = unit.ActivePlotState;
@@ -44,6 +56,8 @@ internal static class SkillCastReactions
             (plot == null || !plot.HasDelayableCastWaits))
             return;
 
+        if (unit.MaxHp <= 0)
+            return;
         var delay = CalculateDamageDelay(unit, damage);
         if (delay <= 0)
             return;
