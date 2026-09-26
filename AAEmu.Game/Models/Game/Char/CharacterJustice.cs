@@ -1,5 +1,6 @@
 using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Char;
 
@@ -9,6 +10,17 @@ public partial class Character
     // case; 0 remains "no case" for existing databases, whose region defaults to Nuian.
     public bool HasPendingTrial => OfflineGuiltyTime != 0;
     public bool IsPrisoner => HasPendingTrial || Buffs.CheckBuffTag((uint)BuffConstants.TagPrisoner);
+
+    internal Character GetArrestorOnPlayerDeath(Unit killer, bool pirateDesperadoZone)
+    {
+        var arrestor = killer?.GetOwnerCharacter();
+        if (arrestor == null || arrestor.Id == Id)
+            return null;
+        if (IsPrisoner)
+            return arrestor;
+        return Buffs.CheckBuffTag((uint)BuffConstants.TagWanted) &&
+            (!Buffs.CheckBuff((uint)BuffConstants.Contemptuous) || !pirateDesperadoZone) ? arrestor : null;
+    }
 
     internal void SetPendingTrialSentence(int minutes, CourtRoomRegion region)
     {
