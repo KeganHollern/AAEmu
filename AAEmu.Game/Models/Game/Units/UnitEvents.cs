@@ -149,6 +149,8 @@ public class OnItemGroupUseArgs : EventArgs
 public class OnInteractionArgs : EventArgs
 {
     public uint DoodadId { get; set; } // Doodad.TemplateId
+    public WorldInteractionType WorldInteractionId { get; set; }
+    public uint Phase { get; set; } // Resulting Doodad.FuncGroupId
     public ICharacter SourcePlayer { get; set; }
     internal bool TeamShareAlreadyDistributed { get; set; }
 }

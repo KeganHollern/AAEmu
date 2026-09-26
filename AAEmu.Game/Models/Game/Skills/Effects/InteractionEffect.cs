@@ -36,30 +36,38 @@ public class InteractionEffect : EffectTemplate
         caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.Interaction);
 
         var action = (IWorldInteraction)Activator.CreateInstance(classType);
-        ExecuteWorldInteraction(action, caster, casterObj, target, targetObj, source, DoodadId);
+        if (!ExecuteWorldInteraction(action, caster, casterObj, target, targetObj, source, DoodadId))
+            return;
 
-        if (caster is not Character character) { return; }
-        if (character.SkillCancelled) { return; }
-        if (caster is Character && target is Doodad doodad)
-        {
-            //character.Quests.OnInteraction(WorldInteraction, target);
-            // инициируем событие
-            //Task.Run(() => QuestManager.Instance.DoInteractionEvents((Character)caster, target.TemplateId));
-            if (SkillLaborBatch.Current is { } batch)
-                batch.AfterCommit(() => QuestManager.Instance.DoDoodadInteractionEvents((Character)caster, (Character)caster, target.TemplateId));
-            else
-                QuestManager.Instance.DoDoodadInteractionEvents((Character)caster, (Character)caster, target.TemplateId);
-        }
+        if (caster is Character character && target is Doodad)
+            PublishQuestInteraction(character, target, WorldInteraction, source.Skill);
     }
 
-    internal static void ExecuteWorldInteraction(IWorldInteraction action, BaseUnit caster, SkillCaster casterObj,
+    internal static void PublishQuestInteraction(Character character, BaseUnit target,
+        WorldInteractionType worldInteraction, Skill skill)
+    {
+        if (character.SkillCancelled || skill?.Cancelled == true || target == null)
+            return;
+
+        // Capture the result now. Other effects or callbacks can change the doodad before commit.
+        var templateId = target.TemplateId;
+        var phase = target is Doodad doodad ? doodad.FuncGroupId : 0;
+        void Publish() => QuestManager.Instance.DoDoodadInteractionEvents(
+            character, character, templateId, worldInteraction, phase);
+        if (SkillLaborBatch.Current is { } batch)
+            batch.AfterCommit(Publish);
+        else
+            Publish();
+    }
+
+    internal static bool ExecuteWorldInteraction(IWorldInteraction action, BaseUnit caster, SkillCaster casterObj,
         BaseUnit target, SkillCastTarget targetObj, EffectSource source, uint doodadId,
         Func<uint, uint, DoodadFunc> doodadFuncResolver = null)
     {
         if (action == null || source is not { Skill: { } skill } || casterObj == null || target == null ||
             targetObj == null || skill.Template == null)
         {
-            return;
+            return false;
         }
 
         if (caster is Character && target is Doodad doodad)
@@ -74,5 +82,6 @@ public class InteractionEffect : EffectTemplate
         }
 
         action.Execute(caster, casterObj, target, targetObj, skill.Template.Id, doodadId);
+        return true;
     }
 }

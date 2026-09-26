@@ -138,6 +138,14 @@ public partial class QuestManager
             owner.Quests.AddQuestFromItem(questStarter.ParentQuestTemplate.Id, templateId);
     }
 
+    /// <summary>Publishes one successful item use, including every matching quest item group.</summary>
+    public void DoItemUseEvents(ICharacter owner, uint templateId)
+    {
+        owner?.Events?.OnItemUse(owner, new OnItemUseArgs { ItemId = templateId });
+        foreach (var group in _groupItems.Where(group => group.Value.Contains(templateId)))
+            owner?.Events?.OnItemGroupUse(owner, new OnItemGroupUseArgs { ItemGroupId = group.Key, Count = 1 });
+    }
+
     internal IReadOnlyList<QuestActConAcceptItemGain> GetItemGainQuestStarters(ICharacter owner, uint itemTemplateId)
     {
         if (owner?.Inventory == null || owner.Quests == null ||
@@ -170,12 +178,17 @@ public partial class QuestManager
     /// <param name="sourcePlayer"></param>
     /// <param name="targetPlayer">Used for TeamShare, otherwise should be same as sourcePlayer</param>
     /// <param name="doodadTemplateId"></param>
-    public void DoDoodadInteractionEvents(ICharacter sourcePlayer, ICharacter targetPlayer, uint doodadTemplateId)
+    /// <param name="worldInteraction">The interaction selected by the skill effect.</param>
+    /// <param name="phase">The doodad phase after the interaction.</param>
+    public void DoDoodadInteractionEvents(ICharacter sourcePlayer, ICharacter targetPlayer, uint doodadTemplateId,
+        WorldInteractionType worldInteraction, uint phase)
     {
         // Trigger the interaction event
         targetPlayer?.Events?.OnInteraction(sourcePlayer, new OnInteractionArgs
         {
             DoodadId = doodadTemplateId,
+            WorldInteractionId = worldInteraction,
+            Phase = phase,
             SourcePlayer = sourcePlayer
         });
     }

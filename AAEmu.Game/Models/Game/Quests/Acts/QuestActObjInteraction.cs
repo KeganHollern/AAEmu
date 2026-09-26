@@ -46,7 +46,9 @@ public class QuestActObjInteraction(QuestComponentTemplate parentComponent) : Qu
         if (questAct.Id != ActId)
             return;
 
-        if (args.DoodadId != DoodadId)
+        if ((DoodadId != 0 && args.DoodadId != DoodadId) ||
+            (WorldInteractionId != 0 && args.WorldInteractionId != WorldInteractionId) ||
+            (Phase != 0 && args.Phase != Phase))
             return;
 
         var player = questAct.QuestComponent.Parent.Parent.Owner;
@@ -60,9 +62,6 @@ public class QuestActObjInteraction(QuestComponentTemplate parentComponent) : Qu
 
         if (isSourcePlayer)
         {
-            // Handle interaction that only apply to source player
-            // TODO Verify: Is Phase here what is actually used to move the Doodad to that phase, or is it the WI that causes the change
-
             // Handle Team sharing (if needed)
             if (TeamShare && !args.TeamShareAlreadyDistributed)
             {
