@@ -5,7 +5,6 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
-using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
@@ -144,15 +143,7 @@ public class Slave : Unit
                 ["level"] = Level
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Str))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Str);
         }
     }
 
@@ -167,14 +158,7 @@ public class Slave : Unit
                 ["level"] = Level
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Dex))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Dex);
         }
     }
 
@@ -189,14 +173,7 @@ public class Slave : Unit
                 ["level"] = Level
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Sta))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Sta);
         }
     }
 
@@ -211,14 +188,7 @@ public class Slave : Unit
                 ["level"] = Level
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Int))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Int);
         }
     }
 
@@ -233,14 +203,7 @@ public class Slave : Unit
                 ["level"] = Level
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Spi))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Spi);
         }
     }
 
@@ -255,14 +218,7 @@ public class Slave : Unit
                 ["level"] = Level
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Fai))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Fai);
         }
     }
 
@@ -283,14 +239,7 @@ public class Slave : Unit
                 ["fai"] = Fai
             };
             var res = Math.Truncate(formula.Evaluate(parameters));
-            foreach (var bonus in GetBonuses(UnitAttribute.MaxHealth))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += Math.Truncate(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MaxHealth, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.MaxHealth);
         }
     }
 
@@ -312,14 +261,7 @@ public class Slave : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res += Spi / 10;
-            foreach (var bonus in GetBonuses(UnitAttribute.HealthRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.HealthRegen);
         }
     }
 
@@ -340,14 +282,7 @@ public class Slave : Unit
                 ["fai"] = Fai
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.PersistentHealthRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.PersistentHealthRegen);
         }
     }
 
@@ -368,14 +303,7 @@ public class Slave : Unit
                 ["fai"] = Fai
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.MaxMana))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.MaxMana);
         }
     }
 
@@ -397,14 +325,7 @@ public class Slave : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res += Spi / 10;
-            foreach (var bonus in GetBonuses(UnitAttribute.ManaRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.ManaRegen);
         }
     }
 
@@ -425,14 +346,7 @@ public class Slave : Unit
                 ["fai"] = Fai
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.PersistentManaRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.PersistentManaRegen);
         }
     }
 
@@ -466,15 +380,7 @@ public class Slave : Unit
             var weapon = (Weapon)Equipment.GetItemBySlot((int)EquipmentItemSlot.Mainhand);
             var res = weapon?.Dps ?? 0;
             res += Str / 10f;
-            foreach (var bonus in GetBonuses(UnitAttribute.MainhandDps))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)(res * 1000);
+            return (int)(CalculateWithBonuses(res, UnitAttribute.MainhandDps) * 1000);
         }
     }
 
@@ -495,15 +401,7 @@ public class Slave : Unit
                 ["fai"] = Fai
             };
             var res = formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.MeleeDpsInc))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += res * bonus.Value / 100f;
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MeleeDpsInc, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.MeleeDpsInc);
         }
     }
 
@@ -515,15 +413,7 @@ public class Slave : Unit
             var weapon = (Weapon)Equipment.GetItemBySlot((int)EquipmentItemSlot.Offhand);
             var res = weapon?.Dps ?? 0;
             res += Str / 10f;
-            foreach (var bonus in GetBonuses(UnitAttribute.OffhandDps))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)(res * 1000);
+            return (int)(CalculateWithBonuses(res, UnitAttribute.OffhandDps) * 1000);
         }
     }
 
@@ -535,15 +425,7 @@ public class Slave : Unit
             var weapon = (Weapon)Equipment.GetItemBySlot((int)EquipmentItemSlot.Ranged);
             var res = weapon?.Dps ?? 0;
             res += Dex / 10f;
-            foreach (var bonus in GetBonuses(UnitAttribute.RangedDps))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)(res * 1000);
+            return (int)(CalculateWithBonuses(res, UnitAttribute.RangedDps) * 1000);
         }
     }
 
@@ -565,15 +447,7 @@ public class Slave : Unit
                 ["fai"] = Fai
             };
             var res = formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.RangedDpsInc))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += res * bonus.Value / 100f;
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.RangedDpsInc, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.RangedDpsInc);
         }
     }
 
@@ -585,15 +459,7 @@ public class Slave : Unit
             var weapon = (Weapon)Equipment.GetItemBySlot((int)EquipmentItemSlot.Mainhand);
             var res = weapon?.MDps ?? 0;
             res += Int / 10f;
-            foreach (var bonus in GetBonuses(UnitAttribute.SpellDps))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)(res * 1000);
+            return (int)(CalculateWithBonuses(res, UnitAttribute.SpellDps) * 1000);
         }
     }
 
@@ -615,15 +481,7 @@ public class Slave : Unit
                 ["fai"] = Fai
             };
             var res = formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.SpellDpsInc))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += res * bonus.Value / 100f;
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.SpellDpsInc, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.SpellDpsInc);
         }
     }
 
@@ -644,14 +502,7 @@ public class Slave : Unit
                 ["fai"] = Fai
             };
             var res = Math.Truncate(formula.Evaluate(parameters));
-            foreach (var bonus in GetBonuses(UnitAttribute.Armor))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += Math.Truncate(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.Armor, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.Armor);
         }
     }
 
@@ -672,14 +523,7 @@ public class Slave : Unit
                 ["fai"] = Fai
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.MagicResist))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.MagicResist);
         }
     }
 

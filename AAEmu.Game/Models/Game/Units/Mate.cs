@@ -1,7 +1,6 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
-using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -72,15 +71,7 @@ public sealed class Mate : Unit
             //foreach (var item in Inventory.Equip)
             //    if (item is EquipItem equip)
             //        res += equip.Str;
-            foreach (var bonus in GetBonuses(UnitAttribute.Str))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Str);
         }
     }
 
@@ -95,15 +86,7 @@ public sealed class Mate : Unit
             //foreach (var item in Inventory.Equip)
             //    if (item is EquipItem equip)
             //        res += equip.Dex;
-            foreach (var bonus in GetBonuses(UnitAttribute.Dex))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Dex);
         }
     }
 
@@ -118,15 +101,7 @@ public sealed class Mate : Unit
             //foreach (var item in Inventory.Equip)
             //    if (item is EquipItem equip)
             //        res += equip.Sta;
-            foreach (var bonus in GetBonuses(UnitAttribute.Sta))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Sta);
         }
     }
 
@@ -141,15 +116,7 @@ public sealed class Mate : Unit
             //foreach (var item in Inventory.Equip)
             //    if (item is EquipItem equip)
             //        res += equip.Int;
-            foreach (var bonus in GetBonuses(UnitAttribute.Int))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Int);
         }
     }
 
@@ -164,15 +131,7 @@ public sealed class Mate : Unit
             //foreach (var item in Inventory.Equip)
             //    if (item is EquipItem equip)
             //        res += equip.Spi;
-            foreach (var bonus in GetBonuses(UnitAttribute.Spi))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Spi);
         }
     }
 
@@ -184,15 +143,7 @@ public sealed class Mate : Unit
             var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Mate, UnitFormulaKind.Fai);
             var parameters = new Dictionary<string, double> { ["level"] = Level };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Fai))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Fai);
         }
     }
 
@@ -243,15 +194,7 @@ public sealed class Mate : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res += Spi / 10;
-            foreach (var bonus in GetBonuses(UnitAttribute.HealthRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.HealthRegen);
         }
     }
 
@@ -274,15 +217,7 @@ public sealed class Mate : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res /= 5; // TODO ...
-            foreach (var bonus in GetBonuses(UnitAttribute.PersistentHealthRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.PersistentHealthRegen);
         }
     }
 
@@ -306,15 +241,7 @@ public sealed class Mate : Unit
                 ["mate_kind"] = mateKindVariable
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.MaxMana))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.MaxMana);
         }
     }
 
@@ -337,15 +264,7 @@ public sealed class Mate : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res += Spi / 10;
-            foreach (var bonus in GetBonuses(UnitAttribute.ManaRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.ManaRegen);
         }
     }
 
@@ -368,15 +287,7 @@ public sealed class Mate : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res /= 5; // TODO ...
-            foreach (var bonus in GetBonuses(UnitAttribute.PersistentManaRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.PersistentManaRegen);
         }
     }
 
@@ -420,14 +331,7 @@ public sealed class Mate : Unit
                 ["fai"] = Fai
             };
             var res = formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.MeleeDpsInc))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += res * bonus.Value / 100f;
-                else
-                    res += bonus.Value;
-            }
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MeleeDpsInc, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.MeleeDpsInc);
         }
     }
 
@@ -449,14 +353,7 @@ public sealed class Mate : Unit
                 ["fai"] = Fai
             };
             var res = formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.SpellDpsInc))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += res * bonus.Value / 100f;
-                else
-                    res += bonus.Value;
-            }
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.SpellDpsInc, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.SpellDpsInc);
         }
     }
 
@@ -477,14 +374,7 @@ public sealed class Mate : Unit
                 ["fai"] = Fai
             };
             var res = Math.Truncate(formula.Evaluate(parameters));
-            foreach (var bonus in GetBonuses(UnitAttribute.Armor))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += Math.Truncate(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.Armor, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.Armor);
         }
     }
 
@@ -505,14 +395,7 @@ public sealed class Mate : Unit
                 ["fai"] = Fai
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.MagicResist))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.MagicResist);
         }
     }
     #endregion

@@ -162,15 +162,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Str))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Str);
         }
     }
 
@@ -191,14 +183,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Dex))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Dex);
         }
     }
 
@@ -219,14 +204,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Sta))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Sta);
         }
     }
 
@@ -247,14 +225,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Int))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Int);
         }
     }
 
@@ -275,14 +246,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Spi))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Spi);
         }
     }
 
@@ -303,14 +267,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Fai))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Fai);
         }
     }
 
@@ -337,14 +294,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = Math.Truncate(formula.Evaluate(parameters));
-            foreach (var bonus in GetBonuses(UnitAttribute.MaxHealth))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += Math.Truncate(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MaxHealth, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.MaxHealth);
         }
     }
 
@@ -372,14 +322,7 @@ public partial class Npc : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res += Spi / 10;
-            foreach (var bonus in GetBonuses(UnitAttribute.HealthRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.HealthRegen);
         }
     }
 
@@ -407,14 +350,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.PersistentHealthRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.PersistentHealthRegen);
         }
     }
 
@@ -441,14 +377,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.MaxMana))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.MaxMana);
         }
     }
 
@@ -476,14 +405,7 @@ public partial class Npc : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res += Spi / 10;
-            foreach (var bonus in GetBonuses(UnitAttribute.ManaRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.ManaRegen);
         }
     }
 
@@ -511,14 +433,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.PersistentManaRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.PersistentManaRegen);
         }
     }
 
@@ -558,15 +473,7 @@ public partial class Npc : Unit
             var weapon = (Weapon)Equipment.GetItemBySlot((int)EquipmentItemSlot.Mainhand);
             var res = weapon?.Dps ?? 0;
             res += Str / 10f;
-            foreach (var bonus in GetBonuses(UnitAttribute.MainhandDps))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)(res * 1000);
+            return (int)(CalculateWithBonuses(res, UnitAttribute.MainhandDps) * 1000);
         }
     }
 
@@ -594,15 +501,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.MeleeDpsInc))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += res * bonus.Value / 100f;
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MeleeDpsInc, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.MeleeDpsInc);
         }
     }
 
@@ -614,15 +513,7 @@ public partial class Npc : Unit
             var weapon = (Weapon)Equipment.GetItemBySlot((int)EquipmentItemSlot.Offhand);
             var res = weapon?.Dps ?? 0;
             res += Str / 10f;
-            foreach (var bonus in GetBonuses(UnitAttribute.OffhandDps))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)(res * 1000);
+            return (int)(CalculateWithBonuses(res, UnitAttribute.OffhandDps) * 1000);
         }
     }
 
@@ -634,15 +525,7 @@ public partial class Npc : Unit
             var weapon = (Weapon)Equipment.GetItemBySlot((int)EquipmentItemSlot.Ranged);
             var res = weapon?.Dps ?? 0;
             res += Dex / 10f;
-            foreach (var bonus in GetBonuses(UnitAttribute.RangedDps))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)(res * 1000);
+            return (int)(CalculateWithBonuses(res, UnitAttribute.RangedDps) * 1000);
         }
     }
 
@@ -670,15 +553,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.RangedDpsInc))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += res * bonus.Value / 100f;
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.RangedDpsInc, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.RangedDpsInc);
         }
     }
 
@@ -690,15 +565,7 @@ public partial class Npc : Unit
             var weapon = (Weapon)Equipment.GetItemBySlot((int)EquipmentItemSlot.Mainhand);
             var res = weapon?.MDps ?? 0;
             res += Int / 10f;
-            foreach (var bonus in GetBonuses(UnitAttribute.SpellDps))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)(res * 1000);
+            return (int)(CalculateWithBonuses(res, UnitAttribute.SpellDps) * 1000);
         }
     }
 
@@ -726,15 +593,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.SpellDpsInc))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += res * bonus.Value / 100f;
-                else
-                    res += bonus.Value;
-            }
-
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.SpellDpsInc, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.SpellDpsInc);
         }
     }
 
@@ -761,14 +620,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = Math.Truncate(formula.Evaluate(parameters));
-            foreach (var bonus in GetBonuses(UnitAttribute.Armor))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += Math.Truncate(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.Armor, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.Armor);
         }
     }
 
@@ -795,14 +647,7 @@ public partial class Npc : Unit
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.MagicResist))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
-                else
-                    res += bonus.Value;
-            }
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.MagicResist);
         }
     }
 

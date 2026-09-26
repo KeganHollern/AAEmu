@@ -784,7 +784,7 @@ public class Unit : BaseUnit, IUnit
 
     protected double CalculateBonuses(double value, UnitAttribute attr)
     {
-        // Order: static flat -> dynamic flat -> static percent -> dynamic percent.
+        // Apply static and dynamic flat values, then one combined Percent multiplier.
         // Dynamic bonuses are evaluated on the fly from their source buff so that time-varying
         // modifiers (LinearFunc dynamic_unit_modifiers) reflect the current elapsed time rather
         // than a value snapshotted at buff Start.
@@ -808,12 +808,14 @@ public class Unit : BaseUnit, IUnit
                 value += dynValue;
         }
 
+        var percent = 100d;
+
         // Static percent values
         foreach (var bonus in bonuses)
         {
             if (bonus.Template.ModifierType != UnitModifierType.Percent)
                 continue;
-            value += value * bonus.Value / 100f;
+            percent += bonus.Value;
         }
 
         // Dynamic percent values
@@ -822,10 +824,10 @@ public class Unit : BaseUnit, IUnit
             if (dynamicBonus.Template.ModifierType != UnitModifierType.Percent)
                 continue;
             if (dynamicBonus.Evaluate(out var dynValue))
-                value += value * dynValue / 100f;
+                percent += dynValue;
         }
 
-        return value;
+        return value * percent / 100d;
     }
 
     public void SendPacket(GamePacket packet)

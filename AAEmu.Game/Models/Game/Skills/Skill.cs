@@ -954,7 +954,7 @@ public partial class Skill
         if (Template.EffectSpeed > 0)
             totalDelay += (int)(unit.GetDistanceTo(target) / Template.EffectSpeed * 1000.0f);
         if (Template.FireAnim != null && Template.UseAnimTime)
-            totalDelay += (int)(Template.FireAnim.CombatSyncTime * (unit.GlobalCooldownMul / 100));
+            totalDelay += AttackTiming.ScaleAnimationTime(unit, Template.FireAnim.CombatSyncTime);
 
         // Determine weapon-based animation for auto-attacks (skill 2/3/4).
         // 0 means "no override" — packet keeps its default (skill template's FireAnim).

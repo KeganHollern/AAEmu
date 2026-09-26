@@ -210,7 +210,7 @@ public sealed class UnitAttributeLimitsTests
     }
 
     [Test]
-    public async Task ManualHealthGetters_PreservePerContributionTruncation()
+    public async Task ManualHealthGetters_CombinePercentBeforeFinalIntegerConversion()
     {
         using var connection = CreateData("(6,-2000000000,10000000)");
         _data.Load(connection);
@@ -220,7 +220,7 @@ public sealed class UnitAttributeLimitsTests
         {
             unit.AddBonus(1, Modifier(UnitAttribute.MaxHealth, -50, UnitModifierType.Percent));
             unit.AddBonus(2, Modifier(UnitAttribute.MaxHealth, 50, UnitModifierType.Percent));
-            await Assert.That(unit.MaxHp).IsEqualTo(76);
+            await Assert.That(unit.MaxHp).IsEqualTo(101);
         }
     }
 
@@ -270,6 +270,53 @@ public sealed class UnitAttributeLimitsTests
         var unit = new Unit();
         unit.AddBonus(1, Modifier(UnitAttribute.MoveSpeedMul, 10000));
         await Assert.That(unit.MoveSpeedMul).IsEqualTo(4f);
+    }
+
+    [Test]
+    public async Task ManualGetters_ApplyCombinedStaticAndDynamicPercentBeforeLimits()
+    {
+        using var connection = CreateData("(6,-2000000000,10000000),(8,0,1000000),(33,0,10000000),(35,0,10000000)");
+        _data.Load(connection);
+        InstallFormulas(kind => kind is UnitFormulaKind.MaxHealth or UnitFormulaKind.Armor or
+            UnitFormulaKind.MeleeDpsInc or UnitFormulaKind.SpellDpsInc ? 100 : 0);
+        Unit[] units = [new Npc { Template = new NpcTemplate() }, new Mate { Template = new NpcTemplate() },
+            new Slave(), new Transfer(), new Shipyard()];
+        foreach (var unit in units)
+        {
+            foreach (var attr in new[] { UnitAttribute.MaxHealth, UnitAttribute.Armor, UnitAttribute.MeleeDpsInc, UnitAttribute.SpellDpsInc })
+            {
+                unit.AddBonus(1, Modifier(attr, 50, UnitModifierType.Percent));
+                unit.AddBonus(2, Modifier(attr, 50, UnitModifierType.Percent));
+                unit.AddDynamicBonus(3, new DynamicBonus
+                {
+                    Template = new DynamicBonusTemplate { Attribute = attr, ModifierType = UnitModifierType.Percent, FuncType = "LinearFunc" },
+                    SourceBuff = new Buff(unit, unit, new SkillCasterUnit(1), new BuffTemplate { Id = 1 }, null, DateTime.UtcNow),
+                    LinearFunc = new LinearFuncTemplate { StartValue = 25, EndValue = 25 }
+                });
+            }
+            await Assert.That(unit.MaxHp).IsEqualTo(225);
+            if (unit is Npc or Mate or Slave)
+            {
+                await Assert.That(unit.Armor).IsEqualTo(225);
+                await Assert.That(unit.DpsInc).IsEqualTo(225);
+                await Assert.That(unit.MDpsInc).IsEqualTo(225);
+            }
+            unit.RemoveBonus(2, UnitAttribute.MaxHealth);
+            await Assert.That(unit.MaxHp).IsEqualTo(175);
+            unit.RemoveDynamicBonus(3, UnitAttribute.MaxHealth);
+            await Assert.That(unit.MaxHp).IsEqualTo(150);
+        }
+    }
+
+    [Test]
+    public async Task Movement_TwoPercentSlowsAddAndRemovalRestoresTheOtherSlow()
+    {
+        var unit = new Unit();
+        unit.AddBonus(1, Modifier(UnitAttribute.MoveSpeedMul, -20, UnitModifierType.Percent));
+        unit.AddBonus(2, Modifier(UnitAttribute.MoveSpeedMul, -30, UnitModifierType.Percent));
+        await Assert.That(unit.MoveSpeedMul).IsEqualTo(0.5f);
+        unit.RemoveBonus(1, UnitAttribute.MoveSpeedMul);
+        await Assert.That(unit.MoveSpeedMul).IsEqualTo(0.7f);
     }
 
     private static void InstallFormulas(Func<UnitFormulaKind, double> value)

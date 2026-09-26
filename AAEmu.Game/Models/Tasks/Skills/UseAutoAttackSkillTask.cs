@@ -30,6 +30,12 @@ public class UseAutoAttackSkillTask : SkillTask
 
     public override void Execute()
     {
+        if (!ReferenceEquals(_caster.AutoAttackTask, this))
+        {
+            StopAutoAttack();
+            return;
+        }
+
         var target = _caster.CurrentTarget as Unit;
 
         // Stop conditions: dead, no target, target dead, self-target, cancelled
@@ -38,6 +44,8 @@ public class UseAutoAttackSkillTask : SkillTask
             StopAutoAttack();
             return;
         }
+
+        RefreshAttackInterval();
 
         // Skill-pause: while another skill is casting or during GCD, skip this tick.
         // We don't cancel — auto-attack will resume on the next tick after skill ends.
@@ -74,10 +82,8 @@ public class UseAutoAttackSkillTask : SkillTask
             offhandSkill.Use(_caster, offCaster, offTarget, offSkillObject, true, out _);
         }
 
-        // Adjust delay if attack speed changed (buff/debuff/weapon swap)
-        var newDelay = TimeSpan.FromMilliseconds(SkillManager.GetAttackDelay(_mainhandSkill.Template, _caster));
-        if (newDelay != RepeatInterval)
-            RepeatInterval = newDelay;
+        // A hit can add or remove a speed buff. Update the pending interval too.
+        RefreshAttackInterval();
     }
 
     /// <summary>
@@ -116,9 +122,18 @@ public class UseAutoAttackSkillTask : SkillTask
     private void StopAutoAttack()
     {
         Cancelled = true;
-        _caster.IsAutoAttack = false;
-        _caster.AutoAttackTask = null;
+        if (ReferenceEquals(_caster.AutoAttackTask, this))
+        {
+            _caster.IsAutoAttack = false;
+            _caster.AutoAttackTask = null;
+        }
         Cancel();
+    }
+
+    private void RefreshAttackInterval()
+    {
+        var interval = TimeSpan.FromMilliseconds(SkillManager.GetAttackDelay(_mainhandSkill.Template, _caster));
+        TaskManager.Instance.UpdateRepeatInterval(this, interval);
     }
 
     /// <summary>Get max attack range from equipped weapon or fall back to skill template.</summary>
