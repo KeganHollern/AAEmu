@@ -399,6 +399,7 @@ public class GameConnection
 
         RunDisconnectStep(() => activeChar.ParentWorld?.SphereQuestManager?.RemoveSphereQuestTriggers(activeChar));
         RunDisconnectStep(() => TradeManager.Instance.CancelTrade(activeChar, 0));
+        RunDisconnectStep(() => DuelManager.Instance.CancelForCharacter(activeChar));
         RunDisconnectStep(() => RadarManager.Instance.UnRegister(activeChar));
         RunDisconnectStep(() => activeChar.Buffs?.CancelAllEffectTasks());
         RunDisconnectStep(activeChar.Delete);

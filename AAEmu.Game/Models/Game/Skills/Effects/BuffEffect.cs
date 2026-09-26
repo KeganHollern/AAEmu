@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Core.Packets;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.NPChar;
@@ -21,6 +22,12 @@ public class BuffEffect : EffectTemplate
         CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time,
         CompressedGamePackets packetBuilder = null)
     {
+        using var duelEffect = Buff.Kind == BuffKind.Bad
+            ? DuelManager.Instance.EnterEffect(caster, target, source)
+            : null;
+        if (duelEffect is { Allowed: false })
+            return;
+
         if (Buff.Kind == BuffKind.Bad && PeaceProtection.PreventsAttack(caster, target))
             return;
 

@@ -94,6 +94,7 @@ public partial class Skill
     public Dictionary<uint, SkillHitType> HitTypes { get; set; }
     public BaseUnit InitialTarget { get; set; }//Temp Hack Fix. Replace this with UnitsEffected
     internal BaseUnit OriginalCaster { get; private set; }
+    internal AAEmu.Game.Models.Game.Duels.Duel DuelContext { get; set; }
     internal uint SourceItemTemplateId { get; private set; }
     private bool _bypassGcd;
     private int _achievementUseRecorded;
@@ -173,6 +174,7 @@ public partial class Skill
         _laborTarget = targetCaster;
         _laborObject = skillObject;
         OriginalCaster = caster;
+        DuelContext = DuelManager.Instance.GetActiveDuel(caster);
         var sourceItem = ZoneSkillRestrictions.GetSourceItem(caster, casterCaster);
         SourceItemTemplateId = sourceItem?.TemplateId ?? 0;
         if (casterCaster is SkillItem itemSource &&

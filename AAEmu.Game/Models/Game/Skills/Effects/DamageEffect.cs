@@ -84,6 +84,10 @@ public class DamageEffect : EffectTemplate
             return;
         }
 
+        using var duelEffect = DuelManager.Instance.EnterEffect(caster, target, source);
+        if (!duelEffect.Allowed)
+            return;
+
         if (PeaceProtection.PreventsAttack(caster, target))
             return;
 

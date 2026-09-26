@@ -367,12 +367,14 @@ public class Unit : BaseUnit, IUnit
             }
         }
 
-        Hp = Math.Max(Hp - value, 0);
+        Hp = Math.Max(Hp - value, GetMinimumHealthAfterDamage(attacker, killReason));
 
         BroadcastPacket(new SCUnitPointsPacket(ObjId, Hp, Hp > 0 ? Mp : 0), true);
 
         PostUpdateCurrentHp(attacker, oldHp, Hp, killReason);
     }
+
+    protected virtual int GetMinimumHealthAfterDamage(BaseUnit attacker, KillReason killReason) => 0;
 
     /// <summary>
     /// Called at the end of ReduceCurrentHp() and can be overriden and handles things like death
@@ -533,7 +535,6 @@ public class Unit : BaseUnit, IUnit
             {
                 StopAutoSkill(thisCharacter);
                 thisCharacter.IsInBattle = false; // we need the character to be "not in battle"
-                thisCharacter.DeadTime = DateTime.UtcNow;
                 DespawnMate(thisCharacter);
             }
 
