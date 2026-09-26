@@ -46,6 +46,6 @@ The combined release tests follow integration with the other combat fixes.
 These checks remain pending and belong in HUMAN VALIDATION #573.
 
 - [ ] **HV526-1.** Enter a Library instance with an opposing-faction player. Check direct attacks, damage-over-time effects, and hostile buffs.
-- [ ] **HV526-2.** Repeat with a battle pet. Check that ordinary combat against an NPC still works. With 2 test players, apply pet damage over time before the target enters a no-PvP instance. Then disconnect the pet owner. Check that the protected target takes no further pet damage.
+- [ ] **HV526-2.** Repeat with a battle pet. Check delayed damage after its owner leaves the instance or disconnects. Check that ordinary combat against an NPC still works. With 2 test players, apply pet damage over time before the target enters a no-PvP instance. Then disconnect the pet owner. Check that the protected target takes no further pet damage.
 - [ ] **HV526-3.** Complete a duel in a no-PvP instance. Check that only the active pair can fight.
 - [ ] **HV526-4.** Leave the instance and check normal PvP eligibility in a suitable conflict zone.

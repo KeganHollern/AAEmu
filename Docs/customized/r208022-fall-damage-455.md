@@ -79,6 +79,8 @@ Normal falls still leave 5 percent HP, with a minimum of 1 HP.
 The current lethal threshold still applies to server-derived impacts.
 The current GM permission still prevents fall damage.
 
+The contact follow-up is [cluster issue 579](https://github.com/KeganHollern/aaemu-cluster/issues/579).
+
 ## Automated checks
 
 `FallMovementTests` covers native encoding, omitted reports, sparse landings, slopes, stairs, jump apex pauses,

@@ -62,6 +62,8 @@ Native NPC interval evidence does not establish how the current server AI must s
 
 `UseWeaponCooldownTime` is separate from `UseAnimTime`. Its loader field is offset `0x1d3`. The disassembly search found its row copy, but no direct timing consumer. The authored auto-attacks set this flag to false. No guessed consumer is added.
 
+The offhand and NPC cadence follow-up is [cluster issue 580](https://github.com/KeganHollern/aaemu-cluster/issues/580).
+
 ## Validation
 
 The Release unit project build passed. All 63 focused checks passed with 0 skips: 23 attack timing tests, 3 interval tests, 30 TaskManager tests, and 7 shutdown tests. The exact compact check was enabled. Focused tests cover raw signs and bounds, weapon slots, two-handed contribution, integer conversion, the positive interval floor, static and dynamic modifiers, and removal. The actual skill effect scheduler and plot delay path have tests for animation scaling. Scheduler tests cover a running callback, pending trigger changes, paused attacks, stale task identity, cancellation, and shutdown. Exact-compact tests use the authored +500 and +700/-700 rows.
