@@ -311,7 +311,7 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                     if (targetUnit is Unit castUnit)
                         SkillCastReactions.OnMovement(castUnit, previousPosition, targetUnit.Transform.Local.Position,
                             ReferenceEquals(previousParent, targetUnit.Transform.Parent),
-                            previousRotation != targetUnit.Transform.Local.Rotation);
+                            SkillCastReactions.HasTurned(previousRotation, targetUnit.Transform.Local.Rotation));
 
                     // Handle Fall Velocity
                     if (dmt.FallVel > 0 && targetUnit is Unit unit)

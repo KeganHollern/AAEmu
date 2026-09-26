@@ -1,5 +1,4 @@
 ﻿using System.Diagnostics;
-using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
@@ -120,6 +119,10 @@ public class PlotTree(uint plotId)
                     queue.Enqueue(item);
                     FlushExecutionQueue(executeQueue, state);
                 }
+
+                // Keep pending publication visible until the initial phase has
+                // registered all of its waits. Effects still check cancellation.
+                state.CompleteInitialPhase();
 
                 if (queue.Count > 0)
                 {
@@ -251,10 +254,11 @@ public class PlotTree(uint plotId)
 
     private static void DoPlotEnd(PlotState state)
     {
+        state.CompleteInitialPhase();
         state.Caster?.BroadcastPacket(new SCPlotEndedPacket(state.ActiveSkill.TlId), true);
         EndPlotChannel(state);
 
-        if (ShouldStartCooldown(state.CancellationRequested(), state.IsCasting))
+        if (!state.CancelledBeforeExecution && ShouldStartCooldown(state.CancellationRequested(), state.IsCasting))
         {
             if (state.Caster != null)
                 SkillCooldowns.StartCooldown(state.Caster, state.ActiveSkill,
@@ -273,8 +277,7 @@ public class PlotTree(uint plotId)
         if (state.CancellationRequested())
             state.Caster?.Events.OnChannelingCancel(state.ActiveSkill, new OnChannelingCancelArgs());
 
-        SkillTlIdManager.ReleaseId(state.ActiveSkill.TlId);
-        state.ActiveSkill.TlId = 0;
+        state.ActiveSkill.ReleaseTimeline(plot: true);
 
         state.Caster?.OnSkillEnd(state.ActiveSkill);
         state.ActiveSkill.Callback?.Invoke();

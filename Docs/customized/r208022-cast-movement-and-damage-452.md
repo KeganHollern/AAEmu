@@ -60,11 +60,11 @@ The following choices are server inferences from the authored data and native li
 - Accepted actor movement cancels an active cast or channel. Instant skills and ordinary plot or projectile delays remain active.
 - Local coordinates distinguish actor movement from vehicle movement. A parent change cancels an active cast, so mount or dismount cannot bypass the rule.
 - An active server skill controller owns forced movement. Its movement does not cancel the skill that owns the controller.
-- The comparison uses the packet position representation to avoid cancellation from coordinate quantization alone.
+- Position and rotation comparisons use the packet representation to avoid cancellation from quantization alone.
 
 A synchronized cast window separates completion, cancellation, and delay. An old queued task cannot fire for a replaced task. If a queued callback reaches an extended deadline too early, a new wakeup waits for the rest of the cast. The scheduler never reuses the ID of the callback in progress.
 
-Successful new-cast admission stops the previous timed cast before the new cast starts. Failed admission keeps the previous cast. Callbacks run outside the timing locks. Cleanup only clears a task or plot that still belongs to that skill. Channel cancellation ends the skill once.
+Successful new-cast admission stops the previous timed cast before the new cast starts. Deferred plots publish a pending state before their worker starts. That state remains pending until the initial phase registers its waits. Replacement admission can cancel pending work, and auto-attacks pause for pending or active cast/channel waits. Movement still needs an authored active wait. A mixed normal/plot skill keeps its shared timeline until both paths end. Each path retains its current callbacks. Failed admission keeps the previous cast. Callbacks run outside the timing locks. Cleanup only clears a task or plot that still belongs to that skill. Channel cancellation ends the skill once.
 
 The plot queue stores a window for each authored cast or channel edge. Cast and channel state come from those windows. A cancelled window keeps its former phase for the stop packet and cooldown decision. Ordinary plot delays no longer appear as channels.
 
@@ -81,7 +81,7 @@ The focused tests cover:
 - Successful and rejected replacement admission, timeline release, and channel cleanup.
 - Both timeline fields, millisecond units, maximum field values, and complete packet consumption.
 
-The Release build passed with 0 errors and 71 warnings. The skill suites passed 382 tests with 0 skips, with the exact compact enabled. The TaskManager suites passed 37 tests with 0 skips. `git diff --check` passed. The release record supplies the source commit and the combined release checks.
+The Release build passed with 0 errors and 71 warnings. The skill suites passed 390 tests with 0 skips, with the exact compact enabled. All 43 duel tests passed. The TaskManager suites passed 37 tests with 0 skips. `git diff --check` passed. The release record supplies the source commit and the combined release checks.
 
 ## Pending human checks for #573
 
@@ -93,6 +93,6 @@ These checks need the published server and the current r208022 client. A GM can 
 4. Rotate during a normal `10107` cast without movement. The cast must continue. Move after a projectile fires. The projectile must still reach its target.
 5. Start channel skill `10372`, then move. Its channel effect must end once. Start another skill at once. No old task must stop that new skill.
 6. Start a cast while on a moving vehicle without local actor movement. The cast must continue. Mount, dismount, or move locally during a cast. The cast must stop.
-7. Use an instant skill during normal movement. Confirm that it still works. Check a server-controlled movement skill separately for an unwanted interruption.
+7. Enable auto-attacks, then start a plot cast. The auto-attacks must pause through the cast and resume afterward. Use an instant skill during normal movement. Confirm that it still works. Check a server-controlled movement skill separately for an unwanted interruption.
 
 Damage-delay values, forced-movement behavior, channel cleanup, and visual synchronization still need these human checks. No retail runtime capture confirms the inferred server formula inputs or plot fan-out rule.
