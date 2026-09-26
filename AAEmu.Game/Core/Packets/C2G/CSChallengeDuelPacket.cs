@@ -8,8 +8,18 @@ public class CSChallengeDuelPacket() : GamePacket(CSOffsets.CSChallengeDuelPacke
 {
     public override void Read(PacketStream stream)
     {
-        var challengedId = stream.ReadUInt32(); // Id the one we challenged to a duel
+        if (!TryReadRequest(stream, out var challengedId) || Connection.ActiveChar == null)
+            return;
 
         DuelManager.Instance.DuelRequest(Connection.ActiveChar, challengedId); // only to the enemy
     }
+    internal static bool TryReadRequest(PacketStream stream, out uint challengedId)
+    {
+        challengedId = 0;
+        if (stream.Count - stream.Pos != 4)
+            return false;
+        challengedId = stream.ReadUInt32();
+        return challengedId != 0;
+    }
+
 }

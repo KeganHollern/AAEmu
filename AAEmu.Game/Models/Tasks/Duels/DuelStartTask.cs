@@ -1,13 +1,9 @@
 ﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Duels;
 
 namespace AAEmu.Game.Models.Tasks.Duels;
 
-public class DuelStartTask(uint challengerId) : Task
+public class DuelStartTask(Duel duel) : Task
 {
-    protected uint _challengerId = challengerId;
-
-    public override void Execute()
-    {
-        DuelManager.Instance.DuelStart(_challengerId);
-    }
+    public override void Execute() => DuelManager.Instance.DuelStart(duel);
 }

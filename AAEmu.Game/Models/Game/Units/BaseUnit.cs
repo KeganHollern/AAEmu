@@ -66,6 +66,8 @@ public class BaseUnit : GameObject, IBaseUnit
     {
         if (PeaceProtection.PreventsAttack(this, target))
             return false;
+        if (DuelManager.Instance.AreActiveOpponents(this, target))
+            return true;
         if (this.Faction == null || target.Faction == null)
             return true;
         if (this.ObjId == target.ObjId)
@@ -152,7 +154,10 @@ public class BaseUnit : GameObject, IBaseUnit
         return !target.Buffs.CheckBuffTag((uint)TagsEnum.Stealth);
     }
 
-    public RelationState GetRelationStateTo(BaseUnit unit) => this.Faction?.GetRelationState(unit.Faction) ?? RelationState.Neutral;
+    public RelationState GetRelationStateTo(BaseUnit unit) =>
+        DuelManager.Instance.AreActiveOpponents(this, unit)
+            ? RelationState.Hostile
+            : Faction?.GetRelationState(unit.Faction) ?? RelationState.Neutral;
 
     public virtual void AddBonus(uint bonusIndex, Bonus bonus)
     {

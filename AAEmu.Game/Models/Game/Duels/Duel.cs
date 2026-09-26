@@ -7,15 +7,21 @@ namespace AAEmu.Game.Models.Game.Duels;
 
 public class Duel(Character challenger, Character challenged)
 {
+    internal const float RequestRangeMeters = 30;
     public Character Challenger { get; set; } = challenger; // это персонаж который вызвал нас на дуэль
     public Character Challenged { get; set; } = challenged; // это наш персонаж (т.е. connection.ActiveChar)
     public Doodad DuelFlag { get; set; }
     public DuelStartTask DuelStartTask { get; set; }
     public DuelEndTimerTask DuelEndTimerTask { get; set; }
     public DuelDistanceСheckTask DuelDistanceСheckTask { get; set; }
-    public DuelResultСheckTask DuelResultСheckTask { get; set; }
     public bool DuelStarted { get; set; } = false;
-    public bool DuelAllowed { get; set; } = false;
+    internal bool Active { get; set; }
+    internal bool Ending { get; set; }
+    internal int EffectsInFlight { get; set; }
+    internal bool ResultPending { get; set; }
+    internal DuelDetType PendingResult { get; set; }
+    internal uint PendingLoserId { get; set; }
+    internal float RequestRange { get; init; }
 
     public void SendPacketsBoth(GamePacket packet)
     {

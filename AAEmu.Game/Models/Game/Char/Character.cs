@@ -2325,17 +2325,12 @@ public partial class Character : Unit, ICharacter
             return; // GodMode On : take no damage at all
         }
 
-        if (IsInDuel)
-        {
-            Hp = Math.Max(Hp - value, 1); // we don't let you die during a duel
-            value = 0;
-        }
-
         // PvP assist tracking: remember who hit us recently
         if (attacker is Character enemyChar && value > 0 && enemyChar.Id != this.Id)
             RecordPvpDamageFrom(enemyChar);
 
         base.ReduceCurrentHp(attacker, value, killReason);
+        DuelManager.Instance.CompleteDamage(this, attacker);
         
         // Handle armor durability
         var durabilityRate = 0f;

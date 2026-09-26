@@ -20,23 +20,27 @@ public class CSResurrectCharacterPacket() : GamePacket(CSOffsets.CSResurrectChar
 
     public override void Read(PacketStream stream)
     {
-        if (stream.Count - stream.Pos != 1 || Connection.ActiveChar is not { } character)
-            return;
-        var flag = stream.ReadByte();
-        if (flag > 1)
+        if (!TryReadRequest(stream, out var inPlace) || Connection.ActiveChar is not { } character)
             return;
         lock (character.StorePurchaseSyncRoot)
-            Resurrect(character, flag == 1);
+            Resurrect(character, inPlace);
+    }
+
+    internal static bool TryReadRequest(PacketStream stream, out bool inPlace)
+    {
+        inPlace = false;
+        if (stream.Count - stream.Pos != 1)
+            return false;
+        var value = stream.ReadByte();
+        inPlace = value == 1;
+        return value <= 1;
     }
 
     private static void Resurrect(Character character, bool inPlace)
     {
-        if (character.Hp > 0)
+        var now = DateTime.UtcNow;
+        if (!character.TryBeginResurrection(inPlace, now, out var offer))
             return;
-        Character.ResurrectionOffer offer = null;
-        if (inPlace && !character.TryTakeResurrectionOffer(out offer))
-            return;
-        character.ClearResurrectionOffer();
 
         Logger.Debug("ResurrectCharacter, InPlace: {0}", inPlace);
 
