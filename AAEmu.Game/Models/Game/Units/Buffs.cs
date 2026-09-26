@@ -454,6 +454,12 @@ public partial class Buffs : IBuffs
                                     last = e;
                     break;
             }
+            // Rejecting a shorter refresh above must not cancel other buffs. Once the
+            // incoming buff is accepted, stop bound buffs before its start callbacks.
+            BreakBuffs(buffIds);
+            if (last != null && !_effects.Contains(last))
+                last = null;
+
             if (last != null)
             {
                 if (_laborPreview)
@@ -521,6 +527,27 @@ public partial class Buffs : IBuffs
         if (finalToleranceBuffId > 0)
         {
             AddBuff(new Buff(buff.Owner, buff.Caster, buff.SkillCaster, SkillManager.Instance.GetBuffTemplate(finalToleranceBuffId), buff.Skill, DateTime.UtcNow));
+        }
+    }
+
+    private void BreakBuffs(List<uint> incomingTags)
+    {
+        if (incomingTags.Count == 0)
+            return;
+
+        foreach (var active in _effects.ToArray())
+        {
+            if (!active.InUse || active.IsEnded() ||
+                !BuffGameData.Instance.IsBrokenBy(active.Template.Id, incomingTags))
+                continue;
+
+            if (_laborPreview)
+            {
+                _laborChangedBuffIds.Add(active.Template.Id);
+                _effects.Remove(active);
+            }
+            else
+                active.Exit();
         }
     }
 
