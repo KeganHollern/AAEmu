@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
+using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Buffs;
 using AAEmu.Game.Models.Game.Teleport;
 using AAEmu.Game.Models.Game.Units;
@@ -72,6 +73,10 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
             Logger.Warn($"Invalid target {_objId} from {character.Name}");
             return;
         }
+
+        var previousPosition = targetUnit.Transform.Local.Position;
+        var previousParent = targetUnit.Transform.Parent;
+        var previousRotation = targetUnit.Transform.Local.Rotation;
 
         // We are not controlling our main character
         switch (_moveType)
@@ -303,13 +308,15 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                         new SCOneUnitMovementPacket(_objId, dmt),
                         ShouldIncludeTargetCharacter(character, targetUnit));
                     targetUnit.Transform.FinalizeTransform();
+                    if (targetUnit is Unit castUnit)
+                        SkillCastReactions.OnMovement(castUnit, previousPosition, targetUnit.Transform.Local.Position,
+                            ReferenceEquals(previousParent, targetUnit.Transform.Parent),
+                            SkillCastReactions.HasTurned(previousRotation, targetUnit.Transform.Local.Rotation));
 
-                    // Handle Fall Velocity
-                    if (dmt.FallVel > 0 && targetUnit is Unit unit)
-                    {
-                        _ = unit.DoFallDamage(dmt.FallVel);
-                        // character.SendMessage("{0} took {1} fall damage {2}/{3} HP left", unit.Name, fallDmg, unit.Hp, unit.MaxHp);
-                    }
+                    // Observe only accepted world movement. The optional native report
+                    // signals contact on roofs/objects, but its number never sets damage.
+                    if (targetUnit is Unit unit)
+                        unit.ObserveFallMovement((dmt.ActorFlags & 0x80) != 0 && dmt.FallVel > 0);
 
                     break;
                 }

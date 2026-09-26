@@ -17,15 +17,29 @@ public class Plot
 
     public PlotTree Tree { get; set; }
 
-    public async Task RunAsync(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject, Skill skill)
+    public Task RunAsync(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject, Skill skill)
+    {
+        var state = PrepareRun(caster, casterCaster, target, targetCaster, skillObject, skill);
+        return state == null ? Task.CompletedTask : RunAsync(state);
+    }
+
+    internal static PlotState PrepareRun(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject, Skill skill)
     {
         if (caster is not Unit casterUnit)
-            return;
+            return null;
 
         var state = new PlotState(caster, casterCaster, target, targetCaster, skillObject, skill);
+        state.SetPendingExecution();
         casterUnit.ActivePlotState = state;
         skill.ActivePlotState = state;
-        // I am guessing we want to do something here to run it in a thread, or at least using Async
+        return state;
+    }
+
+    internal async Task RunAsync(PlotState state)
+    {
+        var skill = state.ActiveSkill;
+        var caster = state.Caster;
+        var casterCaster = state.CasterCaster;
         await Tree.ExecuteAsync(state);
 
         if (skill.Template.PlotOnly && !state.CancellationRequested())

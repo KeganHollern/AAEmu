@@ -220,16 +220,37 @@ public class TaskManager(ITickManager tickManager) : Singleton<TaskManager>, ITa
     /// <returns></returns>
     public bool Cancel(Task task)
     {
-        var res = _queue.Remove(task.Id, out _);
-
-        if (res)
+        lock (_executionLock)
         {
+            // A completed callback can retain an ID that now belongs to another task.
+            if (!_queue.TryRemove(new KeyValuePair<uint, Task>(task.Id, task)))
+                return false;
+
             task.Cancelled = true;
             ReleaseId(task.Id);
+            return true;
         }
-
-        return res;
     }
+
+    internal bool UpdateRepeatInterval(Task task, TimeSpan repeatInterval)
+    {
+        if (repeatInterval <= TimeSpan.Zero)
+            return false;
+
+        lock (_executionLock)
+        {
+            if (_stopping || task.Cancelled || !_queue.TryGetValue(task.Id, out var queued) ||
+                !ReferenceEquals(queued, task) || task.RepeatInterval <= TimeSpan.Zero)
+                return false;
+
+            // Tick chooses the next trigger before the callback starts. Change that
+            // pending interval too, while preserving the start of the current cycle.
+            task.TriggerTime += repeatInterval - task.RepeatInterval;
+            task.RepeatInterval = repeatInterval;
+            return true;
+        }
+    }
+
     public void RemoveTasks(Func<Task, bool> predicate)
     {
         // Take a snapshot of the current tasks to avoid modifying the collection while iterating.

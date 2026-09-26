@@ -319,7 +319,7 @@ public class ChatSpamManagerTests
         Task<ChatSpamCheckResult> second = null;
         try
         {
-            await Assert.That(timeProvider.FirstReadStarted.Wait(TimeSpan.FromSeconds(5))).IsTrue();
+            await Assert.That(timeProvider.FirstReadStarted.Wait(TimeSpan.FromSeconds(30))).IsTrue();
             second = Task.Factory.StartNew(
                 () => manager.CheckMessage(character, ChatType.White, "second"),
                 CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
@@ -333,7 +333,7 @@ public class ChatSpamManagerTests
             timeProvider.ResumeFirstRead.Set();
         }
 
-        var results = await Task.WhenAll(first, second!).WaitAsync(TimeSpan.FromSeconds(5));
+        var results = await Task.WhenAll(first, second!).WaitAsync(TimeSpan.FromSeconds(30));
         var third = manager.CheckMessage(character, ChatType.White, "third");
 
         await Assert.That(results.All(result => result.IsAllowed)).IsTrue();
@@ -352,7 +352,9 @@ public class ChatSpamManagerTests
             if (call == 1)
             {
                 FirstReadStarted.Set();
-                if (!ResumeFirstRead.Wait(TimeSpan.FromSeconds(5)))
+                // This guard detects a broken test handshake. It is not the chat
+                // rate window, and must allow coverage/JIT work on a busy runner.
+                if (!ResumeFirstRead.Wait(TimeSpan.FromSeconds(30)))
                     throw new TimeoutException("First chat timestamp read was not released.");
             }
             return DateTimeOffset.UnixEpoch.AddSeconds(call);

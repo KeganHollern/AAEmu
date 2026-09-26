@@ -33,7 +33,18 @@ public class Buff
     public SkillCaster SkillCaster { get; set; }
     public BaseUnit Owner { get; set; }
     public EffectState State { get; set; }
-    public bool InUse { get; set; }
+    private bool _inUse;
+    public bool InUse
+    {
+        get => _inUse;
+        set
+        {
+            if (_inUse != value && Template is { } template &&
+                (template.FallDamageImmune || template.Gliding) && Owner is Unit unit)
+                unit.FallMovement.Reset();
+            _inUse = value;
+        }
+    }
     public int Duration { get; set; }
     public double Tick { get; set; }
     public DateTime StartTime { get; set; }

@@ -68,7 +68,7 @@ public class PlotNextEvent
 
     public int GetDelay(PlotState state, PlotTargetInfo eventInstance, PlotNode node)
     {
-        var animTime = (int)(GetAnimDelay(node.Event.Effects) * (state.Caster.GlobalCooldownMul / 100f));
+        var animTime = AttackTiming.ScaleAnimationTime(state.Caster, GetAnimDelay(node.Event.Effects));
         var projectileTime = GetProjectileDelay(eventInstance.Source, eventInstance.Target);
         var skillCtrlTime = GetSkillControllerDelay(node);
         var delay = animTime + projectileTime + skillCtrlTime;

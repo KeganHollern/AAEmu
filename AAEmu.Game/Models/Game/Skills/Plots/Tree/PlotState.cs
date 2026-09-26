@@ -15,14 +15,112 @@ public class PlotState(
     Skill skill)
 {
     private volatile bool _cancellationRequest;
+    private readonly object _castWaitLock = new();
+    private readonly List<CastWindow> _castWaits = [];
+    private bool _cancelledWhileCasting;
+    private bool _cancelledWhileChanneling;
+    private bool _pendingExecution;
+    internal bool CancelledBeforeExecution { get; private set; }
+
+    internal void SetPendingExecution()
+    {
+        lock (_castWaitLock)
+            _pendingExecution = true;
+    }
+
+    internal void CompleteInitialPhase()
+    {
+        lock (_castWaitLock)
+            _pendingExecution = false;
+    }
+
+    internal CastWindow RegisterCastWait(PlotNextEvent next, DateTime deadline)
+    {
+        if (next == null || (!next.Casting && !next.Channeling))
+            return null;
+        var wait = new CastWindow(deadline, next.Casting, next.Channeling, next.CastingDelayable);
+        lock (_castWaitLock)
+        {
+            _castWaits.RemoveAll(window => !window.Active);
+            _castWaits.Add(wait);
+        }
+        return wait;
+    }
+
+    internal bool CancelCastWaits(bool includePending = false)
+    {
+        lock (_castWaitLock)
+        {
+            if (includePending && _pendingExecution)
+            {
+                CancelledBeforeExecution = true;
+                _cancellationRequest = true;
+                return true;
+            }
+            var active = _castWaits.Where(wait => wait.Active).ToArray();
+            if (active.Length == 0)
+                return false;
+            _cancelledWhileCasting |= active.Any(wait => wait.Casting);
+            _cancelledWhileChanneling |= active.Any(wait => wait.Channeling);
+            // Publish cancellation before closing a wait that the plot loop can see.
+            _cancellationRequest = true;
+            foreach (var wait in active)
+                wait.TryCancel();
+            return true;
+        }
+    }
+
+    internal bool DelayCastWaits(DateTime now, int milliseconds)
+    {
+        lock (_castWaitLock)
+        {
+            var delayed = false;
+            foreach (var wait in _castWaits)
+                delayed |= wait.TryDelay(now, milliseconds);
+            return delayed;
+        }
+    }
+
+    internal bool HasCastWaits
+    {
+        get
+        {
+            lock (_castWaitLock)
+                return _pendingExecution || _castWaits.Any(wait => wait.Active);
+        }
+    }
+
+    internal bool HasDelayableCastWaits
+    {
+        get
+        {
+            lock (_castWaitLock)
+                return _castWaits.Any(wait => wait.Delayable && wait.Active);
+        }
+    }
+
     private readonly TowerDefenseSpawnToken _eventToken = (caster as Npc)?.TowerDefenseSpawnToken;
     private bool _finishChanneling = false;
     private readonly Dictionary<uint, float> _aoeDamageMultipliers = [];
     public Dictionary<uint, int> Tickets { get; set; } = [];
     public int[] Variables { get; set; } = new int[12];
     public byte CombatDiceRoll { get; set; }
-    public bool IsCasting { get; set; }
-    public bool IsChanneling { get; set; }
+    public bool IsCasting
+    {
+        get
+        {
+            lock (_castWaitLock)
+                return _cancelledWhileCasting || _castWaits.Any(wait => wait.Casting && wait.Active);
+        }
+    }
+    public bool IsChanneling
+    {
+        get
+        {
+            lock (_castWaitLock)
+                return _cancelledWhileChanneling || _castWaits.Any(wait => wait.Channeling && wait.Active);
+        }
+    }
 
     public Skill ActiveSkill { get; set; } = skill;
     public Unit Caster { get; set; } = caster as Unit;
@@ -54,7 +152,15 @@ public class PlotState(
     public bool CancellationRequested() => _cancellationRequest ||
         (_eventToken != null && (_eventToken.Lifetime.IsCancelled ||
          Caster is not Npc npc || !ReferenceEquals(npc.TowerDefenseSpawnToken, _eventToken)));
-    public bool RequestCancellation() => _cancellationRequest = true;
+    public bool RequestCancellation()
+    {
+        lock (_castWaitLock)
+        {
+            _cancelledWhileCasting |= _castWaits.Any(wait => wait.Casting && wait.Active);
+            _cancelledWhileChanneling |= _castWaits.Any(wait => wait.Channeling && wait.Active);
+            return _cancellationRequest = true;
+        }
+    }
     public bool ChannelingFinishRequested() => _finishChanneling;
     public bool FinishChanneling() => _finishChanneling = true;
     public bool PermitChanneling() => _finishChanneling = false;

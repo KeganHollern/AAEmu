@@ -1844,9 +1844,8 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
         // Auto-attack skills (2=melee, 3=offhand, 4=ranged) use weapon speed
         if (skillTemplate.Id is 2 or 3 or 4 && caster is Character character)
         {
-            var weaponSpeed = GetWeaponSpeed(character, skillTemplate.Id);
-            var delay = weaponSpeed * (caster.GlobalCooldownMul / 100.0);
-            return Math.Clamp(delay, 400.0, 5000.0);
+            var (weaponSpeed, twoHanded) = GetWeaponSpeed(character, skillTemplate.Id);
+            return AttackTiming.GetWeaponInterval(caster, weaponSpeed, skillTemplate.Id == 4, twoHanded);
         }
 
         // Non-auto-attack skills: original formula
@@ -1859,7 +1858,7 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
     /// <summary>
     /// Get the weapon speed in ms for an auto-attack skill based on equipped weapon.
     /// </summary>
-    private static double GetWeaponSpeed(Character character, uint skillId)
+    private static (double Milliseconds, bool TwoHanded) GetWeaponSpeed(Character character, uint skillId)
     {
         const double DefaultMeleeSpeed = 1500.0;
         const double DefaultRangedSpeed = 1800.0;
@@ -1871,14 +1870,14 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
             case 2: slot = EquipmentItemSlot.Mainhand; fallback = DefaultMeleeSpeed; break;
             case 3: slot = EquipmentItemSlot.Offhand;  fallback = DefaultMeleeSpeed; break;
             case 4: slot = EquipmentItemSlot.Ranged;   fallback = DefaultRangedSpeed; break;
-            default: return DefaultMeleeSpeed;
+            default: return (DefaultMeleeSpeed, false);
         }
 
         var weapon = character.Equipment?.GetItemBySlot((int)slot);
         if (weapon?.Template is WeaponTemplate wt && wt.HoldableTemplate != null && wt.HoldableTemplate.Speed > 0)
-            return wt.HoldableTemplate.Speed;
+            return (wt.HoldableTemplate.Speed, wt.HoldableTemplate.SlotTypeId == (uint)EquipmentItemSlotType.TwoHanded);
 
-        return fallback;
+        return (fallback, false);
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Skills;
@@ -25,13 +26,21 @@ public static class PeaceProtection
         if (attackerOwnerId == 0 || targetOwnerId == 0 || attackerOwnerId == targetOwnerId)
             return false;
 
+        if (attacker is Character or Units.Mate && target is Character or Units.Mate &&
+            attacker.GetOwnerCharacter() is { } attackerOwner && attackerOwner.Id == attackerOwnerId &&
+            target.GetOwnerCharacter() is { } targetOwner && targetOwner.Id == targetOwnerId &&
+            DuelManager.Instance.AreActiveOpponents(attackerOwner, targetOwner))
+            return false;
+
+        // Instance rules also apply when a zone has no faction or conflict row.
+        // Keep this in the shared guard so delayed damage, debuffs, and mana burns
+        // cannot bypass the rule after target selection.
+        if (attacker.ParentWorld?.AllowPvP == false || target.ParentWorld?.AllowPvP == false)
+            return true;
+
         var attackerProtected = IsProtected(attacker);
         var targetProtected = IsProtected(target);
         if (!attackerProtected && !targetProtected)
-            return false;
-
-        if (attacker is Character or Units.Mate && target is Character or Units.Mate &&
-            DuelManager.Instance.AreActiveOpponents(attacker.GetOwnerCharacter(), target.GetOwnerCharacter()))
             return false;
 
         // Native relation evaluation applies the level guard before retaliation
@@ -60,8 +69,14 @@ public static class PeaceProtection
     private static uint GetPlayerOwnerId(BaseUnit unit) => unit switch
     {
         Character character => character.Id,
+        // Both persistent and temporary pet factories retain the character ID.
+        // A delayed pet effect can outlive the owner's world membership.
+        Units.Mate { OwnerId: > 0 } mate => mate.OwnerId,
         House house => house.OwnerId,
         Shipyard.Shipyard shipyard => shipyard.ShipyardData?.Type2 ?? 0,
+        Doodad { OwnerType: DoodadOwnerType.Slave, ParentObj: Slave parent } => GetPlayerOwnerId(parent),
+        Doodad { OwnerType: DoodadOwnerType.Character, OwnerId: > 0 } doodad => doodad.OwnerId,
+        Slave { Summoner: { } owner } => owner.Id,
         Slave { OwnerId: > 0 } slave => slave.OwnerId,
         _ => unit.GetOwnerCharacter()?.Id ?? 0
     };

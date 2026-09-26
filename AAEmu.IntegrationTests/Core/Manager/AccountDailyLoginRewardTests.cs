@@ -4,6 +4,8 @@ using AAEmu.Game.Core.Network.Connections;
 
 using Moq;
 
+using MySql.Data.MySqlClient;
+
 using Xunit;
 
 namespace AAEmu.IntegrationTests.Core.Manager;
@@ -48,10 +50,11 @@ public sealed class AccountDailyLoginRewardTests : IAsyncLifetime
                 "updates",
                 "2026-09-01_aaemu_game_account_daily_login_claims.sql"),
             TestContext.Current.CancellationToken);
-        var frozenUpdateSql = $"SET timestamp = 1788177600;{Environment.NewLine}{updateSql}";
-
-        await ExecuteAsync(frozenUpdateSql);
-        await ExecuteAsync(frozenUpdateSql);
+        await using (var connection = MySQL.CreateConnection())
+        {
+            await ExecuteAtCutoverAsync(connection, updateSql);
+            await ExecuteAtCutoverAsync(connection, updateSql);
+        }
 
         var claimAttempt = CreateManager().TryClaimDailyLoginReward(
             FirstAccountId, cutoverDate, DailyCredits, DailyLoyalty);
@@ -67,6 +70,29 @@ public sealed class AccountDailyLoginRewardTests : IAsyncLifetime
         Assert.Equal(1, await CountClaimsAsync(FirstAccountId));
         Assert.Equal(1, await CountClaimsAsync(SecondAccountId));
         Assert.Equal(2, await CountCutoverClaimsAsync(cutoverDate));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FrozenMigrationClock_SuccessOrFailure_RestoresSessionTime(bool fail)
+    {
+        await using var connection = MySQL.CreateConnection();
+        var sql = fail
+            ? "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'simulated migration failure'"
+            : "SELECT 1";
+
+        if (fail)
+            await Assert.ThrowsAsync<MySqlException>(() => ExecuteAtCutoverAsync(connection, sql));
+        else
+            await ExecuteAtCutoverAsync(connection, sql);
+
+        await using var command = connection.CreateCommand();
+        // SYSDATE reads the server clock independently of the session timestamp override.
+        command.CommandText = "SELECT ABS(TIMESTAMPDIFF(SECOND, NOW(6), SYSDATE(6)))";
+        var clockDifference = Convert.ToInt64(
+            await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+        Assert.InRange(clockDifference, 0, 1);
     }
 
     [Fact]
@@ -318,6 +344,22 @@ public sealed class AccountDailyLoginRewardTests : IAsyncLifetime
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task ExecuteAtCutoverAsync(MySqlConnection connection, string sql)
+    {
+        await using var command = connection.CreateCommand();
+        try
+        {
+            command.CommandText = $"SET timestamp = 1788177600;{Environment.NewLine}{sql}";
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            // Pooled sessions keep this override unless the same connection resets it.
+            command.CommandText = "SET timestamp = DEFAULT";
+            await command.ExecuteNonQueryAsync(CancellationToken.None);
+        }
     }
 
     private sealed record AccountState(

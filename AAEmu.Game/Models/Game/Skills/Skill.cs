@@ -98,6 +98,10 @@ public partial class Skill
     internal uint SourceItemTemplateId { get; private set; }
     private bool _bypassGcd;
     private int _achievementUseRecorded;
+    private int _stopRequested;
+    private readonly object _timelineLock = new();
+    private int _timelinePaths;
+    private int _completedTimelinePaths;
     public bool Cancelled { get; set; } = false;
     public Action Callback { get; set; }
 
@@ -167,6 +171,9 @@ public partial class Skill
         }
 
         Cancelled = false;
+        Interlocked.Exchange(ref _stopRequested, 0);
+        _timelinePaths = Template.Plot == null ? 1 : Template.PlotOnly ? 2 : 3;
+        _completedTimelinePaths = 0;
         LaborSettled = false;
         LaborVocationSettled = false;
         _normalLaborEffectsCompleted = false;
@@ -256,52 +263,12 @@ public partial class Skill
         // if (caster is Character)
         Logger.Debug($"Created SkillTlId {TlId} for Skill {Template.Id}, Caster {caster.Name} ({caster.TemplateId}:{caster.ObjId}) with target {target.Name} ({target.TemplateId}:{target.ObjId})");
 
-        // Check if target is within range
-        var skillRange = caster.ApplySkillModifiers(this, SkillAttribute.Range, Template.MaxRange);
-        var targetDist = unit.GetDistanceTo(target, true);
-
-        var minRangeCheck = Template.MinRange * 1.0;
-        var maxRangeCheck = skillRange;
-
-        // HackFix: for quest Unblock the Spring ( 3707 ), unable to use the boulder because of being "too close"
-        // The range of skill Remove Stone ( 16462 ) is defined as 100~200 which can't possibly be correct 
-        if (Template.TargetType == SkillTargetType.Doodad && Template.MinRange >= 100)
-        {
-            minRangeCheck = Template.MinRange / 100.0;
-        }
-
-        // HACKFIX : Used mostly for boats, since the actual position of the doodad is the boat's origin, and not where it is displayed
-        // TODO: Do a check based on model size or bounding box instead
-
-        // If weapon is used to calculate range, use that
-        if (Template.WeaponSlotForRangeId > 0)
-        {
-            var minWeaponRange = 0.0f; // Fist default
-            var maxWeaponRange = 3.0f; // Fist default
-            if (unit.Equipment.GetItemBySlot(Template.WeaponSlotForRangeId)?.Template is WeaponTemplate weaponTemplate)
-            {
-                minWeaponRange = weaponTemplate.HoldableTemplate.MinRange;
-                maxWeaponRange = weaponTemplate.HoldableTemplate.MaxRange;
-            }
-
-            minRangeCheck = minWeaponRange;
-            maxRangeCheck = maxWeaponRange;
-        }
-
-        if (targetDist < minRangeCheck)
+        var rangeResult = SkillRange.Check(this, unit, target);
+        if (rangeResult != SkillResult.Success)
         {
             SkillTlIdManager.ReleaseId(TlId);
             TlId = 0;
-            return SkillResult.TooCloseRange;
-        }
-
-        // TODO: Remove exception for doodads
-        // TODO: Remove exceptions for slave initiated by Doodads (needed to fix repair points on ships)
-        if (targetDist > maxRangeCheck && target is not Doodad && target is not Slave)
-        {
-            SkillTlIdManager.ReleaseId(TlId);
-            TlId = 0;
-            return SkillResult.TooFarRange;
+            return rangeResult;
         }
 
         if (character != null && !PermissionManager.Instance.CanUse(character, GamePermission.UseRestrictedPortals))
@@ -356,6 +323,15 @@ public partial class Skill
             TlId = 0;
             return SkillResult.CooldownTime;
         }
+
+        // Failed admission leaves the current cast intact. A successful replacement
+        // must close its old timeline before the new cast is published.
+        var previousTask = unit.SkillTask;
+        if (previousTask?.CastWindow?.Active == true && previousTask.Skill != this)
+            previousTask.Skill.Stop(unit, (previousTask as EndChannelingTask)?._channelDoodad);
+        var previousPlot = unit.ActivePlotState;
+        if (previousPlot != null && previousPlot.ActiveSkill != this)
+            previousPlot.CancelCastWaits(includePending: true);
 
         // Cancel buffs if Template asks for it
         if (Template.CancelOngoingBuffs)
@@ -417,7 +393,10 @@ public partial class Skill
                 RealCastTimeDiv10 = (ushort)(castTime / 10), // calculate with adjustments
             }, true);
 
-            unit.SkillTask = new CastTask(this, caster, casterCaster, target, targetCaster, skillObject);
+            unit.SkillTask = new CastTask(this, caster, casterCaster, target, targetCaster, skillObject)
+            {
+                CastWindow = new CastWindow(DateTime.UtcNow.AddMilliseconds(castTime), true, false, Template.CastingDelayable)
+            };
             TaskManager.Instance.Schedule(unit.SkillTask, TimeSpan.FromMilliseconds(castTime));
         }
         else
@@ -435,22 +414,45 @@ public partial class Skill
         if (!TryEnterExecution(caster as Character, out var execution))
         {
             Cancelled = true;
+            ReleaseTimeline(plot: true);
             return Task.CompletedTask;
         }
+        if (Cancelled)
+        {
+            execution?.Dispose();
+            ReleaseTimeline(plot: true);
+            return Task.CompletedTask;
+        }
+        var state = Plots.Plot.PrepareRun(caster, casterCaster, target, targetCaster, skillObject, this);
         try
         {
             return Task.Run(async () =>
             {
                 using (execution)
                 {
-                    if (!Cancelled)
-                        await Template.Plot.RunAsync(caster, casterCaster, target, targetCaster, skillObject, this);
+                    if (Cancelled)
+                    {
+                        state.RequestCancellation();
+                        state.CompleteInitialPhase();
+                        if (state.Caster.ActivePlotState == state)
+                            state.Caster.ActivePlotState = null;
+                        if (ActivePlotState == state)
+                            ActivePlotState = null;
+                        ReleaseTimeline(plot: true);
+                        return;
+                    }
+                    await Template.Plot.RunAsync(state);
                 }
             });
         }
         catch
         {
             execution?.Dispose();
+            state.RequestCancellation();
+            state.CompleteInitialPhase();
+            if (state.Caster.ActivePlotState == state)
+                state.Caster.ActivePlotState = null;
+            ReleaseTimeline(plot: true);
             throw;
         }
     }
@@ -764,7 +766,8 @@ public partial class Skill
         if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
         {
             Cancelled = true;
-            unit.SkillTask = null;
+            if (unit.SkillTask?.Skill == this)
+                unit.SkillTask = null;
             EndSkill(caster);
             return;
         }
@@ -804,7 +807,8 @@ public partial class Skill
 #pragma warning restore CA1508 // Avoid dead conditional code
             }
         }
-        unit.SkillTask = null;
+        if (unit.SkillTask?.Skill == this)
+            unit.SkillTask = null;
 
         ConsumeMana(caster);
         SkillCooldowns.StartCooldown(unit, this, caster.ApplySkillModifiers(this, SkillAttribute.Cooldown, Template.CooldownTime));
@@ -946,7 +950,10 @@ public partial class Skill
         }
 
         caster.BroadcastPacket(new SCSkillFiredPacket(Id, TlId, casterCaster, targetCaster, this, skillObject), true);
-        unit.SkillTask = new EndChannelingTask(this, caster, casterCaster, target, targetCaster, skillObject, doodad);
+        unit.SkillTask = new EndChannelingTask(this, caster, casterCaster, target, targetCaster, skillObject, doodad)
+        {
+            CastWindow = new CastWindow(DateTime.UtcNow.AddMilliseconds(Template.ChannelingTime), false, true, false)
+        };
         TaskManager.Instance.Schedule(unit.SkillTask, TimeSpan.FromMilliseconds(Template.ChannelingTime));
     }
 
@@ -955,7 +962,8 @@ public partial class Skill
         if (caster is not Unit unit) { return; }
         if (!ZoneSkillRestrictions.CanApply(caster, this, casterCaster))
             Cancelled = true;
-        unit.SkillTask = null;
+        if (unit.SkillTask?.Skill == this)
+            unit.SkillTask = null;
         if (Template.ChannelingBuffId != 0)
         {
             caster.Buffs.RemoveEffect(Template.ChannelingBuffId, Template.Id);
@@ -994,7 +1002,7 @@ public partial class Skill
         if (Template.EffectSpeed > 0)
             totalDelay += (int)(unit.GetDistanceTo(target) / Template.EffectSpeed * 1000.0f);
         if (Template.FireAnim != null && Template.UseAnimTime)
-            totalDelay += (int)(Template.FireAnim.CombatSyncTime * (unit.GlobalCooldownMul / 100));
+            totalDelay += AttackTiming.ScaleAnimationTime(unit, Template.FireAnim.CombatSyncTime);
 
         // Determine weapon-based animation for auto-attacks (skill 2/3/4).
         // 0 means "no override" — packet keeps its default (skill template's FireAnim).
@@ -1652,13 +1660,24 @@ public partial class Skill
         Callback?.Invoke();
         unit.OnSkillEnd(this);
         caster.BroadcastPacket(new SCSkillEndedPacket(TlId), true);
-        SkillTlIdManager.ReleaseId(TlId);
-        TlId = 0;
+        ReleaseTimeline(plot: false);
 
         if (caster.GetOwnerCharacter() is { } cooldownOwner && CanIgnoreCooldowns(cooldownOwner))
         {
             cooldownOwner.ResetSkillCooldown(Template.Id, (uint)Math.Max(0, Template.CooldownTagId), false);
             unit.Cooldowns.RemoveCooldown(Template);
+        }
+    }
+
+    internal void ReleaseTimeline(bool plot)
+    {
+        lock (_timelineLock)
+        {
+            _completedTimelinePaths |= plot ? 2 : 1;
+            if (_timelinePaths != 0 && (_completedTimelinePaths & _timelinePaths) != _timelinePaths)
+                return;
+            SkillTlIdManager.ReleaseId(TlId);
+            TlId = 0;
         }
     }
 
@@ -1670,30 +1689,21 @@ public partial class Skill
     public void Stop(BaseUnit caster, Doodad channelDoodad = null, SkillCaster casterCaster = null)
     {
         if (caster is not Unit unit) { return; }
+        if (Interlocked.Exchange(ref _stopRequested, 1) != 0)
+            return;
         Cancelled = true;
+        if (unit.SkillTask?.Skill == this)
+            unit.SkillTask.CastWindow?.TryCancel();
         (caster as Character)?.Craft?.CancelFromSkill(Template.Id);
-        if (Template.ChannelingTime > 0)
-        {
-            EndChanneling(caster, channelDoodad, casterCaster);
-        }
-
         if (Template.ToggleBuffId != 0)
-        {
             caster.Buffs.RemoveEffect(Template.ToggleBuffId, Template.Id);
-        }
         caster.BroadcastPacket(new SCCastingStoppedPacket(TlId, 0), true);
-        caster.BroadcastPacket(new SCSkillEndedPacket(TlId), true);
-        Callback?.Invoke();
-        unit.OnSkillEnd(this);
-        unit.SkillTask = null;
-        SkillTlIdManager.ReleaseId(TlId);
-        TlId = 0;
-
-        if (caster.GetOwnerCharacter() is { } character && CanIgnoreCooldowns(character))
-        {
-            character.ResetSkillCooldown(Template.Id, (uint)Math.Max(0, Template.CooldownTagId), false);
-            unit.Cooldowns.RemoveCooldown(Template);
-        }
+        if (unit.SkillTask?.Skill == this)
+            unit.SkillTask = null;
+        if (Template.ChannelingTime > 0)
+            EndChanneling(caster, channelDoodad, casterCaster);
+        else
+            EndSkill(caster);
     }
 
     internal static bool CanIgnoreCooldowns(Character character)

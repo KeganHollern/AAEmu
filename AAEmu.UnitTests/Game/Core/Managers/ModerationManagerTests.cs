@@ -212,7 +212,8 @@ public class ModerationManagerTests
         }
         manager.Completion.SetResult(new ModerationResult(1, ModerationStatus.Unavailable,
             new ModerationState(20, 0, false, 0, false, 0)));
-        await audit.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        // This bounds a broken continuation, not the moderation timeout policy.
+        await audit.Completed.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await Assert.That(audit.Completions).IsEqualTo(1);
         await Assert.That(entry.Result).IsEqualTo("unconfirmed");
         await Assert.That(entry.Detail).Contains("Unavailable");
@@ -265,7 +266,9 @@ public class ModerationManagerTests
     private static ModerationManager CreateManager(IPermissionManager permissions, Func<ModerationRequest, bool> send,
         IReadOnlyList<GameConnection> connections = null, Action<GameConnection, string> kick = null, TimeSpan? timeout = null)
         => new(permissions, send, () => connections ?? [], kick ?? ((_, _) => { }), TimeProvider.System,
-            timeout ?? TimeSpan.FromSeconds(1));
+            // Success-path tests must not race coverage/JIT work on a busy runner.
+            // Timeout-policy tests pass their own short timeout above.
+            timeout ?? TimeSpan.FromSeconds(30));
 
     private sealed class TestPermissions(AccountRole actor, AccountRole target) : IPermissionManager
     {
