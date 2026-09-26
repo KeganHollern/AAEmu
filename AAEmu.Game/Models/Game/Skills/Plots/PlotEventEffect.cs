@@ -100,7 +100,12 @@ public class PlotEventEffect
                 target,
                 state.TargetCaster,
                 new CastPlot(evt.PlotId, state.ActiveSkill.TlId, evt.Id, state.ActiveSkill.Template.Id),
-                new EffectSource(state.ActiveSkill),
+                new EffectSource(state.ActiveSkill)
+                {
+                    PlotState = state,
+                    AoeDamageMultiplier = evt.AoeDiminishing && template is DamageEffect && target is Unit unit
+                        ? state.GetAoeDamageMultiplier(unit) : 1f
+                },
                 state.SkillObject,
                 DateTime.UtcNow,
                 gamePackets);

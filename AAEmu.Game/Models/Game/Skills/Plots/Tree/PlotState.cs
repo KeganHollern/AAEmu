@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Models.Game.Units;
+﻿using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.TowerDefs;
@@ -16,6 +17,7 @@ public class PlotState(
     private volatile bool _cancellationRequest;
     private readonly TowerDefenseSpawnToken _eventToken = (caster as Npc)?.TowerDefenseSpawnToken;
     private bool _finishChanneling = false;
+    private readonly Dictionary<uint, float> _aoeDamageMultipliers = [];
     public Dictionary<uint, int> Tickets { get; set; } = [];
     public int[] Variables { get; set; } = new int[12];
     public byte CombatDiceRoll { get; set; }
@@ -31,6 +33,23 @@ public class PlotState(
     public List<(BaseUnit unit, uint buffId)> ChanneledBuffs { get; set; } = [];
 
     public Dictionary<uint, List<GameObject>> HitObjects { get; set; } = [];
+
+    internal float GetAoeDamageMultiplier(Unit target)
+    {
+        // Per-target child nodes share this cast state. Repeated hits on the same
+        // target keep their rate until the plot executes its authored reset effect.
+        if (!_aoeDamageMultipliers.TryGetValue(target.ObjId, out var multiplier))
+        {
+            multiplier = AoeDiminishingGameData.Instance.GetMultiplier(_aoeDamageMultipliers.Count + 1);
+            _aoeDamageMultipliers.Add(target.ObjId, multiplier);
+        }
+        return multiplier;
+    }
+
+    internal void ResetAoeDiminishing()
+    {
+        _aoeDamageMultipliers.Clear();
+    }
 
     public bool CancellationRequested() => _cancellationRequest ||
         (_eventToken != null && (_eventToken.Lifetime.IsCancelled ||
