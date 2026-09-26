@@ -119,7 +119,24 @@ It checks crime attribution, a later plot effect, a later buff tick, and a new d
 Barrier tests check that flag creation and active effects do not hold the manager lock.
 The Release build passed. The focused suites passed 43 duel, 14 resurrection, 17 priest, and 34 Peace cases.
 The independent review checked packet contracts, death state, duel authorization, effect completion, and callback lock order.
-The full suite will run after the merge of the reviewed AoE deployment tip.
+The branch merged reviewed deployment tip `73c9dd5ca4e55d06036a8b0556776d89c74b62ee`.
+The merged Release build passed. The full suite passed 4,341 tests with 0 failures.
+The 20 skipped tests need optional exact-client asset paths. None is a resurrection or duel test.
+The first full run exposed missing world metadata in the new duel fixture. The fixture now supplies that metadata.
+
+Commands:
+
+```text
+dotnet build AAEmu.UnitTests/AAEmu.UnitTests.csproj -c Release --no-restore
+dotnet AAEmu.UnitTests/bin/Release/net10.0/AAEmu.UnitTests.dll --treenode-filter '/*/*/DuelRulesTests/*'
+dotnet AAEmu.UnitTests/bin/Release/net10.0/AAEmu.UnitTests.dll --treenode-filter '/*/*/ResurrectionRulesTests/*'
+dotnet AAEmu.UnitTests/bin/Release/net10.0/AAEmu.UnitTests.dll --treenode-filter '/*/*/PriestPurchaseTests/*'
+dotnet AAEmu.UnitTests/bin/Release/net10.0/AAEmu.UnitTests.dll --treenode-filter '/*/*/PeaceProtectionTests/*'
+dotnet AAEmu.UnitTests/bin/Release/net10.0/AAEmu.UnitTests.dll
+```
+
+The local SDK is `/home/kegan/archeage/.tools/dotnet/dotnet`.
+Build and test logs are in the same ignored evidence directory as the native exports.
 
 ## Pending HUMAN VALIDATION checks
 

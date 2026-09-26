@@ -42,7 +42,7 @@ public sealed class DuelRulesTests
         typeof(ZoneManager).GetField("_zones", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(zones, new Dictionary<uint, Zone>());
         Install(zones);
-        _world = new WorldInstance(null, 0, true, 0);
+        _world = new WorldInstance(new WorldTemplate { Id = 0, Name = "duel-test" }, 0, true, 0);
         var worlds = new WorldManager(null, null, null, null, null);
         typeof(WorldManager).GetField("_worlds", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(worlds, new ConcurrentDictionary<uint, WorldInstance>(new Dictionary<uint, WorldInstance> { [0] = _world }));
@@ -91,7 +91,7 @@ public sealed class DuelRulesTests
             case "dead": second.Hp = 0; break;
             case "offline": typeof(Character).GetField("<IsOnline>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(second, false); break;
             case "far": second.Transform.World.SetPosition(30.01f, 0, 0); break;
-            case "instance": second.ParentWorld = new WorldInstance(null, 0, true, 99); break;
+            case "instance": second.ParentWorld = new WorldInstance(new WorldTemplate { Id = 0, Name = "duel-other-instance" }, 0, true, 99); break;
             case "nan": second.Transform.World.SetPosition(float.NaN, 0, 0); break;
             case "force": first.ForceAttack = true; break;
         }
