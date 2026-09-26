@@ -67,6 +67,9 @@ public static class PeaceProtection
     private static uint GetPlayerOwnerId(BaseUnit unit) => unit switch
     {
         Character character => character.Id,
+        // Both persistent and temporary pet factories retain the character ID.
+        // A delayed pet effect can outlive the owner's world membership.
+        Units.Mate { OwnerId: > 0 } mate => mate.OwnerId,
         House house => house.OwnerId,
         Shipyard.Shipyard shipyard => shipyard.ShipyardData?.Type2 ?? 0,
         Doodad { OwnerType: DoodadOwnerType.Slave, ParentObj: Slave parent } => GetPlayerOwnerId(parent),

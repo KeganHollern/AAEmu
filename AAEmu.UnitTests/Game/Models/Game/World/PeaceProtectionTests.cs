@@ -555,6 +555,56 @@ public sealed class PeaceProtectionTests
         }
     }
 
+    [Test]
+    public async Task DelayedMateEffects_OwnerLeftOldWorld_KeepPlayerOwnership()
+    {
+        var mate = new Mate { ObjId = 3, OwnerId = _attacker.Id, OwnerObjId = _attacker.ObjId };
+        MakeWorld(_attacker, mate);
+        var oldWorld = mate.ParentWorld;
+        var template = new BuffTemplate { Id = 1, Kind = BuffKind.Bad };
+        template.TickEffects.Add(new TickEffect { EffectId = 1 });
+        var buff = new Buff(_target, mate, new SkillCasterUnit(mate.ObjId), template, null, DateTime.UtcNow);
+        var skills = new SkillManager(null, null);
+        SetField(skills, "_types", new Dictionary<uint, EffectType>
+        {
+            [1] = new() { Type = "DamageEffect", ActualId = 1 }
+        });
+        SetField(skills, "_effects", new Dictionary<string, Dictionary<uint, EffectTemplate>>
+        {
+            ["DamageEffect"] = new() { [1] = new DamageEffect { Id = 1 } }
+        });
+        InstallSingleton(skills);
+        var target = new OwnedUnit(_target) { ObjId = 4, Hp = 100 };
+        MakeWorld(_target, target);
+        SetInstanceRule(_target.ParentWorld, 70, false);
+        oldWorld.RemoveObject(_attacker);
+        await Assert.That(mate.GetOwnerCharacter()).IsNull();
+
+        template.TimeToTimeApply(mate, _target, buff);
+        target.ReduceCurrentHp(mate, 10);
+        _target.Mp = 100;
+        new ManaBurnEffect { BaseMin = 20, BaseMax = 20 }.Apply(mate, null, _target, null, null,
+            new EffectSource(template), null, DateTime.UtcNow);
+
+        await Assert.That(_target.Hp).IsEqualTo(100);
+        await Assert.That(_target.Mp).IsEqualTo(100);
+        await Assert.That(target.Hp).IsEqualTo(100);
+        await Assert.That(PeaceProtection.PreventsAttack(mate, _target)).IsTrue();
+        await Assert.That(ReferenceEquals(buff.Caster, mate)).IsTrue();
+    }
+
+    [Test]
+    public async Task MateOwnerObjectIdReuse_DoesNotChangeStablePlayerAttribution()
+    {
+        var mate = new Mate { ObjId = 3, OwnerId = _attacker.Id, OwnerObjId = _attacker.ObjId };
+        var reusedObject = CreateCharacter(_target.Id, 100, FactionsEnum.HaranyaAlliance);
+        reusedObject.ObjId = _attacker.ObjId;
+        MakeWorld(reusedObject, mate, _target);
+        SetInstanceRule(_target.ParentWorld, 70, false);
+        await Assert.That(mate.GetOwnerCharacter()).IsEqualTo(reusedObject);
+        await Assert.That(PeaceProtection.PreventsAttack(mate, _target)).IsTrue();
+    }
+
     private static void SetInstanceRule(WorldInstance world, uint zoneGroup, bool pvp)
     {
         world.DungeonInstance = new Dungeon(new IndunZone { ZoneGroupId = zoneGroup, PvP = pvp }, null);
@@ -569,7 +619,7 @@ public sealed class PeaceProtectionTests
 
     private static void MakeWorld(params BaseUnit[] units)
     {
-        var world = new WorldInstance(null, 0, true, 0);
+        var world = new WorldInstance(new WorldTemplate { Id = 0, Name = "peace-test" }, 0, true, 0);
         SetField(world, "_objects", new ConcurrentDictionary<uint, GameObject>(units.ToDictionary(unit => unit.ObjId, unit => (GameObject)unit)));
         SetField(world, "_baseUnits", new ConcurrentDictionary<uint, BaseUnit>(units.ToDictionary(unit => unit.ObjId)));
         SetField(world, "_units", new ConcurrentDictionary<uint, Unit>(units.OfType<Unit>().ToDictionary(unit => unit.ObjId)));

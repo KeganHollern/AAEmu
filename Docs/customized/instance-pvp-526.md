@@ -4,6 +4,7 @@ The shared combat guard now consumes `WorldInstance.AllowPvP`.
 A false value blocks attacks between different player owners before faction and conflict-zone rules.
 The guard also covers delayed HP damage, damage effects, hostile buffs, mana burns, and cast interruption.
 NPC combat, self effects, friendly buffs, and the active duel pair retain their current rules.
+Pets retain the stable character owner ID after logout or travel, including delayed effects.
 Owned vehicles use the summoner's character ID before a child vehicle's parent database ID.
 Fixed vehicle doodads use their parent vehicle owner. Player-owned doodads retain protection when their owner is offline.
 
@@ -35,9 +36,9 @@ This fix remains downstream until a separate upstream submission receives author
 ## Automated validation
 
 The Release unit-test build passed.
-All 47 `PeaceProtectionTests` passed, including 13 new instance cases.
+All 49 `PeaceProtectionTests` passed, including 15 new instance cases.
 Tests cover absent zone protection, forced attack, retaliation, Retribution, null factions, owned objects, and child vehicle ownership.
-They also cover instance entry and exit, active duel boundaries, PvE, self effects, hostile buffs, mana damage, and cast interruption.
+They also cover pet ownership after logout or travel, reused owner object IDs, instance entry and exit, active duel boundaries, PvE, self effects, hostile buffs, mana damage, and cast interruption.
 The combined release tests follow integration with the other combat fixes.
 
 ## Human validation
@@ -45,6 +46,6 @@ The combined release tests follow integration with the other combat fixes.
 These checks remain pending and belong in HUMAN VALIDATION #573.
 
 - [ ] **HV526-1.** Enter a Library instance with an opposing-faction player. Check direct attacks, damage-over-time effects, and hostile buffs.
-- [ ] **HV526-2.** Repeat with a battle pet. Check that ordinary combat against an NPC still works.
+- [ ] **HV526-2.** Repeat with a battle pet. Check that ordinary combat against an NPC still works. With 2 test players, apply pet damage over time before the target enters a no-PvP instance. Then disconnect the pet owner. Check that the protected target takes no further pet damage.
 - [ ] **HV526-3.** Complete a duel in a no-PvP instance. Check that only the active pair can fight.
 - [ ] **HV526-4.** Leave the instance and check normal PvP eligibility in a suitable conflict zone.
