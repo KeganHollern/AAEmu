@@ -7,6 +7,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Duels;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Housing;
@@ -536,6 +537,22 @@ public sealed class PeaceProtectionTests
             new EffectSource(template), null, DateTime.UtcNow);
         buffs.AddBuff(Is<Buff>(buff => buff.Template == template), 0, 0)
             .WasCalled(allowed ? Times.Once : Times.Never);
+    }
+
+    [Test]
+    public async Task PreventsAttack_NoPvpInstance_UsesFixedDoodadVehicleOwnerAndOfflinePlayerId()
+    {
+        var slave = new Slave { ObjId = 3, OwnerId = _attacker.Id, Summoner = _target };
+        var fixedDoodad = new Doodad { ObjId = 4, OwnerType = DoodadOwnerType.Slave,
+            ParentObj = slave, OwnerObjId = _target.ObjId };
+        var placedDoodad = new Doodad { ObjId = 5, OwnerType = DoodadOwnerType.Character, OwnerId = 99 };
+        MakeWorld(_attacker, _target, slave, fixedDoodad, placedDoodad);
+        SetInstanceRule(_attacker.ParentWorld, 70, false);
+        foreach (var doodad in new[] { fixedDoodad, placedDoodad })
+        {
+            await Assert.That(PeaceProtection.PreventsAttack(_attacker, doodad)).IsTrue();
+            await Assert.That(PeaceProtection.PreventsAttack(doodad, _attacker)).IsTrue();
+        }
     }
 
     private static void SetInstanceRule(WorldInstance world, uint zoneGroup, bool pvp)

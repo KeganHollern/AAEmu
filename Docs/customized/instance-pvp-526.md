@@ -5,6 +5,7 @@ A false value blocks attacks between different player owners before faction and 
 The guard also covers delayed HP damage, damage effects, hostile buffs, mana burns, and cast interruption.
 NPC combat, self effects, friendly buffs, and the active duel pair retain their current rules.
 Owned vehicles use the summoner's character ID before a child vehicle's parent database ID.
+Fixed vehicle doodads use their parent vehicle owner. Player-owned doodads retain protection when their owner is offline.
 
 ## Evidence
 
@@ -34,7 +35,7 @@ This fix remains downstream until a separate upstream submission receives author
 ## Automated validation
 
 The Release unit-test build passed.
-All 46 `PeaceProtectionTests` passed, including 12 new instance cases.
+All 47 `PeaceProtectionTests` passed, including 13 new instance cases.
 Tests cover absent zone protection, forced attack, retaliation, Retribution, null factions, owned objects, and child vehicle ownership.
 They also cover instance entry and exit, active duel boundaries, PvE, self effects, hostile buffs, mana damage, and cast interruption.
 The combined release tests follow integration with the other combat fixes.

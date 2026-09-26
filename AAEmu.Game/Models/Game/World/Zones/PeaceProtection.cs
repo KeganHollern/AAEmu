@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Skills;
@@ -68,6 +69,8 @@ public static class PeaceProtection
         Character character => character.Id,
         House house => house.OwnerId,
         Shipyard.Shipyard shipyard => shipyard.ShipyardData?.Type2 ?? 0,
+        Doodad { OwnerType: DoodadOwnerType.Slave, ParentObj: Slave parent } => GetPlayerOwnerId(parent),
+        Doodad { OwnerType: DoodadOwnerType.Character, OwnerId: > 0 } doodad => doodad.OwnerId,
         Slave { Summoner: { } owner } => owner.Id,
         Slave { OwnerId: > 0 } slave => slave.OwnerId,
         _ => unit.GetOwnerCharacter()?.Id ?? 0
