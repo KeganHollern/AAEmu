@@ -128,7 +128,8 @@ Beginner revival needs a character below the configured minimum experience-loss 
 Priest revival needs the relevant priest buff before death. Another player's offer needs that player's resurrection skill.
 The client automatically requests temple revival after 300 seconds from death.
 The offer-expiry rejection also needs the packet-level automated check, because normal UI death timing can end the manual case first.
-Normal duel checks need 2 players. Forged-reply and concurrent-duel checks need 3 and 4 players, respectively.
+Normal duel checks need 2 players. Concurrent-duel checks need 4 players.
+Forged replies and offer-expiry rejection need packet tooling. Automated tests cover those cases.
 Use an NPC or a fall for the external-damage test. Use a battle pet and a hostile periodic buff for effect cleanup.
 
 
@@ -137,10 +138,10 @@ Use an NPC or a fall for the external-damage test. Use a battle pet and a hostil
 - [ ] **HV447-3.** Reconnect during a death wait. Check that the same wait remains and an early request cannot revive the character.
 - [ ] **HV447-4.** Wait 600 seconds after a death before the next death. Check that the next normal wait is 0 seconds.
 - [ ] **HV447-5.** Receive a resurrection offer from another player. Accept it after the death wait and before offer expiry.
-- [ ] **HV447-6.** Let an offer expire. Check that it cannot revive the character, then use temple revival.
+- [ ] **HV447-6.** Let the normal client reach its 300-second death countdown. Check automatic temple revival.
 - [ ] **HV447-7.** Check a beginner's free revival and a priest-buff revival. Check restored experience for the priest-buff case.
 - [ ] **HV448-1.** Challenge another player inside the 30-metre range. Accept, wait for the countdown, and complete the duel at 1 HP.
-- [ ] **HV448-2.** Refuse a challenge. Check that a third player cannot accept or refuse that challenge.
+- [ ] **HV448-2.** Refuse a challenge. Check that both players can start a new duel.
 - [ ] **HV448-3.** Move outside the 30-metre range before acceptance. Check that acceptance fails without a flag or faction change.
 - [ ] **HV448-4.** Let an NPC or environmental damage kill a duelist. Check normal death, penalties, and duel cleanup.
 - [ ] **HV448-5.** Complete a duel with a damage-over-time effect and with a battle pet. Check that damage stops after completion.

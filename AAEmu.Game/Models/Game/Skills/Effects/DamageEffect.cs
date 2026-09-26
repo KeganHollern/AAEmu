@@ -349,6 +349,7 @@ public class DamageEffect : EffectTemplate
                     break;
             }
         }
+        finalDamage *= source.AoeDamageMultiplier;
         var value = (int)(finalDamage * reductionMul);
         var absorbed = (int)(finalDamage * (1.0f - reductionMul));
         var healthStolen = (int)(value * (HealthStealRatio / 100.0f));
