@@ -6,15 +6,15 @@ namespace AAEmu.Game.Core.Packets.C2G;
 
 public class CSUsePortalPacket() : GamePacket(CSOffsets.CSUsePortalPacket, 1)
 {
-    // 0x0da
-
     public override void Read(PacketStream stream)
     {
         var objId = stream.ReadBc();
-        var onlyMyPortal = stream.ReadBoolean();
+        var onlyMyPortal = stream.ReadByte();
+        if (onlyMyPortal > 1 || stream.LeftBytes != 0)
+            return;
 
         Logger.Debug("UsePortal, ObjId: {0}, OnlyMyPortal: {1}", objId, onlyMyPortal);
 
-        PortalManager.UsePortal(Connection.ActiveChar, objId);
+        PortalManager.UsePortal(Connection.ActiveChar, objId, onlyMyPortal != 0);
     }
 }

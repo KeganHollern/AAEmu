@@ -15,6 +15,7 @@ public class CSTeleportEndedPacket() : GamePacket(CSOffsets.CSTeleportEndedPacke
         var ori = stream.ReadBytes(16); // TODO example: 00000000 00000000 00000000 0000803F
 
         Connection.ActiveChar.DisabledSetPosition = false;
+        Connection.ActiveChar.Portals?.UseState.CompleteTeleport(DateTimeOffset.UtcNow);
         Logger.Warn("TeleportEnded, X: {0}, Y: {1}, Z: {2}", x, y, z);
 
         WorldManager.ResendVisibleObjectsToCharacter(Connection.ActiveChar);

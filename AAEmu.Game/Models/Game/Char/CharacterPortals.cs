@@ -18,6 +18,7 @@ public class CharacterPortals(Character owner)
     public Dictionary<uint, Portal> PrivatePortals { get; set; } = [];
     public Dictionary<uint, Portal> DistrictPortals { get; set; } = [];
     public Character Owner { get; set; } = owner;
+    internal PortalUseState UseState { get; } = new();
 
     public Portal GetPortalInfo(uint id)
     {
