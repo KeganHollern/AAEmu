@@ -3,7 +3,6 @@
 using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
-using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -62,19 +61,7 @@ public class Transfer : Unit
             var parameters = new Dictionary<string, double> { ["level"] = Level };
             var result = formula.Evaluate(parameters);
             var res = (int)result;
-            foreach (var bonus in GetBonuses(UnitAttribute.Str))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += (int)(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Str);
         }
     }
 
@@ -85,19 +72,7 @@ public class Transfer : Unit
             var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Transfer, UnitFormulaKind.Dex);
             var parameters = new Dictionary<string, double> { ["level"] = Level };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Dex))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += (int)(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Dex);
         }
     }
 
@@ -108,19 +83,7 @@ public class Transfer : Unit
             var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Transfer, UnitFormulaKind.Sta);
             var parameters = new Dictionary<string, double> { ["level"] = Level };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Sta))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += (int)(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Sta);
         }
     }
 
@@ -131,19 +94,7 @@ public class Transfer : Unit
             var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Transfer, UnitFormulaKind.Int);
             var parameters = new Dictionary<string, double> { ["level"] = Level };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Int))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += (int)(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Int);
         }
     }
 
@@ -154,19 +105,7 @@ public class Transfer : Unit
             var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Transfer, UnitFormulaKind.Spi);
             var parameters = new Dictionary<string, double> { ["level"] = Level };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Spi))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += (int)(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Spi);
         }
     }
 
@@ -177,19 +116,7 @@ public class Transfer : Unit
             var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Transfer, UnitFormulaKind.Fai);
             var parameters = new Dictionary<string, double> { ["level"] = Level };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.Fai))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += (int)(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.Fai);
         }
     }
 
@@ -209,19 +136,7 @@ public class Transfer : Unit
                 ["fai"] = Fai
             };
             var res = Math.Truncate(formula.Evaluate(parameters));
-            foreach (var bonus in GetBonuses(UnitAttribute.MaxHealth))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += Math.Truncate(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MaxHealth, res);
+            return (int)CalculateWithBonuses(res, UnitAttribute.MaxHealth);
         }
     }
 
@@ -242,19 +157,7 @@ public class Transfer : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res += Spi / 10;
-            foreach (var bonus in GetBonuses(UnitAttribute.HealthRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += (int)(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.HealthRegen);
         }
     }
 
@@ -275,19 +178,7 @@ public class Transfer : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res /= 5; // TODO ...
-            foreach (var bonus in GetBonuses(UnitAttribute.PersistentHealthRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += (int)(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.PersistentHealthRegen);
         }
     }
 
@@ -307,19 +198,7 @@ public class Transfer : Unit
                 ["fai"] = Fai
             };
             var res = (int)formula.Evaluate(parameters);
-            foreach (var bonus in GetBonuses(UnitAttribute.MaxMana))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += (int)(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.MaxMana);
         }
     }
 
@@ -340,19 +219,7 @@ public class Transfer : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res += Spi / 10;
-            foreach (var bonus in GetBonuses(UnitAttribute.ManaRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += (int)(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.ManaRegen);
         }
     }
 
@@ -373,19 +240,7 @@ public class Transfer : Unit
             };
             var res = (int)formula.Evaluate(parameters);
             res /= 5; // TODO ...
-            foreach (var bonus in GetBonuses(UnitAttribute.PersistentManaRegen))
-            {
-                if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                {
-                    res += (int)(res * bonus.Value / 100f);
-                }
-                else
-                {
-                    res += bonus.Value;
-                }
-            }
-
-            return res;
+            return (int)CalculateWithBonuses(res, UnitAttribute.PersistentManaRegen);
         }
     }
 
