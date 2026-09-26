@@ -5,7 +5,7 @@
 public enum BuffSaveRuleType : uint
 {
     /// <summary>
-    /// Not persistable (combat, food, potions, scrolls), Only save if `Kind=Good` AND `Duration ≥ 60s`
+    /// Do not persist this effect.
     /// </summary>
     DontSave = 0,
     /// <summary>
