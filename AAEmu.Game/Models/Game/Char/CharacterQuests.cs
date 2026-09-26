@@ -19,7 +19,7 @@ using NLog;
 
 namespace AAEmu.Game.Models.Game.Char;
 
-public class CharacterQuests(Character owner)
+public class CharacterQuests(Character owner, IGameScheduleManager schedules = null)
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private readonly Func<CompletedQuest, bool> _completedQuestPersistenceOverride;
@@ -35,8 +35,9 @@ public class CharacterQuests(Character owner)
         Character owner,
         Func<CompletedQuest, bool> completedQuestPersistenceOverride,
         Action<uint> removedQuestPersistenceOverride,
-        Action<Quest> activeQuestPersistenceOverride = null)
-        : this(owner)
+        Action<Quest> activeQuestPersistenceOverride = null,
+        IGameScheduleManager schedules = null)
+        : this(owner, schedules)
     {
         ArgumentNullException.ThrowIfNull(completedQuestPersistenceOverride);
         ArgumentNullException.ThrowIfNull(removedQuestPersistenceOverride);
@@ -96,6 +97,9 @@ public class CharacterQuests(Character owner)
                 failed.Template.DetailId != QuestDetail.Main || !failed.Template.RestartOnFail ||
                 HasQuestCompleted(questId) ||
                 !failed.QuestSteps.TryGetValue(QuestComponentKind.Start, out var start) || start.Components.Count == 0)
+                return false;
+
+            if (!CanStartInSchedule(questId))
                 return false;
 
             // Keep the failed attempt and its supplies intact until the new Start row commits.
@@ -203,6 +207,9 @@ public class CharacterQuests(Character owner)
         if (!forcibly && !IsValidQuestAcceptor(template, questAcceptorType, acceptorId))
             return RejectQuestAcceptor(questId, questAcceptorType, 0, acceptorId, "template_mismatch");
 
+        if (!forcibly && !CanStartInSchedule(questId))
+            return false;
+
         if (!forcibly && !CanAcceptSupplyItems(template))
             return false;
 
@@ -278,6 +285,16 @@ public class CharacterQuests(Character owner)
 
         quest.QuestInitialized();
         return true;
+    }
+
+    private bool CanStartInSchedule(uint questId)
+    {
+        if ((schedules ?? GameScheduleManager.Instance).CanAcceptQuest(questId))
+            return true;
+
+        // r208022 has no quest error 37. Use the established system-chat packet.
+        Owner.SendMessage("This quest is not available at this time.");
+        return false;
     }
 
     internal bool TryStartQuest(Quest quest, IQuestIdManager questIdManager)

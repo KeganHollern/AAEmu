@@ -17,6 +17,26 @@ namespace AAEmu.UnitTests.Game.Models.Game.Char;
 public sealed class CharacterQuestRestartTests
 {
     [Test]
+    public async Task RestartMainQuest_OutsideSchedule_PreservesFailedAttemptAndDoesNotWrite()
+    {
+        var schedules = new GameScheduleManager(null, TimeProvider.System);
+        schedules.LoadGameScheduleQuests(new Dictionary<int, AAEmu.Game.Models.Game.Schedules.GameScheduleQuests>
+        {
+            [1] = new() { Id = 1, QuestId = 101, GameScheduleId = 26 }
+        });
+        var owner = CreateOwner();
+        owner.Quests = new CharacterQuests(owner, schedules);
+        var failed = CreateQuest(owner);
+        var savedData = failed.WriteData();
+
+        var restarted = owner.Quests.RestartMainQuest(101, _ => throw new InvalidOperationException("Closed schedule reached persistence"));
+
+        await Assert.That(restarted).IsFalse();
+        await Assert.That(owner.Quests.ActiveQuests[101]).IsSameReferenceAs(failed);
+        await Assert.That(failed.WriteData()).IsEquivalentTo(savedData);
+    }
+
+    [Test]
     public async Task RestartMainQuest_FailedAttempt_CommitsFreshStateBeforeActivation()
     {
         var owner = CreateOwner();
@@ -190,7 +210,7 @@ public sealed class CharacterQuestRestartTests
     private static CharacterMock CreateOwner()
     {
         var owner = new CharacterMock { Id = 7, Name = "Questor" };
-        owner.Quests = new CharacterQuests(owner);
+        owner.Quests = new CharacterQuests(owner, new GameScheduleManager(null, TimeProvider.System));
         return owner;
     }
 

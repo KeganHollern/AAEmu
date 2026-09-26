@@ -179,7 +179,7 @@ public sealed class CharacterQuestTimerRestoreTests
     public async Task RestartMainQuest_StartTimer_PersistsDeadlineAndRejectsOldTimeout()
     {
         var owner = new CharacterMock { Id = OwnerId, Name = "Questor" };
-        owner.Quests = new CharacterQuests(owner);
+        owner.Quests = new CharacterQuests(owner, new GameScheduleManager(null, TimeProvider.System));
         var failed = CreateTimedQuest(owner, QuestComponentKind.Start);
         failed.Template.DetailId = QuestDetail.Main;
         failed.Template.RestartOnFail = true;

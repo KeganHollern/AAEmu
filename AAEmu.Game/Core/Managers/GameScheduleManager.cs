@@ -29,7 +29,7 @@ public class GameScheduleManager(
     private Dictionary<int, List<int>> _gameScheduleSpawnerIds = [];
     private Dictionary<int, GameScheduleDoodads> _gameScheduleDoodads = [];
     private Dictionary<int, List<int>> _gameScheduleDoodadIds = [];
-    private Dictionary<int, GameScheduleQuests> _gameScheduleQuests = [];
+    private Dictionary<uint, List<int>> _gameScheduleQuestIds = [];
     private List<int> GameScheduleId { get; set; }
 
     public void Load()
@@ -92,7 +92,17 @@ public class GameScheduleManager(
 
     public void LoadGameScheduleQuests(Dictionary<int, GameScheduleQuests> gameScheduleQuests)
     {
-        _gameScheduleQuests = gameScheduleQuests;
+        _gameScheduleQuestIds = [];
+        foreach (var association in gameScheduleQuests.Values)
+        {
+            var questId = (uint)association.QuestId;
+            if (!_gameScheduleQuestIds.TryGetValue(questId, out var scheduleIds))
+            {
+                scheduleIds = [];
+                _gameScheduleQuestIds.Add(questId, scheduleIds);
+            }
+            scheduleIds.Add(association.GameScheduleId);
+        }
     }
 
     public bool CheckSpawnerInScheduleSpawners(int spawnerId)
@@ -255,15 +265,21 @@ public class GameScheduleManager(
         return GameScheduleId.Count != 0;
     }
 
-    public bool GetGameScheduleQuestsData(uint questId)
+    /// <summary>
+    /// A new quest attempt can start inside any associated schedule window.
+    /// Missing schedules do not make a linked quest available.
+    /// Accepted quests retain their ordinary progress, report, and timer rules.
+    /// </summary>
+    public bool CanAcceptQuest(uint questId)
     {
-        GameScheduleId = [];
-        foreach (var gsq in _gameScheduleQuests.Values)
-        {
-            if (gsq.QuestId != questId) { continue; }
-            GameScheduleId.Add(gsq.GameScheduleId);
-        }
-        return GameScheduleId.Count != 0;
+        return IsActivePeriod(GetPeriodStatusQuest(questId));
+    }
+
+    public PeriodStatus GetPeriodStatusQuest(uint questId)
+    {
+        return _gameScheduleQuestIds.TryGetValue(questId, out var ids)
+            ? CheckPeriodStatus(ids)
+            : PeriodStatus.NotFound;
     }
 
     private ScheduleOccurrence? FindNextOccurrence(IReadOnlyList<int> gameScheduleIds, bool start, DateTime now)

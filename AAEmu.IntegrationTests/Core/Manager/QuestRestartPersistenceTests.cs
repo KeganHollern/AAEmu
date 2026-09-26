@@ -92,7 +92,7 @@ public sealed class QuestRestartPersistenceTests
     private static Character CreateOwner(uint ownerId)
     {
         var owner = new Character(null) { Id = ownerId, Name = "quest-restart-tester" };
-        owner.Quests = new CharacterQuests(owner);
+        owner.Quests = new CharacterQuests(owner, new GameScheduleManager(null, TimeProvider.System));
         return owner;
     }
 
