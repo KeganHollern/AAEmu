@@ -1,10 +1,11 @@
-using System.Numerics;
+﻿using System.Numerics;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
@@ -281,15 +282,15 @@ public class Slave : Unit
                 ["spi"] = Spi,
                 ["fai"] = Fai
             };
-            var res = (int)formula.Evaluate(parameters);
+            var res = Math.Truncate(formula.Evaluate(parameters));
             foreach (var bonus in GetBonuses(UnitAttribute.MaxHealth))
             {
                 if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
+                    res += Math.Truncate(res * bonus.Value / 100f);
                 else
                     res += bonus.Value;
             }
-            return res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MaxHealth, res);
         }
     }
 
@@ -502,7 +503,7 @@ public class Slave : Unit
                     res += bonus.Value;
             }
 
-            return (int)res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MeleeDpsInc, res);
         }
     }
 
@@ -572,7 +573,7 @@ public class Slave : Unit
                     res += bonus.Value;
             }
 
-            return (int)res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.RangedDpsInc, res);
         }
     }
 
@@ -622,7 +623,7 @@ public class Slave : Unit
                     res += bonus.Value;
             }
 
-            return (int)res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.SpellDpsInc, res);
         }
     }
 
@@ -642,15 +643,15 @@ public class Slave : Unit
                 ["spi"] = Spi,
                 ["fai"] = Fai
             };
-            var res = (int)formula.Evaluate(parameters);
+            var res = Math.Truncate(formula.Evaluate(parameters));
             foreach (var bonus in GetBonuses(UnitAttribute.Armor))
             {
                 if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
+                    res += Math.Truncate(res * bonus.Value / 100f);
                 else
                     res += bonus.Value;
             }
-            return res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.Armor, res);
         }
     }
 

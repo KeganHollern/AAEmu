@@ -336,15 +336,15 @@ public partial class Npc : Unit
                 ["npc_grade"] =
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
-            var res = (int)formula.Evaluate(parameters);
+            var res = Math.Truncate(formula.Evaluate(parameters));
             foreach (var bonus in GetBonuses(UnitAttribute.MaxHealth))
             {
                 if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
+                    res += Math.Truncate(res * bonus.Value / 100f);
                 else
                     res += bonus.Value;
             }
-            return res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MaxHealth, res);
         }
     }
 
@@ -602,7 +602,7 @@ public partial class Npc : Unit
                     res += bonus.Value;
             }
 
-            return (int)res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MeleeDpsInc, res);
         }
     }
 
@@ -678,7 +678,7 @@ public partial class Npc : Unit
                     res += bonus.Value;
             }
 
-            return (int)res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.RangedDpsInc, res);
         }
     }
 
@@ -734,7 +734,7 @@ public partial class Npc : Unit
                     res += bonus.Value;
             }
 
-            return (int)res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.SpellDpsInc, res);
         }
     }
 
@@ -760,15 +760,15 @@ public partial class Npc : Unit
                 ["npc_grade"] =
                 FormulaManager.Instance.GetUnitVariable(formula.Id, UnitFormulaVariableType.NpcGrade, (byte)Template.NpcGradeId)
             };
-            var res = (int)formula.Evaluate(parameters);
+            var res = Math.Truncate(formula.Evaluate(parameters));
             foreach (var bonus in GetBonuses(UnitAttribute.Armor))
             {
                 if (bonus.Template.ModifierType == UnitModifierType.Percent)
-                    res += (int)(res * bonus.Value / 100f);
+                    res += Math.Truncate(res * bonus.Value / 100f);
                 else
                     res += bonus.Value;
             }
-            return res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.Armor, res);
         }
     }
 
@@ -934,6 +934,34 @@ public partial class Npc : Unit
             CreditQuest(contributor, true);
     }
 
+    internal static int ScaleKillExperience(int experience, int npcLevel, int recipientLevel, float share)
+    {
+        var levelDifference = recipientLevel - npcLevel;
+        if (levelDifference is <= -10 or >= 10)
+            return 0;
+
+        var levelMultiplier = 1f - 0.1f * levelDifference;
+        return (int)Math.Clamp(experience * share * levelMultiplier, 0d, int.MaxValue);
+    }
+
+    internal void GrantKillExperience(Character recipient, float playerShare, float mateShare)
+    {
+        // The normal tagged path and the killer-only fallback use the same level rule.
+        // Pet awards retain the owner's level rule, as in the tagged path.
+        if (recipient.Level >= Level + 10 || recipient.Level <= Level - 10)
+            return;
+
+        var experience = KillExp;
+        var playerExperience = ScaleKillExperience(experience, Level, recipient.Level, playerShare);
+        var mateExperience = ScaleKillExperience(experience, Level, recipient.Level, mateShare);
+        recipient.AddExp(playerExperience, true);
+        foreach (var mate in recipient.ParentWorld.MateManager.GetActiveMates(recipient.Id))
+        {
+            mate.AddExp(mateExperience);
+            recipient.SendMessage($"Pet gained {mateExperience} XP");
+        }
+    }
+
     public override void DoDie(BaseUnit killer, KillReason killReason)
     {
         DeadTime = DateTime.UtcNow;
@@ -990,14 +1018,7 @@ public partial class Npc : Unit
         if (eligiblePlayers.Count == 0 && killerOwner != null)
         {
             RecordKillAchievements(killerOwner, eligiblePlayers, taggedTeam);
-            killerOwner.AddExp(KillExp, true);
-            var mateList = killerOwner.ParentWorld.MateManager.GetActiveMates(killerOwner.Id);
-            foreach (var mate in mateList)
-            {
-                mate.AddExp(KillExp);
-                // TODO: Proper message?
-                killerOwner.SendMessage($"Pet gained {KillExp} XP");
-            }
+            GrantKillExperience(killerOwner, 1f, 1f);
         }
         else
         {
@@ -1059,40 +1080,7 @@ public partial class Npc : Unit
                     mateMod = 1f;
                 }
 
-                // Now we need to scale XP based on level difference, which gets a bit more complex.
-
-                if (pl.Level >= this.Level + 10 || pl.Level <= this.Level - 10)
-                {
-                    // No XP for you or your pet. Will check on the +10
-                }
-                else
-                {
-                    var levDif = 1.0f;
-                    var levelDifference = pl.Level - this.Level;
-
-                    if (levelDifference > 0)
-                    {
-                        // pl.Level is above this.Level
-                        levDif = 1.0f - 0.1f * levelDifference;
-                    }
-                    else if (levelDifference < 0)
-                    {
-                        // pl.Level is below this.Level
-                        levDif = 1.0f + 0.1f * -levelDifference;
-                    }
-
-                    var plKillXp = (int)(KillExp * plMod * levDif);
-                    var mateKillXp = (int)(KillExp * mateMod * levDif);
-
-                    pl.AddExp(plKillXp, true);
-                    var mateList = pl.ParentWorld.MateManager.GetActiveMates(pl.Id);
-                    foreach (var mate in mateList)
-                    {
-                        mate.AddExp(mateKillXp);
-                        // TODO: Proper message?
-                        pl.SendMessage($"Pet gained {mateKillXp} XP");
-                    }
-                }
+                GrantKillExperience(pl, plMod, mateMod);
 
                 // character.Quests.OnKill(this);
                 // инициируем событие
