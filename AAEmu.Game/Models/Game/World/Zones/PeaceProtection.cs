@@ -25,13 +25,19 @@ public static class PeaceProtection
         if (attackerOwnerId == 0 || targetOwnerId == 0 || attackerOwnerId == targetOwnerId)
             return false;
 
+        if (attacker is Character or Units.Mate && target is Character or Units.Mate &&
+            DuelManager.Instance.AreActiveOpponents(attacker.GetOwnerCharacter(), target.GetOwnerCharacter()))
+            return false;
+
+        // Instance rules also apply when a zone has no faction or conflict row.
+        // Keep this in the shared guard so delayed damage, debuffs, and mana burns
+        // cannot bypass the rule after target selection.
+        if (attacker.ParentWorld?.AllowPvP == false || target.ParentWorld?.AllowPvP == false)
+            return true;
+
         var attackerProtected = IsProtected(attacker);
         var targetProtected = IsProtected(target);
         if (!attackerProtected && !targetProtected)
-            return false;
-
-        if (attacker is Character or Units.Mate && target is Character or Units.Mate &&
-            DuelManager.Instance.AreActiveOpponents(attacker.GetOwnerCharacter(), target.GetOwnerCharacter()))
             return false;
 
         // Native relation evaluation applies the level guard before retaliation
@@ -62,6 +68,7 @@ public static class PeaceProtection
         Character character => character.Id,
         House house => house.OwnerId,
         Shipyard.Shipyard shipyard => shipyard.ShipyardData?.Type2 ?? 0,
+        Slave { Summoner: { } owner } => owner.Id,
         Slave { OwnerId: > 0 } slave => slave.OwnerId,
         _ => unit.GetOwnerCharacter()?.Id ?? 0
     };
