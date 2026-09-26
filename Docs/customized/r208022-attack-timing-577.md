@@ -54,6 +54,10 @@ The new update holds the task manager's execution lock. It changes the pending t
 
 An old auto-attack callback cannot clear a replacement task. Cancellation also checks the queued object, so a reused task ID cannot cancel another task. These changes retain the recurring scheduler. They do not add independent mainhand and offhand timers. Buff changes take effect at the next auto-attack task callback, not through a new immediate buff notification.
 
+Each auto-attack shot now gets a fresh `Skill` object. Delayed impacts keep separate targets, hit state, cancellation state, and timeline IDs. The recurring task keeps the attack options and animation counters. This preserves template, level, cast-time options, callback, weapon selection, and offhand eligibility.
+
+The old task reused one mutable skill for every shot. A later shot could replace the first shot's timeline before its impact. The regression test uses the real recurring task with ranged skill ID 4, projectile speed 40, and targets at 20 m and 28 m. At a 360 ms attack interval, the 500 ms and 700 ms impacts overlap. Each impact retains its target and timeline, ends independently, and keeps the recurring task active.
+
 ## Scope limits and separate follow-up
 
 The native offhand interval doubles the base weapon speed before the raw conversion. The current server fires offhand skill 3 from the mainhand callback on every eligible melee tick. A correct independent offhand cadence needs its own scheduling work. This release preserves that behavior instead of adding an unused doubled interval to the current shared cadence. Test different mainhand and offhand weapon speeds in the separate follow-up.
@@ -64,7 +68,7 @@ Native NPC interval evidence does not establish how the current server AI must s
 
 ## Validation
 
-The Release unit project build passed. All 63 focused checks passed with 0 skips: 23 attack timing tests, 3 interval tests, 30 TaskManager tests, and 7 shutdown tests. The exact compact check was enabled. Focused tests cover raw signs and bounds, weapon slots, two-handed contribution, integer conversion, the positive interval floor, static and dynamic modifiers, and removal. The actual skill effect scheduler and plot delay path have tests for animation scaling. Scheduler tests cover a running callback, pending trigger changes, paused attacks, stale task identity, cancellation, and shutdown. Exact-compact tests use the authored +500 and +700/-700 rows.
+The Release unit project build passed. All 64 focused checks passed with 0 skips: 24 attack timing tests, 3 interval tests, 30 TaskManager tests, and 7 shutdown tests. The exact compact check was enabled. Focused tests cover raw signs and bounds, weapon slots, two-handed contribution, integer conversion, the positive interval floor, static and dynamic modifiers, and removal. The actual skill effect scheduler and plot delay path have tests for animation scaling. Scheduler tests cover a running callback, pending trigger changes, paused attacks, stale task identity, cancellation, and shutdown. Exact-compact tests use the authored +500 and +700/-700 rows.
 
 No SQL, compact, packet layout, or client payload changes are needed. Client display and observed gameplay timing still need human checks. Add these pending checks to HUMAN VALIDATION #573:
 
@@ -72,6 +76,7 @@ No SQL, compact, packet layout, or client payload changes are needed. Client dis
 - [ ] Repeat with a ranged weapon. Check that the ranged modifier changes its interval independently of melee and GCD modifiers.
 - [ ] Use a two-handed weapon with buff 4509 or its normal skill source. Compare the displayed interval and the server's attack interval.
 - [ ] In a controlled setup, apply animation buffs 4313 and 4343 separately. Check visible animation and damage timing for a normal skill and a plot skill with a combat-sync event.
+- [ ] Use a ranged speed buff and switch between 2 distant targets before the first projectile hits. Check that each projectile hits its original target once.
 - [ ] Change or remove a speed buff during an auto-attack pause. Resume the attack, switch weapons, stop, and restart. Check that one attack task continues with the new interval.
 
 Use server timestamps when visual timing is not precise enough. The task manager uses a 50 ms tick, which limits observed interval precision. No human timing pass is claimed here.

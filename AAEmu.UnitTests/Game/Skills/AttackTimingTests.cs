@@ -3,6 +3,8 @@ using System.Reflection;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
@@ -11,9 +13,12 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
+using AAEmu.Game.Models.Game.Skills.Effects.Enums;
 using AAEmu.Game.Models.Game.Skills.Plots;
 using AAEmu.Game.Models.Game.Skills.Plots.Tree;
 using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.Skills.Static;
+using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Tasks.Skills;
 using AAEmu.UnitTests.Utils.Mocks;
@@ -312,6 +317,109 @@ public sealed class AttackTimingTests
             count++;
         }
         await Assert.That(count).IsEqualTo(4);
+    }
+
+    [Test]
+    public async Task OverlappingRangedImpacts_KeepSeparateSkillsTargetsAndTimelines()
+    {
+        var skills = new SkillManager(null, null);
+        typeof(SkillManager).GetField("_skillReagents", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(skills, new Dictionary<uint, SkillReagent>());
+        typeof(SkillManager).GetField("_skillProducts", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(skills, new Dictionary<uint, SkillProduct>());
+        Replace(skills);
+        Replace(new DuelManager());
+        Replace(new ZoneManager(null, null));
+        Replace(new WorldManager(null, null, null, null, null));
+        Replace(new UnitRequirementsGameData());
+        Replace(new SkillRequirementsGameData());
+        Replace(new AchievementGameData());
+        Replace(new PermissionManager(null));
+        var models = new ModelManager();
+        var modelTypes = typeof(ModelManager).GetField("_modelTypes", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        modelTypes.SetValue(models, Activator.CreateInstance(modelTypes.FieldType));
+        Replace(models);
+        var caster = new RecordingCharacter { Id = 1, ObjId = 1, Hp = 100, Mp = 100, Level = 1, IsAutoAttack = true };
+        var firstTarget = new Unit { ObjId = 2, Hp = 100 };
+        var secondTarget = new Unit { ObjId = 3, Hp = 100 };
+        firstTarget.Transform.Local.SetPosition(20, 0, 0);
+        secondTarget.Transform.Local.SetPosition(28, 0, 0);
+        caster.AddBonus(1, Modifier(UnitAttribute.RangedSpeedMul, 4000));
+        var world = new WorldInstance(new WorldTemplate
+        {
+            Id = 1, CellX = 1, CellY = 1,
+            ZoneKeyByRegions = new uint[WorldManager.SECTORS_PER_CELL, WorldManager.SECTORS_PER_CELL]
+        }, 0, true, 0);
+        foreach (var unit in new Unit[] { caster, firstTarget, secondTarget })
+        {
+            typeof(GameObject).GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(unit, world);
+            world.AddObject(unit);
+        }
+        var effect = new RecordingImpact();
+        var template = new SkillTemplate
+        {
+            Id = 4, SourceAlive = true, TargetAlive = true, TargetType = SkillTargetType.AnyUnit,
+            EffectSpeed = 40, MaxRange = 30, AbilityId = AbilityType.General
+        };
+        template.Effects.Add(new SkillEffect
+        {
+            Template = effect, ApplicationMethod = SkillEffectApplicationMethod.Target, StartLevel = 0, EndLevel = 255,
+            Chance = 100, Friendly = true, NonFriendly = true
+        });
+        var callbacks = 0;
+        var options = new Skill(template) { Level = 7, CastTimeMultiplier = 0.5f, BaseCastingTime = 0,
+            AutoAttackIndex = 3, Callback = () => callbacks++ };
+        var task = new UseAutoAttackSkillTask(options, caster);
+        caster.AutoAttackTask = task;
+        _tasks.Schedule(task, TimeSpan.FromHours(1), TimeSpan.FromMilliseconds(200));
+        caster.CurrentTarget = firstTarget;
+        task.Execute();
+        var firstPacket = caster.Packets.OfType<SCSkillFiredPacket>().Single();
+        var field = typeof(SCSkillFiredPacket).GetField("_skill", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var first = (Skill)field.GetValue(firstPacket)!;
+        var firstTimeline = first.TlId;
+        caster.CurrentTarget = secondTarget;
+        task.Execute();
+        var secondPacket = caster.Packets.OfType<SCSkillFiredPacket>().Last();
+        var second = (Skill)field.GetValue(secondPacket)!;
+        var secondTimeline = second.TlId;
+        await Assert.That(ReferenceEquals(first, second)).IsFalse();
+        await Assert.That(ReferenceEquals(first, options)).IsFalse();
+        await Assert.That(firstTimeline).IsNotEqualTo((ushort)0);
+        await Assert.That(secondTimeline).IsNotEqualTo(firstTimeline);
+        await Assert.That(first.InitialTarget).IsSameReferenceAs(firstTarget);
+        await Assert.That(second.InitialTarget).IsSameReferenceAs(secondTarget);
+        await Assert.That(first.Level).IsEqualTo((byte)7);
+        await Assert.That(second.CastTimeMultiplier).IsEqualTo(0.5f);
+        await Assert.That(second.BaseCastingTime).IsEqualTo(0);
+        await Assert.That(task.RepeatInterval).IsEqualTo(TimeSpan.FromMilliseconds(360));
+        await Assert.That(firstPacket.ComputedDelay).IsEqualTo((short)500);
+        await Assert.That(secondPacket.ComputedDelay).IsEqualTo((short)700);
+        await Assert.That(firstPacket.FireAnimId).IsEqualTo(2u);
+        await Assert.That(secondPacket.FireAnimId).IsEqualTo(1u);
+        var impacts = QueuedTasks().OfType<ApplySkillTask>().OrderBy(impact => impact.Id).ToArray();
+        await Assert.That(impacts.Length).IsEqualTo(2);
+        impacts[0].Execute();
+        await Assert.That(first.TlId).IsEqualTo((ushort)0);
+        await Assert.That(second.TlId).IsEqualTo(secondTimeline);
+        impacts[1].Execute();
+        await Assert.That(second.TlId).IsEqualTo((ushort)0);
+        await Assert.That(effect.Hits.Count).IsEqualTo(2);
+        await Assert.That(effect.Hits[0]).IsEqualTo((2u, firstTimeline));
+        await Assert.That(effect.Hits[1]).IsEqualTo((3u, secondTimeline));
+        await Assert.That(callbacks).IsEqualTo(2);
+        await Assert.That(caster.AutoAttackTask).IsSameReferenceAs(task);
+    }
+
+    private sealed class RecordingImpact : EffectTemplate
+    {
+        public List<(uint Target, ushort Timeline)> Hits { get; } = [];
+        public override bool OnActionTime => false;
+        public override void Apply(BaseUnit caster, SkillCaster casterObj, BaseUnit target, SkillCastTarget targetObj,
+            CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time, CompressedGamePackets packetBuilder = null)
+        {
+            Hits.Add((target.ObjId, source.Skill.TlId));
+        }
     }
 
     private IEnumerable<GameTask> QueuedTasks() =>

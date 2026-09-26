@@ -12,11 +12,12 @@ public class UseAutoAttackSkillTask : SkillTask
 {
     private readonly Character _caster;
     private readonly Skill _mainhandSkill;
+    private int _mainhandAttackIndex;
+    private int _offhandAttackIndex;
 
     /// <summary>
-    /// Cached offhand auto-attack skill instance. Template never changes, so we build
-    /// it on demand once and reuse. Whether it actually FIRES per tick is decided
-    /// fresh in Execute() based on current offhand equipment — see ResolveOffhandSkill().
+    /// Cached offhand attack options. Each shot gets a separate Skill instance.
+    /// Current equipment decides whether the offhand fires on this tick.
     /// </summary>
     private Skill _offhandSkill;
     private SkillTemplate _offhandSkillTemplate;
@@ -24,6 +25,7 @@ public class UseAutoAttackSkillTask : SkillTask
     public UseAutoAttackSkillTask(Skill skill, Character caster) : base(skill)
     {
         _mainhandSkill = skill;
+        _mainhandAttackIndex = skill.AutoAttackIndex;
         _caster = caster;
         Cancelled = false;
     }
@@ -67,8 +69,10 @@ public class UseAutoAttackSkillTask : SkillTask
         var targetCaster = new SkillCastUnitTarget(target.ObjId);
         var skillObject = SkillObject.GetByType(SkillObjectType.None);
 
-        // Fire mainhand attack
-        _mainhandSkill.Use(_caster, casterCaster, targetCaster, skillObject, true, out _);
+        // Delayed impacts retain their own timeline, target, and cancellation state.
+        var mainhand = CreateAttack(_mainhandSkill, _mainhandAttackIndex);
+        mainhand.Use(_caster, casterCaster, targetCaster, skillObject, true, out _);
+        _mainhandAttackIndex = mainhand.AutoAttackIndex;
 
         // Dual-wield: check the current equipment on every tick (not just at task
         // construction). If the player swaps weapons mid-fight, the offhand swing
@@ -79,12 +83,24 @@ public class UseAutoAttackSkillTask : SkillTask
             var offCaster = new SkillCasterUnit(_caster.ObjId);
             var offTarget = new SkillCastUnitTarget(target.ObjId);
             var offSkillObject = SkillObject.GetByType(SkillObjectType.None);
-            offhandSkill.Use(_caster, offCaster, offTarget, offSkillObject, true, out _);
+            var offhand = CreateAttack(offhandSkill, _offhandAttackIndex);
+            offhand.Use(_caster, offCaster, offTarget, offSkillObject, true, out _);
+            _offhandAttackIndex = offhand.AutoAttackIndex;
         }
 
         // A hit can add or remove a speed buff. Update the pending interval too.
         RefreshAttackInterval();
     }
+
+    private static Skill CreateAttack(Skill options, int animationIndex) => new(options.Template)
+    {
+        Id = options.Id,
+        Level = options.Level,
+        BaseCastingTime = options.BaseCastingTime,
+        CastTimeMultiplier = options.CastTimeMultiplier,
+        Callback = options.Callback,
+        AutoAttackIndex = animationIndex
+    };
 
     /// <summary>
     /// Decide per tick whether an offhand auto-attack should fire alongside the
