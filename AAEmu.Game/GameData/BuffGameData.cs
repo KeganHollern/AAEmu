@@ -16,6 +16,12 @@ public class BuffGameData : Singleton<BuffGameData>, IGameDataLoader
     private Dictionary<uint, List<BuffModifier>> _buffModifiers;
     private Dictionary<uint, BuffTolerance> _buffTolerances;
     private Dictionary<uint, BuffTolerance> _buffTolerancesById;
+    private readonly Dictionary<uint, HashSet<uint>> _breakableBuffsByTag = [];
+
+    public bool IsBrokenBy(uint buffId, IEnumerable<uint> incomingTags)
+    {
+        return incomingTags.Any(tag => _breakableBuffsByTag.TryGetValue(tag, out var buffs) && buffs.Contains(buffId));
+    }
 
     public List<BuffModifier> GetModifiersForBuff(uint ownerId)
     {
@@ -32,6 +38,20 @@ public class BuffGameData : Singleton<BuffGameData>, IGameDataLoader
         _buffModifiers = [];
         _buffTolerances = [];
         _buffTolerancesById = [];
+        _breakableBuffsByTag.Clear();
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT buff_id, buff_tag_id FROM buff_breakers";
+            using var reader = new SQLiteWrapperReader(command.ExecuteReader());
+            while (reader.Read())
+            {
+                var tag = reader.GetUInt32("buff_tag_id");
+                if (!_breakableBuffsByTag.TryGetValue(tag, out var buffs))
+                    _breakableBuffsByTag.Add(tag, buffs = []);
+                buffs.Add(reader.GetUInt32("buff_id"));
+            }
+        }
 
         using (var command = connection.CreateCommand())
         {
