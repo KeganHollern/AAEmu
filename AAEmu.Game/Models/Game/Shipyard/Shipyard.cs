@@ -1,5 +1,6 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Units;
@@ -243,12 +244,12 @@ public sealed class Shipyard : Unit
                 ["spi"] = Spi,
                 ["fai"] = Fai
             };
-            var res = (int)formula.Evaluate(parameters);
+            var res = Math.Truncate(formula.Evaluate(parameters));
             foreach (var bonus in GetBonuses(UnitAttribute.MaxHealth))
             {
                 if (bonus.Template.ModifierType == UnitModifierType.Percent)
                 {
-                    res += (int)(res * bonus.Value / 100f);
+                    res += Math.Truncate(res * bonus.Value / 100f);
                 }
                 else
                 {
@@ -256,7 +257,7 @@ public sealed class Shipyard : Unit
                 }
             }
 
-            return res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MaxHealth, res);
         }
     }
 

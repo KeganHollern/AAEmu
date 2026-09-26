@@ -3,6 +3,7 @@
 using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -207,12 +208,12 @@ public class Transfer : Unit
                 ["spi"] = Spi,
                 ["fai"] = Fai
             };
-            var res = (int)formula.Evaluate(parameters);
+            var res = Math.Truncate(formula.Evaluate(parameters));
             foreach (var bonus in GetBonuses(UnitAttribute.MaxHealth))
             {
                 if (bonus.Template.ModifierType == UnitModifierType.Percent)
                 {
-                    res += (int)(res * bonus.Value / 100f);
+                    res += Math.Truncate(res * bonus.Value / 100f);
                 }
                 else
                 {
@@ -220,7 +221,7 @@ public class Transfer : Unit
                 }
             }
 
-            return res;
+            return (int)UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MaxHealth, res);
         }
     }
 

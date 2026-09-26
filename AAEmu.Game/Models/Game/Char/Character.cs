@@ -1091,8 +1091,9 @@ public partial class Character : Unit, ICharacter
                 ["int"] = Int //Str not needed, but maybe we use later
             };
             var res = formula.Evaluate(parameters);
-            res = CalculateWithBonuses(res, UnitAttribute.SpellCritical);
-            res = (float)CalculateWithBonuses(res, UnitAttribute.SpellDamageCritical);
+            res = CalculateBonuses(res, UnitAttribute.SpellCritical);
+            res = CalculateBonuses(res, UnitAttribute.SpellDamageCritical);
+            res = UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.SpellCritical, res);
             res = res * (1f / Facets) * 100;
             res = res + SpellCriticalMul / 10;
             return (float)res;

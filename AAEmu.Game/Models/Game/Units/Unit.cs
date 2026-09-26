@@ -108,7 +108,16 @@ public class Unit : BaseUnit, IUnit
         CalculateWithBonuses(100d, UnitAttribute.ExpByLaborPowerMul)) / 100d;
 
     [UnitAttribute(UnitAttribute.MoveSpeedMul)]
-    public virtual float MoveSpeedMul { get => (float)CalculateWithBonuses(1000f, UnitAttribute.MoveSpeedMul) / 1000f; }
+    public virtual float MoveSpeedMul
+    {
+        get
+        {
+            // Percent movement modifiers apply to the normal-speed baseline too.
+            var value = CalculateBonuses(1000d, UnitAttribute.MoveSpeedMul);
+            var bonus = UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MoveSpeedMul, value - 1000d);
+            return (float)(1000d + bonus) / 1000f;
+        }
+    }
     [UnitAttribute(UnitAttribute.GlobalCooldownMul)]
     public virtual float GlobalCooldownMul { get; set; } = 100f;
     [UnitAttribute(UnitAttribute.MaxHealth)]
@@ -769,6 +778,11 @@ public class Unit : BaseUnit, IUnit
     }
 
     public double CalculateWithBonuses(double value, UnitAttribute attr)
+    {
+        return UnitAttributeLimitsGameData.Instance.Clamp(attr, CalculateBonuses(value, attr));
+    }
+
+    protected double CalculateBonuses(double value, UnitAttribute attr)
     {
         // Order: static flat -> dynamic flat -> static percent -> dynamic percent.
         // Dynamic bonuses are evaluated on the fly from their source buff so that time-varying
