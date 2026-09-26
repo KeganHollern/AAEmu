@@ -548,29 +548,23 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
 
     public void HandlePlayerLogin(Character player)
     {
-        lock (_queueLock)
+        // Sentence recovery must not depend on eligibility to serve on somebody else's jury.
+        if (player.HasPendingTrial)
         {
-            if (!CanAcceptTrialInvites(player))
-                return;
-            if (!JuryQueues.TryGetValue(player.Faction.MotherId, out var queue))
-                return;
-            if (!queue.Contains(player.Id))
-                queue.Add(player.Id);
-            // GetJuryQueueForPlayer(player);
+            var trial = ArrestCriminal(player, null);
+            if (trial != null)
+                ResultIsGuilty(player, trial, false);
+            else
+                Logger.Error($"Failed to recover pending sentence for {player.Name} ({player.Id}): {player.OfflineGuiltyTime}, {player.OfflineGuiltyRegion}");
+            return;
         }
 
-        if (player.OfflineGuiltyTime > 0)
+        if (!CanAcceptTrialInvites(player))
+            return;
+        lock (_queueLock)
         {
-            // Not the Best way to handle this, but create a temporary trial and immediately auto-plead guilty
-            var tempTrial = ArrestCriminal(player, null);
-            if (tempTrial != null)
-            {
-                ResultIsGuilty(player, tempTrial, false);
-            }
-            else
-            {
-                Logger.Error($"Failed to handle justice for skipped trial of {player.Name} ({player.Id})! Time: {player.OfflineGuiltyTime}, Region: {player.OfflineGuiltyRegion}");
-            }
+            if (JuryQueues.TryGetValue(player.Faction.MotherId, out var queue) && !queue.Contains(player.Id))
+                queue.Add(player.Id);
         }
     }
 
@@ -581,75 +575,64 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
     /// <param name="arrestor"></param>
     public TrialData ArrestCriminal(Character criminal, Character arrestor)
     {
-        // TODO: Implement better support for player nations
-        var criminalCourtRegion = GetCourtRoomRegionByFaction(criminal.Faction.MotherId);
-        var arrestorCourtRegion = arrestor != null ? GetCourtRoomRegionByFaction(arrestor.Faction.MotherId) : criminal.OfflineGuiltyRegion;
-        if (arrestor != null && criminalCourtRegion == CourtRoomRegion.Invalid && arrestorCourtRegion == CourtRoomRegion.Invalid)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            // Likely both pirates, ignore
-            Logger.Debug($"ArrestCriminal: {arrestor.Name} cannot arrest {criminal.Name}, both fall outside of justice system");
-            return null;
+            if (criminal == null || IsPlayerInCourt(criminal.Id))
+                return null;
+
+            var recovering = arrestor == null && criminal.HasPendingTrial;
+            var storedMinutes = Math.Max(0, criminal.OfflineGuiltyTime);
+            var criminalCourtRegion = recovering ? criminal.OfflineGuiltyRegion : criminal.GetPrisonCourtRegion();
+            if (criminalCourtRegion == CourtRoomRegion.Invalid)
+                criminalCourtRegion = GetCourtRoomRegionByFaction(criminal.Faction.MotherId);
+            var arrestorCourtRegion = arrestor != null ? GetCourtRoomRegionByFaction(arrestor.Faction.MotherId) :
+                GetCourtRoomRegionByFaction(criminal.Faction.MotherId);
+            if (criminalCourtRegion == CourtRoomRegion.Invalid)
+                criminalCourtRegion = arrestorCourtRegion;
+            var courtRoom = CourtRooms.Values.FirstOrDefault(c => c.Region == criminalCourtRegion);
+            if (courtRoom == null)
+            {
+                Logger.Warn($"Failed to find a court room for {criminal.Name}");
+                return null;
+            }
+
+            var trial = CreateTrialCase(criminal, courtRoom, recovering ? storedMinutes : null);
+            if (trial == null)
+                return null;
+            criminal.Buffs.RemoveBuff((uint)BuffConstants.Wanted);
+            if (arrestor != null)
+            {
+                criminal.ArrestCount++;
+                criminal.BroadcastPacket(new SCCriminalArrestedPacket(criminal.ObjId, criminal.Name, arrestor.Name), true);
+            }
+            if (!recovering)
+                trial.EnterCourtJail(courtRoom, criminal);
+            return trial;
         }
-
-        // If criminal doesn't have a court region, use the arrestor's region instead
-        // TODO: Verify if this is retail behaviour, or if it uses the original nation of the player
-        if (criminalCourtRegion == CourtRoomRegion.Invalid)
-        {
-            criminalCourtRegion = arrestorCourtRegion;
-        }
-
-        // Find a courtroom to use
-        var tempCourtRoom = CourtRooms.Values.FirstOrDefault(c => c.Region == criminalCourtRegion);
-        if (tempCourtRoom == null)
-        {
-            Logger.Warn($"Failed to find a court room for {criminal.Name}");
-            return null;
-        }
-
-        // Update counter
-        if (arrestor != null)
-        {
-            criminal.ArrestCount++;
-        }
-
-        // Create Trial case
-        var trialData = CreateTrialCase(criminal);
-        if (trialData == null)
-        {
-            Logger.Warn($"Failed to create a court case for {criminal.Name}");
-            return null;
-        }
-
-        // Notify nearby players
-        if (arrestor != null)
-            criminal.BroadcastPacket(new SCCriminalArrestedPacket(criminal.ObjId, criminal.Name, arrestor.Name), true);
-
-        // Summon criminal to court jail
-        trialData.EnterCourtJail(tempCourtRoom, criminal);
-        return trialData;
     }
 
-    /// <summary>
-    /// Creates a trial case to be used
-    /// </summary>
-    /// <param name="defendant"></param>
-    /// <returns></returns>
-    private TrialData CreateTrialCase(Character defendant)
+    private TrialData CreateTrialCase(Character defendant, TrialCourtRoom courtRoom, int? storedMinutes)
     {
-        var trialData = new TrialData()
+        var trial = new TrialData
         {
             DefendantId = defendant.Id,
             DefendantName = defendant.Name,
             Id = TrialIdManager.Instance.GetNextId(),
             Step = TrialStep.DefendantAwaitingTrial,
             CurrentStepEndTime = DateTime.MaxValue,
-            Defendant = defendant
+            Defendant = defendant,
+            CourtRegion = courtRoom.Region,
+            CourtRoom = courtRoom
         };
-        Logger.Debug($"TrialStep.DefendantAwaitingTrial - {trialData.Id}");
-        trialData.EvidenceList = CrimeManager.Instance.GetCrimesOfPlayer(defendant.Id, false);
-        trialData.CalculateJailTime();
-        var added = Trials.TryAdd(trialData.Id, trialData);
-        return added ? trialData : null;
+        trial.EvidenceList = CrimeManager.Instance.GetCrimesOfPlayer(defendant.Id, false);
+        if (storedMinutes.HasValue)
+        {
+            trial.JailTime = storedMinutes.Value;
+            defendant.SetPendingTrialSentence(trial.JailTime, courtRoom.Region);
+        }
+        else
+            trial.CalculateJailTime();
+        return Trials.TryAdd(trial.Id, trial) ? trial : null;
     }
 
     /// <summary>
@@ -747,14 +730,16 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
             return;
         }
 
-        // Update evidence
-        trial.ArchiveEvidence();
+        if (!defendant.ApplyPrisonSentence(trial.CourtRegion, trial.JailTime))
+        {
+            Logger.Error($"Could not apply prison sentence for {defendant.Id} in {trial.CourtRegion}");
+            return;
+        }
 
-        // Update crime points
+        trial.ArchiveEvidence();
         var crimeCount = defendant.CrimePoint;
-        defendant.OfflineGuiltyTime = 0;
-        defendant.OfflineGuiltyRegion = CourtRoomRegion.Invalid;
         defendant.CrimePoint -= crimeCount;
+        defendant.Buffs.RemoveBuff((uint)BuffConstants.Wanted);
         // Update counters
         if (pleadGuilty)
         {
@@ -770,26 +755,7 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
         if (!pleadGuilty)
             defendant.Achievements.Increment(CharRecordKind.Judgement, 1, 0);
 
-        // Prisoner buff
-        var jailTimeMs = trial.JailTime * 60_000;
-        jailTimeMs = Math.Max(jailTimeMs, 10_000); // Make it minimum 10 seconds, having 0 here will make it use the default 30 minutes instead
-        switch (trial.CourtRegion)
-        {
-            case CourtRoomRegion.Nuian:
-                defendant.Buffs.AddBuff((uint)BuffConstants.Prisoner_Nuian, defendant, jailTimeMs);
-                break;
-            case CourtRoomRegion.Haranyan:
-                defendant.Buffs.AddBuff((uint)BuffConstants.Prisoner_Haranyan, defendant, jailTimeMs);
-                break;
-            default:
-                Logger.Error(
-                    $"ResultIsGuilty - Invalid court region? {trial.CourtRegion}, defendant: {trial.DefendantName}");
-                break;
-        }
-
-        // Teleport
-        defendant.DisabledSetPosition = true;
-        defendant.SendPacket(new SCTeleportUnitPacket(TeleportReason.Jail, 0, targetJail.Pos.X, targetJail.Pos.Y, targetJail.Pos.Z, targetJail.Pos.Yaw));
+        PrisonerAccess.MoveToJusticeDestination(defendant, targetJail.Pos, TeleportReason.Jail);
         defendant.Buffs.RemoveBuff((uint)BuffConstants.Trial_Defendant);
     }
 
@@ -810,16 +776,24 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
 
         // Update crime points
         var crimeCount = defendant.CrimePoint;
-        defendant.OfflineGuiltyTime = 0;
-        defendant.OfflineGuiltyRegion = CourtRoomRegion.Invalid;
+        defendant.ClearPendingTrialSentence();
         defendant.NotGuiltyCount++;
         defendant.CrimePoint -= crimeCount;
         defendant.InfamyPoint -= crimeCount;
+        defendant.Buffs.RemoveBuff((uint)BuffConstants.Wanted);
         defendant.SendPacket(new SCCrimeChangedPacket(crimeCount, defendant.CrimePoint, defendant.InfamyPoint, defendant.GetCrimeState()));
         defendant.Achievements.Increment(CharRecordKind.Judgement, 0, 0);
 
-        defendant.Buffs.RemoveBuffs(BuffKind.Good, 1, (uint)BuffConstants.TagPrisoner);
         defendant.Buffs.RemoveBuff((uint)BuffConstants.Trial_Defendant);
+        if (defendant.GetUnservedPrisonMilliseconds() > 0)
+        {
+            // Acquittal of the new charge does not erase an earlier conviction.
+            var jail = AppConfiguration.Instance.Justice.Jails.FirstOrDefault(x => x.Faction == trial.CourtRoom.Faction);
+            if (jail != null)
+                PrisonerAccess.MoveToJusticeDestination(defendant, jail.Pos, TeleportReason.Jail);
+        }
+        else
+            defendant.Buffs.RemoveBuffs(BuffKind.Bad, 1, (uint)BuffConstants.TagPrisoner);
 
         defendant.TryLeavePirateFactionAfterRehabilitation();
     }

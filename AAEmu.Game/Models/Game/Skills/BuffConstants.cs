@@ -1,4 +1,4 @@
-namespace AAEmu.Game.Models.Game.Skills;
+﻿namespace AAEmu.Game.Models.Game.Skills;
 
 #pragma warning disable IDE0079 // Remove unnecessary suppression
 #pragma warning disable CA1069 // Enums should not have duplicate values
@@ -36,6 +36,7 @@ public enum BuffConstants : uint
     Contemptuous = 4832, // Pirate
     SuspectedUser = 4862,
     PrimeSuspect = 4863,
+    Prisoner_Bot = 4868,
     OwnersMark = 4867,  // Vehicle ownership buff, prevents non-owners from attaching to the vehicle.
     EquipDualwield = 4899,
     TransformingIntoPrimeSuspect = 4947,

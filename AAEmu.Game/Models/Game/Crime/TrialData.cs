@@ -1,5 +1,7 @@
 using System.Numerics;
 
+using AAEmu.Commons.Utils.DB;
+
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
@@ -63,7 +65,7 @@ public class TrialData
         defendant.PostUpdateCurrentHp(defendant, 0, defendant.Hp, KillReason.PvpEnemy);        
 
         // Teleport criminal to the local jail
-        defendant.SendPacket(new SCTeleportUnitPacket(TeleportReason.Lockup, 0, temporaryCourtRoom.Jail.X, temporaryCourtRoom.Jail.Y, temporaryCourtRoom.Jail.Z, temporaryCourtRoom.Jail.Yaw.DegToRad()));
+        PrisonerAccess.MoveToJusticeDestination(defendant, temporaryCourtRoom.Jail, TeleportReason.Lockup);
 
         // Haranya -> returnDistrict: 427, resurrectionDistrict: 68
         /*
@@ -90,7 +92,8 @@ public class TrialData
         // Pirate = max 40
         // However this information seems to be wrong compared to what the client shows
         // Below is what I suspect are the values based on what the client returns from trial and error
-        var defaultMinutes = 0;
+        long defaultMinutes = 0;
+        var victimLevels = new Dictionary<uint, byte?>();
         foreach (var crimeEvent in EvidenceList.ToList())
         {
             var thisEventScore = 0;
@@ -109,26 +112,38 @@ public class TrialData
                     thisEventScore = 8;
                     break;
             }
-            // There seems to be a level-difference penalty here as well
-            // TODO: move this to the crime table so we can just grab it from there? Or is it from data at the time of trial?
-            var victim = WorldManager.Instance.GetCharacterById(crimeEvent.Victim);
-            if (victim?.Level < 30)
-            {
+            // Retain the server's current low-level-victim policy, independent of login state.
+            if (thisEventScore > 0 && !victimLevels.ContainsKey(crimeEvent.Victim))
+                victimLevels[crimeEvent.Victim] = GetVictimLevel(crimeEvent.Victim);
+            if (victimLevels.GetValueOrDefault(crimeEvent.Victim) < 30)
                 thisEventScore *= 10;
-            }
             defaultMinutes += thisEventScore;
         }
 
-        JailTime = defaultMinutes; // (Defendant.CrimePoint / 5);
-        JailTime *= (1 + (Defendant.InfamyPoint / 1000));
+        JailTime = (int)Math.Clamp(defaultMinutes * (1L + Defendant.InfamyPoint / 1000),
+            0, int.MaxValue / 60000);
         if (Defendant.Faction.Id == FactionsEnum.Pirate)
         {
             JailTime = 40; // Math.Min(40, Math.Max(JailTime, 15)); // Not correct, but good enough for now
         }
 
         // Store the Jail time in case the trial doesn't go through
-        Defendant.OfflineGuiltyTime = JailTime;
-        Defendant.OfflineGuiltyRegion = CourtRegion;
+        Defendant.SetPendingTrialSentence(JailTime, CourtRegion);
+    }
+
+    internal static byte? GetVictimLevel(uint characterId)
+    {
+        if (characterId == 0)
+            return null;
+        var online = WorldManager.Instance.GetCharacterById(characterId);
+        if (online != null)
+            return online.Level;
+        using var connection = MySQL.CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT level FROM characters WHERE id=@id";
+        command.Parameters.AddWithValue("@id", characterId);
+        var value = command.ExecuteScalar();
+        return value is null or DBNull ? null : Convert.ToByte(value);
     }
 
     public void EnterCourtRoom(TrialCourtRoom courtRoom, Character defendant)
