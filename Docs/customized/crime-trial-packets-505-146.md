@@ -49,6 +49,7 @@ The count packet updates the submitted-vote count. It does not reveal individual
 votes and carries no trial ID. Native cancellation clears all local trial state
 and ignores its packet ID. The server must send both packets only to participants
 of the exact current trial. An ordinary verdict does not send cancellation.
+When a juror leaves during voting, the server sends the new vote count and total.
 
 Native jury seats use indices 0 through 4. The seating consumer at `3907bcc0`
 rejects index 5. Its continent flag is true for Nuia and false for Haranya. The
@@ -98,8 +99,8 @@ This change does not copy those rules. Exact r208022 evidence takes precedence.
 The focused tests cover valid and invalid verdicts, seat ownership, repeated
 confirmation, exact packet bodies, truncated and trailing input, result claims,
 concurrent duplicate votes, disconnect cleanup, and stale trial identity.
-The Release build passed with no errors. All 73 focused tests passed without
-skips: 63 trial-rule cases and 10 packet cases. The tie and pirate policies remain
+The Release build passed with no errors. All 75 focused tests passed without
+skips: 65 trial-rule cases and 10 packet cases. The tie and pirate policies remain
 separate release gates until the user supplies them.
 
 ## Pending human checks for #573

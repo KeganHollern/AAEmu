@@ -320,6 +320,12 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
                     seat.JuryMember = null;
                     seat.ConfirmTestimony = false;
                     seat.SelectedSentence = -1;
+                    if (!trial.ResultApplied && trial.Step == TrialStep.JuryVerdict)
+                    {
+                        var jury = trial.Jury.Values.Where(entry => entry.JuryMember != null).ToArray();
+                        trial.SendPackets(new SCChangeJuryVerdictCountPacket(
+                            jury.Count(entry => entry.SelectedSentence is >= 1 and <= 6), jury.Length), true);
+                    }
                 }
             }
         }

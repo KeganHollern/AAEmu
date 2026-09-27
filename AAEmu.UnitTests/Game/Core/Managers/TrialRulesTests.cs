@@ -171,6 +171,40 @@ public sealed class TrialRulesTests
     }
 
     [Test]
+    [Arguments(true)] [Arguments(false)]
+    public async Task JurorDisconnect_UpdatesTheVoteCountOnceForCurrentParticipants(bool submittedVote)
+    {
+        var trial = CreateTrial(TrialStep.JuryVerdict);
+        trial.Jury.Add(3, new TrialJuryBox { SeatId = 3, JuryMember = Player(13) });
+        var observer = Player(14);
+        trial.CourtRoom.AudienceMembers.Add(observer);
+        trial.CourtRoom.AudienceSeats.Add(new Doodad { ObjId = 100 });
+        var departing = trial.Jury[1].JuryMember;
+        if (submittedVote)
+            _manager.JuryVerdict(departing, trial.Id, 1, 2);
+        _manager.JuryVerdict(trial.Jury[2].JuryMember, trial.Id, 2, 4);
+        foreach (var session in _sessions.Values)
+            session.Packets.Clear();
+
+        _manager.HandlePlayerDisconnect(departing);
+        _manager.HandlePlayerDisconnect(departing);
+
+        await Assert.That(trial.Jury[1].JuryMember).IsNull();
+        await Assert.That(trial.Jury[1].SelectedSentence).IsEqualTo(-1);
+        await Assert.That(_sessions[departing.Id].Count(SCOffsets.SCChangeJuryVerdictCountPacket)).IsEqualTo(0);
+        foreach (var id in new uint[] { trial.DefendantId, 12, 13, observer.Id })
+        {
+            var bytes = _sessions[id].Packets.Single(packet =>
+                BitConverter.ToUInt16(packet, 6) == SCOffsets.SCChangeJuryVerdictCountPacket);
+            var body = new PacketStream().Write(bytes[8..]);
+            body.Rollback();
+            await Assert.That(body.ReadInt32()).IsEqualTo(1);
+            await Assert.That(body.ReadInt32()).IsEqualTo(2);
+            await Assert.That(body.LeftBytes).IsEqualTo(0);
+        }
+    }
+
+    [Test]
     public async Task OldTimerAndPackets_CannotChangeAReplacementTrial()
     {
         var old = CreateTrial(TrialStep.JuryVerdict);
