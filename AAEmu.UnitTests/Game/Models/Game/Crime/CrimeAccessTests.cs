@@ -420,6 +420,44 @@ public sealed class CrimeAccessTests
         await Assert.That(other.TrialChatChannel.GetMembersSnapshot().Single()).IsSameReferenceAs(audience);
     }
 
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task JoinTrialAudience_RoleInAnotherUnreleasedCase_DoesNotJoin(bool juror, bool terminal)
+    {
+        var trial = Trial();
+        var player = juror ? Player(2) : trial.Defendant;
+        if (juror)
+            trial.Jury[1] = new TrialJuryBox { JuryMember = player, Seat = new Doodad() };
+        if (terminal)
+            trial.Step = TrialStep.EndTrial;
+        var other = new TrialCourtRoom { Id = 2, AudienceSeats = [new Doodad { TemplateId = 2 }], TrialChatChannel = new() };
+        _trials.CourtRooms.Add(other.Id, other);
+
+        _trials.JoinTrialAudience(player, 2);
+
+        await Assert.That(other.AudienceMembers).IsEmpty();
+        await Assert.That(other.TrialChatChannel.GetMembersSnapshot()).IsEmpty();
+        await Assert.That(_trials.GetParticipatingTrial(player)).IsSameReferenceAs(trial);
+    }
+
+    [Test]
+    public async Task JoinTrialAudience_PendingDefendantInSameCourt_DoesNotJoinDifferentCase()
+    {
+        var pending = Trial();
+        pending.Step = TrialStep.DefendantAwaitingTrial;
+        var cases = (ConcurrentDictionary<uint, TrialData>)typeof(TrialManager)
+            .GetProperty("Trials", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_trials)!;
+        cases.TryAdd(pending.Id, pending);
+        pending.CourtRoom.CurrentTrial = new TrialData { Id = 2, CourtRoom = pending.CourtRoom, Defendant = Player(3) };
+
+        _trials.JoinTrialAudience(pending.Defendant, 1);
+
+        await Assert.That(pending.CourtRoom.AudienceMembers).IsEmpty();
+    }
+
     private TrialData Trial()
     {
         var room = new TrialCourtRoom { Id = 1, TrialChatChannel = new(), AudienceSeats = [new Doodad { TemplateId = 1 }] };

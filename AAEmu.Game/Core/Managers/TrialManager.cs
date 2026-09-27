@@ -961,6 +961,8 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
             {
                 if (!courtRoom.AudienceSeats.Any(seat => seat.TemplateId == doodadTemplateId && IsAtAudienceSeat(player, seat)))
                     continue;
+                if (HasRoleInOtherTrial(player, courtRoom.CurrentTrial))
+                    return;
                 lock (courtRoom.AudienceMembers)
                     if (courtRoom.AudienceMembers.Contains(player))
                         return;
@@ -973,6 +975,23 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
             }
             Logger.Warn($"{player.Name} tried to join courtroom audience while not being near a seat");
         }
+    }
+
+    private bool HasRoleInOtherTrial(Character player, TrialData audienceTrial)
+    {
+        foreach (var trial in Trials.Values.Concat(CourtRooms.Values.Select(room => room.CurrentTrial))
+                     .Where(trial => trial != null).Distinct())
+        {
+            lock (trial.SyncRoot)
+            {
+                if (trial.Step == TrialStep.Invalid || trial == audienceTrial)
+                    continue;
+                if (trial.Defendant == player || trial.DefendantId == player.Id ||
+                    trial.Jury.Values.Any(box => box.JuryMember == player))
+                    return true;
+            }
+        }
+        return false;
     }
 
     public void LeaveTrialAudience(Character player)
