@@ -142,7 +142,7 @@ public class TrialData
             0, int.MaxValue / 60000);
         if (Defendant.Faction.Id == FactionsEnum.Pirate)
         {
-            JailTime = 40; // Math.Min(40, Math.Max(JailTime, 15)); // Not correct, but good enough for now
+            JailTime = Math.Clamp(AppConfiguration.Instance.Justice.PirateSentenceMinutes, 0, int.MaxValue / 60000);
         }
 
         // Store the Jail time in case the trial doesn't go through

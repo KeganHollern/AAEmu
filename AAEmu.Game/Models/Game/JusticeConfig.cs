@@ -10,6 +10,7 @@ public class JusticeConfig
 {
     public bool KeepHistory { get; set; } = true;
     public bool AllowJuryEscape { get; set; } = true;
+    public int PirateSentenceMinutes { get; set; } = 40;
     public List<CourtRoomConfig> CourtRooms { get; init; } = [];
     public List<JailConfig> Jails { get; init; } = [];
     public int BotReportPrimeSuspectCount { get; set; } = 5;

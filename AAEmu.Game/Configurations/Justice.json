@@ -88,6 +88,7 @@
         ],
         "KeepHistory": true,
         "AllowJuryEscape": true,
+        "PirateSentenceMinutes": 40,
         "BotReportPrimeSuspectCount": 5
     }
 }
