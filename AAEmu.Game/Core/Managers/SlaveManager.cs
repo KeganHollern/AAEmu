@@ -31,8 +31,11 @@ namespace AAEmu.Game.Core.Managers;
 
 public class SlaveManager(WorldInstance parentWorldInstance)
 {
+    private enum RemovalRequest { Player, VisibilityTimeout, Cleanup }
+
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private WorldInstance World { get; init; } = parentWorldInstance;
+    internal Func<Slave, bool> SaveForRemoval { get; set; } = slave => slave.Save();
 
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
     private readonly object _slaveListLock = new();
@@ -42,7 +45,8 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         lock (_slaveListLock)
         {
             var slaves = World.GetAllSlaves();
-            return slaves.FirstOrDefault(slave => slave.Summoner?.ObjId == objId && !slave.IsDead);
+            return slaves.FirstOrDefault(slave => slave.Summoner?.ObjId == objId && !slave.IsDead &&
+                slave.ParentObj is not Slave && slave.OwnerType != BaseUnitType.Slave);
         }
     }
 
@@ -266,34 +270,56 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         }
     }
 
-    // TODO: GameConnection connection
     /// <summary>
-    /// Removes a slave from the world
+    /// Handles a player's request to remove their vehicle.
     /// </summary>
-    /// <param name="owner"></param>
-    /// <param name="objId"></param>
-    /// <param name="ignoreAttachedItemWarning">If true will not fail if there are attached items</param>
-    public void Delete(Character owner, uint objId, bool ignoreAttachedItemWarning)
-    {
-        var slaveInfo = GetSlaveByObjId(objId);
-        if (slaveInfo == null) return;
-        slaveInfo.Save();
+    public bool Delete(Character owner, uint objId) =>
+        RemoveSlave(owner, GetSlaveByObjId(objId), false, RemovalRequest.Player);
 
-        // Check if one of the slave doodads is holding an item
-        if (ignoreAttachedItemWarning == false)
+    // Logout, instance transfer, and scheduled cleanup must not depend on the
+    // player's position or the vehicle's combat state. Keep the caller's cargo policy.
+    private bool DeleteForCleanup(Character owner, uint objId, bool ignoreAttachedItemWarning) =>
+        RemoveSlave(owner, GetSlaveByObjId(objId), ignoreAttachedItemWarning, RemovalRequest.Cleanup);
+
+    private bool RemoveSlave(Character owner, Slave slaveInfo, bool ignoreAttachedItemWarning, RemovalRequest request)
+    {
+        if (slaveInfo == null)
+            return false;
+        List<Character> passengers;
+        lock (slaveInfo.AttachmentSyncRoot)
         {
-            foreach (var doodad in slaveInfo.AttachedDoodads)
+            if (slaveInfo.AttachmentsRetired || !ReferenceEquals(GetSlaveByObjId(slaveInfo.ObjId), slaveInfo))
+                return false;
+            if (request != RemovalRequest.Cleanup && !CanPlayerRemove(owner, slaveInfo, request))
+                return false;
+            if (!ignoreAttachedItemWarning && slaveInfo.AttachedDoodads.Any(doodad =>
+                    doodad.ItemId != 0 || doodad.ItemTemplateId != 0))
             {
-                if (doodad.ItemId != 0 || doodad.ItemTemplateId != 0)
-                {
-                    owner?.SendErrorMessage(ErrorMessageType.SlaveEquipmentLoadedItem); // TODO: Do we need this error? Client already mentions it.
-                    return; // don't allow un-summon if some it's holding an item (should be a trade-pack)
-                }
+                owner?.SendErrorMessage(ErrorMessageType.SlaveEquipmentLoadedItem);
+                return false;
             }
+            // Player removal must retain a persistent vehicle if its save fails.
+            // Internal cleanup keeps its existing save policy.
+            var needsSuccessfulSave = request != RemovalRequest.Cleanup &&
+                slaveInfo.Id > 0 && slaveInfo.SummoningItem != null;
+            var saved = false;
+            try
+            {
+                saved = SaveForRemoval(slaveInfo);
+            }
+            catch (Exception exception) when (needsSuccessfulSave)
+            {
+                Logger.Error(exception, "Vehicle removal could not save slave {0}", slaveInfo.Id);
+            }
+            if (needsSuccessfulSave && !saved)
+            {
+                owner?.SendErrorMessage(ErrorMessageType.InternalError);
+                return false;
+            }
+            if (!TryBeginAttachmentRemoval(slaveInfo, out passengers))
+                return false;
         }
 
-        if (!TryBeginAttachmentRemoval(slaveInfo, out var passengers))
-            return;
         foreach (var character in passengers)
             UnbindSlave(character, slaveInfo.TlId, AttachUnitReason.SlaveBinding);
         foreach (var attachedSlave in slaveInfo.AttachedSlaves)
@@ -330,7 +356,7 @@ public class SlaveManager(WorldInstance parentWorldInstance)
 
         var world = WorldManager.Instance.GetWorld(slaveInfo.Transform.InstanceId);
         world.Physics.RemoveShip(slaveInfo);
-        owner?.BroadcastPacket(new SCSlaveDespawnPacket(objId), true);
+        owner?.BroadcastPacket(new SCSlaveDespawnPacket(slaveInfo.ObjId), true);
         owner?.BroadcastPacket(new SCSlaveRemovedPacket(owner.ObjId, slaveInfo.TlId), true);
         lock (_slaveListLock)
         {
@@ -339,6 +365,39 @@ public class SlaveManager(WorldInstance parentWorldInstance)
 
         slaveInfo.Despawn = DateTime.UtcNow.AddSeconds(slaveInfo.Template.PortalTime + 0.5f);
         World.SpawnManager.AddDespawn(slaveInfo);
+        return true;
+    }
+
+    private bool CanPlayerRemove(Character owner, Slave slave, RemovalRequest request)
+    {
+        if (owner == null || !ReferenceEquals(slave.Summoner, owner) ||
+            slave.ParentObj is Slave || slave.OwnerType == BaseUnitType.Slave)
+            return false;
+        if (slave.IsDead || slave.AttachmentsRetired)
+            return false;
+        if (!ReferenceEquals(owner.ParentWorld, World) || !ReferenceEquals(slave.ParentWorld, World) ||
+            owner.Transform.InstanceId != World.Id || slave.Transform.InstanceId != World.Id)
+        {
+            owner.SendErrorMessage(ErrorMessageType.SlaveDespawnNearTheSlave);
+            return false;
+        }
+        var visible = slave.IsVisible &&
+            WorldManager.GetAround<Slave>(owner).Any(candidate => ReferenceEquals(candidate, slave));
+        if (request == RemovalRequest.VisibilityTimeout
+                ? visible || !slave.HasExpiredOwnerVisibility(DateTime.UtcNow)
+                : !visible)
+        {
+            // r208022 rejects a missing loaded vehicle actor, rather than testing
+            // a fixed distance. Use the same region membership as actor visibility.
+            owner.SendErrorMessage(ErrorMessageType.SlaveDespawnNearTheSlave);
+            return false;
+        }
+        if (slave.IsInBattle)
+        {
+            owner.SendErrorMessage(ErrorMessageType.SlaveCannotRemoveWhileInCombat);
+            return false;
+        }
+        return true;
     }
 
     /// <summary>
@@ -361,26 +420,23 @@ public class SlaveManager(WorldInstance parentWorldInstance)
     /// <param name="skillData"></param>
     /// <param name="hideSpawnEffect"></param>
     /// <param name="positionOverride"></param>
-    public void Create(Character owner, SkillItem skillData, bool hideSpawnEffect = false, Transform positionOverride = null)
+    public bool Create(Character owner, SkillItem skillData, bool hideSpawnEffect = false, Transform positionOverride = null)
     {
         var sourceItem = ZoneSkillRestrictions.GetSourceItem(owner, skillData);
         if (sourceItem?.Template is not SummonSlaveTemplate itemTemplate ||
             !ZoneSkillRestrictions.CanUseItem(owner, sourceItem, positionOverride?.World.Position))
-            return;
+            return false;
         var slaveTemplate = SlaveGameData.Instance.GetSlaveTemplate(itemTemplate.SlaveId);
         if (slaveTemplate == null || !ZoneSkillRestrictions.CanUseItem(owner, sourceItem,
                 GetItemSpawnDestination(owner.Transform.World, null, positionOverride, slaveTemplate.SpawnYOffset)))
-            return;
+            return false;
+        if (!CanSummonItem(owner, sourceItem, DateTime.UtcNow))
+            return false;
         var activeSlaveInfo = GetActiveSlaveByOwnerObjId(owner.ObjId);
-        if (activeSlaveInfo != null)
-        {
-            activeSlaveInfo.Save();
-            // TODO: If too far away, don't delete
-            Delete(owner, activeSlaveInfo.ObjId, false);
-            // return;
-        }
+        if (activeSlaveInfo != null && !Delete(owner, activeSlaveInfo.ObjId))
+            return false;
 
-        Create(owner, null, itemTemplate.SlaveId, sourceItem, hideSpawnEffect, positionOverride);
+        return Create(owner, null, itemTemplate.SlaveId, sourceItem, hideSpawnEffect, positionOverride) != null;
     }
 
     internal static Vector3 GetItemSpawnDestination(PositionAndRotation ownerPosition,
@@ -393,6 +449,20 @@ public class SlaveManager(WorldInstance parentWorldInstance)
             spawnerPosition.Roll, spawnerPosition.Pitch, spawnerPosition.Yaw);
         position.AddDistanceToFront(Math.Clamp(spawnYOffset, 5f, 50f));
         return position.Position;
+    }
+
+    internal static bool CanSummonItem(Character owner, Item item, DateTime now)
+    {
+        if (item is not SummonSlave summonItem)
+            return true;
+        var error = summonItem.GetSpawnError(now, out var secondsRemaining);
+        if (error == ErrorMessageType.NoErrorMessage)
+            return true;
+        if (error == ErrorMessageType.SlaveSpawnErrorNeedRepairTime)
+            owner?.SendErrorMessage(error, secondsRemaining);
+        else
+            owner?.SendErrorMessage(error);
+        return false;
     }
 
     // added "/slave spawn <templateId>" to be called from the script command
@@ -410,6 +480,8 @@ public class SlaveManager(WorldInstance parentWorldInstance)
     {
         var slaveTemplate = SlaveGameData.Instance.GetSlaveTemplate(useSpawner?.UnitId ?? templateId);
         if (slaveTemplate == null) return null;
+        if (!CanSummonItem(owner, item, DateTime.UtcNow))
+            return null;
 
         if (owner != null && item != null)
         {
@@ -560,16 +632,6 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         {
             slaveSummonItem.SlaveType = 0x02;
             slaveSummonItem.SlaveDbId = dbId;
-            if (slaveSummonItem.IsDestroyed > 0 || slaveSummonItem.RepairStartTime > DateTime.MinValue)
-            {
-                var secondsLeft = (slaveSummonItem.RepairStartTime.AddMinutes(10) - DateTime.UtcNow).TotalSeconds;
-                if (secondsLeft > 0.0)
-                {
-                    // Slave was destroyed and is on cooldown
-                    owner?.SendErrorMessage(ErrorMessageType.SlaveSpawnErrorNeedRepairTime, (uint)Math.Round(secondsLeft));
-                    return null;
-                }
-            }
             slaveSummonItem.SummonLocation = spawnPos.World.Position;
             slaveSummonItem.RepairStartTime = DateTime.MinValue; // reset timer here
             slaveSummonItem.IsDirty = true;
@@ -950,29 +1012,14 @@ public class SlaveManager(WorldInstance parentWorldInstance)
     }
 
     /// <summary>
-    /// Un-summons a vehicle
+    /// Handles r208022's automatic removal after 300 seconds without the vehicle actor.
     /// </summary>
     /// <param name="character"></param>
     /// <param name="slaveTlId"></param>
-    /// <param name="forceDelete">If true, will force delete attached items</param>
-    public void RemoveActiveSlave(Character character, ushort slaveTlId, bool forceDelete)
+    public bool RemoveActiveSlave(Character character, ushort slaveTlId)
     {
         var slave = GetSlaveByTlId(slaveTlId);
-        if (slave != null)
-        {
-            if (slave.Summoner?.ObjId != character.ObjId)
-            {
-                Logger.Warn($"Non-owner is trying to desummon a slave {character.Name} => {slave.Name} (ObjId: {slave.ObjId})");
-                return;
-            }
-        }
-        else
-        {
-            return;
-        }
-
-        Delete(character, slave.ObjId, forceDelete);
-        // slave.Delete();
+        return RemoveSlave(character, slave, false, RemovalRequest.VisibilityTimeout);
     }
 
     /// <summary>
@@ -1130,8 +1177,7 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         var activeSlaveInfo = GetActiveSlaveByOwnerObjId(owner.ObjId);
         if (activeSlaveInfo != null)
         {
-            activeSlaveInfo.Save();
-            Delete(owner, activeSlaveInfo.ObjId, forceDelete);
+            DeleteForCleanup(owner, activeSlaveInfo.ObjId, forceDelete);
         }
 
         ClearSlaveAttachmentState(owner);
@@ -1153,7 +1199,7 @@ public class SlaveManager(WorldInstance parentWorldInstance)
     /// <returns></returns>
     public void RemoveAndDespawnTestSlave(Character owner, uint slaveObjId)
     {
-        Delete(owner, slaveObjId, false);
+        DeleteForCleanup(owner, slaveObjId, false);
     }
 
     /// <summary>
@@ -1174,7 +1220,7 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         // Despawn the slave if it's currently active
         var currentActiveSlave = GetSlaveByDbId(slaveIdToDelete);
         if (currentActiveSlave != null)
-            RemoveActiveSlave(currentActiveSlave.Summoner, currentActiveSlave.TlId, true);
+            DeleteForCleanup(currentActiveSlave.Summoner, currentActiveSlave.ObjId, true);
 
         // Remove the slave from DB
         using var connection = MySQL.CreateConnection();

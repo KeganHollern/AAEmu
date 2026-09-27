@@ -1101,7 +1101,7 @@ public partial class Skill
             if (_triggeredLaborBatch != null && ReferenceEquals(_triggeredLaborBatch, SkillLaborBatch.Current))
                 ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
             else if (caster is Character laborOwner && (Template.ConsumeLaborPower > 0 ||
-                     Template.Effects.Any(effect => effect.Template is RecoverExpEffect) || Dyeing.IsDyeingSkill(this)))
+                     Template.Effects.Any(effect => effect.Template is RecoverExpEffect or RepairSlaveEffect) || Dyeing.IsDyeingSkill(this)))
             {
                 lock (SaveManager.PersistenceSyncRoot)
                 {

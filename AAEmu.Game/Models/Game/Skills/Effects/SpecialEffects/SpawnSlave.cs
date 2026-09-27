@@ -23,9 +23,11 @@ public class SpawnSlave : SpecialEffectAction
         // TODO ...
         if (caster is Character) { Logger.Debug($"Special effects: SpawnSlave value1 {value1}, value2 {value2}, value3 {value3}, value4 {value4}"); }
 
-        var owner = (Character)caster;
-        var skillData = (SkillItem)casterObj;
+        if (caster is Character owner && casterObj is SkillItem skillData &&
+            owner.ParentWorld.SlaveManager.Create(owner, skillData))
+            return;
 
-        owner.ParentWorld.SlaveManager.Create(owner, skillData);
+        skill.Cancelled = true;
+        SkillLaborBatch.Current?.Fail();
     }
 }

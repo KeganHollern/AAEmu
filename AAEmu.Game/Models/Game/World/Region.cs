@@ -184,6 +184,10 @@ public class Region(WorldInstance worldInstance, int x, int y, uint zoneKey)
             var units = GetList(new List<Unit>(), character1.ObjId);
             foreach (var t in units)
             {
+                // Character departure sends batched actor removals without calling
+                // Slave.RemoveVisibleObject. Preserve the same owner absence clock.
+                if (t is Slave slave)
+                    slave.RecordOwnerVisibility(character1, false, DateTime.UtcNow);
                 if (t is Npc { Ai: not null } npc)
                 {
                     npc.Ai.ShouldTick = false;
