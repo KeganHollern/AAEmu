@@ -154,6 +154,9 @@ public class HealEffect : EffectTemplate
             targetChar.RecordPvpHealFrom(healerChar);
         }
 
+        if (value > 0 && caster is Unit healer)
+            healer.Procs?.OnHeal(trg, criticalHeal, source.IsItemProc);
+
         trg.Events.OnHealed(this, new OnHealedArgs { Healer = (Unit)caster, HealAmount = value });
         trg.PostUpdateCurrentHp(trg, oldHp, trg.Hp, KillReason.Unknown);
     }

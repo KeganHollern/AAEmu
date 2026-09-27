@@ -7,6 +7,8 @@ namespace AAEmu.Game.Models.Game.Skills.Effects;
 public class EffectSource
 {
     public Skill Skill { get; set; }
+    internal bool IsItemProc { get => field || Skill?.IsItemProc == true; init; }
+    internal byte ItemProcLevel { get => Skill?.IsItemProc == true ? Skill.Level : field; init; }
     internal AAEmu.Game.Models.Game.Duels.Duel DuelContext { get; set; }
     public BuffTemplate Buff { get; set; }
     public int Amount { get; set; }

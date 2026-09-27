@@ -29,7 +29,7 @@ public class DispelledBuffTrigger(Buff owner, BuffTriggerTemplate template) : Bu
         }
 
         Template.Effect.Apply(owner, new SkillCasterUnit(_owner.ObjId), target, new SkillCastUnitTarget(target.ObjId), new CastBuff(_buff),
-            new EffectSource(), // TODO : EffectSource Type trigger 
+            new EffectSource() { IsItemProc = _buff.IsItemProc, ItemProcLevel = _buff.ItemProcLevel }, // TODO : EffectSource Type trigger
             null, DateTime.UtcNow);
     }
 }

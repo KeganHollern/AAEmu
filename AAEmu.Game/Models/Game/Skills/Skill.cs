@@ -41,6 +41,7 @@ namespace AAEmu.Game.Models.Game.Skills;
 
 public partial class Skill
 {
+    internal bool IsItemProc { get; init; }
     private static readonly Dictionary<Character, int> s_executingCharacters = [];
 
     /// <summary>True while a character skill is entering, applying effects, or running a plot.</summary>
@@ -326,12 +327,15 @@ public partial class Skill
 
         // Failed admission leaves the current cast intact. A successful replacement
         // must close its old timeline before the new cast is published.
-        var previousTask = unit.SkillTask;
-        if (previousTask?.CastWindow?.Active == true && previousTask.Skill != this)
-            previousTask.Skill.Stop(unit, (previousTask as EndChannelingTask)?._channelDoodad);
-        var previousPlot = unit.ActivePlotState;
-        if (previousPlot != null && previousPlot.ActiveSkill != this)
-            previousPlot.CancelCastWaits(includePending: true);
+        if (!IsItemProc)
+        {
+            var previousTask = unit.SkillTask;
+            if (previousTask?.CastWindow?.Active == true && previousTask.Skill != this)
+                previousTask.Skill.Stop(unit, (previousTask as EndChannelingTask)?._channelDoodad);
+            var previousPlot = unit.ActivePlotState;
+            if (previousPlot != null && previousPlot.ActiveSkill != this)
+                previousPlot.CancelCastWaits(includePending: true);
+        }
 
         // Cancel buffs if Template asks for it
         if (Template.CancelOngoingBuffs)
@@ -393,11 +397,13 @@ public partial class Skill
                 RealCastTimeDiv10 = (ushort)(castTime / 10), // calculate with adjustments
             }, true);
 
-            unit.SkillTask = new CastTask(this, caster, casterCaster, target, targetCaster, skillObject)
+            var castTask = new CastTask(this, caster, casterCaster, target, targetCaster, skillObject)
             {
                 CastWindow = new CastWindow(DateTime.UtcNow.AddMilliseconds(castTime), true, false, Template.CastingDelayable)
             };
-            TaskManager.Instance.Schedule(unit.SkillTask, TimeSpan.FromMilliseconds(castTime));
+            if (!IsItemProc)
+                unit.SkillTask = castTask;
+            TaskManager.Instance.Schedule(castTask, TimeSpan.FromMilliseconds(castTime));
         }
         else
         {

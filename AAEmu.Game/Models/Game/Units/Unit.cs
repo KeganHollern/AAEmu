@@ -336,6 +336,7 @@ public class Unit : BaseUnit, IUnit
     public Simulation Simulation { get; set; }
 
     public UnitProcs Procs { get; protected set; }
+    private readonly HashSet<uint> _equipmentSetBuffs = [];
 
     public ConcurrentDictionary<uint, Aggro> AggroTable { get; } = [];
 
@@ -349,6 +350,7 @@ public class Unit : BaseUnit, IUnit
         Equipment = new EquipmentContainer(0, SlotType.Equipment, false, this);
         ChargeLock = new object();
         Cooldowns = new UnitCooldowns();
+        Procs = new UnitProcs(this);
         CharacterTagging = new Tagging(this); //Adding because Tagging works differently than Aggro
     }
 
@@ -1206,6 +1208,7 @@ public class Unit : BaseUnit, IUnit
         ApplyWeaponWieldBuff();
         ApplyArmorGradeBuff(itemAdded, itemRemoved);
         ApplyEquipItemSetBonuses();
+        Procs.RefreshEquipment();
     }
 
     private void ApplyWeaponWieldBuff()
@@ -1244,68 +1247,35 @@ public class Unit : BaseUnit, IUnit
 
     private void ApplyEquipItemSetBonuses()
     {
-        var setNumPieces = new Dictionary<uint, int>();
-        var itemLevels = new Dictionary<uint, uint>();
-        foreach (var item in Equipment.Items)
+        var desired = new Dictionary<uint, uint>();
+        var equipped = Equipment.Items.OfType<EquipItem>()
+            .Where(item => item.IsNotDestroyed && ReferenceEquals(item._holdingContainer, Equipment));
+        foreach (var group in equipped.Where(item => item.Template is EquipItemTemplate { EquipItemSetId: > 0 })
+                     .GroupBy(item => ((EquipItemTemplate)item.Template).EquipItemSetId))
         {
-            if (item.Template is EquipItemTemplate template)
-            {
-                var equipItemSetId = template.EquipItemSetId;
-                if (template.EquipItemSetId == 0)
-                    continue;
-
-                if (!setNumPieces.TryGetValue(equipItemSetId, out var value))
-                {
-                    setNumPieces.Add(equipItemSetId, 1);
-                    itemLevels.Add(equipItemSetId, (uint)item.Template.Level);
-                }
-                else
-                {
-                    setNumPieces[equipItemSetId] = ++value;
-                    if (item.Template.Level < itemLevels[equipItemSetId])
-                        itemLevels[equipItemSetId] = (uint)item.Template.Level;
-                }
-            }
+            var set = ItemManager.Instance.GetEquippedItemSet(group.Key);
+            if (set == null)
+                continue;
+            var count = group.Count();
+            var level = (uint)group.Min(item => item.Template.Level);
+            foreach (var bonus in set.Bonuses.Where(bonus => bonus.BuffId != 0 && count >= bonus.NumPieces))
+                desired[bonus.BuffId] = level;
         }
 
-        var appliedBuffs = new HashSet<uint>();
-        foreach (var setCount in setNumPieces)
+        foreach (var buffId in _equipmentSetBuffs.Where(buffId => !desired.ContainsKey(buffId)))
+            Buffs.RemoveBuff(buffId);
+        _equipmentSetBuffs.Clear();
+        foreach (var (buffId, level) in desired)
         {
-            var equipItemSet = ItemManager.Instance.GetEquippedItemSet(setCount.Key);
-            foreach (var bonus in equipItemSet.Bonuses)
-            {
-                if (setCount.Value >= bonus.NumPieces)
+            _equipmentSetBuffs.Add(buffId);
+            if (Buffs.CheckBuff(buffId))
+                continue;
+            var template = SkillManager.Instance.GetBuffTemplate(buffId);
+            if (template != null)
+                Buffs.AddBuff(new Buff(this, this, new SkillCasterUnit(ObjId), template, null, DateTime.UtcNow)
                 {
-                    if (bonus.BuffId != 0)
-                    {
-                        if (Buffs.CheckBuff(bonus.BuffId))
-                        {
-                            appliedBuffs.Add(bonus.BuffId);
-                            continue;
-                        }
-                        var buffTemplate = SkillManager.Instance.GetBuffTemplate(bonus.BuffId);
-
-                        var newEffect =
-                            new Buff(this, this, new SkillCasterUnit(ObjId), buffTemplate, null, DateTime.UtcNow)
-                            {
-                                AbLevel = itemLevels[setCount.Key]
-                            };
-                        Buffs.AddBuff(newEffect);
-                        appliedBuffs.Add(bonus.BuffId);
-                    }
-                    if (bonus.ItemProcId != 0)
-                    {
-                        Procs.AddProc(bonus.ItemProcId);
-                    }
-                }
-                else //This needs to be revised? Will we ever remove more than 1 item at a time?
-                {
-                    if (bonus.BuffId != 0 && Buffs.CheckBuff(bonus.BuffId) && !appliedBuffs.Contains(bonus.BuffId))
-                        Buffs.RemoveBuff(bonus.BuffId);
-                    if (bonus.ItemProcId != 0)
-                        Procs.RemoveProc(bonus.ItemProcId);
-                }
-            }
+                    AbLevel = level
+                });
         }
     }
 

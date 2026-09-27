@@ -61,7 +61,11 @@ public class BuffEffect : EffectTemplate
             return; // TODO send error of immune?
 
         uint abLevel = 1;
-        if (caster is Character character)
+        if (source.IsItemProc)
+        {
+            abLevel = source.ItemProcLevel;
+        }
+        else if (caster is Character character)
         {
             Logger.Warn($"BuffEffect {Buff.Id}");
             if (source.Skill != null)
@@ -94,7 +98,8 @@ public class BuffEffect : EffectTemplate
         //if (Buff.Kind == BuffKind.Bad && !caster.CanAttack(target) && caster != target)
         //    return;
 
-        target.Buffs.AddBuff(new Buff(target, caster, casterObj, Buff, source.Skill, time) { AbLevel = abLevel });
+        target.Buffs.AddBuff(new Buff(target, caster, casterObj, Buff, source.Skill, time)
+            { AbLevel = abLevel, IsItemProc = source.IsItemProc, ItemProcLevel = source.ItemProcLevel });
 
         // Check if a bad buff was applied to a friendly faction (bloodlust).
         // Only a deliberate skill cast can flag the caster: a buff's own tick

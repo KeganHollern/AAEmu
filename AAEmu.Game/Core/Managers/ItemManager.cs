@@ -64,6 +64,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
     private Dictionary<uint, uint> _wearableItemLookConverts;
 
     private Dictionary<uint, ItemProcTemplate> _itemProcTemplates;
+    private Dictionary<uint, List<uint>> _itemProcBindings = [];
     private Dictionary<ArmorType, Dictionary<ItemGrade, ArmorGradeBuff>> _armorGradeBuffs;
     private Dictionary<uint, EquipItemSet> _equipItemSets;
     private Dictionary<uint, uint> _defaultDyeIds;
@@ -322,6 +323,29 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
     public ItemProcTemplate GetItemProcTemplate(uint templateId)
     {
         return _itemProcTemplates.GetValueOrDefault(templateId);
+    }
+
+    public IReadOnlyList<uint> GetItemProcBindings(uint itemId)
+    {
+        return _itemProcBindings.TryGetValue(itemId, out var bindings) ? bindings : [];
+    }
+
+    internal static Dictionary<uint, List<uint>> ReadItemProcBindings(SqliteConnection connection)
+    {
+        var bindings = new Dictionary<uint, List<uint>>();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT item_id, proc_id FROM item_proc_bindings ORDER BY id";
+        using var reader = new SQLiteWrapperReader(command.ExecuteReader());
+        while (reader.Read())
+        {
+            var itemId = reader.GetUInt32("item_id");
+            var procId = reader.GetUInt32("proc_id");
+            if (!bindings.TryGetValue(itemId, out var procs))
+                bindings.Add(itemId, procs = []);
+            if (!procs.Contains(procId))
+                procs.Add(procId);
+        }
+        return bindings;
     }
 
     public List<BonusTemplate> GetUnitModifiers(uint itemId)
@@ -729,6 +753,8 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                     }
                 }
             }
+
+            _itemProcBindings = ReadItemProcBindings(connection);
 
             using (var command = connection.CreateCommand())
             {
