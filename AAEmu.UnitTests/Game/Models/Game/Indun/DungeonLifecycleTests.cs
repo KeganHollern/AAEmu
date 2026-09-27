@@ -445,6 +445,24 @@ public sealed class DungeonLifecycleTests
         await Assert.That(player.Transform.World.Position).IsEqualTo(before);
     }
 
+    [Test]
+    public async Task CapturedLeaveCallback_AfterJusticeMove_DoesNotUseOldReturnPosition()
+    {
+        var world = CreateWorld();
+        var dungeon = new Dungeon(new IndunZone { ZoneGroupId = ZoneGroupId }, world);
+        var player = CreatePlayer();
+        player.MainWorldPosition = player.Transform.CloneDetached(player);
+        player.Transform.Local.Position = new System.Numerics.Vector3(10, 20, 30);
+        player.OfflineGuiltyTime = -1;
+        dungeon.CancelAdmission(player);
+
+        typeof(Dungeon).GetMethod("OnDungeonLeave", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(dungeon, [world, new OnDungeonLeaveArgs { Player = player }]);
+
+        await Assert.That(player.Transform.World.Position).IsEqualTo(new System.Numerics.Vector3(10, 20, 30));
+        await Assert.That(world.HasCharacter(player.Id)).IsFalse();
+    }
+
     private WorldInstance CreateWorld()
     {
         var template = new WorldTemplate { Id = 1, Name = "test_dungeon", ZoneKeys = [50] };

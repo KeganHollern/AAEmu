@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
@@ -419,20 +419,14 @@ public class ChatManager : Singleton<ChatManager>, IChatManager
     }
 
     /// <summary>
-    /// Gets the trial channel for a players Faction
+    /// Gets the channel for the character's current trial
     /// </summary>
     /// <param name="character"></param>
     /// <returns></returns>
     public ChatChannel GetTrialChat(Character character)
     {
-        var courtRegion = TrialManager.Instance.GetCourtRoomRegionByFaction(character.Faction.MotherId);
-        if (courtRegion == CourtRoomRegion.Invalid)
-        {
-            // We don't have a home trial channel, try to check what we are part of
-            var trial = TrialManager.Instance.GetParticipatingTrial(character);
-            return CourtRoomChannels.GetValueOrDefault(trial.CourtRegion);
-        }
-        return CourtRoomChannels.GetValueOrDefault(courtRegion);
+        var trial = TrialManager.Instance.GetParticipatingTrial(character);
+        return trial?.CourtRoom?.TrialChatChannel;
     }
 
     public ChatChannel GetTrialChat(CourtRoomRegion courtRegion)

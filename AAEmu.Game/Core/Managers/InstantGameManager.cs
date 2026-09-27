@@ -70,62 +70,66 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
                        battlefieldId);
 
             character.SendPacket(new SCAppliedToInstantGamePacket(battlefieldId, corps));
-
         }
     }
 
     internal void CancelAdmissions(Character character)
     {
-        lock (_lock)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            foreach (var applicants in _matchmakingQueue.Values)
-                applicants?.RemoveAll(applicant => applicant.CharObj == character);
-            foreach (var game in _instantGames.Concat(_queueList).Append(character.CurrentInstantGame).Distinct().ToArray())
-                game?.CancelAdmission(character);
+            lock (_lock)
+            {
+                foreach (var applicants in _matchmakingQueue.Values)
+                    applicants?.RemoveAll(applicant => applicant.CharObj == character);
+                foreach (var game in _instantGames.Concat(_queueList).Append(character.CurrentInstantGame).Distinct().ToArray())
+                    game?.CancelAdmission(character);
+            }
         }
     }
 
     public void WithdrawFromBattlefield(Character character)
     {
-        // Removes player from matchmaking if they cancel the queue. 
-        // Player not offline or invalid.
-
-        if (character == null)
-            return;
-
-        lock (_lock)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            foreach (var applicants in _matchmakingQueue.Values)
+            // Removes player from matchmaking if they cancel the queue.
+            // Player not offline or invalid.
+
+            if (character == null)
+                return;
+
+            lock (_lock)
             {
-                if (applicants != null)
+                foreach (var applicants in _matchmakingQueue.Values)
                 {
-                    foreach (var player in applicants)
+                    if (applicants != null)
                     {
-                        if (player.CharObj == character)
+                        foreach (var player in applicants)
                         {
-                            applicants.Remove(player);
-                            _log.Trace("[Matchmaking] Removing " + character.Name + " from matchmaking.");
-                            return;
+                            if (player.CharObj == character)
+                            {
+                                applicants.Remove(player);
+                                _log.Trace("[Matchmaking] Removing " + character.Name + " from matchmaking.");
+                                return;
+                            }
                         }
                     }
                 }
-            }
-            // Removes player from an invited game if they decline.
-            foreach (var game in _instantGames)
-            {
-                if (game.RemovePlayer(character))
+                // Removes player from an invited game if they decline.
+                foreach (var game in _instantGames)
                 {
-                    _log.Trace("[Matchmaking] " + character.Name + " declined arena invitation.");
-                    if (!_queueList.Contains(game))
+                    if (game.RemovePlayer(character))
                     {
-                        _queueList.Add(game);
-                        _log.Trace("[Matchmaking] Adding game to queue list.");
+                        _log.Trace("[Matchmaking] " + character.Name + " declined arena invitation.");
+                        if (!_queueList.Contains(game))
+                        {
+                            _queueList.Add(game);
+                            _log.Trace("[Matchmaking] Adding game to queue list.");
+                        }
+                        return;
                     }
-                    return;
                 }
             }
         }
-
     }
 
     private void CheckMatchmakingQueue(uint bfId)
@@ -174,14 +178,14 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
                 {
                     _log.Trace("[Matchmaking] Removing queued game from queueList.");
                 }
-                break; // Matchmaking complete if game is full. 
+                break; // Matchmaking complete if game is full.
             }
 
             // Obtain character of player matchmaking and remove them from queue to add them into a game.
             var playerCharacter = WorldManager.Instance.GetCharacterById(applicants[0].CharObj.Id);
             applicants.Remove(applicants[0]);
 
-            // Add player and invite to instant game                        
+            // Add player and invite to instant game
             if (playerCharacter != null)
             {
                 game.AddPlayer(playerCharacter, game.GetCorps());
@@ -270,7 +274,6 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
                     CheckMatchmakingQueue(bfId);
                 }
             }
-
         }
     }
 

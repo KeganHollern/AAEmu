@@ -951,6 +951,47 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
         return false;
     }
 
+    public void JoinTrialAudience(Character player, uint doodadTemplateId)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (player == null || !player.IsOnline)
+                return;
+            foreach (var courtRoom in CourtRooms.Values)
+            {
+                if (!courtRoom.AudienceSeats.Any(seat => seat.TemplateId == doodadTemplateId && IsAtAudienceSeat(player, seat)))
+                    continue;
+                lock (courtRoom.AudienceMembers)
+                    if (courtRoom.AudienceMembers.Contains(player))
+                        return;
+                LeaveTrialAudience(player);
+                lock (courtRoom.AudienceMembers)
+                    courtRoom.AudienceMembers.Add(player);
+                player.BroadcastPacket(new SCTrialAudienceJoinedPacket(courtRoom.CurrentTrial?.Id ?? 0, player.ObjId, player.Name), true);
+                courtRoom.TrialChatChannel?.JoinChannel(player);
+                return;
+            }
+            Logger.Warn($"{player.Name} tried to join courtroom audience while not being near a seat");
+        }
+    }
+
+    public void LeaveTrialAudience(Character player)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            foreach (var courtRoom in CourtRooms.Values)
+            {
+                bool removed;
+                lock (courtRoom.AudienceMembers)
+                    removed = courtRoom.AudienceMembers.Remove(player);
+                if (!removed)
+                    continue;
+                player.BroadcastPacket(new SCTrialAudienceLeftPacket(player.ObjId, player.Name), true);
+                courtRoom.TrialChatChannel?.LeaveChannel(player);
+            }
+        }
+    }
+
     private static bool IsAtAudienceSeat(Character player, Models.Game.DoodadObj.Doodad seat)
     {
         return player.Transform.InstanceId == seat.Transform.InstanceId && player.GetDistanceTo(seat) <= 5f;
@@ -969,86 +1010,68 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
         }
     }
 
-    public void JoinTrialAudience(Character player, uint doodadTemplateId)
+    private static bool IsTrialSpeaker(TrialData trial, Character player)
     {
-        // Try to find what courtroom it belongs too.
-        // Technically each courtroom has its own doodad version, but we will be doing a bit more checks instead of
-        // blindly trusting it.
-        foreach (var trialCourtRoom in CourtRooms.Values)
-        {
-            if (trialCourtRoom.AudienceMembers.Contains(player))
-            {
-                // Already in this audience
-                return;
-            }
-            foreach (var audienceSeat in trialCourtRoom.AudienceSeats)
-            {
-                if (audienceSeat.TemplateId != doodadTemplateId)
-                {
-                    continue;
-                }
-
-                var dist = player.GetDistanceTo(audienceSeat);
-                if (!(dist <= 5f)) // 5m seems a fair enough check
-                {
-                    continue;
-                }
-
-                // Found a matching seat type
-                trialCourtRoom.AudienceMembers.Add(player);
-                player.BroadcastPacket(new SCTrialAudienceJoinedPacket(trialCourtRoom.CurrentTrial?.Id ?? 0, player.ObjId, player.Name), true);
-                trialCourtRoom.TrialChatChannel.JoinChannel(player);
-                return;
-            }
-        }
-        // Was not able to find a valid nearby seat.
-        // Are we hacking here ?
-        var error = $"{player?.Name ?? "unknown"} tried to join courtroom audience while not being near a seat";
-        Logger.Warn(error);
-        SusManager.Instance.LogActivity(SusManager.CategoryCheating, player?.AccountId ?? 0, player?.Id ?? 0, player?.Transform.ZoneId ?? 0, player?.Transform.World.Position ?? Vector3.Zero,error);
+        if (player?.IsOnline != true || trial.CourtRoom?.CurrentTrial != trial)
+            return false;
+        if (trial.Defendant == player)
+            return true;
+        return trial.Jury.Values.Any(box => box.JuryMember == player && box.Seat != null &&
+            player.Transform.InstanceId == box.Seat.Transform.InstanceId);
     }
 
-    public void LeaveTrialAudience(Character player)
+    internal Character[] GetTrialChatRecipients(TrialData trial, Character sender)
     {
-        foreach (var trialCourtRoom in CourtRooms.Values)
+        lock (trial.SyncRoot)
         {
-            if (trialCourtRoom.AudienceMembers.Contains(player))
-            {
-                trialCourtRoom.AudienceMembers.Remove(player);
-                player.BroadcastPacket(new SCTrialAudienceLeftPacket(player.ObjId, player.Name), true);
-                trialCourtRoom.TrialChatChannel.LeaveChannel(player);
-                return;
-            }
+            if (trial.Step < TrialStep.VerifyCriminalRecord || trial.Step > TrialStep.JuryVerdict || !IsTrialSpeaker(trial, sender))
+                return [];
+            return trial.Jury.Values.Select(box => box.JuryMember).Append(trial.Defendant)
+                .Where(player => IsTrialSpeaker(trial, player))
+                .Concat(GetTrialAudienceSnapshot(trial)).Distinct().ToArray();
         }
-        Logger.Debug($"{player?.Name ?? "unknown"} tried to leave the courtroom audience but was not part of it");
+    }
+
+    public int SendTrialChat(Character sender, string message, int ability, byte languageType)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            var trial = GetParticipatingTrial(sender);
+            if (trial != null)
+            {
+                lock (trial.SyncRoot)
+                {
+                    var recipients = GetTrialChatRecipients(trial, sender);
+                    if (recipients.Length > 0)
+                    {
+                        foreach (var recipient in recipients)
+                            recipient.SendPacket(new SCChatMessagePacket(ChatType.Judge, sender, message, ability, languageType));
+                        return recipients.Length;
+                    }
+                }
+            }
+            sender.SendErrorMessage(ErrorMessageType.ChatNotInTrial);
+            return 0;
+        }
     }
 
     public TrialData GetParticipatingTrial(Character player)
     {
+        if (player == null)
+            return null;
         foreach (var courtRoom in CourtRooms.Values)
         {
-            if (courtRoom.CurrentTrial == null)
-            {
+            var trial = courtRoom.CurrentTrial;
+            if (trial == null)
                 continue;
-            }
-
-            if (courtRoom.CurrentTrial.Defendant == player)
+            lock (trial.SyncRoot)
             {
-                return courtRoom.CurrentTrial;
-            }
-            foreach (var juryValue in courtRoom.CurrentTrial.Jury.Values)
-            {
-                if (juryValue.JuryMember == player)
-                {
-                    return courtRoom.CurrentTrial;
-                }
-            }
-            foreach (var audience in courtRoom.AudienceMembers)
-            {
-                if (audience == player)
-                {
-                    return courtRoom.CurrentTrial;
-                }
+                if (courtRoom.CurrentTrial != trial)
+                    continue;
+                if (trial.Defendant == player || trial.Jury.Values.Any(box => box.JuryMember == player))
+                    return trial;
+                if (GetTrialAudienceSnapshot(trial).Contains(player))
+                    return trial;
             }
         }
         return null;

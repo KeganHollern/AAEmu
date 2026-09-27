@@ -325,7 +325,6 @@ public class Dungeon
                 character.SendPacket(new SCProcessingInstancePacket((int)_zoneInstanceId.ZoneId));
             }
             return true;
-
         }
     }
 
@@ -368,7 +367,6 @@ public class Dungeon
             {
                 MoveCharacterToDungeon(character);
             }
-
         }
     }
 
@@ -380,6 +378,9 @@ public class Dungeon
             _leaveRequests.TryRemove(character.Id, out _);
             if (World?.HasCharacter(character.Id) == true)
                 RemovePlayer(character);
+            character.Events.OnTeamJoin -= OnTeamJoin;
+            character.Events.OnTeamKick -= OnTeamLeave;
+            character.Events.OnTeamLeave -= OnTeamLeave;
             character.Events.OnDungeonLeave -= OnDungeonLeave;
             character.Events.OnDisconnect -= OnDisconnect;
         }
@@ -648,23 +649,26 @@ public class Dungeon
 
     private void OnTeamJoin(object sender, OnTeamJoinArgs args)
     {
-        var character = args.Player;
-        var team = args.Team;
-        var ownerId = team.OwnerId;
-        if (character == null) { return; }
-
-        Logger.Info($"Player {character.Name} has joined a party!");
-
-        if (_isTeamOwned == false)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (ownerId != _characterOwner?.Id) { return; }
-            _ = IndunManager.Instance.TryPromoteDungeonToTeam(this, team);
-            return;
-        }
+            var character = args.Player;
+            var team = args.Team;
+            var ownerId = team.OwnerId;
+            if (character == null || character.IsPrisoner) { return; }
 
-        if (PlayerInSameTeam(character) && !World.HasCharacter(character.Id))
-        {
-            World.AddObject(character);
+            Logger.Info($"Player {character.Name} has joined a party!");
+
+            if (_isTeamOwned == false)
+            {
+                if (ownerId != _characterOwner?.Id) { return; }
+                _ = IndunManager.Instance.TryPromoteDungeonToTeam(this, team);
+                return;
+            }
+
+            if (PlayerInSameTeam(character) && !World.HasCharacter(character.Id))
+            {
+                World.AddObject(character);
+            }
         }
     }
 
@@ -687,23 +691,28 @@ public class Dungeon
 
     private void OnDungeonLeave(object sender, OnDungeonLeaveArgs args)
     {
-        var character = args.Player;
-        if (character == null)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            return;
-        }
-
-        Logger.Info($"Player {character.Name} ({character.Id}) has exited from dungeon {World}!");
-
-        if (character.ParentWorld.DungeonInstance != null)
-        {
-            if (character.ParentWorld.DungeonInstance.IsSystem)
+            var character = args.Player;
+            if (character == null)
             {
-                LeaveSystemInstance(character);
+                return;
             }
-            else
+            if (character.IsPrisoner || character.ParentWorld?.DungeonInstance != this)
+                return;
+
+            Logger.Info($"Player {character.Name} ({character.Id}) has exited from dungeon {World}!");
+
+            if (character.ParentWorld.DungeonInstance != null)
             {
-                LeaveDungeonInstance(character);
+                if (character.ParentWorld.DungeonInstance.IsSystem)
+                {
+                    LeaveSystemInstance(character);
+                }
+                else
+                {
+                    LeaveDungeonInstance(character);
+                }
             }
         }
     }
@@ -834,7 +843,6 @@ public class Dungeon
                 }
                 EnterRequests.Clear();
             }
-
         }
     }
 

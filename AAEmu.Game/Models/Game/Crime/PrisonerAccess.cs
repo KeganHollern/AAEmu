@@ -42,7 +42,9 @@ internal static class PrisonerAccess
             }
 
             character.DisabledSetPosition = true;
-            character.Transform.ApplyWorldSpawnPosition(destination, world.Id);
+            // Instance 0 is valid. ApplyWorldSpawnPosition treats 0 as no change.
+            character.Transform.InstanceId = world.Id;
+            character.Transform.ApplyWorldSpawnPosition(destination);
             world.AddObject(character);
             if (crossesInstance)
             {
