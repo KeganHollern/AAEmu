@@ -1,4 +1,4 @@
-using AAEmu.Game.Models.Game.Char;
+﻿using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 
 namespace AAEmu.Game.Models.Game.Crime;
@@ -10,5 +10,5 @@ public class TrialJuryBox
     public int SeatId { get; set; }
     public Character JuryMember { get; set; }
     public bool ConfirmTestimony { get; set; }
-    public int SelectedSentence { get; set; }
+    public int SelectedSentence { get; set; } = -1;
 }

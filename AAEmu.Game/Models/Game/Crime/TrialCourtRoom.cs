@@ -29,6 +29,22 @@ public class TrialCourtRoom
     public ChatChannel TrialChatChannel { get; set; }
     public TrialData CurrentTrial { get; set; } = null;
 
+    internal static bool TryGetNativeJuryLocation(uint chairTemplateId, out bool isWest, out uint courtBank, out int seatId)
+    {
+        isWest = false;
+        courtBank = 0;
+        seatId = 0;
+        // r208022 has two banks of five chairs per continent. These template IDs come from
+        // its native arrays, not the server's global courtroom IDs or placement labels.
+        if (chairTemplateId is < 4937 or > 4956)
+            return false;
+        var index = chairTemplateId - 4937;
+        isWest = index < 10;
+        courtBank = index / 5 % 2;
+        seatId = (int)(index % 5);
+        return true;
+    }
+
     // Nuian Main Court
     // Legal Secretary 12530
     // Judge 10894

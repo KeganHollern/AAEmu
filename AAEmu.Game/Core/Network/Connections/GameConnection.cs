@@ -193,6 +193,7 @@ public class GameConnection
                 RunDisconnectStep(() => ChatManager.Instance.LeaveAllChannels(ActiveChar));
                 RunDisconnectStep(() => AreaTriggerManager.Instance.EvictUnit(ActiveChar));
                 RunDisconnectStep(() => TradeManager.Instance.CancelTrade(ActiveChar, 0));
+                RunDisconnectStep(() => TrialManager.Instance.HandlePlayerDisconnect(ActiveChar));
                 RunDisconnectStep(() => ActiveChar.IsOnline = false);
                 foreach (var subscriber in ActiveChar.Subscribers.ToArray())
                     RunDisconnectStep(subscriber.Dispose);
