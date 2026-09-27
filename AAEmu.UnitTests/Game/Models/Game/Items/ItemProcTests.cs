@@ -203,6 +203,17 @@ public sealed class ItemProcTests
         await Assert.That(target.Hp).IsEqualTo(110);
     }
 
+    [Test]
+    public async Task ProcTick_LevelDamageAndHealing_UseItemLevelWithoutOrdinarySkillContext()
+    {
+        var source = new EffectSource { IsItemProc = true, ItemProcLevel = 50 };
+        await Assert.That(source.Skill).IsNull();
+        await Assert.That(Math.Abs(source.GetLevelModifier(0, 49) - 0.49f) < 0.00001f).IsTrue();
+        var intermediate = new EffectSource { IsItemProc = true, ItemProcLevel = 25 };
+        await Assert.That(Math.Abs(intermediate.GetLevelModifier(0, 49) - 0.24f) < 0.00001f).IsTrue();
+        await Assert.That(new EffectSource().GetLevelModifier(0, 49)).IsEqualTo(0f);
+    }
+
     private static ItemProcTemplate WithId(ItemProcTemplate template, uint id)
     {
         template.Id = id;

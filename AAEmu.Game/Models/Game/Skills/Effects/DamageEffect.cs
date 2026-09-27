@@ -168,7 +168,7 @@ public class DamageEffect : EffectTemplate
         {
             var lvlMd = ((Unit)caster).LevelDps * LevelMd;
             // Hack null-check on skill
-            var levelModifier = (((source.Skill?.Level ?? 1) - 1) / 49 * (LevelVaEnd - LevelVaStart) + LevelVaStart) * 0.01f;
+            var levelModifier = source.GetLevelModifier(LevelVaStart, LevelVaEnd);
 
             levelMin += lvlMd - levelModifier * lvlMd + 0.5f;
             levelMax += (levelModifier + 1) * lvlMd + 0.5f;
