@@ -81,6 +81,13 @@ matches. A stale timer cannot remove a replacement trial.
 Disconnect settles the trial before the final character save. It preserves the
 pending default sentence for login recovery. The timer does not later change an
 old offline Character. Juror return and trial removal use the same cleanup path.
+Cleanup removes jury buffs even when the escaped juror does not return or earn
+a jury point. Seat admission removes old audience membership before the new
+juror receives packets.
+
+A guilty result displays the new sentence plus the old unserved milliseconds.
+The old sentence is added after the new verdict factor. Acquittal displays zero
+for the new charge and preserves an earlier prison sentence.
 
 The zero-submitted-vote timeout preserves the legacy server choice 3, which
 applies half the base sentence. This is not a native-authored rule. It differs
@@ -103,6 +110,12 @@ The Release build passed with no errors. All 75 focused tests passed without
 skips: 65 trial-rule cases and 10 packet cases. The tie and pirate policies remain
 separate release gates until the user supplies them.
 
+The combined sentence branch adds 14 passing lifecycle cases. These use actual
+trial results and prison buffs. They cover pending 37-minute recovery without
+jury eligibility, repeat arrests, old sentence carry, acquittal, default cancel,
+escaped-juror cleanup, audience removal, and the production death arrest query.
+The owner tests reject a reused pet object ID with a different persistent owner.
+
 ## Pending human checks for #573
 
 - Check all five seats in each of the four configured courtrooms. Each juror
@@ -112,6 +125,8 @@ separate release gates until the user supplies them.
   juror vote. Check that all five clients see the submitted count rise once per vote.
 - Submit an acquittal and each guilty tier in separate trials. Use a 7-minute
   base sentence. The displayed guilty choices must be 1, 3, 5, 7, and 8 minutes.
+- Repeat a guilty result with old unserved prison time. The result must show the
+  new sentence plus that old time. Acquittal must keep the old sentence active.
 - Cancel while the defendant waits with no accepted juror. Check that the waiting
   UI closes and the default sentence applies once. Repeat the button action.
 - Accept one juror, then attempt a late cancel. The court must keep the case.

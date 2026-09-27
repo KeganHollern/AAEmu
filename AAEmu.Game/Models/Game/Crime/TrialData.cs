@@ -284,6 +284,7 @@ public class TrialData
                 if (juryEntry.Seat == null || !TrialCourtRoom.TryGetNativeJuryLocation(juryEntry.Seat.TemplateId,
                         out var isWest, out var courtBank, out var nativeSeat) || nativeSeat != jurySeatId)
                     continue;
+                TrialManager.Instance.LeaveTrialAudience(player);
                 juryEntry.JuryMember = player;
                 TrialManager.Instance.RemovePlayerFromQueue(juryEntry.JuryMember);
 
@@ -456,7 +457,10 @@ public class TrialData
             var sentenceType = (TrialSentenceResult)mostVoted;
             var sentenceTime = GetSentenceMinutes(JailTime, mostVoted);
 
-            SendPackets(new SCRulingStatusPacket(selectedCount, total, sentenceType, sentenceTime * 60_000));
+            var sentenceMilliseconds = isGuilty
+                ? Character.CombinePrisonSentence(sentenceTime, Defendant.GetUnservedPrisonMilliseconds())
+                : 0;
+            SendPackets(new SCRulingStatusPacket(selectedCount, total, sentenceType, sentenceMilliseconds));
 
             JailTime = sentenceTime;
             if (isGuilty)

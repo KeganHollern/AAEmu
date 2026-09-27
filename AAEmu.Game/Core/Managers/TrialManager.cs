@@ -368,14 +368,14 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
             player.SendPacket(new SCTeleportUnitPacket(TeleportReason.Jury, 0,
                 position.X, position.Y, position.Z, player.MainWorldPosition?.World.Rotation.Z ?? 0));
             player.MainWorldPosition = null;
-            player.Buffs.RemoveBuff((uint)BuffConstants.CourtHouse);
-            player.Buffs.RemoveBuff((uint)BuffConstants.Jury);
             if (awardJuryPoint)
             {
                 player.JuryPoint++;
                 player.Achievements.Increment(CharRecordKind.GetJuryPoint, 0, 0);
             }
         }
+        player.Buffs.RemoveBuff((uint)BuffConstants.CourtHouse);
+        player.Buffs.RemoveBuff((uint)BuffConstants.Jury);
         trial.CourtRoom?.TrialChatChannel?.LeaveChannel(player);
     }
 
