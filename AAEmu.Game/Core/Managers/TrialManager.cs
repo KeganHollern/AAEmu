@@ -603,6 +603,7 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
                 return null;
             }
 
+            LeaveTrialAudience(criminal);
             var trial = CreateTrialCase(criminal, courtRoom, recovering ? storedMinutes : null);
             if (trial == null)
                 return null;
