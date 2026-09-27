@@ -678,6 +678,9 @@ public class Slave : Unit
 
     public override void DoDie(BaseUnit killer, KillReason killReason)
     {
+        if (!TryBeginDeath())
+            return;
+
         InterruptSkills();
         Events.OnDeath(this, new OnDeathArgs { Killer = (Unit)killer, Victim = this });
         Buffs.RemoveEffectsOnDeath();
@@ -870,6 +873,11 @@ public class Slave : Unit
     {
         if (Id <= 0)
             return false;
+        // A repaired summon item can coexist with its old 20-second corpse.
+        // Its repair transaction owns the saved HP/MP until the next summon.
+        if (IsDead && SummoningItem is SummonSlave { IsDestroyed: 0 } repairedItem &&
+            repairedItem.RepairStartTime != DateTime.MinValue)
+            return true;
 
         bool result;
         try

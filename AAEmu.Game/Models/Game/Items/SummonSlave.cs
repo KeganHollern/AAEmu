@@ -7,7 +7,10 @@ namespace AAEmu.Game.Models.Game.Items;
 
 public class SummonSlave : Item
 {
+    // r208022 repair-kit descriptions and the native summon check both use 600 seconds.
+    internal const int RepairDurationSeconds = 600;
     private DateTime _repairStartTime;
+    private byte[] _locationDetails = new byte[16];
     public override ItemDetailType DetailType => ItemDetailType.Slave;
     public override uint DetailBytesLength => 29;
 
@@ -29,6 +32,22 @@ public class SummonSlave : Item
     // TODO: Actually use this location for saving the data in ItemDetails
     public Vector3 SummonLocation { get; set; }
 
+    internal ErrorMessageType GetSpawnError(DateTime now, out uint secondsRemaining)
+    {
+        secondsRemaining = 0;
+        if (IsDestroyed != 0)
+            return ErrorMessageType.SlaveSpawnErrorDestroyed;
+        if (RepairStartTime == DateTime.MinValue)
+            return ErrorMessageType.NoErrorMessage;
+
+        // The native gate uses time64 seconds and accepts only elapsed > 600.
+        var elapsed = AAEmu.Commons.Utils.Helpers.UnixTime(now) - AAEmu.Commons.Utils.Helpers.UnixTime(RepairStartTime);
+        if (elapsed > RepairDurationSeconds)
+            return ErrorMessageType.NoErrorMessage;
+        secondsRemaining = (uint)Math.Clamp(RepairDurationSeconds - elapsed, 0, uint.MaxValue);
+        return ErrorMessageType.SlaveSpawnErrorNeedRepairTime;
+    }
+
     public SummonSlave()
     {
         //
@@ -46,19 +65,11 @@ public class SummonSlave : Item
         SlaveType = stream.ReadByte(); // Type? (2 = slave?)
         SlaveDbId = stream.ReadBc(); // DbId
         IsDestroyed = stream.ReadByte();
-        try
-        {
-            // Read time of something else than 0
-            var timeBytes = stream.ReadBytes(4);
-            RepairStartTime = Convert.ToInt32(timeBytes) != 0 ? Convert.ToDateTime(timeBytes) : DateTime.MinValue;
-
-            // Read remaining bytes
-            _ = stream.ReadBytes((int)DetailBytesLength - 1 - 4 - 4); // Filler, Equipment?
-        }
-        catch
-        {
-            RepairStartTime = DateTime.MinValue;
-        }
+        var repairTime = stream.ReadInt64();
+        _repairStartTime = repairTime == 0 ? DateTime.MinValue : AAEmu.Commons.Utils.Helpers.UnixTime(repairTime);
+        // The client copies this fixed union body unchanged. Preserve its location
+        // fields without assigning unconfirmed meanings to individual bytes.
+        _locationDetails = stream.ReadBytes(16);
     }
 
     public override void WriteDetails(PacketStream stream)
@@ -67,20 +78,8 @@ public class SummonSlave : Item
         stream.WriteBc(SlaveDbId);
         stream.Write(IsDestroyed);
 
-        if (RepairStartTime == DateTime.MinValue)
-            stream.Write(0);
-        else
-            stream.Write(RepairStartTime);
-
-        stream.Write(0); // If this is anything besides 0, it will count as being in recovering (negative at that)
-
-        // The following 16 bytes somehow determine where a Vehicle is allowed to be summoned
-        // TODO: Get real live data capture of this value being set
-        // TODO: Get this from having a vehicle out when maintenance starts
-        stream.Write(0);
-        stream.Write(0);
-        stream.Write(0);
-        stream.Write(0);
+        stream.Write(RepairStartTime);
+        stream.Write(_locationDetails);
     }
 
     public override void OnManuallyDestroyingItem()

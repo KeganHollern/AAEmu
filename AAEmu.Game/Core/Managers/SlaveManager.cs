@@ -371,6 +371,8 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         if (slaveTemplate == null || !ZoneSkillRestrictions.CanUseItem(owner, sourceItem,
                 GetItemSpawnDestination(owner.Transform.World, null, positionOverride, slaveTemplate.SpawnYOffset)))
             return;
+        if (!CanSummonItem(owner, sourceItem, DateTime.UtcNow))
+            return;
         var activeSlaveInfo = GetActiveSlaveByOwnerObjId(owner.ObjId);
         if (activeSlaveInfo != null)
         {
@@ -395,6 +397,20 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         return position.Position;
     }
 
+    internal static bool CanSummonItem(Character owner, Item item, DateTime now)
+    {
+        if (item is not SummonSlave summonItem)
+            return true;
+        var error = summonItem.GetSpawnError(now, out var secondsRemaining);
+        if (error == ErrorMessageType.NoErrorMessage)
+            return true;
+        if (error == ErrorMessageType.SlaveSpawnErrorNeedRepairTime)
+            owner?.SendErrorMessage(error, secondsRemaining);
+        else
+            owner?.SendErrorMessage(error);
+        return false;
+    }
+
     // added "/slave spawn <templateId>" to be called from the script command
     /// <summary>
     /// Slave created by player or spawn effect, use either useSpawner or templateId
@@ -410,6 +426,8 @@ public class SlaveManager(WorldInstance parentWorldInstance)
     {
         var slaveTemplate = SlaveGameData.Instance.GetSlaveTemplate(useSpawner?.UnitId ?? templateId);
         if (slaveTemplate == null) return null;
+        if (!CanSummonItem(owner, item, DateTime.UtcNow))
+            return null;
 
         if (owner != null && item != null)
         {
@@ -560,16 +578,6 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         {
             slaveSummonItem.SlaveType = 0x02;
             slaveSummonItem.SlaveDbId = dbId;
-            if (slaveSummonItem.IsDestroyed > 0 || slaveSummonItem.RepairStartTime > DateTime.MinValue)
-            {
-                var secondsLeft = (slaveSummonItem.RepairStartTime.AddMinutes(10) - DateTime.UtcNow).TotalSeconds;
-                if (secondsLeft > 0.0)
-                {
-                    // Slave was destroyed and is on cooldown
-                    owner?.SendErrorMessage(ErrorMessageType.SlaveSpawnErrorNeedRepairTime, (uint)Math.Round(secondsLeft));
-                    return null;
-                }
-            }
             slaveSummonItem.SummonLocation = spawnPos.World.Position;
             slaveSummonItem.RepairStartTime = DateTime.MinValue; // reset timer here
             slaveSummonItem.IsDirty = true;
