@@ -504,9 +504,19 @@ public class Unit : BaseUnit, IUnit
 
     public virtual void DoDie(BaseUnit killer, KillReason killReason)
     {
-        if (Interlocked.Exchange(ref _deathHandled, 1) != 0)
+        if (!TryBeginDeath())
             return;
 
+        CompleteDeath(killer, killReason);
+    }
+
+    protected bool TryBeginDeath()
+    {
+        return Interlocked.Exchange(ref _deathHandled, 1) == 0;
+    }
+
+    protected void CompleteDeath(BaseUnit killer, KillReason killReason)
+    {
         FallMovement.Reset();
         InterruptSkills();
 
