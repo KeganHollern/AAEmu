@@ -313,13 +313,16 @@ public sealed class CrimeAccessTests
         _restore.Add(() => idField.SetValue(null, oldIds));
         idField.SetValue(null, ids);
         var zoneManager = new ZoneManager(_worldManager, Mock.Of<ITaskManager>().Object);
-        SetField(zoneManager, "_zones", new Dictionary<uint, Zone>());
+        SetField(zoneManager, "_zones", new Dictionary<uint, Zone>
+            { [17] = new Zone { Id = 88, ZoneKey = 17 } });
         Install(zoneManager);
+        evidence.Transform.ZoneId = 17;
 
         var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
             manager.ReportCrime(reporter, evidence, 11672, function.NextPhase, function.FuncKey, "report"))));
 
         await Assert.That(results.Count(result => result != null)).IsEqualTo(1);
+        await Assert.That(results.Single(result => result != null).ZoneKey).IsEqualTo(17u);
         await Assert.That(manager.GetCrimesOfPlayer(99, true).Count).IsEqualTo(1);
         await Assert.That(criminal.CrimePoint).IsEqualTo((short)10);
         await Assert.That(evidence.FuncGroupId).IsEqualTo(1043u);

@@ -17,7 +17,7 @@ internal static class PrisonerAccess
             foreach (var world in WorldManager.Instance.GetWorlds())
                 world.DungeonInstance?.CancelAdmission(character);
             character.MainWorldPosition = null;
-        
+
         }
     }
 

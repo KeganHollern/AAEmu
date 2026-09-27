@@ -214,8 +214,6 @@ public class CrimeManager() : Singleton<CrimeManager>, ICrimeManager
             var crimeValue = evidenceItemLoot.CrimeValue;
             var nextPhase = evidenceFunction.NextPhase;
 
-            var zoneKey = ZoneManager.Instance.GetZoneByKey(evidence.Transform.ZoneId);
-
             var newId = CrimeIdManager.Instance.GetNextId();
             var newEvent = new CrimeEvent()
             {
@@ -228,7 +226,7 @@ public class CrimeManager() : Singleton<CrimeManager>, ICrimeManager
                 CrimeTime = evidence.PlantTime,
                 ReportTime = DateTime.UtcNow,
                 Position = evidence.Transform.World.Position,
-                ZoneKey = zoneKey?.Id ?? 0u,
+                ZoneKey = evidence.Transform.ZoneId,
                 UsedSkillId = usedSkillId,
                 DoodadNextFuncGroup = (uint)doodadNextFuncGroup,
                 DoodadFuncId = doodadFuncId,
