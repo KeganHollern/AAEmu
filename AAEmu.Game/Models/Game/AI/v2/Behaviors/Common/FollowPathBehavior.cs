@@ -2,7 +2,6 @@
 
 using AAEmu.Game.Models.Game.AI.v2.Params.Almighty;
 using AAEmu.Game.Models.Game.Models;
-using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Movements;
 
 namespace AAEmu.Game.Models.Game.AI.v2.Behaviors.Common;
@@ -21,10 +20,6 @@ public class FollowPathBehavior : BaseCombatBehavior
 
         _combatStartTime = DateTime.UtcNow;
 
-        if (Ai.Owner is { IsInBattle: false } npc)
-        {
-            npc.Events.OnCombatStarted(this, new OnCombatStartedArgs { Owner = npc, Target = npc });
-        }
         Ai.Param = Ai.Owner.Template.AiParams;
 
         // aaemu-cluster#92: path movement is driven by Ai.PathHandler in Tick(). The legacy Simulation

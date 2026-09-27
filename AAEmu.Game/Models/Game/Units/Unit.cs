@@ -81,7 +81,17 @@ public class Unit : BaseUnit, IUnit
 
     public byte Level { get; set; }
 
-    public int Hp { get; set; }
+    private int _deathHandled;
+    public int Hp
+    {
+        get;
+        set
+        {
+            if (field <= 0 && value > 0)
+                Interlocked.Exchange(ref _deathHandled, 0);
+            field = value;
+        }
+    }
 
     public int Hpp
     {
@@ -283,16 +293,28 @@ public class Unit : BaseUnit, IUnit
     public UnitCooldowns Cooldowns { get; set; }
     public virtual Expedition Expedition { get; set; }
 
+    private int _isInBattle;
     public bool IsInBattle
     {
-        get;
+        get => Volatile.Read(ref _isInBattle) != 0;
         set
         {
-            if (value == field)
+            var state = value ? 1 : 0;
+            if (Interlocked.Exchange(ref _isInBattle, state) == state)
                 return;
-            field = value;
-            if (!field)
+            if (value)
+                LastCombatActivity = DateTime.UtcNow;
+            else
                 BroadcastPacket(new SCCombatClearedPacket(ObjId), true);
+
+            var world = ParentWorld;
+            if (world == null)
+                return;
+
+            if (value)
+                world.Events.OnUnitCombatStart(world, new OnUnitCombatStartArgs { Npc = this });
+            else
+                world.Events.OnUnitCombatEnd(world, new OnUnitCombatEndArgs { Npc = this });
         }
     }
 
@@ -449,24 +471,8 @@ public class Unit : BaseUnit, IUnit
             }
         }
 
-        if (Hp > 0)
+        if (Hp > 0 || oldHpValue <= 0 || newHpValue > 0)
             return;
-
-        if (attackerBase is Unit attackerUnit)
-        {
-            attackerUnit.Events.OnKill(attackerUnit, new OnKillArgs { Target = attackerUnit });
-
-            var world = WorldManager.Instance.GetWorld(Transform.InstanceId);
-            if (Transform.WorldId > 0)
-            {
-                if (world.DungeonInstance is not null)
-                {
-                    world.Events.OnUnitKilled(world, new OnUnitKilledArgs { Killer = attackerUnit, Victim = this });
-                    world.Events.OnUnitCombatEnd(world, new OnUnitCombatEndArgs { Npc = this });
-                    Events.OnDeath(this, new OnDeathArgs { Killer = attackerUnit, Victim = this });
-                }
-            }
-        }
 
         DoDie(attackerBase, killReason);
     }
@@ -496,6 +502,9 @@ public class Unit : BaseUnit, IUnit
 
     public virtual void DoDie(BaseUnit killer, KillReason killReason)
     {
+        if (Interlocked.Exchange(ref _deathHandled, 1) != 0)
+            return;
+
         FallMovement.Reset();
         InterruptSkills();
 
@@ -505,8 +514,9 @@ public class Unit : BaseUnit, IUnit
         var thisCharacter = this as Character;
 
         Events.OnDeath(this, new OnDeathArgs { Killer = killerUnit, Victim = this });
-        ParentWorld.Events.OnUnitKilled(ParentWorld, new OnUnitKilledArgs { Killer = killerUnit, Victim = this });
-        killerUnit?.Events.OnKill(this, new OnKillArgs { Killer = killerUnit, Victim = this });
+        var world = ParentWorld;
+        world?.Events.OnUnitKilled(world, new OnUnitKilledArgs { Killer = killerUnit, Victim = this });
+        killerUnit?.Events.OnKill(this, new OnKillArgs { Killer = killerUnit, Victim = this, Target = this });
 
         Buffs.RemoveEffectsOnDeath();
 

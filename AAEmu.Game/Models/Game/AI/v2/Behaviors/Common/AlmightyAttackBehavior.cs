@@ -30,6 +30,7 @@ public class AlmightyAttackBehavior : BaseCombatBehavior
         {
             npc.Events.OnCombatStarted(this, new OnCombatStartedArgs { Owner = npc, Target = npc });
         }
+        Ai.Owner.IsInBattle = true;
         Ai.Param = Ai.Owner.Template.AiParams;
         _enter = true;
     }

@@ -6,8 +6,11 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.DoodadObj;
@@ -16,6 +19,7 @@ using AAEmu.Game.Models.Game.Indun;
 using AAEmu.Game.Models.Game.Indun.Actions;
 using AAEmu.Game.Models.Game.Indun.Events;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Game.World;
 
 using Microsoft.Extensions.Options;
@@ -213,22 +217,310 @@ public sealed class DungeonLifecycleTests
         ev.Subscribe(world);
         await Assert.That(HandlerCount(world, ev)).IsEqualTo(1);
         RaiseEvent(kind, world);
-        if (kind is "doodad" or "npc_spawn" or "npc_killed")
+        if (kind != "room")
             await Assert.That(_action.Calls).IsEqualTo(1);
 
         ev.UnSubscribe(world);
         ev.UnSubscribe(world);
         await Assert.That(HandlerCount(world, ev)).IsEqualTo(0);
         RaiseEvent(kind, world);
-        if (kind is "doodad" or "npc_spawn" or "npc_killed")
+        if (kind != "room")
             await Assert.That(_action.Calls).IsEqualTo(1);
 
         ev.Subscribe(world);
         ev.Subscribe(world);
         await Assert.That(HandlerCount(world, ev)).IsEqualTo(1);
         RaiseEvent(kind, world);
-        if (kind is "doodad" or "npc_spawn" or "npc_killed")
+        if (kind != "room")
             await Assert.That(_action.Calls).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments("doodad")]
+    [Arguments("npc_spawn")]
+    [Arguments("npc_killed")]
+    [Arguments("combat_start")]
+    [Arguments("combat_end")]
+    public async Task Dispatch_RepeatedRegistration_RunsWholeChainOncePerEvent(string kind)
+    {
+        var world = CreateWorld();
+        var calls = SetActionChain(2, 3, 0);
+        var ev = CreateEvent(kind);
+        _events.Add(ev);
+        ev.Subscribe(world);
+        ev.Subscribe(world);
+
+        RaiseEvent(kind, world);
+        await Assert.That(calls.Select(call => call.ActionId).SequenceEqual(new uint[] { 1, 2, 3 })).IsTrue();
+        await Assert.That(calls.All(call => call.World == world)).IsTrue();
+
+        RaiseEvent(kind, world);
+        await Assert.That(calls.Select(call => call.ActionId).SequenceEqual(new uint[] { 1, 2, 3, 1, 2, 3 })).IsTrue();
+    }
+
+    [Test]
+    public async Task NpcLethalDamage_RunsWholeKillChainOncePerLifeAndStopsAfterTeardown()
+    {
+        var previousConfig = AppConfiguration.Instance.World;
+        AppConfiguration.Instance.World = new WorldConfig { TagShareEnabled = false };
+        try
+        {
+            var world = CreateWorld();
+            var calls = SetActionChain(2, 3, 0);
+            var ev = CreateEvent("npc_killed");
+            _events.Add(ev);
+            var dungeon = new Dungeon(new IndunZone { ZoneGroupId = ZoneGroupId }, world);
+            await new DungeonLoaderTask(dungeon).ExecuteAsync();
+            var npc = new DeathEventNpc
+            {
+                ObjId = 200,
+                TemplateId = NpcTemplateId,
+                Template = new NpcTemplate(),
+                Hp = 100,
+                MaxHp = 100,
+                ParentWorld = world
+            };
+
+            npc.ReduceCurrentHp(npc, 100, KillReason.Damage);
+            npc.ReduceCurrentHp(npc, 100, KillReason.Damage);
+
+            await Assert.That(calls.Select(call => call.ActionId).SequenceEqual(new uint[] { 1, 2, 3 })).IsTrue();
+            await Assert.That(calls.All(call => call.World == world)).IsTrue();
+            await Assert.That(npc.DeathPackets).IsEqualTo(1);
+
+            npc.Hp = 100;
+            npc.ReduceCurrentHp(npc, 100, KillReason.Damage);
+            await Assert.That(calls.Select(call => call.ActionId).SequenceEqual(new uint[] { 1, 2, 3, 1, 2, 3 })).IsTrue();
+            await Assert.That(npc.DeathPackets).IsEqualTo(2);
+
+            var capturedKill = world.Events.OnUnitKilled;
+            dungeon.DestroyDungeon();
+            capturedKill(world, new OnUnitKilledArgs { Killer = npc, Victim = npc });
+
+            await Assert.That(HandlerCount(world, ev)).IsEqualTo(0);
+            await Assert.That(calls.Count).IsEqualTo(6);
+        }
+        finally
+        {
+            AppConfiguration.Instance.World = previousConfig;
+        }
+    }
+
+    [Test]
+    [Arguments("doodad")]
+    [Arguments("npc_spawn")]
+    [Arguments("npc_killed")]
+    [Arguments("combat_start")]
+    [Arguments("combat_end")]
+    public async Task Dispatch_WrongTemplateOrWorld_DoesNotRunActions(string kind)
+    {
+        var world = CreateWorld();
+        var otherWorld = CreateWorld();
+        var calls = SetActionChain(2, 3, 0);
+        var ev = CreateEvent(kind);
+        _events.Add(ev);
+        ev.Subscribe(world);
+
+        RaiseEvent(kind, world, wrongTemplate: true);
+        RaiseEvent(kind, world, otherWorld);
+        await Assert.That(calls).IsEmpty();
+
+        RaiseEvent(kind, world);
+        await Assert.That(calls.Count).IsEqualTo(3);
+    }
+
+    [Test]
+    [Arguments("doodad")]
+    [Arguments("npc_spawn")]
+    [Arguments("npc_killed")]
+    [Arguments("combat_start")]
+    [Arguments("combat_end")]
+    public async Task Dispatch_SharedEventAcrossInstances_UsesOnlySourceWorldAndDetachesSeparately(string kind)
+    {
+        var firstWorld = CreateWorld();
+        var secondWorld = CreateWorld();
+        var calls = SetActionChain(2, 3, 0);
+        var ev = CreateEvent(kind);
+        _events.Add(ev);
+        ev.Subscribe(firstWorld);
+        ev.Subscribe(secondWorld);
+
+        RaiseEvent(kind, firstWorld);
+        await Assert.That(calls.Count).IsEqualTo(3);
+        await Assert.That(calls.All(call => call.World == firstWorld)).IsTrue();
+
+        ev.UnSubscribe(firstWorld);
+        RaiseEvent(kind, firstWorld);
+        await Assert.That(calls.Count).IsEqualTo(3);
+
+        RaiseEvent(kind, secondWorld);
+        await Assert.That(calls.Count).IsEqualTo(6);
+        await Assert.That(calls.Skip(3).All(call => call.World == secondWorld)).IsTrue();
+    }
+
+    [Test]
+    [Arguments("doodad")]
+    [Arguments("npc_spawn")]
+    [Arguments("npc_killed")]
+    [Arguments("combat_start")]
+    [Arguments("combat_end")]
+    public async Task DestroyDungeon_EachActionEvent_DetachesWholeChain(string kind)
+    {
+        var world = CreateWorld();
+        var calls = SetActionChain(2, 3, 0);
+        var ev = CreateEvent(kind);
+        _events.Add(ev);
+        var dungeon = new Dungeon(new IndunZone { ZoneGroupId = ZoneGroupId }, world);
+        await new DungeonLoaderTask(dungeon).ExecuteAsync();
+        RaiseEvent(kind, world);
+        await Assert.That(calls.Count).IsEqualTo(3);
+
+        dungeon.DestroyDungeon();
+        RaiseEvent(kind, world);
+
+        await Assert.That(HandlerCount(world, ev)).IsEqualTo(0);
+        await Assert.That(calls.Count).IsEqualTo(3);
+    }
+
+    [Test]
+    [Arguments(1u, 1u, 0u, 1)]
+    [Arguments(1u, 2u, 1u, 2)]
+    [Arguments(1u, 99u, 0u, 1)]
+    [Arguments(99u, 2u, 0u, 0)]
+    [Arguments(0u, 2u, 0u, 0)]
+    public async Task DoIndunActions_CycleMissingActionOrEmptyChain_StopsWithoutRepeatingActions(
+        uint startId, uint firstNextId, uint secondNextId, int expectedCalls)
+    {
+        var world = CreateWorld();
+        var calls = SetActionChain(firstNextId, secondNextId);
+
+        IndunManager.Instance.DoIndunActions(startId, world);
+
+        await Assert.That(calls.Count).IsEqualTo(expectedCalls);
+        await Assert.That(calls.Select(call => call.ActionId).Distinct().Count()).IsEqualTo(expectedCalls);
+    }
+
+    [Test]
+    public async Task DoIndunActions_SynchronousReentry_StopsRecursionAndAllowsLaterEvents()
+    {
+        var world = CreateWorld();
+        var calls = new List<uint>();
+        var actions = new Dictionary<uint, IndunAction>
+        {
+            [1] = new CallbackAction
+            {
+                Id = 1,
+                NextActionId = 2,
+                Callback = instance =>
+                {
+                    calls.Add(1);
+                    IndunManager.Instance.DoIndunActions(1, instance);
+                }
+            },
+            [2] = new CallbackAction { Id = 2, Callback = _ => calls.Add(2) }
+        };
+        SetField(IndunGameData.Instance, "_indunActions", actions);
+
+        IndunManager.Instance.DoIndunActions(1, world);
+        IndunManager.Instance.DoIndunActions(1, world);
+
+        await Assert.That(calls.SequenceEqual(new uint[] { 1, 2, 1, 2 })).IsTrue();
+    }
+
+    [Test]
+    public async Task DoIndunActions_SameActionReentersOtherWorld_RunsBothWorlds()
+    {
+        var first = CreateWorld();
+        var second = CreateWorld();
+        var calls = new List<WorldInstance>();
+        SetField(IndunGameData.Instance, "_indunActions", new Dictionary<uint, IndunAction>
+        {
+            [1] = new CallbackAction
+            {
+                Id = 1,
+                Callback = world =>
+                {
+                    calls.Add(world);
+                    if (world == first)
+                        IndunManager.Instance.DoIndunActions(1, second);
+                }
+            }
+        });
+
+        IndunManager.Instance.DoIndunActions(1, first);
+
+        await Assert.That(calls.SequenceEqual(new[] { first, second })).IsTrue();
+    }
+
+    [Test]
+    public async Task DoIndunActions_ActionThrows_ClearsReentryGuardForNextEvent()
+    {
+        var world = CreateWorld();
+        var expected = new InvalidOperationException("action failed");
+        var action = new CallbackAction { Id = 1, Callback = _ => throw expected };
+        var actions = new Dictionary<uint, IndunAction> { [1] = action };
+        SetField(IndunGameData.Instance, "_indunActions", actions);
+        Exception actual = null;
+        try
+        {
+            IndunManager.Instance.DoIndunActions(1, world);
+        }
+        catch (Exception exception)
+        {
+            actual = exception;
+        }
+        await Assert.That(actual).IsSameReferenceAs(expected);
+
+        actions[1] = _action;
+        IndunManager.Instance.DoIndunActions(1, world);
+        await Assert.That(_action.Calls).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task DoIndunActions_ConcurrentEventsInSameWorld_RunsBothChains()
+    {
+        var world = CreateWorld();
+        using var entered = new CountdownEvent(2);
+        var completed = 0;
+        SetField(IndunGameData.Instance, "_indunActions", new Dictionary<uint, IndunAction>
+        {
+            [1] = new CallbackAction
+            {
+                Id = 1,
+                NextActionId = 2,
+                Callback = _ =>
+                {
+                    entered.Signal();
+                    if (!entered.Wait(TimeSpan.FromSeconds(5)))
+                        throw new TimeoutException("independent events did not both enter");
+                }
+            },
+            [2] = new CallbackAction { Id = 2, Callback = _ => Interlocked.Increment(ref completed) }
+        });
+
+        await Task.WhenAll(
+            Task.Run(() => IndunManager.Instance.DoIndunActions(1, world)),
+            Task.Run(() => IndunManager.Instance.DoIndunActions(1, world))).WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(completed).IsEqualTo(2);
+    }
+
+    private static List<(uint ActionId, WorldInstance World)> SetActionChain(params uint[] nextIds)
+    {
+        var calls = new List<(uint ActionId, WorldInstance World)>();
+        var actions = new Dictionary<uint, IndunAction>();
+        for (var i = 0; i < nextIds.Length; i++)
+        {
+            var id = (uint)i + 1;
+            actions.Add(id, new CallbackAction
+            {
+                Id = id,
+                NextActionId = nextIds[i],
+                Callback = world => calls.Add((id, world))
+            });
+        }
+        SetField(IndunGameData.Instance, "_indunActions", actions);
+        return calls;
     }
 
     [Test]
@@ -617,13 +909,17 @@ public sealed class DungeonLifecycleTests
         };
     }
 
-    private static void RaiseEvent(string kind, WorldInstance world)
+    private static void RaiseEvent(string kind, WorldInstance world, WorldInstance sourceWorld = null, bool wrongTemplate = false)
     {
-        var npc = new Npc { TemplateId = NpcTemplateId };
+        sourceWorld ??= world;
+        var npc = new Npc { TemplateId = wrongTemplate ? NpcTemplateId + 1 : NpcTemplateId };
+        npc.Transform.InstanceId = sourceWorld.Id;
+        var doodad = new Doodad { TemplateId = wrongTemplate ? DoodadTemplateId + 1 : DoodadTemplateId };
+        doodad.Transform.InstanceId = sourceWorld.Id;
         switch (kind)
         {
             case "doodad":
-                world.Events.OnDoodadSpawn(world, new OnDoodadSpawnArgs { Doodad = new Doodad { TemplateId = DoodadTemplateId } });
+                world.Events.OnDoodadSpawn(world, new OnDoodadSpawnArgs { Doodad = doodad });
                 break;
             case "npc_spawn":
                 world.Events.OnUnitSpawn(world, new OnUnitSpawnArgs { Npc = npc });
@@ -685,6 +981,18 @@ public sealed class DungeonLifecycleTests
         public override void Execute(WorldInstance worldInstance)
         {
             Calls++;
+        }
+    }
+
+    private sealed class DeathEventNpc : Npc
+    {
+        public override int MaxHp { get; set; }
+        public int DeathPackets { get; private set; }
+
+        public override void BroadcastPacket(GamePacket packet, bool self)
+        {
+            if (packet is SCUnitDeathPacket)
+                DeathPackets++;
         }
     }
 

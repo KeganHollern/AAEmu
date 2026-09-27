@@ -45,6 +45,14 @@ public class IndunEvent
         }
     }
 
+    protected bool IsSubscribed(WorldInstance worldInstance)
+    {
+        lock (_subscriptionLock)
+        {
+            return _subscribedWorlds.Contains(worldInstance);
+        }
+    }
+
     protected virtual void SubscribeCore(WorldInstance worldInstance) { }
 
     protected virtual void UnSubscribeCore(WorldInstance worldInstance) { }

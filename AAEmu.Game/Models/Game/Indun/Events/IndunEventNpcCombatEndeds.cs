@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Models.Game.NPChar;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.Game.Models.Game.Indun.Events;
@@ -19,9 +20,10 @@ internal class IndunEventNpcCombatEndeds : IndunEvent
 
     private void OnUnitCombatEnd(object sender, OnUnitCombatEndArgs args)
     {
-        if (args.Npc is Npc npc)
-        {
-            Logger.Warn($"{npc.TemplateId} has left combat.");
-        }
+        if (args.Npc is not Npc npc || sender is not WorldInstance world) { return; }
+        if (npc.TemplateId != NpcId || npc.Transform.InstanceId != world.Id || !IsSubscribed(world)) { return; }
+
+        Logger.Warn($"{npc.TemplateId} has left combat.");
+        IndunManager.Instance.DoIndunActions(StartActionId, world);
     }
 }
