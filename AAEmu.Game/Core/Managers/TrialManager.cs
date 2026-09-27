@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Numerics;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.Id;
@@ -35,6 +35,8 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
     private const int EndTrialSeconds = 30;
 
     private readonly Lock _queueLock = new();
+    private readonly object _juryAdmissionLock = new();
+    private readonly object _courtAssignmentLock = new();
     private bool _loading;
     private bool _loaded;
 
@@ -112,7 +114,7 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
             return false;
 
         // Faction check is not done here and will prevent the player from actually getting in a queue if needed
-        if (GetParticipatingTrial(character) != null)
+        if (IsPlayerInCourt(character.Id) || GetParticipatingTrial(character) != null)
             return false;
 
         return true;
@@ -124,50 +126,33 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
     /// </summary>
     public void UpdateJuryQueue()
     {
-        List<uint> toRemove = [];
+        // Eligibility reads trial state. Do not hold the queue lock while taking a trial lock.
+        var eligible = WorldManager.Instance.MainWorld.GetAllCharacters()
+            .Where(CanAcceptTrialInvites).ToList();
+        Dictionary<FactionsEnum, uint[]> snapshot;
         lock (_queueLock)
+            snapshot = JuryQueues.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray());
+
+        var toRemove = new HashSet<uint>();
+        foreach (var (faction, queue) in snapshot)
         {
-            // Add new characters to the list
-            var characterList = WorldManager.Instance.MainWorld.GetAllCharacters();
-            foreach (var character in characterList)
+            foreach (var playerId in queue)
             {
-                if (!CanAcceptTrialInvites(character))
-                    continue;
-
-                // Check if faction has a queue
-                if (!JuryQueues.TryGetValue(character.Faction.MotherId, out var queue))
-                    continue;
-
-                // Add it to queue
-                if (!queue.Contains(character.Id))
-                {
-                    queue.Add(character.Id);
-                }
-            }
-
-            // Remove offline characters
-            foreach (var (faction, queue) in JuryQueues)
-            {
-                foreach (var playerId in queue)
-                {
-                    var player = WorldManager.Instance.GetCharacterById(playerId);
-                    if (!CanAcceptTrialInvites(player) || faction != player.Faction.MotherId)
-                    {
-                        toRemove.Add(playerId);
-                    }
-                }
+                var player = WorldManager.Instance.GetCharacterById(playerId);
+                if (!CanAcceptTrialInvites(player) || faction != player.Faction.MotherId)
+                    toRemove.Add(playerId);
             }
         }
 
-        // Actually remove the playerIds from all the queues
         lock (_queueLock)
         {
-            foreach (var playerId in toRemove)
+            foreach (var queue in JuryQueues.Values)
+                queue.RemoveAll(toRemove.Contains);
+            foreach (var player in eligible)
             {
-                foreach (var queue in JuryQueues.Values)
-                {
-                    queue.Remove(playerId);
-                }
+                if (!toRemove.Contains(player.Id) && JuryQueues.TryGetValue(player.Faction.MotherId, out var queue) &&
+                    !queue.Contains(player.Id))
+                    queue.Add(player.Id);
             }
         }
     }
@@ -177,17 +162,37 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
     /// </summary>
     private void UpdateTrialStates()
     {
-        foreach (var trialData in Trials.Values.ToList())
-        {
-            // Waiting for empty courtroom when defendant decided to go on trial
-            if (trialData.Step == TrialStep.DefendantAwaitingTrial && trialData.CurrentStepEndTime <= DateTime.UtcNow)
-            {
-                // Try to find a free courtroom
-                var targetCourtRoom =
-                    CourtRooms.Values.FirstOrDefault(x => x.Region == trialData.CourtRegion && x.CurrentTrial == null);
-                if (targetCourtRoom is null)
-                    continue;
+        foreach (var trial in Trials.Values.ToList())
+            UpdateTrialState(trial);
+    }
 
+    internal void UpdateTrialState(TrialData trialData)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (trialData.SyncRoot)
+        {
+            if (!IsCurrentTrial(trialData))
+                return;
+
+            if (!trialData.ResultApplied && trialData.Defendant?.IsOnline != true)
+            {
+                CancelDisconnectedDefendant(trialData);
+                return;
+            }
+
+            // Reserve a free courtroom before any teleport, buff, or packet callback.
+            if (trialData.Step == TrialStep.DefendantAwaitingTrial && trialData.DecisionReceived &&
+                trialData.CurrentStepEndTime <= DateTime.UtcNow)
+            {
+                TrialCourtRoom targetCourtRoom;
+                lock (_courtAssignmentLock)
+                {
+                    targetCourtRoom = CourtRooms.Values.FirstOrDefault(
+                        room => room.Region == trialData.CourtRegion && room.CurrentTrial == null);
+                    if (targetCourtRoom == null)
+                        return;
+                    targetCourtRoom.CurrentTrial = trialData;
+                }
                 trialData.EnterCourtRoom(targetCourtRoom, trialData.Defendant);
             }
 
@@ -240,7 +245,7 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
                 // Goto select verdict
                 Logger.Debug($"TrialStep.JuryVerdict - {trialData.Id}");
                 trialData.Step = TrialStep.JuryVerdict;
-                trialData.CurrentStepEndTime = DateTime.UtcNow.AddMinutes(ClosingStatementMinutes);
+                trialData.CurrentStepEndTime = DateTime.UtcNow.AddMinutes(JuryVerdictMinutes);
 
                 // Update the step
                 trialData.SendPackets(new SCChangeTrialStatePacket(trialData.Id, (byte)trialData.Step, trialData.GetActiveJuryCount(), trialData.RemainingCurrentStepTime));
@@ -253,94 +258,125 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
             {
                 // Goto trial result
                 Logger.Debug($"TrialStep.CalculateSentence - {trialData.Id}");
-                trialData.Step = TrialStep.EndTrial;
-                trialData.CurrentStepEndTime = DateTime.UtcNow.AddMinutes(JuryVerdictMinutes);
-
-                // Update the step
-                trialData.SendPackets(new SCChangeTrialStatePacket(trialData.Id, (byte)trialData.Step, trialData.GetActiveJuryCount(), trialData.RemainingCurrentStepTime));
-
                 trialData.FinalizeVerdict();
             }
 
             if (trialData.Step == TrialStep.EndTrial && trialData.CurrentStepEndTime <= DateTime.UtcNow)
+                CompleteTrial(trialData, true);
+            else if (trialData.Step == TrialStep.PleadGuilty)
+                CompleteTrial(trialData, false);
+            else if (trialData.Step == TrialStep.TrialCancelled)
             {
-                // Clean up trial
-                trialData.SendPackets(new SCRulingClosedPacket());
+                ResultIsGuilty(trialData.Defendant, trialData, false);
+                NotifyTrialCancellation(trialData);
+                CompleteTrial(trialData, false);
+            }
+        }
+    }
 
-                Logger.Debug($"TrialStep.Cleanup - {trialData.Id}");
-                trialData.Step = TrialStep.Cleanup;
-                trialData.CurrentStepEndTime = DateTime.MaxValue;
-                trialData.CourtRoom.TrialChatChannel.LeaveChannel(trialData.Defendant); // Remove defendant from chat if not already so
+    private static void NotifyTrialCancellation(TrialData trial)
+    {
+        if (trial.CancellationNotified)
+            return;
+        trial.CancellationNotified = true;
+        trial.SendPackets(new SCTrialCanceledPacket(trial.Id), true);
+    }
 
-                foreach (var juryEntry in trialData.Jury.Values)
+    // The durable pending sentence already exists before a trial starts. Do not update an old
+    // Character after disconnect, since the final save or a new session can already own its state.
+    private void CancelDisconnectedDefendant(TrialData trial)
+    {
+        if (!trial.ResultApplied)
+        {
+            trial.TryClaimResult(trial.Defendant);
+            trial.Step = TrialStep.TrialCancelled;
+            NotifyTrialCancellation(trial);
+        }
+        CompleteTrial(trial, false);
+    }
+
+    public void HandlePlayerDisconnect(Character player)
+    {
+        if (player == null)
+            return;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            RemovePlayerFromQueue(player);
+            foreach (var trial in Trials.Values.ToArray())
+            {
+                lock (trial.SyncRoot)
                 {
-                    if (juryEntry.JuryMember != null)
+                    if (!IsCurrentTrial(trial))
+                        continue;
+                    if (ReferenceEquals(trial.Defendant, player))
                     {
-                        // Teleport the jury back to their original place
-                        if (AppConfiguration.Instance.Justice.AllowJuryEscape && !juryEntry.JuryMember.Buffs.CheckBuff((uint)BuffConstants.CourtHouse))
-                        {
-                            // Jury is allowed to escape, only cancel the MainWorldPosition setting
-                            juryEntry.JuryMember.MainWorldPosition = null;
-                        }
-                        else
-                        {
-                            var pos = juryEntry.JuryMember.MainWorldPosition?.World.Position ??
-                                      juryEntry.JuryMember.Transform.World.Position;
-                            
-                            Logger.Debug($"Returning {juryEntry.JuryMember.Name} to {pos} <- {juryEntry.JuryMember.Transform.World.Position}");
-
-                            juryEntry.JuryMember.ForceDismount(); // forces them off their seat
-                            juryEntry.JuryMember.DisabledSetPosition = true;
-                            Logger.Debug($"Returning jury member {juryEntry.JuryMember.Name} to their old position {pos}");
-                            
-                            juryEntry.JuryMember.SendPacket(new SCTeleportUnitPacket(TeleportReason.Jury, 0, pos.X,
-                                pos.Y, pos.Z, juryEntry.Seat.Transform.World.Rotation.Z));
-                            // juryEntry.JuryMember.Transform.World.SetPosition(pos);
-                            
-                            juryEntry.JuryMember.MainWorldPosition = null;
-                            juryEntry.JuryMember.Buffs.RemoveBuff((uint)BuffConstants.CourtHouse);
-                            juryEntry.JuryMember.Buffs.RemoveBuff((uint)BuffConstants.Jury);
-                            Logger.Debug($"{juryEntry.JuryMember.Name} back at {juryEntry.JuryMember.Transform.World.Position}");
-
-                            // Update trials attended count
-                            juryEntry.JuryMember.JuryPoint++;
-                            juryEntry.JuryMember.Achievements.Increment(CharRecordKind.GetJuryPoint, 0, 0);
-                        }
-                        trialData.CourtRoom.TrialChatChannel.LeaveChannel(juryEntry.JuryMember); // Remove Jury from courtroom chat
+                        CancelDisconnectedDefendant(trial);
+                        continue;
+                    }
+                    var seat = trial.Jury.Values.FirstOrDefault(entry => ReferenceEquals(entry.JuryMember, player));
+                    if (seat == null)
+                        continue;
+                    ReturnJuryMember(trial, seat, false);
+                    seat.JuryMember = null;
+                    seat.ConfirmTestimony = false;
+                    seat.SelectedSentence = -1;
+                    if (!trial.ResultApplied && trial.Step == TrialStep.JuryVerdict)
+                    {
+                        var jury = trial.Jury.Values.Where(entry => entry.JuryMember != null).ToArray();
+                        trial.SendPackets(new SCChangeJuryVerdictCountPacket(
+                            jury.Count(entry => entry.SelectedSentence is >= 1 and <= 6), jury.Length), true);
                     }
                 }
             }
+        }
+    }
 
-            if (trialData.Step == TrialStep.PleadGuilty)
-            {
-                trialData.SendPackets(new SCRulingClosedPacket());
-                Logger.Debug($"TrialStep.Cleanup from PleadGuilty - {trialData.Id}");
-                trialData.Step = TrialStep.Cleanup;
-                trialData.CurrentStepEndTime = DateTime.MaxValue;
-            }
+    private void CompleteTrial(TrialData trial, bool awardJuryPoint)
+    {
+        if (trial.Step >= TrialStep.Cleanup)
+            return;
+        trial.Step = TrialStep.Cleanup;
+        trial.CurrentStepEndTime = DateTime.MaxValue;
+        trial.SendPackets(new SCRulingClosedPacket(), true);
+        trial.CourtRoom?.TrialChatChannel?.LeaveChannel(trial.Defendant);
+        foreach (var seat in trial.Jury.Values)
+            ReturnJuryMember(trial, seat, awardJuryPoint);
+        lock (_courtAssignmentLock)
+        {
+            if (trial.CourtRoom?.CurrentTrial == trial)
+                trial.CourtRoom.CurrentTrial = null;
+        }
+        trial.Step = TrialStep.Invalid;
+        Trials.TryRemove(new KeyValuePair<uint, TrialData>(trial.Id, trial));
+    }
 
-            if (trialData.Step == TrialStep.TrialCancelled)
+    private static void ReturnJuryMember(TrialData trial, TrialJuryBox seat, bool awardJuryPoint)
+    {
+        var player = seat.JuryMember;
+        if (player == null)
+            return;
+        if (AppConfiguration.Instance.Justice.AllowJuryEscape && !player.Buffs.CheckBuff((uint)BuffConstants.CourtHouse))
+        {
+            player.MainWorldPosition = null;
+        }
+        else
+        {
+            var position = player.MainWorldPosition?.World.Position ?? player.Transform.World.Position;
+            player.ForceDismount();
+            player.DisabledSetPosition = true;
+            player.Transform.World.SetPosition(position);
+            player.SendPacket(new SCTeleportUnitPacket(TeleportReason.Jury, 0,
+                position.X, position.Y, position.Z, player.MainWorldPosition?.World.Rotation.Z ?? 0));
+            player.MainWorldPosition = null;
+            if (awardJuryPoint)
             {
-                ResultIsGuilty(trialData.Defendant, trialData, false);
-                trialData.SendPackets(new SCRulingClosedPacket());
-                Logger.Debug($"TrialStep.TrialCancelled - {trialData.Id}");
-                trialData.Step = TrialStep.Cleanup;
-                trialData.CurrentStepEndTime = DateTime.MaxValue;
-            }
-
-            // Delete trial when done
-            if (trialData.Step == TrialStep.Cleanup)
-            {
-                // Free up the courtroom (if used)
-                trialData.Step = TrialStep.Invalid;
-                trialData.CourtRoom?.CurrentTrial = null;
-                Logger.Debug($"TrialStep.Cleanup - {trialData.Id}");
-                if (!Trials.Remove(trialData.Id, out _))
-                {
-                    Logger.Warn($"Failed to remove Trial {trialData.Id}");
-                }
+                player.JuryPoint++;
+                player.Achievements.Increment(CharRecordKind.GetJuryPoint, 0, 0);
             }
         }
+        player.Buffs.RemoveBuff((uint)BuffConstants.CourtHouse);
+        player.Buffs.RemoveBuff((uint)BuffConstants.Jury);
+        trial.CourtRoom?.TrialChatChannel?.LeaveChannel(player);
     }
 
     /// <summary>
@@ -350,63 +386,44 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
     /// <returns></returns>
     private bool QueueAvailable(TrialData trial)
     {
-        if (!JuryQueues.TryGetValue(trial.CourtRoom.Faction, out var queue))
-            return false;
-        return queue.Count > 0;
+        lock (_queueLock)
+            return JuryQueues.TryGetValue(trial.CourtRoom.Faction, out var queue) && queue.Count > 0;
     }
 
-    /// <summary>
-    /// Returns character's position in the jury queue by sending them the related packet
-    /// </summary>
-    /// <param name="player"></param>
     public void GetJuryQueueForPlayer(Character player)
     {
-        if (!JuryQueues.TryGetValue(player.Faction.MotherId, out var queue))
-            return;
-        var pos = queue.IndexOf(player.Id);
-        if (pos >= 0)
+        int position;
+        lock (_queueLock)
         {
-            pos++;
-            player.SendPacket(new SCJuryWaitingNumberPacket(pos));
+            if (!JuryQueues.TryGetValue(player.Faction.MotherId, out var queue))
+                return;
+            position = queue.IndexOf(player.Id);
         }
+        if (position >= 0)
+            player.SendPacket(new SCJuryWaitingNumberPacket(position + 1));
     }
 
-    /// <summary>
-    /// Removes a player from all jury queues
-    /// </summary>
-    /// <param name="player"></param>
     public void RemovePlayerFromQueue(Character player)
     {
-        foreach (var juryQueuesValue in JuryQueues.Values)
+        lock (_queueLock)
         {
-            juryQueuesValue.Remove(player.Id);
+            foreach (var queue in JuryQueues.Values)
+                queue.Remove(player.Id);
         }
     }
 
-    /// <summary>
-    /// Generates a list of elegible players for jury duty
-    /// </summary>
-    /// <param name="trial"></param>
-    /// <param name="maxCount"></param>
-    /// <returns></returns>
     public List<Character> GenerateJuryList(TrialData trial, int maxCount = 10)
     {
-        var res = new List<Character>();
-        if (!JuryQueues.TryGetValue(trial.CourtRoom.Faction, out var juryFactionQueue))
-            return res;
-        foreach (var playerId in juryFactionQueue)
+        uint[] candidates;
+        lock (_queueLock)
         {
-            var player = WorldManager.Instance.GetCharacterById(playerId);
-            if (player == null || !player.IsOnline)
-                continue;
-            if (player.Id == trial.DefendantId) // don't invite self
-                continue;
-            res.Add(player);
-            if (res.Count >= maxCount)
-                break;
+            if (!JuryQueues.TryGetValue(trial.CourtRoom.Faction, out var queue))
+                return [];
+            candidates = queue.ToArray();
         }
-
-        return res;
+        return candidates.Select(WorldManager.Instance.GetCharacterById)
+            .Where(player => player != null && player.IsOnline && player.Id != trial.DefendantId)
+            .Take(maxCount).ToList();
     }
 
     /// <summary>
@@ -421,66 +438,56 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
         if (player == null)
             return false;
 
-        if (!Trials.TryGetValue(trialId, out var trial))
+        // Reserve admission across trials before taking a single trial's lock. No trial callback
+        // takes this lock, and queue eligibility checks never hold the queue lock.
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (_juryAdmissionLock)
         {
-            // Replied too late, don't remove from queue
-            Logger.Debug(
-                $"{player.Name} sent a jury invite reply for a non-existing trial ({trialId}). Possibly already concluded.");
-            player.SendErrorMessage(ErrorMessageType.TrialsAlreadyClosed);
-            return false;
-        }
+            var trial = GetTrial(trialId);
+            if (trial == null)
+            {
+                player.SendErrorMessage(ErrorMessageType.TrialsAlreadyClosed);
+                return false;
+            }
 
-        if (!JuryQueues.TryGetValue(player.Faction.MotherId, out var queue))
-        {
-            player.SendErrorMessage(ErrorMessageType.TrialsJuryFull);
-            SusManager.Instance.LogActivity(SusManager.CategoryCheating, player,
-                "Player is trying to join as jury while not in an eligible faction");
-            return false; // Not in queue
-        }
+            lock (_queueLock)
+            {
+                if (!JuryQueues.TryGetValue(player.Faction.MotherId, out var queue) || !queue.Contains(player.Id))
+                {
+                    player.SendErrorMessage(ErrorMessageType.TrialsJuryFull);
+                    return false;
+                }
+                if (!accept)
+                {
+                    queue.Remove(player.Id);
+                    return false;
+                }
+            }
 
-        if (!queue.Contains(player.Id))
-        {
-            player.SendErrorMessage(ErrorMessageType.TrialsJuryFull);
-            SusManager.Instance.LogActivity(SusManager.CategoryCheating, player,
-                "Player is trying to join as jury while not in an the jury queue");
-            return false; // Not in queue
-        }
+            if (!CanAcceptTrialInvites(player))
+            {
+                player.SendErrorMessage(ErrorMessageType.TrialsJuryFull);
+                return false;
+            }
+            if (player.ParentWorld?.Id != WorldManager.DefaultInstanceId)
+            {
+                player.SendErrorMessage(ErrorMessageType.CannotJoinTrialFromInstantZone);
+                return false;
+            }
 
-        if (!accept)
-        {
-            queue.Remove(player.Id); // Remove current queue position if manually declined
-            return false;
+            lock (trial.SyncRoot)
+            {
+                if (!IsCurrentTrial(trial) || trial.Step != TrialStep.AwaitingJurySummons || trial.ResultApplied)
+                {
+                    player.SendErrorMessage(ErrorMessageType.TrialsCannotJoinAfterStart);
+                    return false;
+                }
+                var joined = trial.SummonJuryMember(player);
+                if (!joined)
+                    player.SendErrorMessage(ErrorMessageType.TrialsJuryFull);
+                return joined;
+            }
         }
-
-        // Verify if we are not already part of another trial
-        if (Trials.Values.Any(x => x.Jury.Values.Any(j => j.JuryMember == player)))
-        {
-            // Not the correct error, but it happens if two trials start at the same time, and you get invites for both
-            player.SendErrorMessage(ErrorMessageType.TrialsJuryFull);
-            return false;
-        }
-
-        if (player.ParentWorld.Id != WorldManager.DefaultInstanceId)
-        {
-            // Only allow joining from within the main_world
-            player.SendErrorMessage(ErrorMessageType.CannotJoinTrialFromInstantZone);
-            return false;
-        }
-
-        if (trial.Step > TrialStep.AwaitingJurySummons)
-        {
-            player.SendErrorMessage(ErrorMessageType.TrialsCannotJoinAfterStart);
-            return false;
-        }
-
-        // Send to courtroom
-        var res = trial.SummonJuryMember(player);
-        if (!res)
-        {
-            player.SendErrorMessage(ErrorMessageType.TrialsJuryFull);
-        }
-
-        return res;
     }
 
     /// <summary>
@@ -510,7 +517,7 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
                 {
                     if (doodadSpawner.SpecialLink == $"justice.{courtRoomId}.seat.{seatId}")
                     {
-                        trialCourtRoom.JurySeats.Add(seatId, doodadSpawner.Last);
+                        trialCourtRoom.JurySeats.Add(seatId - 1, doodadSpawner.Last);
                     }
                 }
 
@@ -548,29 +555,23 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
 
     public void HandlePlayerLogin(Character player)
     {
-        lock (_queueLock)
+        // Sentence recovery must not depend on eligibility to serve on somebody else's jury.
+        if (player.HasPendingTrial)
         {
-            if (!CanAcceptTrialInvites(player))
-                return;
-            if (!JuryQueues.TryGetValue(player.Faction.MotherId, out var queue))
-                return;
-            if (!queue.Contains(player.Id))
-                queue.Add(player.Id);
-            // GetJuryQueueForPlayer(player);
+            var trial = ArrestCriminal(player, null);
+            if (trial != null)
+                ResultIsGuilty(player, trial, false);
+            else
+                Logger.Error($"Failed to recover pending sentence for {player.Name} ({player.Id}): {player.OfflineGuiltyTime}, {player.OfflineGuiltyRegion}");
+            return;
         }
 
-        if (player.OfflineGuiltyTime > 0)
+        if (!CanAcceptTrialInvites(player))
+            return;
+        lock (_queueLock)
         {
-            // Not the Best way to handle this, but create a temporary trial and immediately auto-plead guilty
-            var tempTrial = ArrestCriminal(player, null);
-            if (tempTrial != null)
-            {
-                ResultIsGuilty(player, tempTrial, false);
-            }
-            else
-            {
-                Logger.Error($"Failed to handle justice for skipped trial of {player.Name} ({player.Id})! Time: {player.OfflineGuiltyTime}, Region: {player.OfflineGuiltyRegion}");
-            }
+            if (JuryQueues.TryGetValue(player.Faction.MotherId, out var queue) && !queue.Contains(player.Id))
+                queue.Add(player.Id);
         }
     }
 
@@ -581,52 +582,41 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
     /// <param name="arrestor"></param>
     public TrialData ArrestCriminal(Character criminal, Character arrestor)
     {
-        // TODO: Implement better support for player nations
-        var criminalCourtRegion = GetCourtRoomRegionByFaction(criminal.Faction.MotherId);
-        var arrestorCourtRegion = arrestor != null ? GetCourtRoomRegionByFaction(arrestor.Faction.MotherId) : criminal.OfflineGuiltyRegion;
-        if (arrestor != null && criminalCourtRegion == CourtRoomRegion.Invalid && arrestorCourtRegion == CourtRoomRegion.Invalid)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            // Likely both pirates, ignore
-            Logger.Debug($"ArrestCriminal: {arrestor.Name} cannot arrest {criminal.Name}, both fall outside of justice system");
-            return null;
+            if (criminal == null || IsPlayerInCourt(criminal.Id))
+                return null;
+
+            var recovering = arrestor == null && criminal.HasPendingTrial;
+            var storedMinutes = Math.Max(0, criminal.OfflineGuiltyTime);
+            var criminalCourtRegion = recovering ? criminal.OfflineGuiltyRegion : criminal.GetPrisonCourtRegion();
+            if (criminalCourtRegion == CourtRoomRegion.Invalid)
+                criminalCourtRegion = GetCourtRoomRegionByFaction(criminal.Faction.MotherId);
+            var arrestorCourtRegion = arrestor != null ? GetCourtRoomRegionByFaction(arrestor.Faction.MotherId) :
+                GetCourtRoomRegionByFaction(criminal.Faction.MotherId);
+            if (criminalCourtRegion == CourtRoomRegion.Invalid)
+                criminalCourtRegion = arrestorCourtRegion;
+            var courtRoom = CourtRooms.Values.FirstOrDefault(c => c.Region == criminalCourtRegion);
+            if (courtRoom == null)
+            {
+                Logger.Warn($"Failed to find a court room for {criminal.Name}");
+                return null;
+            }
+
+            LeaveTrialAudience(criminal);
+            var trial = CreateTrialCase(criminal, courtRoom, recovering ? storedMinutes : null);
+            if (trial == null)
+                return null;
+            criminal.Buffs.RemoveBuff((uint)BuffConstants.Wanted);
+            if (arrestor != null)
+            {
+                criminal.ArrestCount++;
+                criminal.BroadcastPacket(new SCCriminalArrestedPacket(criminal.ObjId, criminal.Name, arrestor.Name), true);
+            }
+            if (!recovering)
+                trial.EnterCourtJail(courtRoom, criminal);
+            return trial;
         }
-
-        // If criminal doesn't have a court region, use the arrestor's region instead
-        // TODO: Verify if this is retail behaviour, or if it uses the original nation of the player
-        if (criminalCourtRegion == CourtRoomRegion.Invalid)
-        {
-            criminalCourtRegion = arrestorCourtRegion;
-        }
-
-        // Find a courtroom to use
-        var tempCourtRoom = CourtRooms.Values.FirstOrDefault(c => c.Region == criminalCourtRegion);
-        if (tempCourtRoom == null)
-        {
-            Logger.Warn($"Failed to find a court room for {criminal.Name}");
-            return null;
-        }
-
-        // Update counter
-        if (arrestor != null)
-        {
-            criminal.ArrestCount++;
-        }
-
-        // Create Trial case
-        var trialData = CreateTrialCase(criminal);
-        if (trialData == null)
-        {
-            Logger.Warn($"Failed to create a court case for {criminal.Name}");
-            return null;
-        }
-
-        // Notify nearby players
-        if (arrestor != null)
-            criminal.BroadcastPacket(new SCCriminalArrestedPacket(criminal.ObjId, criminal.Name, arrestor.Name), true);
-
-        // Summon criminal to court jail
-        trialData.EnterCourtJail(tempCourtRoom, criminal);
-        return trialData;
     }
 
     /// <summary>
@@ -634,22 +624,28 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
     /// </summary>
     /// <param name="defendant"></param>
     /// <returns></returns>
-    private TrialData CreateTrialCase(Character defendant)
+    private TrialData CreateTrialCase(Character defendant, TrialCourtRoom courtRoom, int? storedMinutes)
     {
-        var trialData = new TrialData()
+        var trial = new TrialData
         {
             DefendantId = defendant.Id,
             DefendantName = defendant.Name,
             Id = TrialIdManager.Instance.GetNextId(),
             Step = TrialStep.DefendantAwaitingTrial,
             CurrentStepEndTime = DateTime.MaxValue,
-            Defendant = defendant
+            Defendant = defendant,
+            CourtRegion = courtRoom.Region,
+            CourtRoom = courtRoom
         };
-        Logger.Debug($"TrialStep.DefendantAwaitingTrial - {trialData.Id}");
-        trialData.EvidenceList = CrimeManager.Instance.GetCrimesOfPlayer(defendant.Id, false);
-        trialData.CalculateJailTime();
-        var added = Trials.TryAdd(trialData.Id, trialData);
-        return added ? trialData : null;
+        trial.EvidenceList = CrimeManager.Instance.GetCrimesOfPlayer(defendant.Id, false);
+        if (storedMinutes.HasValue)
+        {
+            trial.JailTime = storedMinutes.Value;
+            defendant.SetPendingTrialSentence(trial.JailTime, courtRoom.Region);
+        }
+        else
+            trial.CalculateJailTime();
+        return Trials.TryAdd(trial.Id, trial) ? trial : null;
     }
 
     /// <summary>
@@ -685,37 +681,40 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
 
     public void AddNewEvidence(CrimeEvent newEvent)
     {
-        var relatedTrial = GetTrialCase(newEvent.Criminal);
-        if (relatedTrial == null)
+        var trial = GetTrialCase(newEvent.Criminal);
+        if (trial == null)
             return;
-        relatedTrial.EvidenceList.Add(newEvent);
-        relatedTrial.CalculateJailTime();
-        relatedTrial.SendPackets(new SCCrimeRecordsPacket(relatedTrial.Id, 0, relatedTrial.EvidenceList.Count, 1,
-            new[] { newEvent }));
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (trial.SyncRoot)
+        {
+            if (!IsCurrentTrial(trial) || trial.ResultApplied || trial.Step >= TrialStep.TrialCancelled)
+                return;
+            trial.EvidenceList.Add(newEvent);
+            trial.CalculateJailTime();
+            trial.SendPackets(new SCCrimeRecordsPacket(trial.Id, 0, trial.EvidenceList.Count, 1, [newEvent]));
+        }
     }
 
     public void ReplyImprisonOrTrial(Character defendant, bool requestTrial)
     {
-        var trial = GetTrialCase(defendant.Id);
-        if (trial is null)
-        {
-            Logger.Warn(
-                $"{defendant.Name} ({defendant.Id}) sent a CSReplyImprisonOrTrialPacket without being on trial. requestTrial={requestTrial}");
+        var trial = defendant == null ? null : GetTrialCase(defendant.Id);
+        if (trial == null)
             return;
-        }
-
-        if (!requestTrial)
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (trial.SyncRoot)
         {
-            // Directly to jail with trial.JailTime time
-            ResultIsGuilty(defendant, trial, true);
-            return;
-        }
+            if (!IsCurrentTrial(trial) || trial.Defendant != defendant || trial.ResultApplied ||
+                trial.Step != TrialStep.DefendantAwaitingTrial || trial.DecisionReceived)
+                return;
 
-        // If not started yet, end the initial 2 minutes waiting time for an answer
-        if (trial.Step == TrialStep.DefendantAwaitingTrial)
-        {
-            // End timer now
-            defendant.AcceptTrialCount++; // TODO: How to handle if we don't respond
+            trial.DecisionReceived = true;
+            if (!requestTrial)
+            {
+                ResultIsGuilty(defendant, trial, true);
+                return;
+            }
+
+            defendant.AcceptTrialCount++;
             trial.CurrentStepEndTime = DateTime.UtcNow;
         }
     }
@@ -728,69 +727,56 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
     /// <param name="pleadGuilty"></param>
     public void ResultIsGuilty(Character defendant, TrialData trial, bool pleadGuilty)
     {
-        if (trial == null)
-        {
-            Logger.Warn($"Trial is null for {defendant}");
+        if (trial == null || defendant == null)
             return;
-        }
-        Logger.Debug($"TrialStep.EndTrial - {trial.Id}");
-        trial.Step = pleadGuilty ? TrialStep.PleadGuilty : TrialStep.EndTrial;
-        trial.CurrentStepEndTime = DateTime.UtcNow.AddSeconds(EndTrialSeconds);
-        trial.SendPackets(new SCChangeTrialStatePacket(trial.Id, (byte)trial.Step, trial.GetActiveJuryCount(), trial.RemainingCurrentStepTime));
-        trial.CourtRoom.TrialChatChannel.LeaveChannel(defendant);
-
-        // Find jail to go to
-        var targetJail = AppConfiguration.Instance.Justice.Jails.FirstOrDefault(x => x.Faction == trial.CourtRoom.Faction);
-        if (targetJail == null)
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (trial.SyncRoot)
         {
-            Logger.Error($"Could not find a jail location for Court: {trial.CourtRoom.Name}, Defendant: {defendant?.Name}");
-            return;
+            if (!IsCurrentTrial(trial) || !trial.TryClaimResult(defendant))
+                return;
+
+            Logger.Debug($"TrialStep.EndTrial - {trial.Id}");
+            trial.Step = pleadGuilty ? TrialStep.PleadGuilty : TrialStep.EndTrial;
+            trial.CurrentStepEndTime = DateTime.UtcNow.AddSeconds(EndTrialSeconds);
+            trial.SendPackets(new SCChangeTrialStatePacket(trial.Id, (byte)trial.Step, trial.GetActiveJuryCount(), trial.RemainingCurrentStepTime));
+            trial.CourtRoom.TrialChatChannel.LeaveChannel(defendant);
+
+            // Find jail to go to
+            var targetJail = AppConfiguration.Instance.Justice.Jails.FirstOrDefault(x => x.Faction == trial.CourtRoom.Faction);
+            if (targetJail == null)
+            {
+                Logger.Error($"Could not find a jail location for Court: {trial.CourtRoom.Name}, Defendant: {defendant?.Name}");
+                return;
+            }
+
+            if (!defendant.ApplyPrisonSentence(trial.CourtRegion, trial.JailTime))
+            {
+                Logger.Error($"Could not apply prison sentence for {defendant.Id} in {trial.CourtRegion}");
+                return;
+            }
+
+            trial.ArchiveEvidence();
+            var crimeCount = defendant.CrimePoint;
+            defendant.CrimePoint -= crimeCount;
+            defendant.Buffs.RemoveBuff((uint)BuffConstants.Wanted);
+            // Update counters
+            if (pleadGuilty)
+            {
+                defendant.AcceptGuiltyCount++;
+            }
+            else
+            {
+                defendant.GuiltyCount++;
+            }
+            defendant.SendPacket(new SCCrimeChangedPacket(crimeCount, defendant.CrimePoint, defendant.InfamyPoint,
+                defendant.GetCrimeState()));
+
+            if (!pleadGuilty)
+                defendant.Achievements.Increment(CharRecordKind.Judgement, 1, 0);
+
+            PrisonerAccess.MoveToJusticeDestination(defendant, targetJail.Pos, TeleportReason.Jail);
+            defendant.Buffs.RemoveBuff((uint)BuffConstants.Trial_Defendant);
         }
-
-        // Update evidence
-        trial.ArchiveEvidence();
-
-        // Update crime points
-        var crimeCount = defendant.CrimePoint;
-        defendant.OfflineGuiltyTime = 0;
-        defendant.OfflineGuiltyRegion = CourtRoomRegion.Invalid;
-        defendant.CrimePoint -= crimeCount;
-        // Update counters
-        if (pleadGuilty)
-        {
-            defendant.AcceptGuiltyCount++;
-        }
-        else
-        {
-            defendant.GuiltyCount++;
-        }
-        defendant.SendPacket(new SCCrimeChangedPacket(crimeCount, defendant.CrimePoint, defendant.InfamyPoint,
-            defendant.GetCrimeState()));
-
-        if (!pleadGuilty)
-            defendant.Achievements.Increment(CharRecordKind.Judgement, 1, 0);
-
-        // Prisoner buff
-        var jailTimeMs = trial.JailTime * 60_000;
-        jailTimeMs = Math.Max(jailTimeMs, 10_000); // Make it minimum 10 seconds, having 0 here will make it use the default 30 minutes instead
-        switch (trial.CourtRegion)
-        {
-            case CourtRoomRegion.Nuian:
-                defendant.Buffs.AddBuff((uint)BuffConstants.Prisoner_Nuian, defendant, jailTimeMs);
-                break;
-            case CourtRoomRegion.Haranyan:
-                defendant.Buffs.AddBuff((uint)BuffConstants.Prisoner_Haranyan, defendant, jailTimeMs);
-                break;
-            default:
-                Logger.Error(
-                    $"ResultIsGuilty - Invalid court region? {trial.CourtRegion}, defendant: {trial.DefendantName}");
-                break;
-        }
-
-        // Teleport
-        defendant.DisabledSetPosition = true;
-        defendant.SendPacket(new SCTeleportUnitPacket(TeleportReason.Jail, 0, targetJail.Pos.X, targetJail.Pos.Y, targetJail.Pos.Z, targetJail.Pos.Yaw));
-        defendant.Buffs.RemoveBuff((uint)BuffConstants.Trial_Defendant);
     }
 
     /// <summary>
@@ -800,28 +786,45 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
     /// <param name="trial"></param>
     public void ResultIsNotGuilty(Character defendant, TrialData trial)
     {
-        Logger.Debug($"TrialStep.EndTrial - {trial.Id}");
-        trial.Step = TrialStep.EndTrial;
-        trial.CurrentStepEndTime = DateTime.UtcNow.AddSeconds(EndTrialSeconds);
-        trial.SendPackets(new SCChangeTrialStatePacket(trial.Id, (byte)trial.Step, trial.GetActiveJuryCount(), trial.RemainingCurrentStepTime));
+        if (trial == null || defendant == null)
+            return;
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (trial.SyncRoot)
+        {
+            if (!IsCurrentTrial(trial) || !trial.TryClaimResult(defendant))
+                return;
 
-        // Update evidence
-        trial.ArchiveEvidence();
+            Logger.Debug($"TrialStep.EndTrial - {trial.Id}");
+            trial.Step = TrialStep.EndTrial;
+            trial.CurrentStepEndTime = DateTime.UtcNow.AddSeconds(EndTrialSeconds);
+            trial.SendPackets(new SCChangeTrialStatePacket(trial.Id, (byte)trial.Step, trial.GetActiveJuryCount(), trial.RemainingCurrentStepTime));
 
-        // Update crime points
-        var crimeCount = defendant.CrimePoint;
-        defendant.OfflineGuiltyTime = 0;
-        defendant.OfflineGuiltyRegion = CourtRoomRegion.Invalid;
-        defendant.NotGuiltyCount++;
-        defendant.CrimePoint -= crimeCount;
-        defendant.InfamyPoint -= crimeCount;
-        defendant.SendPacket(new SCCrimeChangedPacket(crimeCount, defendant.CrimePoint, defendant.InfamyPoint, defendant.GetCrimeState()));
-        defendant.Achievements.Increment(CharRecordKind.Judgement, 0, 0);
+            // Update evidence
+            trial.ArchiveEvidence();
 
-        defendant.Buffs.RemoveBuffs(BuffKind.Good, 1, (uint)BuffConstants.TagPrisoner);
-        defendant.Buffs.RemoveBuff((uint)BuffConstants.Trial_Defendant);
+            // Update crime points
+            var crimeCount = defendant.CrimePoint;
+            defendant.ClearPendingTrialSentence();
+            defendant.NotGuiltyCount++;
+            defendant.CrimePoint -= crimeCount;
+            defendant.InfamyPoint -= crimeCount;
+            defendant.Buffs.RemoveBuff((uint)BuffConstants.Wanted);
+            defendant.SendPacket(new SCCrimeChangedPacket(crimeCount, defendant.CrimePoint, defendant.InfamyPoint, defendant.GetCrimeState()));
+            defendant.Achievements.Increment(CharRecordKind.Judgement, 0, 0);
 
-        defendant.TryLeavePirateFactionAfterRehabilitation();
+            defendant.Buffs.RemoveBuff((uint)BuffConstants.Trial_Defendant);
+            if (defendant.GetUnservedPrisonMilliseconds() > 0)
+            {
+                // Acquittal of the new charge does not erase an earlier conviction.
+                var jail = AppConfiguration.Instance.Justice.Jails.FirstOrDefault(x => x.Faction == trial.CourtRoom.Faction);
+                if (jail != null)
+                    PrisonerAccess.MoveToJusticeDestination(defendant, jail.Pos, TeleportReason.Jail);
+            }
+            else
+                defendant.Buffs.RemoveBuffs(BuffKind.Bad, 1, (uint)BuffConstants.TagPrisoner);
+
+            defendant.TryLeavePirateFactionAfterRehabilitation();
+        }
     }
 
     public TrialData GetTrial(uint trialId)
@@ -835,112 +838,113 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
     /// <param name="juryMember"></param>
     /// <param name="trial"></param>
     /// <param name="juryId"></param>
-    public static void JuryEndTestimony(Character juryMember, TrialData trial, int juryId)
+    public void JuryEndTestimony(Character juryMember, uint trialId, int juryId)
     {
-        if (trial.Step != TrialStep.ConfirmCriminalRecord)
-        {
-            Logger.Warn($"JuryEndTestimony by {juryMember.Name} for trial {trial.Id} with seatId {juryId} was confirmed outside of the correct trial step");
+        var trial = GetTrial(trialId);
+        if (trial == null)
             return;
-        }
-        if (!trial.Jury.TryGetValue(juryId, out var jury) || jury.SeatId != juryId)
-        {
-            Logger.Warn($"JuryEndTestimony by {juryMember.Name} seems to be invalid for trial {trial.Id} with seatId {juryId}");
-            return; // ignore if invalid
-        }
 
-        jury.ConfirmTestimony = true;
-
-        // Update totals
-        var count = 0;
-        var total = 0;
-        foreach (var juryValue in trial.Jury.Values)
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (trial.SyncRoot)
         {
-            if (juryValue.JuryMember != null)
-            {
-                total++;
-                if (juryValue.ConfirmTestimony)
-                    count++;
-            }
-        }
-        trial.SendPackets(new SCChangeJuryOKCountPacket(count, total));
+            if (!IsCurrentTrial(trial) || trial.ResultApplied || trial.Step != TrialStep.ConfirmCriminalRecord ||
+                !OwnsJurySeat(juryMember, trial, juryId, out var jury) || jury.ConfirmTestimony)
+                return;
 
-        // Mark current step for ending if all have confirmed
-        if (trial.AllJuryConfirmedCriminalRecords())
-        {
-            // TODO: this skip to the next step should technically be instance
-            trial.CurrentStepEndTime = DateTime.UtcNow;
+            jury.ConfirmTestimony = true;
+            var occupiedSeats = trial.Jury.Values.Where(seat => seat.JuryMember != null).ToList();
+            trial.SendPackets(new SCChangeJuryOKCountPacket(
+                occupiedSeats.Count(seat => seat.ConfirmTestimony), occupiedSeats.Count));
+            if (trial.AllJuryConfirmedCriminalRecords())
+                trial.CurrentStepEndTime = DateTime.UtcNow;
         }
     }
 
-    public static void JuryVerdict(Character juryMember, TrialData trial, int juryId, byte sentence)
+    public void JuryVerdict(Character juryMember, uint trialId, int juryId, byte sentence)
     {
-        if (trial.Step != TrialStep.JuryVerdict)
-        {
-            Logger.Warn($"JuryVerdict by {juryMember.Name} for trial {trial.Id} with seatId {juryId} was confirmed outside of the correct trial step");
+        var trial = GetTrial(trialId);
+        if (trial == null)
             return;
-        }
-        if (!trial.Jury.TryGetValue(juryId, out var jury) || jury.SeatId != juryId)
-        {
-            Logger.Warn($"JuryVerdict by {juryMember.Name} seems to be invalid for trial {trial.Id} with seatId {juryId}");
-            return; // ignore if invalid
-        }
 
-        if (jury.JuryMember.Id != juryMember.Id)
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (trial.SyncRoot)
         {
-            Logger.Warn($"Jury Verdict Seat does not match the expected player");
-            return;
-        }
+            if (!IsCurrentTrial(trial) || trial.ResultApplied || trial.Step != TrialStep.JuryVerdict ||
+                sentence is < 1 or > 6 ||
+                !OwnsJurySeat(juryMember, trial, juryId, out var jury) || jury.SelectedSentence >= 0)
+                return;
 
-        jury.SelectedSentence = sentence;
-        
-        var count = 0;
-        var total = 0;
-        foreach (var juryValue in trial.Jury.Values)
-        {
-            if (juryValue.JuryMember != null)
-            {
-                total++;
-                if (juryValue.SelectedSentence >= 0)
-                    count++;
-            }
-        }
+            jury.SelectedSentence = sentence;
+            var occupiedSeats = trial.Jury.Values.Where(seat => seat.JuryMember != null).ToList();
+            var count = occupiedSeats.Count(seat => seat.SelectedSentence >= 0);
+            var total = occupiedSeats.Count;
 
-        // Send updated voted count
-        var resultPacket = new SCRulingStatusPacket(count, total, 0, 0);
-        trial.Defendant?.SendPacket(resultPacket);
-        foreach (var juryValue in trial.Jury.Values)
-        {
-            if (juryValue.SelectedSentence >= 0)
-                juryValue.JuryMember?.SendPacket(resultPacket);
-        }
+            trial.SendPackets(new SCChangeJuryVerdictCountPacket(count, total), true);
+            var resultPacket = new SCRulingStatusPacket(count, total, TrialSentenceResult.Undefined, 0);
+            trial.Defendant?.SendPacket(resultPacket);
+            foreach (var seat in occupiedSeats.Where(seat => seat.SelectedSentence >= 0))
+                seat.JuryMember.SendPacket(resultPacket);
 
-        // Mark current step for ending if all have confirmed
-        if (trial.AllJurySelectedSentence())
-        {
-            trial.CurrentStepEndTime = DateTime.UtcNow;
+            if (trial.AllJurySelectedSentence())
+                trial.CurrentStepEndTime = DateTime.UtcNow;
         }
     }
 
-    // Defendant declined a closing statement
-    public static void SkipFinalStatementReply(Character defendant, TrialData trial)
+    private bool IsCurrentTrial(TrialData trial)
     {
-        if (trial.Defendant != defendant)
-            return;
-        if (trial.Step != TrialStep.ClosingStatement)
+        return Trials.TryGetValue(trial.Id, out var current) && ReferenceEquals(current, trial);
+    }
+
+    private static bool OwnsJurySeat(Character player, TrialData trial, int seatId, out TrialJuryBox jury)
+    {
+        jury = null;
+        return player != null && trial.Jury.TryGetValue(seatId, out jury) &&
+               jury.SeatId == seatId && ReferenceEquals(jury.JuryMember, player);
+    }
+
+    public void CancelTrial(Character defendant, uint trialId)
+    {
+        var trial = GetTrial(trialId);
+        if (trial == null)
             return;
 
-        trial.CurrentStepEndTime = DateTime.UtcNow;
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (trial.SyncRoot)
+        {
+            if (!IsCurrentTrial(trial) || trial.Defendant != defendant || trial.ResultApplied ||
+                trial.Step is not (TrialStep.DefendantAwaitingTrial or TrialStep.AwaitingJurySummons) ||
+                trial.Jury.Values.Any(seat => seat.JuryMember != null))
+                return;
+
+            trial.DecisionReceived = true;
+            ResultIsGuilty(defendant, trial, true);
+            NotifyTrialCancellation(trial);
+        }
+    }
+
+    // Defendant declined a closing statement.
+    public void SkipFinalStatementReply(Character defendant, uint trialId)
+    {
+        var trial = GetTrial(trialId);
+        if (trial == null)
+            return;
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (trial.SyncRoot)
+        {
+            if (!IsCurrentTrial(trial) || trial.Defendant != defendant || trial.ResultApplied ||
+                trial.Step != TrialStep.ClosingStatement)
+                return;
+            trial.CurrentStepEndTime = DateTime.UtcNow;
+        }
     }
 
     public bool IsPlayerInCourt(uint playerId)
     {
-        foreach (var trialData in Trials.Values)
+        foreach (var trial in Trials.Values)
         {
-            if (trialData.DefendantId == playerId)
-                return true;
-            foreach (var jury in trialData.Jury.Values)
+            lock (trial.SyncRoot)
             {
-                if (jury.JuryMember?.Id == playerId)
+                if (trial.DefendantId == playerId || trial.Jury.Values.Any(seat => seat.JuryMember?.Id == playerId))
                     return true;
             }
         }
@@ -949,84 +953,144 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
 
     public void JoinTrialAudience(Character player, uint doodadTemplateId)
     {
-        // Try to find what courtroom it belongs too.
-        // Technically each courtroom has its own doodad version, but we will be doing a bit more checks instead of
-        // blindly trusting it.
-        foreach (var trialCourtRoom in CourtRooms.Values)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (trialCourtRoom.AudienceMembers.Contains(player))
+            if (player == null || !player.IsOnline)
+                return;
+            foreach (var courtRoom in CourtRooms.Values)
             {
-                // Already in this audience
+                if (!courtRoom.AudienceSeats.Any(seat => seat.TemplateId == doodadTemplateId && IsAtAudienceSeat(player, seat)))
+                    continue;
+                if (HasRoleInOtherTrial(player, courtRoom.CurrentTrial))
+                    return;
+                lock (courtRoom.AudienceMembers)
+                    if (courtRoom.AudienceMembers.Contains(player))
+                        return;
+                LeaveTrialAudience(player);
+                lock (courtRoom.AudienceMembers)
+                    courtRoom.AudienceMembers.Add(player);
+                player.BroadcastPacket(new SCTrialAudienceJoinedPacket(courtRoom.CurrentTrial?.Id ?? 0, player.ObjId, player.Name), true);
+                courtRoom.TrialChatChannel?.JoinChannel(player);
                 return;
             }
-            foreach (var audienceSeat in trialCourtRoom.AudienceSeats)
+            Logger.Warn($"{player.Name} tried to join courtroom audience while not being near a seat");
+        }
+    }
+
+    private bool HasRoleInOtherTrial(Character player, TrialData audienceTrial)
+    {
+        foreach (var trial in Trials.Values.Concat(CourtRooms.Values.Select(room => room.CurrentTrial))
+                     .Where(trial => trial != null).Distinct())
+        {
+            lock (trial.SyncRoot)
             {
-                if (audienceSeat.TemplateId != doodadTemplateId)
-                {
+                if (trial.Step == TrialStep.Invalid || trial == audienceTrial)
                     continue;
-                }
-
-                var dist = player.GetDistanceTo(audienceSeat);
-                if (!(dist <= 5f)) // 5m seems a fair enough check
-                {
-                    continue;
-                }
-
-                // Found a matching seat type
-                trialCourtRoom.AudienceMembers.Add(player);
-                player.BroadcastPacket(new SCTrialAudienceJoinedPacket(trialCourtRoom.CurrentTrial?.Id ?? 0, player.ObjId, player.Name), true);
-                trialCourtRoom.TrialChatChannel.JoinChannel(player);
-                return;
+                if (trial.Defendant == player || trial.DefendantId == player.Id ||
+                    trial.Jury.Values.Any(box => box.JuryMember == player))
+                    return true;
             }
         }
-        // Was not able to find a valid nearby seat.
-        // Are we hacking here ?
-        var error = $"{player?.Name ?? "unknown"} tried to join courtroom audience while not being near a seat";
-        Logger.Warn(error);
-        SusManager.Instance.LogActivity(SusManager.CategoryCheating, player?.AccountId ?? 0, player?.Id ?? 0, player?.Transform.ZoneId ?? 0, player?.Transform.World.Position ?? Vector3.Zero,error);
+        return false;
     }
 
     public void LeaveTrialAudience(Character player)
     {
-        foreach (var trialCourtRoom in CourtRooms.Values)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (trialCourtRoom.AudienceMembers.Contains(player))
+            foreach (var courtRoom in CourtRooms.Values)
             {
-                trialCourtRoom.AudienceMembers.Remove(player);
+                bool removed;
+                lock (courtRoom.AudienceMembers)
+                    removed = courtRoom.AudienceMembers.Remove(player);
+                if (!removed)
+                    continue;
                 player.BroadcastPacket(new SCTrialAudienceLeftPacket(player.ObjId, player.Name), true);
-                trialCourtRoom.TrialChatChannel.LeaveChannel(player);
-                return;
+                courtRoom.TrialChatChannel?.LeaveChannel(player);
             }
         }
-        Logger.Debug($"{player?.Name ?? "unknown"} tried to leave the courtroom audience but was not part of it");
+    }
+
+    private static bool IsAtAudienceSeat(Character player, Models.Game.DoodadObj.Doodad seat)
+    {
+        return player.Transform.InstanceId == seat.Transform.InstanceId && player.GetDistanceTo(seat) <= 5f;
+    }
+
+    public Character[] GetTrialAudienceSnapshot(TrialData trial)
+    {
+        lock (trial.SyncRoot)
+        {
+            var room = trial.CourtRoom;
+            if (room?.CurrentTrial != trial)
+                return [];
+            lock (room.AudienceMembers)
+                return room.AudienceMembers.Where(player => player.IsOnline &&
+                    room.AudienceSeats.Any(seat => IsAtAudienceSeat(player, seat))).ToArray();
+        }
+    }
+
+    private static bool IsTrialSpeaker(TrialData trial, Character player)
+    {
+        if (player?.IsOnline != true || trial.CourtRoom?.CurrentTrial != trial)
+            return false;
+        if (trial.Defendant == player)
+            return true;
+        return trial.Jury.Values.Any(box => box.JuryMember == player && box.Seat != null &&
+            player.Transform.InstanceId == box.Seat.Transform.InstanceId);
+    }
+
+    internal Character[] GetTrialChatRecipients(TrialData trial, Character sender)
+    {
+        lock (trial.SyncRoot)
+        {
+            if (trial.Step < TrialStep.VerifyCriminalRecord || trial.Step > TrialStep.JuryVerdict || !IsTrialSpeaker(trial, sender))
+                return [];
+            return trial.Jury.Values.Select(box => box.JuryMember).Append(trial.Defendant)
+                .Where(player => IsTrialSpeaker(trial, player))
+                .Concat(GetTrialAudienceSnapshot(trial)).Distinct().ToArray();
+        }
+    }
+
+    public int SendTrialChat(Character sender, string message, int ability, byte languageType)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            var trial = GetParticipatingTrial(sender);
+            if (trial != null)
+            {
+                lock (trial.SyncRoot)
+                {
+                    var recipients = GetTrialChatRecipients(trial, sender);
+                    if (recipients.Length > 0)
+                    {
+                        foreach (var recipient in recipients)
+                            recipient.SendPacket(new SCChatMessagePacket(ChatType.Judge, sender, message, ability, languageType));
+                        return recipients.Length;
+                    }
+                }
+            }
+            sender.SendErrorMessage(ErrorMessageType.ChatNotInTrial);
+            return 0;
+        }
     }
 
     public TrialData GetParticipatingTrial(Character player)
     {
+        if (player == null)
+            return null;
         foreach (var courtRoom in CourtRooms.Values)
         {
-            if (courtRoom.CurrentTrial == null)
-            {
+            var trial = courtRoom.CurrentTrial;
+            if (trial == null)
                 continue;
-            }
-
-            if (courtRoom.CurrentTrial.Defendant == player)
+            lock (trial.SyncRoot)
             {
-                return courtRoom.CurrentTrial;
-            }
-            foreach (var juryValue in courtRoom.CurrentTrial.Jury.Values)
-            {
-                if (juryValue.JuryMember == player)
-                {
-                    return courtRoom.CurrentTrial;
-                }
-            }
-            foreach (var audience in courtRoom.AudienceMembers)
-            {
-                if (audience == player)
-                {
-                    return courtRoom.CurrentTrial;
-                }
+                if (courtRoom.CurrentTrial != trial)
+                    continue;
+                if (trial.Defendant == player || trial.Jury.Values.Any(box => box.JuryMember == player))
+                    return trial;
+                if (GetTrialAudienceSnapshot(trial).Contains(player))
+                    return trial;
             }
         }
         return null;

@@ -1,4 +1,4 @@
-using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 
@@ -8,12 +8,13 @@ public class CSJuryEndTestimonyPacket() : GamePacket(CSOffsets.CSJuryEndTestimon
 {
     public override void Read(PacketStream stream)
     {
+        if (stream.LeftBytes != 8)
+            throw new InvalidDataException("CSJuryEndTestimonyPacket requires exactly 8 bytes.");
+
         var trialId = stream.ReadUInt32();
         var juryId = stream.ReadInt32();
 
         Logger.Info($"JuryEndTestimony, {Connection.ActiveChar.Name}, Trial: {trialId}, Jury: {juryId}");
-        var trial = TrialManager.Instance.GetTrial(trialId);
-        if (trial != null)
-            TrialManager.JuryEndTestimony(Connection.ActiveChar, trial, juryId);
+        TrialManager.Instance.JuryEndTestimony(Connection.ActiveChar, trialId, juryId);
     }
 }

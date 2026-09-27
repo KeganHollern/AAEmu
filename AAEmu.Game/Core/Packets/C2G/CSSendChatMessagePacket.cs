@@ -115,14 +115,6 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
                     Connection.ActiveChar.SendErrorMessage(ErrorMessageType.ChatNotInFamily);
                 }
                 break;
-            /*
-        case ChatType.Judge:
-            // TODO: Need a check so only defendant and jury can talk here, the client does some checks too, but let's make sure
-            ChatManager.Instance.GetNationChat(Connection.ActiveChar.Race).SendPacket(
-                new SCChatMessagePacket(type, Connection.ActiveChar, message, ability, languageType)
-                );
-            break;
-            */
             case ChatType.Region: //nation (birth place/race, includes pirates etc)
                 ChatManager.Instance.GetNationChat(Connection.ActiveChar.Race).SendMessage(Connection.ActiveChar, message, ability, languageType);
                 break;
@@ -130,8 +122,8 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
                 ChatManager.Instance.GetFactionChat(Connection.ActiveChar.Faction.MotherId).SendMessage(Connection.ActiveChar, message, ability, languageType);
                 AikaChatManager.Instance.OnFactionChatMessage(Connection.ActiveChar, message);
                 break;
-            case ChatType.Judge: //faction (by current allegiance)
-                ChatManager.Instance.GetTrialChat(Connection.ActiveChar)?.SendMessage(Connection.ActiveChar, message, ability, languageType);
+            case ChatType.Judge:
+                TrialManager.Instance.SendTrialChat(Connection.ActiveChar, message, ability, languageType);
                 break;
             default:
                 Logger.Warn("Unsupported chat type {0} from {1}", type, Connection.ActiveChar.Name);

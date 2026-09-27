@@ -1,4 +1,4 @@
-using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 
@@ -8,16 +8,11 @@ public class CSCancelTrialPacket() : GamePacket(CSOffsets.CSCancelTrialPacket, 1
 {
     public override void Read(PacketStream stream)
     {
+        if (stream.LeftBytes != 4)
+            throw new InvalidDataException("CSCancelTrialPacket requires exactly 4 bytes.");
+
         var trial = stream.ReadUInt32();
         Logger.Warn($"CancelTrial, Trial: {trial}");
-        var trialData = TrialManager.Instance.GetTrial(trial);
-        if (trialData.DefendantId == Connection.ActiveChar.Id)
-        {
-            TrialManager.Instance.ResultIsGuilty(Connection.ActiveChar, trialData, true);
-        }
-        else
-        {
-            SusManager.Instance.LogActivity(SusManager.CategoryCheating, Connection.ActiveChar, $"Player {Connection.ActiveChar.Name} tried to cancel a trial they do not belong to");
-        }
+        TrialManager.Instance.CancelTrial(Connection.ActiveChar, trial);
     }
 }

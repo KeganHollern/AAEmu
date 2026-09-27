@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Data;
 using System.Numerics;
+using System.Text;
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.Id;
@@ -14,6 +15,7 @@ using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.StaticValues;
 using MySql.Data.MySqlClient;
@@ -34,7 +36,7 @@ public class CrimeManager() : Singleton<CrimeManager>, ICrimeManager
     private ConcurrentDictionary<uint,HashSet<uint>> ReportedSuspects { get; } = [];
 
     /// <summary>
-    /// Gets a list of evidence reports for this player. 
+    /// Gets a list of evidence reports for this player.
     /// </summary>
     /// <param name="playerId"></param>
     /// <param name="includeOld">If true, also includes crimes that have already been judged</param>
@@ -196,74 +198,100 @@ public class CrimeManager() : Singleton<CrimeManager>, ICrimeManager
     /// <returns></returns>
     public CrimeEvent ReportCrime(Character reporter, Doodad evidence, uint usedSkillId, int doodadNextFuncGroup, uint doodadFuncId, string message)
     {
-        if (evidence.OwnerType == DoodadOwnerType.Character && evidence.OwnerId == reporter.Id)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            Logger.Warn($"{reporter.Name} ({reporter.Id}) tried to somehow report their own crimes at {evidence.Transform.World.Position}");
-            SusManager.Instance.LogActivity(SusManager.CategoryCheating, reporter, $"Reported own crime at {evidence.Transform.World.Position} (type={evidence.TemplateId}");
-            return null;
-        }
-        var crimeType = CrimeKind.Invalid;
-        short crimeValue = 0; // Not sure if needed to be known here
-        var nextPhase = 0;
-        foreach (var evidenceCurrentFunc in evidence.CurrentFuncs)
-        {
-            if (evidenceCurrentFunc.FuncType == "DoodadFuncEvidenceItemLoot")
+            if (!TryGetReportFunction(reporter, evidence, usedSkillId, doodadNextFuncGroup, doodadFuncId,
+                    out var evidenceFunction, out var evidenceItemLoot) || Encoding.UTF8.GetByteCount(message ?? string.Empty) > 200)
+                return null;
+            // Altered evidence has an authored zero-point transition. Consume it
+            // without creating invalid history, awarding an achievement, or charging points.
+            if (evidenceItemLoot.CrimeKindId == 0 && evidenceItemLoot.CrimeValue == 0)
             {
-                var func = DoodadManager.Instance.GetFuncTemplate(evidenceCurrentFunc.FuncId, evidenceCurrentFunc.FuncType);
-                if (func is DoodadFuncEvidenceItemLoot evidenceItemLoot)
-                {
-                    crimeType = (CrimeKind)evidenceItemLoot.CrimeKindId;
-                    crimeValue = evidenceItemLoot.CrimeValue;
-                    nextPhase = evidenceCurrentFunc.NextPhase;
-                }
+                evidence.DoChangePhase(reporter, evidenceFunction.NextPhase);
+                return null;
             }
+            var crimeType = (CrimeKind)evidenceItemLoot.CrimeKindId;
+            var crimeValue = evidenceItemLoot.CrimeValue;
+            var nextPhase = evidenceFunction.NextPhase;
+
+            var newId = CrimeIdManager.Instance.GetNextId();
+            var newEvent = new CrimeEvent()
+            {
+                Id = newId,
+                Criminal = evidence.OwnerId,
+                Victim = (uint)evidence.Data,
+                Reporter = reporter.Id,
+                DoodadTemplate = evidence.ItemTemplateId,
+                CrimeKind = crimeType,
+                CrimeTime = evidence.PlantTime,
+                ReportTime = DateTime.UtcNow,
+                Position = evidence.Transform.World.Position,
+                ZoneKey = evidence.Transform.ZoneId,
+                UsedSkillId = usedSkillId,
+                DoodadNextFuncGroup = (uint)doodadNextFuncGroup,
+                DoodadFuncId = doodadFuncId,
+                Msg = message
+            };
+
+            if (!CrimeEvents.TryAdd(newEvent.Id, newEvent))
+            {
+                CrimeIdManager.Instance.ReleaseId(newId); // Free the Id again if not able to add
+                Logger.Warn($"Unable to report crime at {newEvent.Position} with message {newEvent.Msg}");
+                return null;
+            }
+            lock (UpdatedEventIds)
+                UpdatedEventIds.Add(newEvent.Id);
+            reporter.Achievements.Increment(CharRecordKind.ReportCrime, (uint)crimeType, 0);
+
+            // TODO: Handle this phase change by doing the skill, and handling the crime points in DoodadFuncEvidenceItemLoot of the doodad.
+            // Add crime points to criminal
+            AddCrimePoints(newEvent.Criminal, crimeType, crimeValue);
+
+            // Try to add this to ongoing trials
+            TrialManager.Instance.AddNewEvidence(newEvent);
+
+            // Progress Doodad to next phase to finish the report
+            if (nextPhase > 0)
+            {
+                evidence.DoChangePhase(reporter, nextPhase);
+            }
+
+            // Return the new CrimeId
+            return newEvent;
         }
+    }
 
-        var zoneKey = ZoneManager.Instance.GetZoneByKey(evidence.Transform.ZoneId);
+    internal static bool TryGetReportFunction(Character reporter, Doodad evidence, uint usedSkillId,
+        int nextPhase, uint functionId, out DoodadFunc function, out DoodadFuncEvidenceItemLoot template)
+    {
+        function = null;
+        template = null;
+        if (reporter?.IsOnline != true || evidence == null || reporter.ParentWorld == null ||
+            evidence.ParentWorld != reporter.ParentWorld || reporter.ParentWorld.GetDoodad(evidence.ObjId) != evidence ||
+            evidence.Despawn > DateTime.MinValue || evidence.OwnerType != DoodadOwnerType.Character ||
+            evidence.OwnerId == 0 || evidence.OwnerId == reporter.Id)
+            return false;
 
-        var newId = CrimeIdManager.Instance.GetNextId();
-        var newEvent = new CrimeEvent()
-        {
-            Id = newId,
-            Criminal = evidence.OwnerId,
-            Victim = (uint)evidence.Data,
-            Reporter = reporter.Id,
-            DoodadTemplate = evidence.ItemTemplateId,
-            CrimeKind = crimeType,
-            CrimeTime = evidence.PlantTime,
-            ReportTime = DateTime.UtcNow,
-            Position = evidence.Transform.World.Position,
-            ZoneKey = zoneKey?.Id ?? 0u,
-            UsedSkillId = usedSkillId,
-            DoodadNextFuncGroup = (uint)doodadNextFuncGroup,
-            DoodadFuncId = doodadFuncId,
-            Msg = message
-        };
+        function = evidence.CurrentFuncs.FirstOrDefault(candidate => candidate.FuncKey == functionId &&
+            candidate.GroupId == evidence.FuncGroupId && candidate.NextPhase == nextPhase &&
+            candidate.NextPhase > 0 && candidate.NextPhase != evidence.FuncGroupId &&
+            candidate.FuncType == nameof(DoodadFuncEvidenceItemLoot));
+        if (function == null || DoodadManager.Instance.GetFuncTemplate(function.FuncId, function.FuncType)
+                is not DoodadFuncEvidenceItemLoot found || found.SkillId != usedSkillId)
+            return false;
 
-        if (!CrimeEvents.TryAdd(newEvent.Id, newEvent))
-        {
-            CrimeIdManager.Instance.ReleaseId(newId); // Free the Id again if not able to add
-            Logger.Warn($"Unable to report crime at {newEvent.Position} with message {newEvent.Msg}");
-            return null;
-        }
-        UpdatedEventIds.Add(newEvent.Id);
-        reporter.Achievements.Increment(CharRecordKind.ReportCrime, (uint)crimeType, 0);
+        var reportsCrime = found.CrimeValue > 0 &&
+            (CrimeKind)found.CrimeKindId is CrimeKind.Assault or CrimeKind.Murder or CrimeKind.Theft;
+        if (!reportsCrime && (found.CrimeKindId != 0 || found.CrimeValue != 0))
+            return false;
 
-        // TODO: Handle this phase change by doing the skill, and handling the crime points in DoodadFuncEvidenceItemLoot of the doodad.
-        // Add crime points to criminal
-        AddCrimePoints(newEvent.Criminal, crimeType, crimeValue);
-
-        // Try to add this to ongoing trials
-        TrialManager.Instance.AddNewEvidence(newEvent);
-
-        // Progress Doodad to next phase to finish the report
-        if (nextPhase > 0)
-        {
-            evidence.DoChangePhase(reporter, nextPhase);
-        }
-
-        // Return the new CrimeId
-        return newEvent;
+        var skill = SkillManager.Instance.GetSkillTemplate(found.SkillId);
+        if (skill == null || (!skill.AllowToPrisoner && reporter.IsPrisoner) ||
+            SkillCasterStates.Check(reporter, skill, out _) != SkillResult.Success ||
+            SkillRange.Check(new Skill(skill), reporter, evidence) != SkillResult.Success)
+            return false;
+        template = found;
+        return true;
     }
 
     /// <summary>

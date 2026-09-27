@@ -11,8 +11,6 @@ public class CSSkipFinalStatementPacket() : GamePacket(CSOffsets.CSSkipFinalStat
         var trialId = stream.ReadUInt32();
 
         Logger.Debug($"SkipFinalStatement, Trial: {trialId}");
-        var trial = TrialManager.Instance.GetTrial(trialId);
-        if (trial != null)
-            TrialManager.SkipFinalStatementReply(Connection.ActiveChar, trial);
+        TrialManager.Instance.SkipFinalStatementReply(Connection.ActiveChar, trialId);
     }
 }

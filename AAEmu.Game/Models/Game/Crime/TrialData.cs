@@ -1,4 +1,6 @@
-using System.Numerics;
+﻿using System.Numerics;
+
+using AAEmu.Commons.Utils.DB;
 
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
@@ -15,6 +17,24 @@ namespace AAEmu.Game.Models.Game.Crime;
 
 public class TrialData
 {
+    public object SyncRoot { get; } = new();
+    internal bool DecisionReceived { get; set; }
+    internal bool ResultApplied { get; private set; }
+    internal bool CancellationNotified { get; set; }
+
+    internal bool TryClaimResult(Character defendant)
+    {
+        lock (SyncRoot)
+        {
+            if (defendant == null || Defendant != defendant || DefendantId != defendant.Id ||
+                ResultApplied || Step >= TrialStep.Cleanup)
+                return false;
+
+            ResultApplied = true;
+            return true;
+        }
+    }
+
     /// <summary>
     /// TrialId
     /// </summary>
@@ -31,7 +51,7 @@ public class TrialData
     {
         get
         {
-            return (uint)(CurrentStepEndTime - DateTime.UtcNow).TotalMilliseconds;
+            return (uint)Math.Clamp((CurrentStepEndTime - DateTime.UtcNow).TotalMilliseconds, 0, uint.MaxValue);
         }
     }
 
@@ -40,7 +60,7 @@ public class TrialData
     public List<CrimeEvent> EvidenceList { get; set; } = [];
 
     /// <summary>
-    /// Called by arresting function to put the criminal into court jail to await trial 
+    /// Called by arresting function to put the criminal into court jail to await trial
     /// </summary>
     /// <param name="temporaryCourtRoom"></param>
     /// <param name="defendant"></param>
@@ -60,10 +80,10 @@ public class TrialData
                 defendant.Transform.World.Rotation.Z), true);
         defendant.BroadcastPacket(
             new SCUnitPointsPacket(defendant.ObjId, defendant.Hp, defendant.Mp), true);
-        defendant.PostUpdateCurrentHp(defendant, 0, defendant.Hp, KillReason.PvpEnemy);        
+        defendant.PostUpdateCurrentHp(defendant, 0, defendant.Hp, KillReason.PvpEnemy);
 
         // Teleport criminal to the local jail
-        defendant.SendPacket(new SCTeleportUnitPacket(TeleportReason.Lockup, 0, temporaryCourtRoom.Jail.X, temporaryCourtRoom.Jail.Y, temporaryCourtRoom.Jail.Z, temporaryCourtRoom.Jail.Yaw.DegToRad()));
+        PrisonerAccess.MoveToJusticeDestination(defendant, temporaryCourtRoom.Jail, TeleportReason.Lockup);
 
         // Haranya -> returnDistrict: 427, resurrectionDistrict: 68
         /*
@@ -75,7 +95,7 @@ public class TrialData
         // Send guilty/trial question to player
         // TODO: Not yet sure if this sends CrimePoint or CrimeRecord or just 50 of the threshold
         defendant.SendPacket(new SCAskImprisonOrTrialPacket((uint)defendant.CrimePoint, JailTime));
-        
+
         defendant.SendPacket(new SCTrialWaitStatusPacket(0, JailTime * 60_000));
     }
 
@@ -90,7 +110,8 @@ public class TrialData
         // Pirate = max 40
         // However this information seems to be wrong compared to what the client shows
         // Below is what I suspect are the values based on what the client returns from trial and error
-        var defaultMinutes = 0;
+        long defaultMinutes = 0;
+        var victimLevels = new Dictionary<uint, byte?>();
         foreach (var crimeEvent in EvidenceList.ToList())
         {
             var thisEventScore = 0;
@@ -109,26 +130,38 @@ public class TrialData
                     thisEventScore = 8;
                     break;
             }
-            // There seems to be a level-difference penalty here as well
-            // TODO: move this to the crime table so we can just grab it from there? Or is it from data at the time of trial?
-            var victim = WorldManager.Instance.GetCharacterById(crimeEvent.Victim);
-            if (victim?.Level < 30)
-            {
+            // Retain the server's current low-level-victim policy, independent of login state.
+            if (thisEventScore > 0 && !victimLevels.ContainsKey(crimeEvent.Victim))
+                victimLevels[crimeEvent.Victim] = GetVictimLevel(crimeEvent.Victim);
+            if (victimLevels.GetValueOrDefault(crimeEvent.Victim) < 30)
                 thisEventScore *= 10;
-            }
             defaultMinutes += thisEventScore;
         }
 
-        JailTime = defaultMinutes; // (Defendant.CrimePoint / 5);
-        JailTime *= (1 + (Defendant.InfamyPoint / 1000));
+        JailTime = (int)Math.Clamp(defaultMinutes * (1L + Defendant.InfamyPoint / 1000),
+            0, int.MaxValue / 60000);
         if (Defendant.Faction.Id == FactionsEnum.Pirate)
         {
-            JailTime = 40; // Math.Min(40, Math.Max(JailTime, 15)); // Not correct, but good enough for now
+            JailTime = Math.Clamp(AppConfiguration.Instance.Justice.PirateSentenceMinutes, 0, int.MaxValue / 60000);
         }
 
         // Store the Jail time in case the trial doesn't go through
-        Defendant.OfflineGuiltyTime = JailTime;
-        Defendant.OfflineGuiltyRegion = CourtRegion;
+        Defendant.SetPendingTrialSentence(JailTime, CourtRegion);
+    }
+
+    internal static byte? GetVictimLevel(uint characterId)
+    {
+        if (characterId == 0)
+            return null;
+        var online = WorldManager.Instance.GetCharacterById(characterId);
+        if (online != null)
+            return online.Level;
+        using var connection = MySQL.CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT level FROM characters WHERE id=@id";
+        command.Parameters.AddWithValue("@id", characterId);
+        var value = command.ExecuteScalar();
+        return value is null or DBNull ? null : Convert.ToByte(value);
     }
 
     public void EnterCourtRoom(TrialCourtRoom courtRoom, Character defendant)
@@ -136,25 +169,14 @@ public class TrialData
         courtRoom.CurrentTrial = this;
         CourtRoom = courtRoom;
 
-        // Make Jury seats
-        Jury.Clear();
-        for(var i = 1; i <= CourtRoom.JurySeats.Count; i++)
-        {
-            var seat = CourtRoom.JurySeats.GetValueOrDefault(i);
-            if (seat == null)
-            {
-                // Failed to find seat doodad
-                continue;
-            }
-            Jury.Add(i, new TrialJuryBox { CourtRoom = CourtRoom, Seat = seat, SeatId = i, ConfirmTestimony = false, SelectedSentence = -1});
-        }
+        InitializeJurySeats();
         DefendantId = defendant.Id;
         DefendantName = defendant.Name;
 
-        // On Trial buff 
+        // On Trial buff
         defendant.Buffs.RemoveBuff((uint)BuffConstants.ForciblyAwaitingTrial);
         defendant.Buffs.AddBuff((uint)BuffConstants.Trial_Defendant, defendant);
-        
+
         // Teleport defendant
         defendant.SendPacket(new SCTeleportUnitPacket(TeleportReason.Defendant, 0, CourtRoom.Defendant.X, CourtRoom.Defendant.Y, CourtRoom.Defendant.Z, CourtRoom.Defendant.Yaw.DegToRad()));
 
@@ -162,7 +184,7 @@ public class TrialData
         defendant.SendPacket(new SCSummonDefendantPacket(Id));
         courtRoom.TrialChatChannel.JoinChannel(defendant);
 
-        // Jury Wait Status 
+        // Jury Wait Status
         defendant.SendPacket(new SCJuryWaitStatusPacket(0, Jury.Values.Count, JailTime * 60_000));
 
         // Change trial state
@@ -185,9 +207,25 @@ public class TrialData
 
         // Force self-target
         defendant.SendPacket(new SCForceAttackSetPacket(defendant.ObjId, false));
-        
+
         // Send Jury Invites
         SendJuryInvites();
+    }
+
+    internal void InitializeJurySeats()
+    {
+        // Native r208022 indexes a five-chair array with the wire seat ID, so it must be 0..4.
+        Jury.Clear();
+        for (var seatId = 0; seatId < 5; seatId++)
+        {
+            if (!CourtRoom.JurySeats.TryGetValue(seatId, out var seat) || seat == null)
+                continue;
+            Jury.Add(seatId, new TrialJuryBox
+            {
+                CourtRoom = CourtRoom, Seat = seat, SeatId = seatId,
+                ConfirmTestimony = false, SelectedSentence = -1
+            });
+        }
     }
 
     /// <summary>
@@ -243,22 +281,26 @@ public class TrialData
         {
             if (juryEntry.JuryMember == null)
             {
+                if (juryEntry.Seat == null || !TrialCourtRoom.TryGetNativeJuryLocation(juryEntry.Seat.TemplateId,
+                        out var isWest, out var courtBank, out var nativeSeat) || nativeSeat != jurySeatId)
+                    continue;
+                TrialManager.Instance.LeaveTrialAudience(player);
                 juryEntry.JuryMember = player;
                 TrialManager.Instance.RemovePlayerFromQueue(juryEntry.JuryMember);
 
                 // Save current position to return to after the trial (or if you disconnected)
                 player.MainWorldPosition = player.Transform.CloneDetached(player);
                 player.SendMessage($"Saving location {player.Transform.World.Position} -> {player.MainWorldPosition.World.Position}");
-                player.SendPacket(new SCSummonJuryPacket(Id, CourtRoom.Id, jurySeatId));
+                player.SendPacket(new SCSummonJuryPacket(Id, courtBank, nativeSeat));
 
                 // Teleport the jury
                 var pos = juryEntry.Seat.Transform.World.Position;
                 player.SendPacket(new SCTeleportUnitPacket(TeleportReason.Jury, 0, pos.X, pos.Y, pos.Z, juryEntry.Seat.Transform.World.Rotation.Z));
                 player.Transform.World.SetPosition(pos);
                 player.SendMessage($"New location {player.Transform.World.Position}");
-                
+
                 // Seat them down
-                player.SendPacket(new SCJuryBeSeatedPacket(CourtRegion == CourtRoomRegion.Haranyan, Id, (int)CourtRoom.Id, juryEntry.SeatId));
+                player.SendPacket(new SCJuryBeSeatedPacket(isWest, Id, (int)courtBank, nativeSeat));
 
                 CourtRoom.TrialChatChannel.JoinChannel(player);
                 // TODO: Remove the hardcoded attachment and bound Ids by grabbing them from the chair's DoodadFuncAttachment
@@ -321,14 +363,17 @@ public class TrialData
     /// Sends a packet to the defendant and all jury members
     /// </summary>
     /// <param name="packet"></param>
-    public void SendPackets(GamePacket packet)
+    public void SendPackets(GamePacket packet, bool includeAudience = false)
     {
-        Defendant?.SendPacket(packet);
-        foreach (var jury in Jury.Values)
+        lock (SyncRoot)
         {
-            jury?.JuryMember?.SendPacket(packet);
+            var recipients = Jury.Values.Select(seat => seat.JuryMember).Append(Defendant)
+                .Where(player => player != null);
+            if (includeAudience)
+                recipients = recipients.Concat(TrialManager.Instance.GetTrialAudienceSnapshot(this));
+            foreach (var player in recipients.Distinct().ToArray())
+                player.SendPacket(packet);
         }
-        // TODO: Maybe include audience as well?
     }
 
     /// <summary>
@@ -393,94 +438,66 @@ public class TrialData
 
     public void FinalizeVerdict()
     {
-        var total = 0;
-        var selectedCount = 0;
-        var voteResults = new Dictionary<int, int>();
-        foreach (var juryValue in Jury.Values)
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (SyncRoot)
         {
-            if (juryValue.JuryMember != null)
+            if (ResultApplied || Step != TrialStep.JuryVerdict)
+                return;
+
+            var occupiedSeats = Jury.Values.Where(seat => seat.JuryMember != null).ToArray();
+            var votes = occupiedSeats.Select(seat => seat.SelectedSentence)
+                .Where(choice => choice is >= 1 and <= 6).ToArray();
+            var total = occupiedSeats.Length;
+            var selectedCount = votes.Length;
+            foreach (var seat in occupiedSeats)
+                seat.JuryMember.Buffs.RemoveBuff((uint)BuffConstants.Jury);
+            var mostVoted = SelectVerdict(votes);
+
+            var isGuilty = mostVoted > 1;
+            var sentenceType = (TrialSentenceResult)mostVoted;
+            var sentenceTime = GetSentenceMinutes(JailTime, mostVoted);
+
+            var sentenceMilliseconds = isGuilty
+                ? Character.CombinePrisonSentence(sentenceTime, Defendant.GetUnservedPrisonMilliseconds())
+                : 0;
+            SendPackets(new SCRulingStatusPacket(selectedCount, total, sentenceType, sentenceMilliseconds));
+
+            JailTime = sentenceTime;
+            if (isGuilty)
             {
-                total++;
-                if (juryValue.SelectedSentence >= 0)
-                {
-                    if (!voteResults.ContainsKey(juryValue.SelectedSentence))
-                        voteResults.Add(juryValue.SelectedSentence, 0);
-                    
-                    voteResults[juryValue.SelectedSentence]++;
-                    selectedCount++;
-                }
-                juryValue.JuryMember?.Buffs.RemoveBuff((uint)BuffConstants.Jury);
+                TrialManager.Instance.ResultIsGuilty(Defendant, this, false);
             }
-        }
-
-        // TODO: Figure out how the times ojn the jury buttons are calculated
-        // TODO: Calculate actual times by jury "average"
-
-
-        var mostVoted = 3; // default guilty
-        var mostVotedCount = 0;
-        foreach (var (voteKey, voteCount) in voteResults)
-        {
-            if (voteCount > mostVotedCount)
+            else
             {
-                mostVoted = voteKey;
-                mostVotedCount = voteCount;
+                TrialManager.Instance.ResultIsNotGuilty(Defendant, this);
             }
-        }
-
-        var isGuilty = mostVoted > 1;
-        // NG , 2 , 3 , 4 , 5 , 6
-        // TODO: verify formula
-        // Example: 0  ,  3  ,  8  ,  13  ,  17  ,  20
-        // Rates:   0    1/3    1    5/3           9/4
-
-        TrialSentenceResult sentenceType;
-        var sentenceTime = (int)Math.Round(JailTime * 1f);
-        switch (mostVoted)
-        {
-            case 0:
-            case 1:
-                // Not guilty
-                sentenceType = TrialSentenceResult.NotGuilty;
-                sentenceTime = 0;
-                break;
-            case 2:
-                sentenceType = TrialSentenceResult.Guilty1;
-                sentenceTime = (int)Math.Round(JailTime * 0.2f);
-                break;
-            case 3:
-                sentenceType = TrialSentenceResult.Guilty2;
-                sentenceTime = (int)Math.Round(JailTime * 0.5f);
-                break;
-            case 4:
-                sentenceType = TrialSentenceResult.Guilty3;
-                sentenceTime = (int)Math.Round(JailTime * 0.8f);
-                break;
-            case 5:
-                sentenceType = TrialSentenceResult.Guilty4;
-                sentenceTime = (int)Math.Round(JailTime * 1f);
-                break;
-            case 6:
-                sentenceType = TrialSentenceResult.Guilty5;
-                sentenceTime = (int)Math.Round(JailTime * 1.2f);
-                break;
-            default:
-                // Should not happen
-                sentenceType = TrialSentenceResult.NotGuilty;
-                sentenceTime = 0;
-                break;
-        }
-
-        SendPackets(new SCRulingStatusPacket(selectedCount, total, sentenceType, sentenceTime * 60_000));
-
-        JailTime = sentenceTime;
-        if (isGuilty)
-        {
-            TrialManager.Instance.ResultIsGuilty(Defendant, this, false);
-        }
-        else
-        {
-            TrialManager.Instance.ResultIsNotGuilty(Defendant, this);
         }
     }
+
+    internal static int SelectVerdict(IReadOnlyList<int> choices)
+    {
+        // Preserve the legacy server fallback when nobody submits a vote. This is not a
+        // client-authored rule and is separate from no-jury cancellation at the full base time.
+        return choices.Where(choice => choice is >= 1 and <= 6)
+            .GroupBy(choice => choice).OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key)
+            .Select(group => group.Key).DefaultIfEmpty(3).First();
+    }
+
+    internal static int GetSentenceMinutes(int baseMinutes, int verdict)
+    {
+        // r208022 computes the displayed options from base milliseconds and floors whole minutes.
+        var multiplier = verdict switch
+        {
+            1 => 0d,
+            2 => 0.2d,
+            3 => 0.5d,
+            4 => 0.8d,
+            5 => 1d,
+            6 => 1.2d,
+            _ => throw new ArgumentOutOfRangeException(nameof(verdict))
+        };
+        return (int)Math.Clamp(Math.Floor(Math.Max(0, baseMinutes) * multiplier), 0, int.MaxValue / 60_000);
+    }
+
 }

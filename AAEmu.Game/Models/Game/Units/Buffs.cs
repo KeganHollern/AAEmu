@@ -784,9 +784,15 @@ public partial class Buffs : IBuffs
             effects = _effects.ToArray();
         }
 
-        foreach (var e in effects.ToList())
-            if (e != null /* && (e.Template.Skill == null || e.Template.Skill.Type != SkillTypes.Passive)*/)
-                e.Exit();
+        foreach (var effect in effects)
+        {
+            if (effect == null)
+                continue;
+            // Arena combat resets must not remove a persistent justice penalty or a report.
+            if (own is Character && (IsJusticePenaltyBuff(effect.Template.Id) || IsBotReportBuff(effect.Template.Id)))
+                continue;
+            effect.Exit();
+        }
     }
 
     public void TriggerRemoveOn(BuffRemoveOn on, uint value = 0)
@@ -948,8 +954,13 @@ public partial class Buffs : IBuffs
     private static bool IsBotReportBuff(uint id) => id is (uint)BuffConstants.SuspectedUser or
         (uint)BuffConstants.TransformingIntoPrimeSuspect or (uint)BuffConstants.PrimeSuspect;
 
-    private static bool IsPermanentBotReportBuff(uint id, int duration) =>
-        id == (uint)BuffConstants.SuspectedUser && duration == 0;
+    private static bool IsJusticePenaltyBuff(uint id) => id is
+        (uint)BuffConstants.Prisoner_Nuian or (uint)BuffConstants.Prisoner_Haranyan or
+        (uint)BuffConstants.Prisoner_Bot or (uint)BuffConstants.ForciblyAwaitingTrial or
+        (uint)BuffConstants.Wanted or (uint)BuffConstants.Retribution or (uint)BuffConstants.WarZoneLeech;
+
+    private static bool IsPermanentSavedMarker(uint id, int duration) => duration == 0 &&
+        id is (uint)BuffConstants.SuspectedUser or (uint)BuffConstants.Wanted;
 
     /// <summary>
     /// Determines whether a buff should be saved to the database on logout.
@@ -967,8 +978,8 @@ public partial class Buffs : IBuffs
         if (buff.Passive)
             return false;
 
-        // The authored report marker is permanent. Other permanent buffs come from race/template data.
-        if (IsPermanentBotReportBuff(buff.Template.Id, buff.Duration))
+        // Wanted and the authored report marker are permanent. Other permanent buffs come from race/template data.
+        if (IsPermanentSavedMarker(buff.Template.Id, buff.Duration))
             return buff.State != EffectState.Finishing && buff.State != EffectState.Finished;
 
         // Permanent buffs (Duration=0) are race/template buffs
@@ -995,16 +1006,17 @@ public partial class Buffs : IBuffs
         if (buff.Template.SaveRuleId == BuffSaveRuleType.Normal)
         {
             // Authored paid cooldowns can be Bad buffs, such as the four-hour language cooldown.
-            // Keep ordinary combat debuffs excluded. The authored save rule and duration still apply.
+            // Authored justice penalties also persist. Ordinary hostile effects need a separate
+            // caster-restoration path, so retain the existing Normal combat-debuff filter.
             if (buff.Template.Kind == BuffKind.Bad && !IsBotReportBuff(buff.Template.Id) &&
-                !IsPaidBuff(buff.Template.Id))
+                !IsPaidBuff(buff.Template.Id) && !IsJusticePenaltyBuff(buff.Template.Id))
                 return false;
 
             // A restored paid cooldown can have less than one minute left.
             // Use its authored duration to distinguish it from a short combat buff.
             var paidLongBuff = IsPaidBuff(buff.Template.Id) &&
                 buff.Template.GetDuration(buff.AbLevel) >= MinimumBuffDurationToSave;
-            if (buff.Duration < MinimumBuffDurationToSave && !IsBotReportBuff(buff.Template.Id) && !paidLongBuff)
+            if (buff.Duration < MinimumBuffDurationToSave && !IsBotReportBuff(buff.Template.Id) && !IsJusticePenaltyBuff(buff.Template.Id) && !paidLongBuff)
                 return false;
 
             return true;
@@ -1055,7 +1067,7 @@ public partial class Buffs : IBuffs
                 if (!ShouldPersistBuff(buff) || (changedBuffIds != null && !changedBuffIds.Contains(buff.Template.Id)))
                     continue;
 
-                var permanent = IsPermanentBotReportBuff(buff.Template.Id, buff.Duration);
+                var permanent = IsPermanentSavedMarker(buff.Template.Id, buff.Duration);
                 var timeLeft = permanent ? 0 : (int)buff.GetTimeLeft();
                 if (timeLeft <= 0 && !permanent)
                     continue;
@@ -1109,13 +1121,6 @@ public partial class Buffs : IBuffs
         try
         {
             var restoredCount = 0;
-            var retainedBuffIds = new HashSet<uint>
-            {
-                (uint)BuffConstants.SuspectedUser,
-                (uint)BuffConstants.TransformingIntoPrimeSuspect,
-                (uint)BuffConstants.PrimeSuspect
-            };
-
             using var connection = MySQL.CreateConnection();
             using (var cmd = connection.CreateCommand())
             {
@@ -1154,20 +1159,18 @@ public partial class Buffs : IBuffs
                         continue;
                     }
 
-                    if (buffTemplate.SaveRuleId != BuffSaveRuleType.DontSave &&
-                        IsPaidBuff(row.buffId))
-                        retainedBuffIds.Add(row.buffId);
+                    if (buffTemplate.SaveRuleId == BuffSaveRuleType.DontSave)
+                        continue;
 
-                    // The permanent report marker has no countdown.
-                    var permanent = IsPermanentBotReportBuff(row.buffId, row.duration) && buffTemplate.Duration == 0;
+                    var permanent = IsPermanentSavedMarker(row.buffId, row.duration) && buffTemplate.Duration == 0;
                     int remainingMs;
                     if (permanent)
                         remainingMs = 0;
                     else if (row.realTime)
                     {
                         // RealTime: subtract offline time
-                        var offlineMs = (int)(DateTime.UtcNow - row.savedAt).TotalMilliseconds;
-                        remainingMs = row.timeLeft - offlineMs;
+                        var offlineMs = Math.Max(0, (DateTime.UtcNow - row.savedAt).TotalMilliseconds);
+                        remainingMs = (int)Math.Clamp(row.timeLeft - offlineMs, 0, int.MaxValue);
 
                         if (remainingMs <= 0)
                         {
@@ -1208,20 +1211,8 @@ public partial class Buffs : IBuffs
                 }
             }
 
-            // Restore does not consume a paid buff. Keep its last durable checkpoint if the
-            // process stops again before autosave. Later character/skill checkpoints replace it.
-            using (var deleteCmd = connection.CreateCommand())
-            {
-                var retained = retainedBuffIds.Order().Select((id, index) => (id, name: "@retained" + index)).ToArray();
-                deleteCmd.CommandText =
-                    "DELETE FROM `character_active_buffs` WHERE `character_id` = @characterId " +
-                    "AND `buff_id` NOT IN (" + string.Join(",", retained.Select(value => value.name)) + ")";
-                deleteCmd.Parameters.AddWithValue("@characterId", character.Id);
-                foreach (var (id, name) in retained)
-                    deleteCmd.Parameters.AddWithValue(name, id);
-                deleteCmd.ExecuteNonQuery();
-            }
-
+            // Loading does not consume a durable checkpoint. A second restart before autosave
+            // must restore the same saved penalties. The next save replaces these rows.
             if (restoredCount > 0)
                 Logger.Info($"Restored {restoredCount} buff(s) for character {character.Id} ({character.Name})");
         }

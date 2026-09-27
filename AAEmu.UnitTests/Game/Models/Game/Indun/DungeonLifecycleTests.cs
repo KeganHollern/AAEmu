@@ -4,11 +4,14 @@ using System.Reflection;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Indun;
 using AAEmu.Game.Models.Game.Indun.Actions;
 using AAEmu.Game.Models.Game.Indun.Events;
@@ -35,6 +38,9 @@ public sealed class DungeonLifecycleTests
     [Before(Test)]
     public void SetUp()
     {
+        var skills = new SkillManager(null, null);
+        SetField(skills, "_taggedBuffs", new Dictionary<uint, List<uint>>());
+        SetSingleton(skills);
         var tick = new TickManager();
         _worldManager = new WorldManager(tick, Mock.Of<IWorldIdManager>().Object,
             new Lazy<IZoneManager>(() => Mock.Of<IZoneManager>().Object),
@@ -315,6 +321,98 @@ public sealed class DungeonLifecycleTests
     }
 
     [Test]
+    public async Task AreaClearTick_PhaseChangeAndJusticeCancellation_CompleteWithoutLockInversion()
+    {
+        const uint phaseId = 2;
+        const uint targetTemplateId = 9999;
+        var doodads = new DoodadManager(null, null, null, null, null);
+        SetField(doodads, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>> { [phaseId] = [] });
+        SetField(doodads, "_phaseFuncs", new Dictionary<uint, List<DoodadPhaseFunc>>());
+        SetSingleton(doodads);
+        SetSingleton(new InstantGameManager());
+        var world = CreateWorld();
+        AddRoomDoodad(world);
+        var target = new Doodad { ObjId = 101, TemplateId = targetTemplateId, Template = new DoodadTemplate() };
+        target.Transform.InstanceId = world.Id;
+        world.Regions[0, 0].AddObject(target);
+        var roomEvent = (IndunEventNoAliveChInRooms)CreateEvent("room");
+        _events.Add(roomEvent);
+        var dungeon = new Dungeon(new IndunZone { ZoneGroupId = ZoneGroupId }, world);
+        await new DungeonLoaderTask(dungeon).ExecuteAsync();
+        roomEvent.SetRoomPlayerCount(world.Id, 1);
+        var player = CreatePlayer();
+        player.Transform.InstanceId = world.Id;
+        player.OfflineGuiltyTime = -1;
+        player.MainWorldPosition = player.Transform.CloneDetached(player);
+        // Membership outside the room still needs removal when the court takes the player.
+        world.AddObject(player);
+        using var actionEntered = new ManualResetEventSlim();
+        using var continuePhase = new ManualResetEventSlim();
+        using var justiceReachedPersistence = new ManualResetEventSlim();
+        var phaseAction = new IndunActionChangeDoodadPhases
+        {
+            DoodadAlmightyId = targetTemplateId,
+            DoodadFuncGroupId = phaseId
+        };
+        var action = new CallbackAction
+        {
+            Id = 1,
+            Callback = instance =>
+            {
+                actionEntered.Set();
+                if (!continuePhase.Wait(TimeSpan.FromSeconds(5)))
+                    throw new TimeoutException("The justice path did not reach the persistence lock.");
+                // Bound the inverse-lock regression so a failed test cannot leave the suite deadlocked.
+                if (!Monitor.TryEnter(SaveManager.PersistenceSyncRoot, TimeSpan.FromSeconds(2)))
+                    throw new TimeoutException("The dungeon action and justice cancellation use opposite lock orders.");
+                try
+                {
+                    phaseAction.Execute(instance);
+                }
+                finally
+                {
+                    Monitor.Exit(SaveManager.PersistenceSyncRoot);
+                }
+            }
+        };
+        SetField(IndunGameData.Instance, "_indunActions", new Dictionary<uint, IndunAction> { [action.Id] = action });
+        var tick = Task.Factory.StartNew(() => InvokeAreaClearTick(dungeon), CancellationToken.None,
+            TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Task justice = Task.CompletedTask;
+        try
+        {
+            await Assert.That(actionEntered.Wait(TimeSpan.FromSeconds(5))).IsTrue();
+            justice = Task.Factory.StartNew(() =>
+            {
+                var entered = Monitor.TryEnter(SaveManager.PersistenceSyncRoot, TimeSpan.FromMilliseconds(100));
+                justiceReachedPersistence.Set();
+                try
+                {
+                    if (!entered)
+                        Monitor.Enter(SaveManager.PersistenceSyncRoot, ref entered);
+                    PrisonerAccess.CancelInstanceAdmissions(player);
+                }
+                finally
+                {
+                    if (entered)
+                        Monitor.Exit(SaveManager.PersistenceSyncRoot);
+                }
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            await Assert.That(justiceReachedPersistence.Wait(TimeSpan.FromSeconds(5))).IsTrue();
+        }
+        finally
+        {
+            continuePhase.Set();
+            await Task.WhenAll(tick, justice).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        await Assert.That(target.FuncGroupId).IsEqualTo(phaseId);
+        await Assert.That(roomEvent.GetRoomPlayerCount(world.Id)).IsEqualTo(0u);
+        await Assert.That(world.HasCharacter(player.Id)).IsFalse();
+        await Assert.That(player.MainWorldPosition).IsNull();
+    }
+
+    [Test]
     public async Task AreaClearTick_FirstRoomAlreadyCleared_StillProcessesLaterRooms()
     {
         var world = CreateWorld();
@@ -387,6 +485,77 @@ public sealed class DungeonLifecycleTests
         await Assert.That(ev.GetRoomDoodad(first.Id)).IsNull();
         await Assert.That(ev.GetRoomDoodad(second.Id)).IsSameReferenceAs(secondDoodad);
         await Assert.That(ev.GetRoomPlayerCount(second.Id)).IsEqualTo(7u);
+    }
+
+    [Test]
+    public async Task QueuePlayer_Prisoner_DoesNotConsumeOrQueue()
+    {
+        var world = CreateWorld();
+        var dungeon = new Dungeon(new IndunZone { ZoneGroupId = ZoneGroupId }, world);
+        var player = CreatePlayer();
+        player.OfflineGuiltyTime = 1;
+        var consumed = false;
+
+        var accepted = dungeon.QueuePlayer(player, () => { consumed = true; return true; });
+
+        await Assert.That(accepted).IsFalse();
+        await Assert.That(consumed).IsFalse();
+        await Assert.That(dungeon.EnterRequests).IsEmpty();
+        await Assert.That(world.HasCharacter(player.Id)).IsFalse();
+    }
+
+    [Test]
+    public async Task CompleteLoading_SentenceAfterQueue_DoesNotMovePrisoner()
+    {
+        var world = CreateWorld();
+        var dungeon = new Dungeon(new IndunZone { ZoneGroupId = ZoneGroupId }, world);
+        var player = CreatePlayer();
+        dungeon.EnterRequests.Add(player);
+        player.OfflineGuiltyTime = 1;
+        var before = player.Transform.InstanceId;
+
+        dungeon.CompleteLoading(world);
+
+        await Assert.That(dungeon.FinishedLoading).IsTrue();
+        await Assert.That(dungeon.EnterRequests).IsEmpty();
+        await Assert.That(world.HasCharacter(player.Id)).IsFalse();
+        await Assert.That(player.Transform.InstanceId).IsEqualTo(before);
+    }
+
+    [Test]
+    public async Task CancelAdmission_QueuedAndEntered_RemovesBothWithoutRestoringOldPosition()
+    {
+        var world = CreateWorld();
+        var dungeon = new Dungeon(new IndunZone { ZoneGroupId = ZoneGroupId }, world);
+        var player = CreatePlayer();
+        dungeon.EnterRequests.Add(player);
+        world.AddObject(player);
+        var before = player.Transform.World.Position;
+
+        dungeon.CancelAdmission(player);
+        dungeon.CompleteLoading(world);
+
+        await Assert.That(dungeon.EnterRequests).IsEmpty();
+        await Assert.That(world.HasCharacter(player.Id)).IsFalse();
+        await Assert.That(player.Transform.World.Position).IsEqualTo(before);
+    }
+
+    [Test]
+    public async Task CapturedLeaveCallback_AfterJusticeMove_DoesNotUseOldReturnPosition()
+    {
+        var world = CreateWorld();
+        var dungeon = new Dungeon(new IndunZone { ZoneGroupId = ZoneGroupId }, world);
+        var player = CreatePlayer();
+        player.MainWorldPosition = player.Transform.CloneDetached(player);
+        player.Transform.Local.Position = new System.Numerics.Vector3(10, 20, 30);
+        player.OfflineGuiltyTime = -1;
+        dungeon.CancelAdmission(player);
+
+        typeof(Dungeon).GetMethod("OnDungeonLeave", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(dungeon, [world, new OnDungeonLeaveArgs { Player = player }]);
+
+        await Assert.That(player.Transform.World.Position).IsEqualTo(new System.Numerics.Vector3(10, 20, 30));
+        await Assert.That(world.HasCharacter(player.Id)).IsFalse();
     }
 
     private WorldInstance CreateWorld()
@@ -497,6 +666,16 @@ public sealed class DungeonLifecycleTests
     private static void SetField(object target, string name, object value)
     {
         target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(target, value);
+    }
+
+    private sealed class CallbackAction : IndunAction
+    {
+        public Action<WorldInstance> Callback { get; init; }
+
+        public override void Execute(WorldInstance worldInstance)
+        {
+            Callback(worldInstance);
+        }
     }
 
     private sealed class CountingAction : IndunAction

@@ -129,12 +129,8 @@ public partial class Character
             victimZone?.GroupId ?? 0,
             Buffs.CheckBuffTag((uint)BuffConstants.TagWanted));
 
-        var possibleArrest = false;
-        Character arrestor = null;
         if (killer is Character enemy)
         {
-            possibleArrest = true;
-            arrestor = enemy;
             if (relationState != RelationState.Friendly)
             {
                 enemy.HostileFactionKills++;
@@ -174,20 +170,11 @@ public partial class Character
         // Clear damage history on death (heal history is intentionally kept)
         _pvpDamageHistory.Clear();
 
-        // Arrest if wanted
-        if (possibleArrest && Buffs.CheckBuffTag((uint)BuffConstants.TagWanted))
-        {
-            if (!Buffs.CheckBuff((uint)BuffConstants.Contemptuous))
-            {
-                // If not a pirate arrest regardless
-                TrialManager.Instance.ArrestCriminal(this, arrestor);
-            }
-            else if (!ZoneManager.Instance.IsPirateDesperadoZone(Transform.ZoneId))
-            {
-                // If a pirate, only arrest in faction zones
-                TrialManager.Instance.ArrestCriminal(this, arrestor);
-            }
-        }
+        // Owner attribution includes a player's pet. An escaped prisoner's old sentence
+        // remains enforceable even after Wanted was cleared or outside the normal pirate zones.
+        var arrestor = GetArrestorOnPlayerDeath(killer, ZoneManager.Instance.IsPirateDesperadoZone(Transform.ZoneId));
+        if (arrestor != null)
+            TrialManager.Instance.ArrestCriminal(this, arrestor);
     }
 
     internal static ZoneConflictType RecordZoneConflictKill(ZoneConflict conflictData, bool qualifyingKill)
@@ -484,20 +471,15 @@ public partial class Character
         }
         else
         {
-            if (CrimePoint >= CrimeManager.WantedCrimePointThreshold)
+            if (CrimePoint >= CrimeManager.WantedCrimePointThreshold && !HasPendingTrial)
             {
                 if (!Buffs.CheckBuff((uint)BuffConstants.Wanted))
                 {
                     Buffs.AddBuff((uint)BuffConstants.Wanted, this);
                 }
             }
-            else
-            {
-                if (Buffs.CheckBuff((uint)BuffConstants.Wanted))
-                {
-                    Buffs.RemoveBuff((uint)BuffConstants.Wanted);
-                }
-            }
+            // Lower crime points do not clear an existing Wanted marker. Arrest or a trial
+            // result clears it explicitly, and persistence carries it through relog.
             // Remove pirate buff if on
             if (Buffs.CheckBuff((uint)BuffConstants.Contemptuous))
             {

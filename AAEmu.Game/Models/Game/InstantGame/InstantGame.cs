@@ -3,6 +3,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.InstantGame.Static;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
@@ -57,39 +58,58 @@ public partial class InstantGame
 
     public void AddPlayer(Character character, InstantCorps corps)
     {
-        if (_players.Contains(character))
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            // Player already exists in game, remove for correction
-            RemovePlayer(character);
-        }
-        _players.Add(character);
-        var factionId = corps == InstantCorps.Corps1 ? _battlefield.RuleSet.Corps1FactionId : _battlefield.RuleSet.Corps2FactionId;
-        _corps[factionId].Add(character);
-        _characterCorps.Add(character, corps);
+            if (!PrisonerAccess.CanEnter(character, true))
+                return;
+            if (_players.Contains(character))
+            {
+                // Player already exists in game, remove for correction
+                RemovePlayer(character);
+            }
+            _players.Add(character);
+            var factionId = corps == InstantCorps.Corps1 ? _battlefield.RuleSet.Corps1FactionId : _battlefield.RuleSet.Corps2FactionId;
+            _corps[factionId].Add(character);
+            _characterCorps.Add(character, corps);
 
-        character.SendPacket(new SCInviteToInstantGamePacket(_zoneInstanceId, _battlefield.RuleSet.Id, corps, 1));
-        character.CurrentInstantGame = this;
+            character.SendPacket(new SCInviteToInstantGamePacket(_zoneInstanceId, _battlefield.RuleSet.Id, corps, 1));
+            character.CurrentInstantGame = this;
+        }
     }
 
     public bool RemovePlayer(Character character)
     {
-        if (character == null)
-            return false;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (character == null)
+                return false;
 
-        if (!_players.Contains(character))
-            return false;
+            if (!_players.Contains(character))
+                return false;
 
-        _players.Remove(character);
+            _players.Remove(character);
 
-        if (_corps.TryGetValue((uint)InstantCorps.Corps1, out var charsInCorps1))
-            charsInCorps1.Remove(character);
+            foreach (var members in _corps.Values)
+                members.Remove(character);
 
-        if (_corps.TryGetValue((uint)InstantCorps.Corps2, out var charsInCorps2))
-            charsInCorps2.Remove(character);
+            _characterCorps.Remove(character);
+            if (character.CurrentInstantGame == this)
+                character.CurrentInstantGame = null;
+            return true;
+        }
+    }
 
-        _characterCorps.Remove(character);
-        character.CurrentInstantGame = null;
-        return true;
+    internal void CancelAdmission(Character character)
+    {
+        RemovePlayer(character);
+        if (character.CurrentInstantGame == this)
+            character.CurrentInstantGame = null;
+        if (_members.Remove(character, out var member))
+        {
+            member.Corps?.Members.Remove(member);
+            character.SetFaction(character.OriginFaction.Id);
+        }
+        character.Events.OnKill -= OnKill;
     }
 
     public bool IsFull => _players.Count == _battlefield.RuleSet.CorpsSize * 2;
@@ -115,42 +135,62 @@ public partial class InstantGame
 
     public void PlayerInviteResponse(Character character, bool joins, ulong qualifierId)
     {
-        if (!joins)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            // Next room, remove from current game then readd to requeue
-            InstantGameManager.Instance.WithdrawFromBattlefield(character);
-            InstantGameManager.Instance.ApplyToBattlefield(_battlefield.Id, InstantCorps.Any, character);
-            return;
-        }
+            if (!PrisonerAccess.CanEnter(character, true))
+            {
+                CancelAdmission(character);
+                return;
+            }
+            if (!joins)
+            {
+                // Next room, remove from current game then readd to requeue
+                InstantGameManager.Instance.WithdrawFromBattlefield(character);
+                InstantGameManager.Instance.ApplyToBattlefield(_battlefield.Id, InstantCorps.Any, character);
+                return;
+            }
 
-        var corps = _characterCorps[character];
-        var spawn = corps == InstantCorps.Corps1 ? _battlefield.Spawns.Corps1Spawn : _battlefield.Spawns.Corps2Spawn;
-        MoveCharacterToWorld(character, _battlefield.ZoneKey, spawn.X, spawn.Y, spawn.Z);
+            if (character.CurrentInstantGame != this || !_characterCorps.TryGetValue(character, out var corps))
+                return;
+            var spawn = corps == InstantCorps.Corps1 ? _battlefield.Spawns.Corps1Spawn : _battlefield.Spawns.Corps2Spawn;
+            MoveCharacterToWorld(character, _battlefield.ZoneKey, spawn.X, spawn.Y, spawn.Z);
+        }
     }
 
     public void OnEnterWorld(Character character, ulong qualifierId)
     {
-        var corps = _characterCorps[character];
-        character.SendPacket(new SCInstantGameJoinedPacket(_zoneInstanceId, corps, _battlefield.RuleSet));
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!PrisonerAccess.CanEnter(character, true))
+            {
+                // A sentence issued during the load owns the new jail position. Do not
+                // restore the battlefield's older pre-arrest MainWorldPosition here.
+                CancelAdmission(character);
+                return;
+            }
+            if (character.CurrentInstantGame != this || !_characterCorps.TryGetValue(character, out var corps))
+                return;
+            character.SendPacket(new SCInstantGameJoinedPacket(_zoneInstanceId, corps, _battlefield.RuleSet));
 
-        if (corps == InstantCorps.Corps1)
-            character.SetFaction((FactionsEnum)_battlefield.RuleSet.Corps1FactionId);
-        else
-            character.SetFaction((FactionsEnum)_battlefield.RuleSet.Corps2FactionId);
+            if (corps == InstantCorps.Corps1)
+                character.SetFaction((FactionsEnum)_battlefield.RuleSet.Corps1FactionId);
+            else
+                character.SetFaction((FactionsEnum)_battlefield.RuleSet.Corps2FactionId);
 
-        character.Events.OnKill += OnKill;
+            character.Events.OnKill += OnKill;
 
-        var member = new InstantGameTeamMember { Character = character };
-        _members.Add(character, member);
+            var member = new InstantGameTeamMember { Character = character };
+            _members.Add(character, member);
 
-        var result = corps == InstantCorps.Corps1 ? _corps1Result : _corps2Result;
-        result.Members.Add(member);
-        member.Corps = result;
+            var result = corps == InstantCorps.Corps1 ? _corps1Result : _corps2Result;
+            result.Members.Add(member);
+            member.Corps = result;
 
-        // TODO: This can be done better.
-        // TODO: Game expire after 60 seconds if not enough players
-        if (_members.Count == _battlefield.RuleSet.CorpsSize * 2)
-            Start();
+            // TODO: This can be done better.
+            // TODO: Game expire after 60 seconds if not enough players
+            if (_members.Count == _battlefield.RuleSet.CorpsSize * 2)
+                Start();
+        }
     }
 
     public void Start()
@@ -163,10 +203,29 @@ public partial class InstantGame
         Task.Run(async () =>
         {
             await Task.Delay(3000);
-            foreach (var (character, _) in _characterCorps)
+            ResetPlayers();
+        });
+        Task.Run(async () =>
+        {
+            await Task.Delay(_battlefield.RuleSet.TimePlaying * 60 * 1000, _endGameTokenSource.Token);
+            await EndGame();
+        }, _endGameTokenSource.Token);
+    }
+
+    internal void ResetPlayers()
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            foreach (var (character, _) in _characterCorps.ToArray())
             {
-                if (character == null)
+                if (character == null || character.CurrentInstantGame != this)
                 {
+                    continue;
+                }
+
+                if (!PrisonerAccess.CanEnter(character, true))
+                {
+                    CancelAdmission(character);
                     continue;
                 }
 
@@ -180,12 +239,7 @@ public partial class InstantGame
                 // Reset Cooldowns
                 character.ResetAllSkillCooldowns(false);
             }
-        });
-        Task.Run(async () =>
-        {
-            await Task.Delay(_battlefield.RuleSet.TimePlaying * 60 * 1000, _endGameTokenSource.Token);
-            await EndGame();
-        }, _endGameTokenSource.Token);
+        }
     }
 
     public async Task EndGame()
@@ -216,33 +270,42 @@ public partial class InstantGame
 
     public void LeaveInstantGame(Character character)
     {
-        // Warning: Null exception exists if player does not exist in the world when this is ran (Most likely from disconnecting or character select)
-
-        RemovePlayer(character);
-        character.SetFaction(character.OriginFaction.Id);
-        character.Events.OnKill -= OnKill;
-        character.DisabledSetPosition = true;
-
-        if (character.MainWorldPosition == null)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            _log.Warn($"Character {character.Name} ({character.Id}) does not have MainWorldPosition when leaving instant game!");
-            return;
-        }
+            if (character.CurrentInstantGame != this || !_players.Contains(character))
+                return;
+            if (character.IsPrisoner)
+            {
+                CancelAdmission(character);
+                return;
+            }
 
-        character.Transform = character.MainWorldPosition.Clone();
-        character.Transform.InstanceId = WorldManager.DefaultInstanceId;
-        character.SendPacket(
-            new SCLoadInstancePacket(
-                character.MainWorldPosition.WorldId,
-                character.MainWorldPosition.ZoneId,
-                character.MainWorldPosition.World.Position.X,
-                character.MainWorldPosition.World.Position.Y,
-                character.MainWorldPosition.World.Position.Z,
-                character.MainWorldPosition.World.Rotation.X.DegToRad(),
-                character.MainWorldPosition.World.Rotation.Y.DegToRad(),
-                character.MainWorldPosition.World.Rotation.Z.DegToRad()
-            )
-        );
+            RemovePlayer(character);
+            character.SetFaction(character.OriginFaction.Id);
+            character.Events.OnKill -= OnKill;
+            character.DisabledSetPosition = true;
+
+            if (character.MainWorldPosition == null)
+            {
+                _log.Warn($"Character {character.Name} ({character.Id}) does not have MainWorldPosition when leaving instant game!");
+                return;
+            }
+
+            character.Transform = character.MainWorldPosition.Clone();
+            character.Transform.InstanceId = WorldManager.DefaultInstanceId;
+            character.SendPacket(
+                new SCLoadInstancePacket(
+                    character.MainWorldPosition.WorldId,
+                    character.MainWorldPosition.ZoneId,
+                    character.MainWorldPosition.World.Position.X,
+                    character.MainWorldPosition.World.Position.Y,
+                    character.MainWorldPosition.World.Position.Z,
+                    character.MainWorldPosition.World.Rotation.X.DegToRad(),
+                    character.MainWorldPosition.World.Rotation.Y.DegToRad(),
+                    character.MainWorldPosition.World.Rotation.Z.DegToRad()
+                )
+            );
+        }
     }
 
     private void MoveCharacterToWorld(Character character, uint zoneId, float x, float y, float z)

@@ -4,6 +4,7 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.Indun;
 using AAEmu.Game.Models.Game.Team;
 using AAEmu.Game.Models.Game.World;
@@ -62,7 +63,7 @@ public class IndunManager(
 
         if (sysInstanceCount + dungeonInstanceCount <= 0)
             return;
-        
+
         Logger.Info($"Active Instances: {sysInstanceCount} system instance(s), {dungeonInstanceCount} dungeon(s)");
 
         if (dungeonInstanceCount <= 0)
@@ -158,10 +159,14 @@ public class IndunManager(
     /// </summary>
     internal T RunDungeonRequestSerialized<T>(Func<T> request)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        lock (_dungeonRequestLock)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            return request();
+            ArgumentNullException.ThrowIfNull(request);
+            lock (_dungeonRequestLock)
+            {
+                return request();
+            }
+
         }
     }
 
@@ -172,6 +177,8 @@ public class IndunManager(
             Logger.Info($"Player requested a dungeon, but is now offline.");
             return false;
         }
+        if (!PrisonerAccess.CanEnter(character))
+            return false;
         var team = teamManager.GetTeamByObjId(character.ObjId);
         var zone = zoneManager.GetZoneById(zoneId);
 
@@ -189,7 +196,7 @@ public class IndunManager(
             // Key does not match any zone
             return false;
         }
-        
+
         var dungeonZone = IndunGameData.Instance.GetDungeonZone(targetZone.GroupId);
         if (dungeonZone == null)
         {
@@ -401,6 +408,8 @@ public class IndunManager(
     /// <returns></returns>
     private bool VerifyDungeonEnterRequirements(IndunZone dungeonZone, Character character, Team team)
     {
+        if (!PrisonerAccess.CanEnter(character))
+            return false;
         if (TrialManager.Instance.IsPlayerInCourt(character.Id))
         {
             character.SendErrorMessage(ErrorMessageType.CannotUsePortalInTrial);
@@ -420,7 +429,7 @@ public class IndunManager(
             character.SendErrorMessage(ErrorMessageType.InstanceLevel);
             return false;
         }
-        
+
         // Check party status
         if (dungeonZone.PartyOnly && team == null)
         {
@@ -428,7 +437,7 @@ public class IndunManager(
             character.SendErrorMessage(ErrorMessageType.NeedParty);
             return false;
         }
-        
+
         return true;
     }
 
@@ -516,65 +525,71 @@ public class IndunManager(
     /// <returns></returns>
     public Dungeon CreateSystemInstance(Character character, uint zoneKey, uint channelId, bool overrideInstanceId = false, uint fixedInstanceId = 0)
     {
-        Logger.Info($"Requesting system instance, zoneKey: {zoneKey}, character: {character?.Name ?? "[SYSTEM]"}, channel: {channelId}, override InstanceId: {(overrideInstanceId ? fixedInstanceId.ToString() : "NO")}");
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (character != null && !PrisonerAccess.CanEnter(character))
+                return null;
+            Logger.Info($"Requesting system instance, zoneKey: {zoneKey}, character: {character?.Name ?? "[SYSTEM]"}, channel: {channelId}, override InstanceId: {(overrideInstanceId ? fixedInstanceId.ToString() : "NO")}");
 
-        var team = character != null ? teamManager.GetTeamByObjId(character.ObjId) : null;
-        var zone = zoneManager.GetZoneByKey(zoneKey);
-        var dungeonZone = zone == null ? null : IndunGameData.Instance.GetDungeonZone(zone.GroupId);
-        if (dungeonZone == null)
-        {
-            Logger.Error($"Requesting invalid system instance: , zoneKey: {zoneKey}, character: {character?.Name ?? "[SYSTEM]"}, channel: {channelId}, override InstanceId: {(overrideInstanceId ? fixedInstanceId.ToString() : "NO")}");
-            return null;
-        }
-        
-        // Check for duplicate system instances
-        foreach (var worldInstance in worldManager.GetWorlds())
-        {
-            if (worldInstance.ChannelId == channelId &&
-                worldInstance.DungeonInstance?.GetZoneGroupId == dungeonZone.ZoneGroupId)
+            var team = character != null ? teamManager.GetTeamByObjId(character.ObjId) : null;
+            var zone = zoneManager.GetZoneByKey(zoneKey);
+            var dungeonZone = zone == null ? null : IndunGameData.Instance.GetDungeonZone(zone.GroupId);
+            if (dungeonZone == null)
             {
-                if (character == null || worldInstance.DungeonInstance.EnterRequests.Contains(character) || worldInstance.HasCharacter(character.Id))
+                Logger.Error($"Requesting invalid system instance: , zoneKey: {zoneKey}, character: {character?.Name ?? "[SYSTEM]"}, channel: {channelId}, override InstanceId: {(overrideInstanceId ? fixedInstanceId.ToString() : "NO")}");
+                return null;
+            }
+
+            // Check for duplicate system instances
+            foreach (var worldInstance in worldManager.GetWorlds())
+            {
+                if (worldInstance.ChannelId == channelId &&
+                    worldInstance.DungeonInstance?.GetZoneGroupId == dungeonZone.ZoneGroupId)
                 {
+                    if (character == null || worldInstance.DungeonInstance.EnterRequests.Contains(character) || worldInstance.HasCharacter(character.Id))
+                    {
+                        return worldInstance.DungeonInstance;
+                    }
+
+                    if (!VerifyDungeonEnterRequirements(dungeonZone, character, team) ||
+                        !QueuePlayerWithRequiredItem(worldInstance.DungeonInstance, character))
+                    {
+                        return null;
+                    }
+
                     return worldInstance.DungeonInstance;
                 }
-
-                if (!VerifyDungeonEnterRequirements(dungeonZone, character, team) ||
-                    !QueuePlayerWithRequiredItem(worldInstance.DungeonInstance, character))
-                {
-                    return null;
-                }
-
-                return worldInstance.DungeonInstance;
             }
+
+            // Check if zones match
+            if (dungeonZone.ZoneGroupId != zone.GroupId)
+            {
+                Logger.Info("[IndunManager] system dungeon request on different area.");
+                character?.SendErrorMessage(ErrorMessageType.ProhibitedInInstance);
+                return null;
+            }
+
+            if (character != null &&
+                (!VerifyDungeonEnterRequirements(dungeonZone, character, team) || !ConsumeDungeonEntryItem(dungeonZone, character)))
+            {
+                return null;
+            }
+
+            // Create new system instance
+            var dungeon = new Dungeon(dungeonZone, character, channelId, team, overrideInstanceId, fixedInstanceId)
+            {
+                IsSystem = true
+            };
+
+            if (character != null && !dungeon.QueuePlayer(character))
+            {
+                dungeon.DestroyDungeon();
+                return null;
+            }
+
+            return dungeon;
+
         }
-
-        // Check if zones match
-        if (dungeonZone.ZoneGroupId != zone.GroupId)
-        {
-            Logger.Info("[IndunManager] system dungeon request on different area.");
-            character?.SendErrorMessage(ErrorMessageType.ProhibitedInInstance);
-            return null;
-        }
-
-        if (character != null &&
-            (!VerifyDungeonEnterRequirements(dungeonZone, character, team) || !ConsumeDungeonEntryItem(dungeonZone, character)))
-        {
-            return null;
-        }
-
-        // Create new system instance
-        var dungeon = new Dungeon(dungeonZone, character, channelId, team, overrideInstanceId, fixedInstanceId)
-        {
-            IsSystem = true
-        };
-
-        if (character != null && !dungeon.QueuePlayer(character))
-        {
-            dungeon.DestroyDungeon();
-            return null;
-        }
-
-        return dungeon;
     }
 
     /// <summary>
@@ -632,12 +647,12 @@ public class IndunManager(
     {
         if (character == null)
             return false;
-        
+
         // Remove from all possible different types of dungeons
         // System dungeons (mirage/library)
         foreach (var worldInstance in worldManager.GetWorlds().Where(w => w.HasCharacter(character.Id)))
         {
-            
+
             character.Events.OnDungeonLeave(worldInstance, new OnDungeonLeaveArgs { Player = character });
             // dungeon.LeaveSysInstance(character); // Already called in the OnDungeonLeave event
             return true;
