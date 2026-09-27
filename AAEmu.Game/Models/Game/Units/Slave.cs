@@ -532,8 +532,25 @@ public class Slave : Unit
 
     #endregion
 
+    private DateTime? _ownerVisibilityLostAt;
+
+    internal void RecordOwnerVisibility(Character character, bool visible, DateTime utcNow)
+    {
+        if (!ReferenceEquals(character, Summoner))
+            return;
+        lock (AttachmentSyncRoot)
+            _ownerVisibilityLostAt = visible ? null : _ownerVisibilityLostAt ?? utcNow;
+    }
+
+    internal bool HasExpiredOwnerVisibility(DateTime utcNow)
+    {
+        lock (AttachmentSyncRoot)
+            return _ownerVisibilityLostAt is { } lostAt && utcNow >= lostAt.AddSeconds(300);
+    }
+
     public override void AddVisibleObject(Character character)
     {
+        RecordOwnerVisibility(character, true, DateTime.UtcNow);
         character.SendPacket(new SCUnitStatePacket(this));
         character.SendPacket(new SCUnitPointsPacket(ObjId, Hp, Mp));
         character.SendPacket(new SCSlaveStatePacket(ObjId, TlId, Summoner?.Name ?? string.Empty, Summoner?.ObjId ?? 0, Id));
@@ -553,6 +570,7 @@ public class Slave : Unit
 
     public override void RemoveVisibleObject(Character character)
     {
+        RecordOwnerVisibility(character, false, DateTime.UtcNow);
         base.RemoveVisibleObject(character);
 
         character.SendPacket(new SCUnitsRemovedPacket([ObjId]));
