@@ -1,10 +1,10 @@
 ﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Core.Network.Login;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2L;
 
 namespace AAEmu.Game.Models.Tasks.ServerLoad;
 
-public class LoadTask : Task
+public class LoadTask(LoginConnection connection) : Task
 {
     public override void Execute()
     {
@@ -18,6 +18,6 @@ public class LoadTask : Task
                 1,
             _ => 0 // LOW
         };
-        LoginNetwork.Instance.GetConnection()?.SendPacket(new GLGameServerLoadPacket(load));
+        connection.SendPacket(new GLGameServerLoadPacket(load));
     }
 }

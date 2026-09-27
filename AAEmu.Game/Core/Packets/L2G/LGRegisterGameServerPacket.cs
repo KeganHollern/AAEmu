@@ -16,7 +16,7 @@ public class LGRegisterGameServerPacket() : LoginPacket(LGOffsets.LGRegisterGame
         }
         else
         {
-            Connection.IsRegistered = true;
+            Connection.Register();
             Logger.Info("Successfully registered on LoginServer");
             _ = ModerationManager.Instance.RefreshLiveAccountsAsync();
         }

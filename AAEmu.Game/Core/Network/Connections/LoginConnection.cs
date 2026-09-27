@@ -7,7 +7,7 @@ using AAEmu.Game.Models;
 
 namespace AAEmu.Game.Core.Network.Connections;
 
-public class LoginConnection(ISession session)
+public class LoginConnection(ISession session, Action onRegistered = null)
 {
     public uint Id => session.SessionId;
     public IPAddress Ip => session.Ip;
@@ -16,6 +16,14 @@ public class LoginConnection(ISession session)
     public bool IsRegistered { get; set; }
     public PacketStream LastPacket { get; set; }
     internal ConnectionEventLimiter UnknownPacketEvents { get; } = new();
+
+    internal void Register()
+    {
+        if (IsRegistered || Block)
+            return;
+        IsRegistered = true;
+        onRegistered?.Invoke();
+    }
 
     public void OnConnect()
     {
