@@ -957,7 +957,7 @@ public partial class Buffs : IBuffs
     private static bool IsJusticePenaltyBuff(uint id) => id is
         (uint)BuffConstants.Prisoner_Nuian or (uint)BuffConstants.Prisoner_Haranyan or
         (uint)BuffConstants.Prisoner_Bot or (uint)BuffConstants.ForciblyAwaitingTrial or
-        (uint)BuffConstants.Wanted or 2167u /* Retribution */ or 4424u /* Leech */;
+        (uint)BuffConstants.Wanted or (uint)BuffConstants.Retribution or (uint)BuffConstants.WarZoneLeech;
 
     private static bool IsPermanentSavedMarker(uint id, int duration) => duration == 0 &&
         id is (uint)BuffConstants.SuspectedUser or (uint)BuffConstants.Wanted;

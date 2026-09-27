@@ -16,6 +16,10 @@ public partial class Character
         var arrestor = killer?.GetOwnerCharacter();
         if (arrestor == null || arrestor.Id == Id)
             return null;
+        // A stale runtime object ID must not attribute a pet/vehicle kill to a new owner.
+        if (killer is Mate mate && mate.OwnerId != arrestor.Id ||
+            killer is Slave slave && (slave.Summoner?.Id ?? slave.OwnerId) != arrestor.Id)
+            return null;
         if (IsPrisoner)
             return arrestor;
         return Buffs.CheckBuffTag((uint)BuffConstants.TagWanted) &&
