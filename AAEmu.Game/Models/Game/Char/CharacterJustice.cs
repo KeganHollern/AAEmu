@@ -11,7 +11,7 @@ public partial class Character
     public bool HasPendingTrial => OfflineGuiltyTime != 0;
     public bool IsPrisoner => HasPendingTrial || Buffs.CheckBuffTag((uint)BuffConstants.TagPrisoner);
 
-    internal Character GetArrestorOnPlayerDeath(Unit killer, bool pirateDesperadoZone)
+    internal Character GetArrestorOnPlayerDeath(BaseUnit killer, bool pirateDesperadoZone)
     {
         var arrestor = killer?.GetOwnerCharacter();
         if (arrestor == null || arrestor.Id == Id)
