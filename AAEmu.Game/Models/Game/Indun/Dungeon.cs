@@ -910,33 +910,37 @@ public class Dungeon
 
     private void AreaClearTick(TimeSpan delta)
     {
-        lock (_lock)
+        // Room actions can change doodad phases. Keep the same lock order as justice admission cancellation.
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (!FinishedLoading || IsDestroyed || World == null)
-                return;
-
-            foreach (var ev in _registeredIndunEvents)
+            lock (_lock)
             {
-                if (ev is not IndunEventNoAliveChInRooms room) { continue; }
+                if (!FinishedLoading || IsDestroyed || World == null)
+                    return;
 
-                if (IsRoomCleared(room.RoomId)) { continue; }
-
-                var indunRoom = IndunGameData.Instance.GetRoom(room.RoomId);
-                var doodad = room.GetRoomDoodad(World.Id);
-
-                if (doodad == null) { continue; }
-
-                var radiusCount = WorldManager.GetAround<Character>(doodad, indunRoom.Radius)
-                    .Where(o => o.GetDistanceTo(doodad) <= indunRoom.Radius).ToList().Count;
-
-                Logger.Info($"Character:{radiusCount} in room:{room.RoomId}");
-
-                if (radiusCount == 0 && room.GetRoomPlayerCount(World.Id) != 0)
+                foreach (var ev in _registeredIndunEvents)
                 {
-                    IndunManager.Instance.DoIndunActions(ev.StartActionId, World);
-                }
+                    if (ev is not IndunEventNoAliveChInRooms room) { continue; }
 
-                room.SetRoomPlayerCount(World.Id, (uint)radiusCount);
+                    if (IsRoomCleared(room.RoomId)) { continue; }
+
+                    var indunRoom = IndunGameData.Instance.GetRoom(room.RoomId);
+                    var doodad = room.GetRoomDoodad(World.Id);
+
+                    if (doodad == null) { continue; }
+
+                    var radiusCount = WorldManager.GetAround<Character>(doodad, indunRoom.Radius)
+                        .Where(o => o.GetDistanceTo(doodad) <= indunRoom.Radius).ToList().Count;
+
+                    Logger.Info($"Character:{radiusCount} in room:{room.RoomId}");
+
+                    if (radiusCount == 0 && room.GetRoomPlayerCount(World.Id) != 0)
+                    {
+                        IndunManager.Instance.DoIndunActions(ev.StartActionId, World);
+                    }
+
+                    room.SetRoomPlayerCount(World.Id, (uint)radiusCount);
+                }
             }
         }
     }
