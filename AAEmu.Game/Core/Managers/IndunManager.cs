@@ -26,6 +26,11 @@ public class IndunManager(
     // ReSharper disable once InconsistentNaming
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
+    // Indun actions can synchronously spawn another event. Keep this guard local to
+    // the current thread so independent events in the same world are not discarded.
+    [ThreadStatic]
+    private static HashSet<(WorldInstance World, uint ActionId)> s_activeActions;
+
     private Dictionary<uint, Dictionary<uint, List<DateTimeOffset>>> CreationHistory { get; } = [];
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
     private readonly object _lock = new();
@@ -664,18 +669,41 @@ public class IndunManager(
 
     public void DoIndunActions(uint startActionId, WorldInstance worldInstance)
     {
-        while (true)
+        var visited = new HashSet<uint>();
+        var actionId = startActionId;
+        while (actionId != 0)
         {
-            var action = IndunGameData.Instance.GetIndunActionById(startActionId);
-            action.Execute(worldInstance);
-            Logger.Warn($"DoIndunActions: world={worldInstance.Id}, action.Id={action.Id}, action.NextActionId={action.NextActionId}");
-            if (action.NextActionId > 0)
+            if (!visited.Add(actionId))
             {
-                startActionId = action.NextActionId;
-                continue;
+                Logger.Warn($"DoIndunActions: world={worldInstance.Id}, cycle at action={actionId}, start={startActionId}");
+                return;
             }
 
-            break;
+            var action = IndunGameData.Instance.GetIndunActionById(actionId);
+            if (action == null)
+            {
+                Logger.Warn($"DoIndunActions: world={worldInstance.Id}, missing action={actionId}, start={startActionId}");
+                return;
+            }
+
+            var key = (worldInstance, actionId);
+            s_activeActions ??= [];
+            if (!s_activeActions.Add(key))
+            {
+                Logger.Warn($"DoIndunActions: world={worldInstance.Id}, recursive action={actionId}, start={startActionId}");
+                return;
+            }
+
+            try
+            {
+                action.Execute(worldInstance);
+            }
+            finally
+            {
+                s_activeActions.Remove(key);
+            }
+            Logger.Debug($"DoIndunActions: world={worldInstance.Id}, action.Id={action.Id}, action.NextActionId={action.NextActionId}");
+            actionId = action.NextActionId;
         }
     }
 

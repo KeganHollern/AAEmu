@@ -1,4 +1,4 @@
-﻿using AAEmu.Game.GameData;
+﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.Game.Models.Game.Indun.Events;
@@ -23,11 +23,9 @@ internal class IndunEventDoodadSpawneds : IndunEvent
         var doodad = args.Doodad;
         if (doodad == null || sender is not WorldInstance world) { return; }
         Logger.Warn($"IndunEventDoodadSpawneds - {doodad.TemplateId}, {DoodadAlmightyId}");
-        if (doodad.TemplateId != DoodadAlmightyId) { return; }
+        if (doodad.TemplateId != DoodadAlmightyId || doodad.Transform.InstanceId != world.Id || !IsSubscribed(world)) { return; }
 
-        var action = IndunGameData.Instance.GetIndunActionById(StartActionId);
-        action.Execute(world);
+        IndunManager.Instance.DoIndunActions(StartActionId, world);
 
-        //IndunManager.DoIndunActions(StartActionId, world);
     }
 }

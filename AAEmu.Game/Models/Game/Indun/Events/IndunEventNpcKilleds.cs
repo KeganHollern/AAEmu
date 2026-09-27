@@ -21,7 +21,7 @@ internal class IndunEventNpcKilleds : IndunEvent
     private void OnUnitKilled(object sender, OnUnitKilledArgs args)
     {
         if (args.Victim is not Npc npc || sender is not WorldInstance world) { return; }
-        if (npc.TemplateId != NpcId) { return; }
+        if (npc.TemplateId != NpcId || npc.Transform.InstanceId != world.Id || !IsSubscribed(world)) { return; }
 
         Logger.Warn($"IndunEventNpcKilleds - {NpcId}, {Id}");
         IndunManager.Instance.DoIndunActions(StartActionId, world);

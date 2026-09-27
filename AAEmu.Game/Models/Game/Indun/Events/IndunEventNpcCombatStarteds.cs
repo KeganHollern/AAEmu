@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Models.Game.NPChar;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.Game.Models.Game.Indun.Events;
@@ -20,13 +21,10 @@ internal class IndunEventNpcCombatStarteds : IndunEvent
     private void OnNpcCombatStarted(object sender, OnUnitCombatStartArgs args)
     {
         if (args.Npc is not Npc npc || sender is not WorldInstance world) { return; }
-        if (npc.TemplateId != NpcId) { return; }
+        if (npc.TemplateId != NpcId || npc.Transform.InstanceId != world.Id || !IsSubscribed(world)) { return; }
 
         Logger.Warn($"{npc.TemplateId} has entered combat.");
 
-        //var action = IndunGameData.Instance.GetIndunActionById(StartActionId);
-        //action.Execute(world);
-
-        //IndunManager.DoIndunActions(StartActionId, world);
+        IndunManager.Instance.DoIndunActions(StartActionId, world);
     }
 }
