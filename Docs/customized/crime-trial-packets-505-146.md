@@ -91,8 +91,11 @@ for the new charge and preserves an earlier prison sentence.
 
 The zero-submitted-vote timeout preserves the legacy server choice 3, which
 applies half the base sentence. This is not a native-authored rule. It differs
-from no-jury cancellation, which keeps the full default sentence. The tied-vote
-rule awaits the project policy choice and is not complete in this source commit.
+from no-jury cancellation, which keeps the full default sentence. The approved
+server tie rule selects the lower verdict among equally frequent choices. A tie
+with choice 1 acquits the new charge. Seat order does not change the result.
+The approved pirate base sentence uses the explicit PirateSentenceMinutes setting,
+which defaults to 40. Neither policy is a native-confirmed server rule.
 
 ## Comparison with official AAEmu
 
@@ -107,14 +110,17 @@ The focused tests cover valid and invalid verdicts, seat ownership, repeated
 confirmation, exact packet bodies, truncated and trailing input, result claims,
 concurrent duplicate votes, disconnect cleanup, and stale trial identity.
 The Release build passed with no errors. All 75 focused tests passed without
-skips: 65 trial-rule cases and 10 packet cases. The tie and pirate policies remain
-separate release gates until the user supplies them.
+skips: 65 trial-rule cases and 10 packet cases.
 
-The combined sentence branch adds 14 passing lifecycle cases. These use actual
+The combined sentence branch adds 30 passing lifecycle cases. These use actual
 trial results and prison buffs. They cover pending 37-minute recovery without
 jury eligibility, repeat arrests, old sentence carry, acquittal, default cancel,
 escaped-juror cleanup, audience removal, and the production death arrest query.
 The owner tests reject a reused pet object ID with a different persistent owner.
+Policy tests cover tied-vote permutations, acquittal ties, vote plurality, the
+40-minute default, changed pirate values, zero, bounds, and the non-pirate formula.
+Timeout tests distinguish accepted jurors with no submitted votes from no jurors.
+Both final verdicts keep their result when all jurors leave before court cleanup.
 
 ## Pending human checks for #573
 
@@ -125,6 +131,8 @@ The owner tests reject a reused pet object ID with a different persistent owner.
   juror vote. Check that all five clients see the submitted count rise once per vote.
 - Submit an acquittal and each guilty tier in separate trials. Use a 7-minute
   base sentence. The displayed guilty choices must be 1, 3, 5, 7, and 8 minutes.
+- Use 2 jurors with different guilty choices. The lower choice must win the tie.
+  Repeat with an acquittal vote and confirm acquittal of the new charge.
 - Repeat a guilty result with old unserved prison time. The result must show the
   new sentence plus that old time. Acquittal must keep the old sentence active.
 - Cancel while the defendant waits with no accepted juror. Check that the waiting

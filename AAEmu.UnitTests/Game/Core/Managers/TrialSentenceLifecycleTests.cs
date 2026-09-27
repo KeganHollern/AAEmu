@@ -171,6 +171,124 @@ public sealed class TrialSentenceLifecycleTests
     }
 
     [Test]
+    [Arguments(1)] [Arguments(3)]
+    public async Task JurorsLeaveAfterVerdict_DoesNotChangeTheResultToCancellation(int verdict)
+    {
+        var player = Player(10);
+        var trial = Trial(player, TrialStep.JuryVerdict);
+        trial.JailTime = 7;
+        var juror = Player(11);
+        trial.Jury[0] = new TrialJuryBox { SeatId = 0, JuryMember = juror, SelectedSentence = verdict };
+        trial.FinalizeVerdict();
+
+        _manager.HandlePlayerDisconnect(juror);
+        _manager.UpdateTrialState(trial);
+
+        await Assert.That(trial.Step).IsEqualTo(TrialStep.EndTrial);
+        await Assert.That(_sessions[player.Id].Count(SCOffsets.SCTrialCanceledPacket)).IsEqualTo(0);
+        trial.CurrentStepEndTime = DateTime.UtcNow.AddSeconds(-1);
+        _manager.UpdateTrialState(trial);
+        await Assert.That(_sessions[player.Id].Count(SCOffsets.SCTrialCanceledPacket)).IsEqualTo(0);
+        await Assert.That(_sessions[player.Id].Count(SCOffsets.SCRulingClosedPacket)).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(true, 3)] [Arguments(false, 7)]
+    public async Task VerdictTimeout_DistinguishesUnsubmittedVotesFromNoJurors(bool hasJury, int expectedMinutes)
+    {
+        var player = Player(10);
+        var trial = Trial(player, TrialStep.JuryVerdict);
+        trial.JailTime = 7;
+        if (hasJury)
+            trial.Jury[0] = new TrialJuryBox { SeatId = 0, JuryMember = Player(11), SelectedSentence = -1 };
+
+        _manager.UpdateTrialState(trial);
+
+        await Assert.That(player.GuiltyCount).IsEqualTo(1);
+        await Assert.That(player.GetUnservedPrisonMilliseconds()).IsBetween(expectedMinutes * 60_000 - 1_000,
+            expectedMinutes * 60_000);
+        await Assert.That(_sessions[player.Id].Count(SCOffsets.SCTrialCanceledPacket)).IsEqualTo(hasJury ? 0 : 1);
+        if (hasJury)
+        {
+            var result = _sessions[player.Id].Body(SCOffsets.SCRulingStatusPacket);
+            result.Rollback();
+            await Assert.That(result.ReadInt32()).IsEqualTo(0);
+            await Assert.That(result.ReadInt32()).IsEqualTo(1);
+            await Assert.That(result.ReadByte()).IsEqualTo((byte)3);
+        }
+    }
+
+    [Test]
+    [Arguments(1, 6)] [Arguments(2, 6)] [Arguments(3, 5)]
+    public async Task TiedVotes_ChooseLowerVerdictInEveryOrder(int lower, int higher)
+    {
+        var other = lower == 3 ? 2 : 3;
+        foreach (var votes in Permutations([higher, lower, higher, lower, other]))
+            await Assert.That(TrialData.SelectVerdict(votes)).IsEqualTo(lower);
+    }
+
+    [Test]
+    public async Task UniqueVotePlurality_PrecedesTheLowerSentenceTieRule()
+    {
+        await Assert.That(TrialData.SelectVerdict([1, 6, 6, 2, 6])).IsEqualTo(6);
+    }
+
+    [Test]
+    [Arguments(false)] [Arguments(true)]
+    public async Task AcquittalTie_PreservesOldSentenceRegardlessOfSeatOrder(bool reverse)
+    {
+        var player = Player(10);
+        var old = AddBuff(player, BuffConstants.Prisoner_Nuian, 90_000);
+        var trial = Trial(player, TrialStep.JuryVerdict);
+        trial.JailTime = 7;
+        trial.Jury[0] = new TrialJuryBox { SeatId = 0, JuryMember = Player(11), SelectedSentence = reverse ? 6 : 1 };
+        trial.Jury[1] = new TrialJuryBox { SeatId = 1, JuryMember = Player(12), SelectedSentence = reverse ? 1 : 6 };
+
+        trial.FinalizeVerdict();
+
+        await Assert.That(player.NotGuiltyCount).IsEqualTo(1);
+        await Assert.That(player.GuiltyCount).IsEqualTo(0);
+        await Assert.That(player.Buffs.GetEffectFromBuffId((uint)BuffConstants.Prisoner_Nuian)).IsSameReferenceAs(old);
+        var result = _sessions[player.Id].Body(SCOffsets.SCRulingStatusPacket);
+        result.Rollback();
+        result.ReadInt32();
+        result.ReadInt32();
+        await Assert.That(result.ReadByte()).IsEqualTo((byte)1);
+        await Assert.That(result.ReadInt32()).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(40, 40)] [Arguments(23, 23)] [Arguments(0, 0)]
+    [Arguments(-1, 0)] [Arguments(int.MaxValue, int.MaxValue / 60_000)]
+    public async Task PirateSentence_UsesTheConfiguredMinutesAndPendingMarker(int configured, int expected)
+    {
+        AppConfiguration.Instance.Justice.PirateSentenceMinutes = configured;
+        var player = Player(10);
+        player.Faction = new SystemFaction { Id = FactionsEnum.Pirate };
+        var trial = Trial(player, TrialStep.DefendantAwaitingTrial);
+        trial.EvidenceList.Add(new CrimeEvent { CrimeKind = CrimeKind.Murder, Victim = 0 });
+
+        trial.CalculateJailTime();
+
+        await Assert.That(trial.JailTime).IsEqualTo(expected);
+        await Assert.That(player.OfflineGuiltyTime).IsEqualTo(expected == 0 ? -1 : expected);
+        await Assert.That(player.HasPendingTrial).IsTrue();
+    }
+
+    [Test]
+    public async Task NonPirateSentence_KeepsCrimeFormulaRegardlessOfPirateSetting()
+    {
+        AppConfiguration.Instance.Justice.PirateSentenceMinutes = 23;
+        var trial = Trial(Player(10), TrialStep.DefendantAwaitingTrial);
+        trial.EvidenceList.Add(new CrimeEvent { CrimeKind = CrimeKind.Murder, Victim = 0 });
+
+        trial.CalculateJailTime();
+
+        await Assert.That(trial.JailTime).IsEqualTo(20);
+        await Assert.That(trial.Defendant.OfflineGuiltyTime).IsEqualTo(20);
+    }
+
+    [Test]
     public async Task DefendantDisconnect_RemovesEscapedJurorBuff_AndPreservesPendingMinutes()
     {
         var player = Player(10);
@@ -311,6 +429,17 @@ public sealed class TrialSentenceLifecycleTests
 
     private static T Get<T>(object instance, string name) => (T)instance.GetType()
         .GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(instance)!;
+
+    private static IEnumerable<int[]> Permutations(int[] values)
+    {
+        if (values.Length == 0)
+            yield return [];
+        for (var index = 0; index < values.Length; index++)
+        {
+            foreach (var tail in Permutations(values.Where((_, position) => position != index).ToArray()))
+                yield return [values[index], .. tail];
+        }
+    }
 
     private sealed class OwnedUnit(Character owner) : Unit
     {

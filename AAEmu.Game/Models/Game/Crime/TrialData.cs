@@ -480,6 +480,7 @@ public class TrialData
         // client-authored rule and is separate from no-jury cancellation at the full base time.
         return choices.Where(choice => choice is >= 1 and <= 6)
             .GroupBy(choice => choice).OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key)
             .Select(group => group.Key).DefaultIfEmpty(3).First();
     }
 
