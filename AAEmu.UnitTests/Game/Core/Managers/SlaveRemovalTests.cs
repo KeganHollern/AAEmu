@@ -19,6 +19,7 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
+using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
@@ -291,6 +292,73 @@ public sealed class SlaveRemovalTests
         await Assert.That(_owner.Transform.Parent).IsSameReferenceAs(_slave.Transform);
         await Assert.That(_slave.AttachedCharacters[AttachPointKind.Driver]).IsSameReferenceAs(_owner);
         await Assert.That(cargo.IsPersistent).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task PlayerRemoval_SaveFailureKeepsVehiclePassengersAndAttachments(bool automatic, bool throws)
+    {
+        _slave.Id = 123;
+        typeof(Slave).GetProperty(nameof(Slave.SummoningItem))!.SetValue(_slave, new SummonSlave());
+        Attach(_owner, _slave);
+        var doodad = new Doodad { ObjId = 22, IsPersistent = true, ParentWorld = _world };
+        doodad.Transform.Parent = _slave.Transform;
+        _slave.AttachedDoodads.Add(doodad);
+        if (automatic)
+            ExpireVisibility();
+        var saves = 0;
+        _world.SlaveManager.SaveForRemoval = vehicle =>
+        {
+            saves++;
+            if (!ReferenceEquals(vehicle, _slave))
+                throw new InvalidOperationException("The wrong vehicle reached persistence.");
+            return throws ? throw new InvalidOperationException("Forced vehicle save failure") : false;
+        };
+
+        var accepted = automatic
+            ? _world.SlaveManager.RemoveActiveSlave(_owner, _slave.TlId)
+            : _world.SlaveManager.Delete(_owner, _slave.ObjId);
+
+        await Assert.That(accepted).IsFalse();
+        await Assert.That(saves).IsEqualTo(1);
+        await AssertUnchanged();
+        await Assert.That(LastError()).IsEqualTo(ErrorMessageType.InternalError);
+        await Assert.That(_owner.Transform.Parent).IsSameReferenceAs(_slave.Transform);
+        await Assert.That(_slave.AttachedCharacters[AttachPointKind.Driver]).IsSameReferenceAs(_owner);
+        await Assert.That(doodad.IsPersistent).IsTrue();
+        await Assert.That(doodad.Transform.Parent).IsSameReferenceAs(_slave.Transform);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PlayerRemoval_NonpersistentVehicleDoesNotNeedSuccessfulSave(bool hasSummoningItem)
+    {
+        _slave.Id = hasSummoningItem ? 0u : 123u;
+        if (hasSummoningItem)
+            typeof(Slave).GetProperty(nameof(Slave.SummoningItem))!.SetValue(_slave, new SummonSlave());
+        _world.SlaveManager.SaveForRemoval = _ => false;
+
+        await Assert.That(_world.SlaveManager.Delete(_owner, _slave.ObjId)).IsTrue();
+        await Assert.That(_slave.AttachmentsRetired).IsTrue();
+        await Assert.That(_world.GetAllSlaves()).IsEmpty();
+    }
+
+    [Test]
+    public async Task InternalCleanup_SaveFailureKeepsExistingRemovalPolicy()
+    {
+        _slave.Id = 123;
+        typeof(Slave).GetProperty(nameof(Slave.SummoningItem))!.SetValue(_slave, new SummonSlave());
+        _world.SlaveManager.SaveForRemoval = _ => false;
+
+        _world.SlaveManager.RemoveAndDespawnAllActiveOwnedSlaves(_owner);
+
+        await Assert.That(_slave.AttachmentsRetired).IsTrue();
+        await Assert.That(_world.GetAllSlaves()).IsEmpty();
+        await Assert.That(_session.Packets).IsEmpty();
     }
 
     [Test]

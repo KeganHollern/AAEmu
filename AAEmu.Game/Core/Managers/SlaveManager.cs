@@ -35,6 +35,7 @@ public class SlaveManager(WorldInstance parentWorldInstance)
 
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private WorldInstance World { get; init; } = parentWorldInstance;
+    internal Func<Slave, bool> SaveForRemoval { get; set; } = slave => slave.Save();
 
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
     private readonly object _slaveListLock = new();
@@ -297,9 +298,24 @@ public class SlaveManager(WorldInstance parentWorldInstance)
                 owner?.SendErrorMessage(ErrorMessageType.SlaveEquipmentLoadedItem);
                 return false;
             }
-            // A failed connection must leave attachment admission open. Save only
-            // accepted requests, before marking this vehicle as retired.
-            slaveInfo.Save();
+            // Player removal must retain a persistent vehicle if its save fails.
+            // Internal cleanup keeps its existing save policy.
+            var needsSuccessfulSave = request != RemovalRequest.Cleanup &&
+                slaveInfo.Id > 0 && slaveInfo.SummoningItem != null;
+            var saved = false;
+            try
+            {
+                saved = SaveForRemoval(slaveInfo);
+            }
+            catch (Exception exception) when (needsSuccessfulSave)
+            {
+                Logger.Error(exception, "Vehicle removal could not save slave {0}", slaveInfo.Id);
+            }
+            if (needsSuccessfulSave && !saved)
+            {
+                owner?.SendErrorMessage(ErrorMessageType.InternalError);
+                return false;
+            }
             if (!TryBeginAttachmentRemoval(slaveInfo, out passengers))
                 return false;
         }
