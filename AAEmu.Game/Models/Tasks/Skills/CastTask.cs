@@ -15,7 +15,7 @@ public class CastTask(
 {
     public override void Execute()
     {
-        if (Cancelled || Skill.Cancelled || caster is not Unit unit || !ReferenceEquals(unit.SkillTask, this))
+        if (Cancelled || Skill.Cancelled || caster is not Unit unit || !Skill.IsItemProc && !ReferenceEquals(unit.SkillTask, this))
             return;
 
         if (CastWindow != null && !CastWindow.TryComplete(DateTime.UtcNow, out var remaining))

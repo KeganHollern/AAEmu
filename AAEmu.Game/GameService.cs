@@ -139,7 +139,7 @@ public sealed class GameService : IHostedService, IDisposable
         // Stop admission and drain packet/disconnect work before the final checkpoint.
         GameNetwork.Instance.Stop();
         StreamNetwork.Instance.Stop();
-        LoginNetwork.Instance.Stop();
+        await LoginNetwork.Instance.StopAsync();
 
         // SpawnManager.Instance.Stop(); Moved to World Instance
         TowerDefenseManager.Instance.Dispose();

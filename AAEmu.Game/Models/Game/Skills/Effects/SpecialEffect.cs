@@ -33,6 +33,11 @@ public class SpecialEffect : EffectTemplate
         }
 
         var action = (SpecialEffectAction)Activator.CreateInstance(classType);
+        if (action is SpecialEffects.SkillUse skillUse)
+        {
+            skillUse.IsItemProc = source.IsItemProc;
+            skillUse.ItemProcLevel = source.ItemProcLevel;
+        }
         if (source.Skill?.Template.EffectRepeatCount > 1)
         {
             for (var i = 0; i < source.Skill.Template.EffectRepeatCount; i++)

@@ -185,7 +185,11 @@ public class BuffTemplate
 
         uint abLevel = 1;
 
-        if (caster is Character character)
+        if (source.IsItemProc)
+        {
+            abLevel = source.ItemProcLevel;
+        }
+        else if (caster is Character character)
         {
             if (source.Skill != null)
             {
@@ -211,7 +215,8 @@ public class BuffTemplate
                 abLevel = (uint)source.Skill.Template.AbilityLevel;
             }
         }
-        target.Buffs.AddBuff(new Buff(target, caster, casterObj, this, source.Skill, time) { AbLevel = abLevel });
+        target.Buffs.AddBuff(new Buff(target, caster, casterObj, this, source.Skill, time)
+            { AbLevel = abLevel, IsItemProc = source.IsItemProc, ItemProcLevel = source.ItemProcLevel });
     }
 
     /// <summary>
@@ -398,7 +403,8 @@ public class BuffTemplate
 
             var targetObj = new SkillCastUnitTarget(owner.ObjId);
             var skillObj = new SkillObject(); // TODO ?
-            eff.Apply(caster, buff.SkillCaster, owner, targetObj, new CastBuff(buff), new EffectSource(this) { DuelContext = buff.DuelContext }, skillObj,
+            eff.Apply(caster, buff.SkillCaster, owner, targetObj, new CastBuff(buff), new EffectSource(this)
+                { DuelContext = buff.DuelContext, IsItemProc = buff.IsItemProc, ItemProcLevel = buff.ItemProcLevel }, skillObj,
                 DateTime.UtcNow);
         }
     }
@@ -455,7 +461,8 @@ public class BuffTemplate
                         continue;
 
                     var targetObj = new SkillCastUnitTarget(trg.ObjId);
-                    eff.Apply(source, buff.SkillCaster, trg, targetObj, new CastBuff(buff), new EffectSource(this) { DuelContext = buff.DuelContext }, skillObj, DateTime.UtcNow);
+                    eff.Apply(source, buff.SkillCaster, trg, targetObj, new CastBuff(buff), new EffectSource(this)
+                        { DuelContext = buff.DuelContext, IsItemProc = buff.IsItemProc, ItemProcLevel = buff.ItemProcLevel }, skillObj, DateTime.UtcNow);
                 }
             }
         }

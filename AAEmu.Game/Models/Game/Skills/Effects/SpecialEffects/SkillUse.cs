@@ -7,6 +7,8 @@ namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 
 public class SkillUse : SpecialEffectAction
 {
+    internal bool IsItemProc { get; set; }
+    internal byte ItemProcLevel { get; set; }
     protected override SpecialType SpecialEffectActionType => SpecialType.SkillUse;
 
     public override void Execute(BaseUnit caster,
@@ -36,7 +38,10 @@ public class SkillUse : SpecialEffectAction
         }
 
         //target = ((Unit)caster).CurrentTarget;
-        var useSkill = new Skill(SkillManager.Instance.GetSkillTemplate((uint)skillId));
+        var useSkill = new Skill(SkillManager.Instance.GetSkillTemplate((uint)skillId))
+            { IsItemProc = IsItemProc || skill?.IsItemProc == true };
+        if (useSkill.IsItemProc)
+            useSkill.Level = skill?.IsItemProc == true ? skill.Level : ItemProcLevel;
         targetObj = new SkillCastUnitTarget(target?.ObjId ?? 0);
         if (SkillLaborBatch.Current is { } batch)
         {

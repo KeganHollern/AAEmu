@@ -809,6 +809,11 @@ public partial class Npc : Unit
 
     public override void DoDie(BaseUnit killer, KillReason killReason)
     {
+        // Rewards and script callbacks precede the base death events. They must share
+        // the same once-per-life gate, including repeated or reentrant death calls.
+        if (!TryBeginDeath())
+            return;
+
         DeadTime = DateTime.UtcNow;
 
         // Notify the world's script controller (dungeon kill-chains). Contained invoker;
@@ -864,6 +869,9 @@ public partial class Npc : Unit
         {
             RecordKillAchievements(killerOwner, eligiblePlayers, taggedTeam);
             GrantKillExperience(killerOwner, 1f, 1f);
+            // As with loot, an absent tagged team does not release its private claim.
+            if (CharacterTagging.TagTeam == 0 && CharacterTagging.Tagger == null)
+                GrantKillHonor(killerOwner);
         }
         else
         {
@@ -926,6 +934,7 @@ public partial class Npc : Unit
                 }
 
                 GrantKillExperience(pl, plMod, mateMod);
+                GrantKillHonor(pl);
 
                 // character.Quests.OnKill(this);
                 // инициируем событие
@@ -943,7 +952,7 @@ public partial class Npc : Unit
                 QuestManager.Instance.DoOnMonsterHuntEvents(
                     character, this, teamShareAlreadyDistributed, tagShareRecipientIds));
 
-        base.DoDie(killer, killReason);
+        CompleteDeath(killer, killReason);
         ClearAllAggroTargetsAndCheckCombatState();
         // AggroTable.Clear();
         CharacterTagging.ClearAllTaggers();

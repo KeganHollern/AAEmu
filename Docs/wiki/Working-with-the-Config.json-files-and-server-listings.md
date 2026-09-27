@@ -101,6 +101,15 @@ Under Aspire, the AppHost parameters `login-host` and `login-port` set these
 two `LoginNetwork` values. Under Docker Compose, the installer scripts set
 `host.docker.internal` and `1234`.
 
+Game keeps the Login link active until Game shutdown. After a failed attempt,
+Game waits 1, 2, 4, 8, 16, then 30 seconds between attempts. Each delay includes
+up to 1 second of random jitter, with a maximum delay of 30 seconds.
+
+Each attempt has a 10-second limit for DNS, TCP connection, and registration.
+Only accepted registration resets the delay. A rejected `SecretKey` keeps the
+longer delay. Check the matching secrets if the log reports a registration error.
+Game cancels the attempt and waits for socket cleanup during shutdown.
+
 ## `game_pak` configuration
 
 Set `game_pak` source in one of these places:

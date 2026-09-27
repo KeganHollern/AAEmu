@@ -42,7 +42,7 @@ public class DamagedBuffTrigger(Buff owner, BuffTriggerTemplate template) : Buff
         }
 
         Template.Effect.Apply(owner, new SkillCasterUnit(_owner.ObjId), target, new SkillCastUnitTarget(target.ObjId), new CastBuff(_buff),
-            new EffectSource(_buff.Template) { Amount = args?.Amount ?? 0, IsTrigger = true }, // TODO : EffectSource Type trigger 
+            new EffectSource(_buff.Template) { Amount = args?.Amount ?? 0, IsTrigger = true, IsItemProc = _buff.IsItemProc, ItemProcLevel = _buff.ItemProcLevel }, // TODO : EffectSource Type trigger
             null, DateTime.UtcNow);
     }
 }

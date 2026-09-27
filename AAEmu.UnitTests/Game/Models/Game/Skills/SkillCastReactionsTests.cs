@@ -32,7 +32,12 @@ public sealed class SkillCastReactionsTests
     [Before(Test)]
     public void SetUp()
     {
-        Install(new SkillManager(null, null));
+        var skills = new SkillManager(null, null);
+        typeof(SkillManager).GetField("_skillReagents", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(skills, new Dictionary<uint, SkillReagent>());
+        typeof(SkillManager).GetField("_skillProducts", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(skills, new Dictionary<uint, SkillProduct>());
+        Install(skills);
         Install(new DuelManager());
         Install(new ZoneManager(null, null));
         Install(new WorldManager(null, null, null, null, null));
@@ -358,6 +363,55 @@ public sealed class SkillCastReactionsTests
         wait.TryComplete(Start, out _);
         SkillCastReactions.OnDamage(unit, 100, Start);
         await Assert.That(unit.Packets.OfType<SCCastingDelayedPacket>().Count()).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task ItemProcPlot_AuthoredSkill19148_DoesNotReplaceThePlayerPlot()
+    {
+        var unit = CreateWorldUnit();
+        var playerSkill = new Skill(new SkillTemplate { Id = 10752 });
+        var playerPlot = Plot.PrepareRun(unit, null, unit, null, null, playerSkill);
+        var procSkill = new Skill(new SkillTemplate { Id = 19148, Plot = new Plot { Id = 699 } }) { IsItemProc = true };
+        var procPlot = Plot.PrepareRun(unit, null, unit, null, null, procSkill);
+        await Assert.That(unit.ActivePlotState).IsSameReferenceAs(playerPlot);
+        await Assert.That(procSkill.ActivePlotState).IsSameReferenceAs(procPlot);
+        SkillCastReactions.OnMovement(unit, Vector3.Zero, Vector3.UnitX, true, false);
+        // A pending player plot retains its identity and can still be replaced or cancelled normally.
+        playerPlot.CancelCastWaits(includePending: true);
+        await Assert.That(playerPlot.CancellationRequested()).IsTrue();
+        await Assert.That(procPlot.CancellationRequested()).IsFalse();
+        procPlot.RequestCancellation();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ItemProc_DuringActiveCast_PreservesCastAndPlot(bool delayed)
+    {
+        var unit = CreateWorldUnit();
+        var oldSkill = new Skill(new SkillTemplate { Id = 10107 }) { TlId = SkillTlIdManager.GetNextId(unit) };
+        var oldTask = new CastTask(oldSkill, unit, new SkillCasterUnit(70), unit, new SkillCastUnitTarget(70), null)
+        {
+            CastWindow = new CastWindow(DateTime.UtcNow.AddSeconds(10), true, false, true)
+        };
+        unit.SkillTask = oldTask;
+        var plot = new PlotState(unit, null, unit, null, null, oldSkill);
+        plot.RegisterCastWait(new PlotNextEvent { Casting = true }, DateTime.UtcNow.AddSeconds(10));
+        unit.ActivePlotState = plot;
+        unit.GlobalCooldown = DateTime.UtcNow.AddSeconds(1);
+        var proc = new Skill(new SkillTemplate
+        {
+            Id = 900, TargetType = SkillTargetType.Self, CastingTime = delayed ? 2000 : 0
+        }) { IsItemProc = true };
+        await Assert.That(proc.Use(unit, new SkillCasterUnit(70), new SkillCastUnitTarget(70), null, true, out _))
+            .IsEqualTo(SkillResult.Success);
+        await Assert.That(unit.SkillTask).IsSameReferenceAs(oldTask);
+        await Assert.That(oldTask.CastWindow.Active).IsTrue();
+        await Assert.That(oldSkill.Cancelled).IsFalse();
+        await Assert.That(unit.ActivePlotState).IsSameReferenceAs(plot);
+        await Assert.That(plot.CancellationRequested()).IsFalse();
+        proc.Stop(unit);
+        oldSkill.Stop(unit);
     }
 
     [Test]

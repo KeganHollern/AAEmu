@@ -4,7 +4,6 @@ using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
-using AAEmu.Game.Models.Game.Items.Procs;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Static;
@@ -169,7 +168,7 @@ public class DamageEffect : EffectTemplate
         {
             var lvlMd = ((Unit)caster).LevelDps * LevelMd;
             // Hack null-check on skill
-            var levelModifier = (((source.Skill?.Level ?? 1) - 1) / 49 * (LevelVaEnd - LevelVaStart) + LevelVaStart) * 0.01f;
+            var levelModifier = source.GetLevelModifier(LevelVaStart, LevelVaEnd);
 
             levelMin += lvlMd - levelModifier * lvlMd + 0.5f;
             levelMax += (levelModifier + 1) * lvlMd + 0.5f;
@@ -366,6 +365,7 @@ public class DamageEffect : EffectTemplate
             return;
 
         // TODO: Set proper kill reason
+        var hpBeforeDamage = trg.Hp;
         trg.ReduceCurrentHp(caster, value);
         ((Unit)caster).SummarizeDamage += value;
 
@@ -409,8 +409,6 @@ public class DamageEffect : EffectTemplate
             }
         }
 
-        // TODO : Use proper chance kinds (melee, magic etc.)
-
         // set for all combatants, for RegenTick
         trg.IsInBattle = trg.Hp > 0;
         trg.LastCombatActivity = DateTime.UtcNow;
@@ -420,15 +418,18 @@ public class DamageEffect : EffectTemplate
             //trgCharacter.IsInBattle |= trg.Hp > 0;
             //trgCharacter.LastCombatActivity = DateTime.UtcNow;
             trgCharacter.SetHostileActivity(caster);
-            trgCharacter.Procs?.RollProcsForKind(ProcChanceKind.TakeDamageAny);
         }
 
         if (attacker != null)
         {
             attacker.IsInBattle |= trg.Hp > 0;
             attacker.LastCombatActivity = DateTime.UtcNow;
-            attacker.Procs?.RollProcsForKind(ProcChanceKind.HitAny);
         }
+
+        if (value > 0 && attacker != null)
+            UnitProcs.OnDamage(attacker, trg, DamageType,
+                hitType is SkillHitType.MeleeCritical or SkillHitType.SpellCritical or SkillHitType.RangedCritical,
+                hpBeforeDamage > 0 && trg.Hp <= 0, FireProc, source.IsItemProc);
 
         // TODO: Gotta figure out how to tell if it should be applied on getting hit, or on hitting
         caster.CombatBuffs.TriggerCombatBuffs((Unit)caster, target as Unit, hitType, false);

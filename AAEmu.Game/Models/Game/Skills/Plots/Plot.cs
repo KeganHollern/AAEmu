@@ -30,7 +30,8 @@ public class Plot
 
         var state = new PlotState(caster, casterCaster, target, targetCaster, skillObject, skill);
         state.SetPendingExecution();
-        casterUnit.ActivePlotState = state;
+        if (!skill.IsItemProc)
+            casterUnit.ActivePlotState = state;
         skill.ActivePlotState = state;
         return state;
     }

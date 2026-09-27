@@ -3,7 +3,7 @@ using System.Globalization;
 using AAEmu.Commons.Exceptions;
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
-using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Packets.L2G;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Models.Tasks.ServerLoad;
 using NLog;
@@ -15,38 +15,135 @@ public class LoginProtocolHandler : BaseProtocolHandler
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     private readonly ConcurrentDictionary<uint, Type> _packets = new();
+    private readonly object _gate = new();
+    private readonly Func<LoginConnection, bool> _publish;
+    private readonly Action<LoginConnection> _clear;
+    private readonly Action<LoadTask> _scheduleLoad;
+    private readonly Action<LoadTask> _cancelLoad;
+    private readonly TaskCompletionSource _registered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _disconnected = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly List<byte[]> _earlyFrames = [];
+    private LoginConnection _connection;
+    private ISession _session;
     private LoadTask _loadTask;
+    private bool _stopped;
+
+    internal Task Registered => _registered.Task;
+    internal Task Disconnected => _disconnected.Task;
+
+    public LoginProtocolHandler() : this(_ => true, _ => { }, _ => { }, _ => { })
+    {
+    }
+
+    internal LoginProtocolHandler(Func<LoginConnection, bool> publish, Action<LoginConnection> clear,
+        Action<LoadTask> scheduleLoad, Action<LoadTask> cancelLoad)
+    {
+        _publish = publish;
+        _clear = clear;
+        _scheduleLoad = scheduleLoad;
+        _cancelLoad = cancelLoad;
+        RegisterPacket(LGOffsets.LGRegisterGameServerPacket, typeof(LGRegisterGameServerPacket));
+        RegisterPacket(LGOffsets.LGPlayerEnterPacket, typeof(LGPlayerEnterPacket));
+        RegisterPacket(LGOffsets.LGPlayerReconnectPacket, typeof(LGPlayerReconnectPacket));
+        RegisterPacket(LGOffsets.LGRequestInfoPacket, typeof(LGRequestInfoPacket));
+        RegisterPacket(LGOffsets.LGModerationResultPacket, typeof(LGModerationResultPacket));
+        RegisterPacket(LGOffsets.LGModerationStatePacket, typeof(LGModerationStatePacket));
+    }
 
     public override void OnConnect(ISession session)
     {
-        Logger.Info("Connect to {0} established, session id: {1}", session.Ip.ToString(), session.SessionId.ToString(CultureInfo.InvariantCulture));
-        var con = new LoginConnection(session);
-        con.OnConnect();
-        LoginNetwork.Instance.SetConnection(con);
+        lock (_gate)
+        {
+            if (_stopped || (_session != null && !ReferenceEquals(_session, session)))
+            {
+                session.Close();
+                return;
+            }
+            if (_connection != null)
+                return;
 
-        _loadTask = new LoadTask();
-        TaskManager.Instance.Schedule(_loadTask, null, TimeSpan.FromMinutes(1));
+            _session = session;
+            _connection = new LoginConnection(session, OnRegistered);
+            if (!_publish(_connection))
+            {
+                Stop();
+                session.Close();
+                return;
+            }
+
+            Logger.Info("Connect to {0} established, session id: {1}", session.Ip, session.SessionId.ToString(CultureInfo.InvariantCulture));
+            _connection.OnConnect();
+            // NetCoreServer 8.0.7 starts receiving before it calls OnConnected.
+            foreach (var frame in _earlyFrames.ToArray())
+            {
+                if (_stopped)
+                    break;
+                OnReceive(_connection, frame, 0, frame.Length);
+            }
+            _earlyFrames.Clear();
+        }
+    }
+
+    private void OnRegistered()
+    {
+        lock (_gate)
+        {
+            if (_stopped || _registered.Task.IsCompleted)
+                return;
+            _loadTask = new LoadTask(_connection);
+            _scheduleLoad(_loadTask);
+            _registered.TrySetResult();
+        }
     }
 
     public override void OnDisconnect(ISession session)
     {
-        Logger.Info("Connection to LoginServer has been lost");
-        LoginNetwork.Instance.SetConnection(null);
-        session.Close();
-        if (_loadTask != null)
+        lock (_gate)
         {
-            TaskManager.Instance.Cancel(_loadTask);
-            _loadTask = null;
+            if (_session != null && !ReferenceEquals(_session, session))
+                return;
+            Logger.Info("Connection to LoginServer has been lost");
+            Stop();
         }
+    }
 
-        // TODO Hard Restart
-        LoginNetwork.Instance.Stop();
-        LoginNetwork.Instance.Start();
+    internal void Stop()
+    {
+        lock (_gate)
+        {
+            if (_stopped)
+                return;
+            _stopped = true;
+            _earlyFrames.Clear();
+            if (_connection != null)
+            {
+                _connection.Block = true;
+                _connection.LastPacket = null;
+                _clear(_connection);
+            }
+            if (_loadTask != null)
+            {
+                _cancelLoad(_loadTask);
+                _loadTask = null;
+            }
+            _disconnected.TrySetResult();
+        }
     }
 
     public override void OnReceive(ISession session, byte[] buf, int offset, int bytes)
     {
-        OnReceive(LoginNetwork.Instance.GetConnection(), buf, offset, bytes);
+        lock (_gate)
+        {
+            if (_stopped || (_session != null && !ReferenceEquals(_session, session)))
+                return;
+            _session = session;
+            if (_connection == null)
+            {
+                _earlyFrames.Add(buf.AsSpan(offset, bytes).ToArray());
+                return;
+            }
+            OnReceive(_connection, buf, offset, bytes);
+        }
     }
 
     public void OnReceive(LoginConnection connection, byte[] buf, int offset, int bytes)
@@ -60,7 +157,7 @@ public class LoginProtocolHandler : BaseProtocolHandler
                 connection.LastPacket = null;
             }
             stream.Insert(stream.Count, buf, offset, bytes);
-            while (stream != null && stream.Count > 0)
+            while (stream != null && stream.Count > 0 && !connection.Block)
             {
                 ushort len;
                 try

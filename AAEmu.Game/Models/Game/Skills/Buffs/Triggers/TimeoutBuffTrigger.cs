@@ -31,7 +31,7 @@ public class TimeoutBuffTrigger(Buff owner, BuffTriggerTemplate template) : Buff
         }
 
         Template.Effect.Apply(source, new SkillCasterUnit(_owner.ObjId), target, new SkillCastUnitTarget(target.ObjId), new CastBuff(_buff),
-            new EffectSource(_buff?.Skill), // TODO : EffectSource Type trigger 
+            new EffectSource(_buff?.Skill) { IsItemProc = _buff?.IsItemProc == true, ItemProcLevel = _buff?.ItemProcLevel ?? 0 }, // TODO : EffectSource Type trigger
             null, DateTime.UtcNow);
     }
 }

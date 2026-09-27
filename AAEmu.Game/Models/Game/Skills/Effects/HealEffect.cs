@@ -54,7 +54,7 @@ public class HealEffect : EffectTemplate
         if (UseLevelHeal)
         {
             var lvlMd = ((Unit)caster).LevelDps * LevelMd;
-            var levelModifier = (((source.Skill?.Level ?? 1) - 1) / 49 * (LevelVaEnd - LevelVaStart) + LevelVaStart) * 0.01f;
+            var levelModifier = source.GetLevelModifier(LevelVaStart, LevelVaEnd);
 
             levelMin += lvlMd - levelModifier * lvlMd + 0.5f;
             levelMax += (levelModifier + 1) * lvlMd + 0.5f;
@@ -153,6 +153,9 @@ public class HealEffect : EffectTemplate
         {
             targetChar.RecordPvpHealFrom(healerChar);
         }
+
+        if (value > 0 && caster is Unit healer)
+            healer.Procs?.OnHeal(trg, criticalHeal, source.IsItemProc);
 
         trg.Events.OnHealed(this, new OnHealedArgs { Healer = (Unit)caster, HealAmount = value });
         trg.PostUpdateCurrentHp(trg, oldHp, trg.Hp, KillReason.Unknown);

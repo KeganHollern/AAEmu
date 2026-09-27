@@ -1,34 +1,62 @@
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Static;
+using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Items.Procs;
 
-/// <summary>
-/// Instance of ItemProcTemplate. Keeps track of cooldown, "owner" item
-/// </summary>
-public class ItemProc(uint templateId)
+/// <summary>A proc activation and its cooldown. Equipment refreshes retain this state.</summary>
+public class ItemProc
 {
-    public uint TemplateId { get; set; } = templateId;
-    public ItemProcTemplate Template { get; set; } = ItemManager.Instance.GetItemProcTemplate(templateId);
-    public DateTime LastProc { get; set; } = DateTime.MinValue;
+    private int _applying;
 
-    public bool Apply(Unit owner, bool ignoreRoll = false)
+    public uint TemplateId => Template.Id;
+    public ItemProcTemplate Template { get; }
+    public DateTime LastProc { get; private set; } = DateTime.MinValue;
+
+    public ItemProc(uint templateId) : this(ItemManager.Instance.GetItemProcTemplate(templateId))
     {
-        if (DateTime.UtcNow < LastProc.AddSeconds(Template.CooldownSec))
+    }
+
+    internal ItemProc(ItemProcTemplate template)
+    {
+        Template = template ?? throw new ArgumentNullException(nameof(template));
+    }
+
+    internal bool Apply(Unit owner, Unit eventTarget, bool killingBlow, double chance, int itemLevel, DateTime now,
+        Func<double> roll, Func<Unit, Unit, SkillTemplate, int, bool> cast, bool ignoreRoll = false)
+    {
+        if (Interlocked.Exchange(ref _applying, 1) != 0)
             return false;
+        try
+        {
+            if (owner.Hp <= 0 || Template.SkillTemplate == null || Template.Finisher && !killingBlow ||
+                now < LastProc.AddSeconds(Template.CooldownSec))
+                return false;
+            if (!ignoreRoll && (chance <= 0 || roll() * 100 >= Math.Clamp(chance, 0, 100)))
+                return false;
+            var target = GetTarget(owner, eventTarget, Template.SkillTemplate);
+            if (target == null || !cast(owner, target, Template.SkillTemplate, itemLevel))
+                return false;
+            LastProc = now;
+            return true;
+        }
+        finally
+        {
+            Volatile.Write(ref _applying, 0);
+        }
+    }
 
-        if (ignoreRoll || Random.Shared.Next(0, 100) > Template.ChanceRate)
-            return false;
+    internal static Unit GetTarget(Unit owner, Unit eventTarget, SkillTemplate skill)
+    {
+        return skill.TargetType == SkillTargetType.Self ? owner : eventTarget;
+    }
 
-        var caster = SkillCaster.GetByType(SkillCasterType.Unit);
-        caster.ObjId = owner.ObjId;
-
-        var target = SkillCastTarget.GetByType(SkillCastTargetType.Doodad);
-        target.ObjId = owner.ObjId;
-
-        var skill = new Skill(Template.SkillTemplate);
-        skill.Use(owner, caster, target, null, false, out _);
-        return true;
+    internal static bool Cast(Unit owner, Unit target, SkillTemplate template, int itemLevel)
+    {
+        var skill = new Skill(template) { IsItemProc = true, Level = (byte)Math.Clamp(itemLevel, 1, byte.MaxValue) };
+        return skill.Use(owner, new SkillCasterUnit(owner.ObjId), new SkillCastUnitTarget(target.ObjId),
+            null, true, out _) == SkillResult.Success;
     }
 }

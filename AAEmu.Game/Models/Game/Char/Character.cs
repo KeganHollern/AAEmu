@@ -2410,6 +2410,8 @@ public partial class Character : Unit, ICharacter
                 item.IsDirty = true;
             }
             mutation.Complete();
+            if (repairs.Any(item => item.SlotType == SlotType.Equipment))
+                UpdateGearBonuses(null, null);
             if (repairs.Count > 0)
                 Achievements?.Increment(CharRecordKind.ItemFix, 0, 0, (uint)repairs.Count);
             SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.Repair,
@@ -2869,7 +2871,6 @@ public partial class Character : Unit, ICharacter
             Slots[i] = new ActionSlot();
 
         Craft = new CharacterCraft(this);
-        Procs = new UnitProcs(this);
         LocalPingPosition = new WorldSpawnPosition();
 
         using (var connection = MySQL.CreateConnection())

@@ -42,6 +42,7 @@ public interface IItemManager : ILoadable
     ItemTemplate GetItemTemplateFromItemId(uint itemId);
     List<ItemTemplate> GetItemTemplatesForAuctionSearch(AuctionSearch searchTemplate);
     ItemProcTemplate GetItemProcTemplate(uint templateId);
+    IReadOnlyList<uint> GetItemProcBindings(uint itemId);
     List<BonusTemplate> GetUnitModifiers(uint itemId);
     ArmorGradeBuff GetArmorGradeBuff(ArmorType type, ItemGrade grade);
     Item Create(uint templateId, int count, byte grade, bool generateId = true);
