@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Threading.Channels;
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
@@ -204,6 +205,27 @@ public class LoginReconnectTests
         var expected = new ProbePacket { Value = 0x12345678 }.Encode().GetBytes();
         await Assert.That(client.Sent.Any(value => value.SequenceEqual(expected))).IsTrue();
         handler.Stop();
+    }
+
+    [Test]
+    public async Task Dispose_BetweenConnectFlagsPreventsLateConnectedCallback()
+    {
+        var published = false;
+        var handler = new LoginProtocolHandler(_ => { published = true; return true; }, _ => { }, _ => { }, _ => { });
+        using var client = new LoginClient(IPAddress.Loopback, 1, handler);
+        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        // NetCoreServer 8.0.7 ProcessConnect clears IsConnecting before setting IsConnected.
+        // Reproduce disposal in that gap without depending on the OS callback timing.
+        typeof(NetCoreServer.TcpClient).GetField("<Socket>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(client, socket);
+        client.Dispose();
+        await Assert.That(socket.SafeHandle.IsClosed).IsTrue();
+        typeof(NetCoreServer.TcpClient).GetField("<IsConnected>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(client, true);
+        typeof(LoginClient).GetMethod("OnConnected", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(client, null);
+        await Assert.That(published).IsFalse();
+        await Assert.That(client.ConnectAsync()).IsFalse();
     }
 
     [Test]

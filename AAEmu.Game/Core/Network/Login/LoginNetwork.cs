@@ -128,10 +128,7 @@ public class LoginNetwork : Singleton<LoginNetwork>
                 {
                     try
                     {
-                        // NetCoreServer also calls OnDisconnected for refused connects, but its Dispose
-                        // does not close a socket once IsConnecting and IsConnected are both false.
                         client?.Dispose();
-                        client?.Socket?.Dispose();
                     }
                     catch (Exception exception)
                     {
