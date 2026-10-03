@@ -41,6 +41,27 @@ public class MateManager(WorldInstance parentWorldInstance)
             return _activeMates.TryGetValue(ownerId, out var mates) ? [.. mates] : [];
     }
 
+    // The caller holds the persistence lock. Keep identity validation and the
+    // field copy together so removal cannot retire or replace a captured mate.
+    internal void CaptureOwnedPersistentMateStates(Character owner, Action<Mate> capture)
+    {
+        if (owner == null || !ReferenceEquals(owner.ParentWorld, World))
+            return;
+        lock (_activeMatesLock)
+        {
+            if (!_activeMates.TryGetValue(owner.Id, out var mates))
+                return;
+            foreach (var mate in mates)
+            {
+                if (mate.IsTemporarySummon || mate.ItemId == 0 || mate.OwnerId != owner.Id ||
+                    mate.OwnerObjId != owner.ObjId || !ReferenceEquals(mate.ParentWorld, World) ||
+                    _matesBeingRemoved.Contains(mate))
+                    continue;
+                capture(mate);
+            }
+        }
+    }
+
     /// <summary>
     /// Gets an active pet by it's TlId
     /// </summary>
@@ -167,6 +188,12 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// <param name="attachPoint"></param>
     /// <param name="reason"></param>
     public void MountMate(GameConnection connection, uint tlId, AttachPointKind attachPoint, AttachUnitReason reason)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+            MountMateCore(connection, tlId, attachPoint, reason);
+    }
+
+    private void MountMateCore(GameConnection connection, uint tlId, AttachPointKind attachPoint, AttachUnitReason reason)
     {
         var character = connection.ActiveChar;
         var mateInfo = GetActiveMateByTlId(tlId);

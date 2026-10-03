@@ -30,7 +30,7 @@ internal enum MateLifecycleState
     Removed
 }
 
-public sealed class Mate : Unit
+public sealed partial class Mate : Unit
 {
     private readonly object _lifecycleLock = new();
     private MateLifecycleState _lifecycleState = MateLifecycleState.Created;
@@ -571,15 +571,17 @@ public sealed class Mate : Unit
     public override int DoFallDamage(ushort fallVel)
     {
         // Death cleanup can detach passengers. Capture them before applying the impact.
-        var riders = Passengers.ToList();
+        var riders = Passengers.Select(passenger =>
+            (Seat: passenger.Key, ObjId: passenger.Value._objId)).ToList();
+        var wasDowned = IsDowned;
         var fallDmg = base.DoFallDamage(fallVel);
-        if (fallDmg > 0 && Hp <= 0)
+        if ((fallDmg > 0 && Hp <= 0) || (!wasDowned && IsDowned))
         {
             // A lethal mount impact also reaches its riders, with their own immunity checks.
             for (var i = riders.Count - 1; i >= 0; i--)
             {
-                var pos = riders[i].Key;
-                var rider = WorldManager.Instance.GetCharacterByObjId(riders[i].Value._objId);
+                var pos = riders[i].Seat;
+                var rider = WorldManager.Instance.GetCharacterByObjId(riders[i].ObjId);
                 if (rider != null)
                 {
                     rider.DoFallDamage(fallVel);

@@ -18,7 +18,8 @@ internal static class SkillCastAuthorization
         if (skill.Id is 2 or 3 or 4 || SkillManager.Instance.IsDefaultSkill(skill.Id) ||
             character.Skills.Skills.ContainsKey(skill.Id) ||
             SkillGrantGameData.Instance.HasBuffGrant(skill.Id, character.Buffs) ||
-            PriestSkillAuthorization.CanUse(character, skill, source, target))
+            PriestSkillAuthorization.CanUse(character, skill, source, target) ||
+            MateRecovery.CanUseGetUp(character, skill, source, target))
             return true;
 
         var world = character.ParentWorld;

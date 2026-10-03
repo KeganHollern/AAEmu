@@ -111,8 +111,8 @@ public class CharacterMates(Character owner)
             ModelId = template.ModelId,
             Faction = Owner.Faction,
             Level = (byte)mateDbInfo.Level,
-            Hp = mateDbInfo.Hp > 0 ? mateDbInfo.Hp : 100,
-            Mp = mateDbInfo.Mp > 0 ? mateDbInfo.Mp : 100,
+            Hp = mateDbInfo.Hp,
+            Mp = mateDbInfo.Mp,
             OwnerObjId = Owner.ObjId,
             Id = mateDbInfo.Id,
             ItemId = mateDbInfo.ItemId,
@@ -143,9 +143,13 @@ public class CharacterMates(Character owner)
         mount.Equipment = ItemManager.Instance.GetItemContainerForCharacter(Owner.Id, SlotType.EquipmentMate, mount, mount.Id);
         mount.UpdateGearBonuses(null, null);
 
+        mount.RestoreInjuryState((SummonMate)item, mateDbInfo.Hp, downed: false);
+
         // Cap stats to their max
         mount.Hp = Math.Min(mount.Hp, mount.MaxHp);
         mount.Mp = Math.Min(mount.Mp, mount.MaxMp);
+
+        mount.RefreshInjuryBuffs();
 
         //Logger.Warn($"Spawn the pet:{mount.ObjId} X={mount.Transform.World.Position.X} Y={mount.Transform.World.Position.Y}");
         Owner.ParentWorld.MateManager.AddActiveMateAndSpawn(Owner, mount, item);
@@ -163,11 +167,21 @@ public class CharacterMates(Character owner)
         if (mateInfo is null)
             return;
 
-        var mateDbInfo = GetMateInfo(mateInfo.ItemId);
-        if (mateDbInfo != null)
-            CopyPersistentMateState(mateDbInfo, mateInfo, DateTime.UtcNow);
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            var manager = Owner.ParentWorld?.MateManager;
+            if (manager == null || mateInfo.OwnerId != Owner.Id || mateInfo.OwnerObjId != Owner.ObjId ||
+                !ReferenceEquals(mateInfo.ParentWorld, Owner.ParentWorld) || !manager.IsOwnedMate(Owner, mateInfo))
+                return;
 
-        Owner.ParentWorld.MateManager.RemoveActiveMateAndDespawn(Owner, mateInfo);
+            var mateDbInfo = GetMateInfo(mateInfo.ItemId);
+            if (!mateInfo.IsTemporarySummon && mateInfo.ItemId != 0 && mateDbInfo != null &&
+                mateDbInfo.Owner == Owner.Id && mateDbInfo.Id == mateInfo.Id && mateDbInfo.ItemId == mateInfo.ItemId &&
+                ReferenceEquals(mateDbInfo, mateInfo.DbInfo))
+                CopyPersistentMateState(mateDbInfo, mateInfo, DateTime.UtcNow);
+
+            manager.RemoveActiveMateAndDespawn(Owner, mateInfo);
+        }
     }
 
     internal static void CopyPersistentMateState(MateDb target, Units.Mate source, DateTime updatedAt)
@@ -224,6 +238,7 @@ public class CharacterMates(Character owner)
 
     private void Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
     {
+        CaptureActiveMateStates(DateTime.UtcNow);
         if (_removedMates.Count > 0)
         {
             var removedIds = _removedMates.ToArray();
@@ -266,6 +281,20 @@ public class CharacterMates(Character owner)
             command.Parameters.AddWithValue("@updated_at", value.UpdatedAt);
             command.Parameters.AddWithValue("@created_at", value.CreatedAt);
             command.ExecuteNonQuery();
+        }
+    }
+
+    internal void CaptureActiveMateStates(DateTime updatedAt)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            Owner.ParentWorld?.MateManager?.CaptureOwnedPersistentMateStates(Owner, mate =>
+            {
+                if (!_mates.TryGetValue(mate.ItemId, out var saved) || saved.Owner != Owner.Id ||
+                    saved.Id != mate.Id || saved.ItemId != mate.ItemId || !ReferenceEquals(saved, mate.DbInfo))
+                    return;
+                CopyPersistentMateState(saved, mate, updatedAt);
+            });
         }
     }
 }

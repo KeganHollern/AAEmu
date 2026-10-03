@@ -19,7 +19,8 @@ internal static class MountSeatAuthorization
         actor.Transform.WorldId == mount.Transform.WorldId;
 
     internal static bool CanEnter(Character actor, Unit mount, Vector3 seatPosition, float range) =>
-        SameLivingWorld(actor, mount) && !mount.AttachmentsRetired && actor.AttachedPoint == AttachPointKind.None &&
+        SameLivingWorld(actor, mount) && mount is not Units.Mate { IsDowned: true } &&
+        !mount.AttachmentsRetired && actor.AttachedPoint == AttachPointKind.None &&
         !actor.IsRiding && actor.Transform.Parent == null && actor.Bonding == null &&
         InRange(actor.Transform.World.Position, seatPosition, range);
 

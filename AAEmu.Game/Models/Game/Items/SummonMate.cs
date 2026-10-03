@@ -6,6 +6,7 @@ namespace AAEmu.Game.Models.Game.Items;
 public class SummonMate : Item
 {
     public int DetailMateExp { get; set; }
+    public bool DetailInjured { get; set; }
     public byte DetailLevel { get; set; }
 
     public override ItemDetailType DetailType => ItemDetailType.Mate;
@@ -24,14 +25,14 @@ public class SummonMate : Item
         if (stream.LeftBytes < DetailBytesLength)
             return;
         DetailMateExp = stream.ReadInt32(); // exp
-        _ = stream.ReadByte();
+        DetailInjured = stream.ReadByte() != 0;
         DetailLevel = stream.ReadByte(); // level
     }
 
     public override void WriteDetails(PacketStream stream)
     {
         stream.Write(DetailMateExp); // exp
-        stream.Write((byte)0);
+        stream.Write((byte)(DetailInjured ? 1 : 0));
         stream.Write(DetailLevel); // level
     }
 
