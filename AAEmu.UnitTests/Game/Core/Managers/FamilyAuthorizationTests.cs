@@ -193,8 +193,8 @@ public sealed class FamilyAuthorizationTests
         var family = graph.Family(10, members);
         var invitedA = graph.Character(20);
         var invitedB = graph.Character(21);
-        graph.Manager.InviteToFamily(members[0], invitedA.Name, "A");
-        graph.Manager.InviteToFamily(members[0], invitedB.Name, "B");
+        graph.Manager.InviteToFamily(members[0], invitedA.Name, "Cousina");
+        graph.Manager.InviteToFamily(members[0], invitedB.Name, "Cousinb");
 
         await Task.WhenAll(
             Task.Run(() => graph.Manager.ReplyToInvite(members[0].Id, invitedA, true, "Ignored")),
@@ -234,7 +234,7 @@ public sealed class FamilyAuthorizationTests
         var family = graph.Family(10, owner, member);
         var otherFamily = graph.Family(20, otherOwner, otherMember);
 
-        graph.Manager.ChangeTitle(owner, targetId, "Wrong family");
+        graph.Manager.ChangeTitle(owner, targetId, "Cousin");
         graph.Manager.ChangeOwner(owner, targetId);
         graph.Manager.KickMember(owner, targetId);
 
@@ -422,20 +422,20 @@ public sealed class FamilyAuthorizationTests
     }
 
     [Test]
-    [Arguments(false, 45, true)]
-    [Arguments(false, 46, false)]
-    [Arguments(true, 34, true)]
-    [Arguments(true, 35, false)]
-    public async Task FamilyTitle_StorageAndNativeByteBounds_ApplyAtInviteAndTitleChange(bool multibyte, int length, bool valid)
+    [Arguments(false, 1, false)]
+    [Arguments(false, 2, true)]
+    [Arguments(false, 26, true)]
+    [Arguments(false, 27, false)]
+    [Arguments(true, 26, true)]
+    [Arguments(true, 27, false)]
+    public async Task FamilyTitle_ClientPolicyBounds_ApplyAtInviteAndTitleChange(bool multibyte, int length, bool valid)
     {
         using var graph = new FamilyGraph();
         var owner = graph.Character(1);
         var member = graph.Character(2);
         var invited = graph.Character(3);
         var family = graph.Family(10, owner, member);
-        var title = new string(multibyte ? '界' : 'A', length);
-        if (multibyte && length == 34)
-            title += "AA"; // Exactly 104 UTF-8 bytes.
+        var title = new string(multibyte ? 'É' : 'A', length);
         graph.Manager.ChangeTitle(owner, member.Id, title);
         graph.Manager.InviteToFamily(owner, invited.Name, title);
         graph.Manager.ReplyToInvite(owner.Id, invited, true, "Ignored");

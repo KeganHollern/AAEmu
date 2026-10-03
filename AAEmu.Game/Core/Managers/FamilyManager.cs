@@ -1,6 +1,4 @@
-﻿using System.Text;
-
-using AAEmu.Commons.Utils;
+﻿using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
@@ -9,6 +7,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Names;
 
 using NLog;
 
@@ -17,9 +16,6 @@ namespace AAEmu.Game.Core.Managers;
 public class FamilyManager(IWorldManager worldManager, IChatManager chatManager, IFamilyIdManager familyIdManager) : Singleton<FamilyManager>, IFamilyManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
-
-    private const int MaximumTitleCharacters = 45; // family_members.title varchar(45)
-    private const int MaximumTitleBytes = 104; // Native FamilyMember title buffer, excluding the terminator.
 
     private Dictionary<uint, Family> _families = [];
     private Dictionary<uint, FamilyMember> _familyMembers = [];
@@ -176,8 +172,8 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
         }
     }
 
-    private static bool IsValidTitle(string title) => title == null ||
-        title.Length <= MaximumTitleCharacters && Encoding.UTF8.GetByteCount(title) <= MaximumTitleBytes;
+    private static bool IsValidTitle(string title) =>
+        NameRules.Validate(title, NameType.FamilyTitle) == NameValidationResult.Valid;
 
     private static bool CurrentCharacter(Character character, GameConnection connection) =>
         character != null && character.IsOnline && connection != null &&

@@ -40,7 +40,6 @@ The configuration structure is as follows:
         "Database": "aaemu_game"
     }
 },
-"CharacterNameRegex": "^[a-zA-Z0-9а-яА-Я]{1,18}$",
 "MaxConcurencyThreadPool": 8,
 "HeightMapsEnable": false
 ```

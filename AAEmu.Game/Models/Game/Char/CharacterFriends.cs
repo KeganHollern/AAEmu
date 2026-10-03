@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Commons.Utils;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Packets.G2C;
 using MySql.Data.MySqlClient;
@@ -33,17 +34,27 @@ public class CharacterFriends(Character owner)
 
     public void RemoveFriend(string name)
     {
-        var friend = FriendMananger.GetFriendInfo(name);
-        if (friend == null || !FriendsIdList.TryGetValue(friend.CharacterId, out var value))
-        {
-            // TODO - ERROR MESSAGE NOT FRIEND
+        if (string.IsNullOrEmpty(name))
             return;
-        }
 
-        FriendMananger.Instance.RemoveFromAllFriends(value.Id);
-        FriendsIdList.Remove(friend.CharacterId);
-        _removedFriends.Add(friend.CharacterId);
-        Owner.SendPacket(new SCDeleteFriendPacket(friend.CharacterId, true, name, 0));
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            // Deleted characters leave the active name index, and another character
+            // can reuse their name. A removal must resolve the saved friend IDs.
+            var normalizedName = name.NormalizeName();
+            var friends = FriendMananger.GetFriendInfo([.. FriendsIdList.Keys]);
+            var friend = friends
+                .Where(candidate => string.Equals(candidate.Name.NormalizeName(), normalizedName, StringComparison.Ordinal))
+                .OrderBy(candidate => FriendsIdList[candidate.CharacterId].Id)
+                .FirstOrDefault();
+            if (friend == null || !FriendsIdList.TryGetValue(friend.CharacterId, out var value))
+                return;
+
+            FriendMananger.Instance.RemoveFromAllFriends(value.Id);
+            FriendsIdList.Remove(friend.CharacterId);
+            _removedFriends.Add(friend.CharacterId);
+            Owner.SendPacket(new SCDeleteFriendPacket(friend.CharacterId, true, friend.Name, 0));
+        }
     }
 
     public void Send()

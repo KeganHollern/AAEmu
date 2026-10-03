@@ -15,6 +15,7 @@ using AAEmu.Game.Models.Game.Char.Templates;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Names;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.StaticValues;
@@ -456,6 +457,12 @@ public class CharacterManager(
         {
             Logger.Warn("Rejected unauthenticated character creation");
             connection.Shutdown();
+            return;
+        }
+
+        if (!NameRules.IsWellFormed(name))
+        {
+            connection.SendPacket(new SCCharacterCreationFailedPacket(CharacterCreateError.InvalidCharacters));
             return;
         }
 
@@ -1004,12 +1011,19 @@ public class CharacterManager(
 
     public virtual bool IsCharacterPendingDeletion(string name)
     {
+        if (string.IsNullOrEmpty(name))
+            return false;
+        var characterId = nameManager.GetCharacterId(name.NormalizeName());
+        if (characterId == 0)
+            return false;
+
         using (var connection = MySQL.CreateConnection())
         {
             using (var command = connection.CreateCommand())
             {
-                command.CommandText = "SELECT * FROM characters WHERE `name` = @name";
-                command.Parameters.AddWithValue("@name", name);
+                // NameManager preserves accents. The database's name collation does not.
+                command.CommandText = "SELECT deleted, delete_request_time FROM characters WHERE `id` = @id";
+                command.Parameters.AddWithValue("@id", characterId);
                 command.Prepare();
                 using (var reader = command.ExecuteReader())
                 {

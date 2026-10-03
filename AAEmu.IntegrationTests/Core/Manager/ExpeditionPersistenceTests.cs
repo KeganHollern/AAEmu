@@ -1,4 +1,4 @@
-using AAEmu.Commons.Utils.DB;
+﻿using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
@@ -26,7 +26,7 @@ public sealed class ExpeditionPersistenceTests : IDisposable
     public ExpeditionPersistenceTests()
     {
         _previousConfig = AppConfiguration.Instance.Expedition;
-        AppConfiguration.Instance.Expedition = new ExpeditionConfig { NameRegex = "^[a-zA-Zа-яА-Я ]{3,32}$" };
+        AppConfiguration.Instance.Expedition = new ExpeditionConfig();
         Cleanup();
         SeedCharacter(OwnerId);
         SeedCharacter(MemberId);

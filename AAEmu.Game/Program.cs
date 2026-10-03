@@ -222,6 +222,7 @@ public static class Program
                 services.AddSingleton<MusicManager>();
                 services.AddSingleton<IMusicManager>(sp => sp.GetRequiredService<MusicManager>());
 
+                services.AddSingleton<AAEmu.Game.GameData.NameGameData>();
                 services.AddSingleton<NameManager>();
                 services.AddSingleton<INameManager>(sp => sp.GetRequiredService<NameManager>());
 

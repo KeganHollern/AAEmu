@@ -81,7 +81,7 @@ public sealed class FamilyPersistenceTests : IAsyncLifetime
     {
         var manager = LoadManager();
         var owner = new Character(null) { Id = OwnerId, Family = FamilyId };
-        manager.ChangeTitle(owner, targetId, "Wrong family");
+        manager.ChangeTitle(owner, targetId, "Cousin");
         manager.ChangeOwner(owner, targetId);
         manager.KickMember(owner, targetId);
 

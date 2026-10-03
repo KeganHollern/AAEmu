@@ -29,7 +29,6 @@
             "../../../../AAEmu.Game/bin/Debug/net6.0/ClientData/game_pak"
         ]
     },
-    "CharacterNameRegex": "^[a-zA-Z0-9а-яА-Я]{1,18}$",
     "MaxConcurencyThreadPool": 8,
     "HeightMapsEnable": false,
     "World": {

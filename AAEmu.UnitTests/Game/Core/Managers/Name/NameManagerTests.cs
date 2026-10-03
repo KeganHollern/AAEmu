@@ -107,7 +107,8 @@ public sealed class NameManagerTests
     [Test]
     [Arguments("")]
     [Arguments("   ")]
-    [Arguments("000&#$*")]
+    [Arguments("Ab界")]
+    [Arguments("A")]
     public async Task ValidationCharacterInvalidName(string providedName)
     {
         // Arrange

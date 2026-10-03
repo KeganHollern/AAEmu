@@ -17,6 +17,7 @@ using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Names;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Effects.Enums;
@@ -190,6 +191,14 @@ public partial class Skill
         {
             Cancelled = true;
             return SkillResult.InvalidSource;
+        }
+        // Save and rename share this payload, including when a plot runs SavePortal.
+        // Reject the name before GCD, buff removal, or any skill cost.
+        if (skillObject is SkillObjectSavePortalInfo portal &&
+            NameRules.Validate(portal.Name, NameType.Portal) != NameValidationResult.Valid)
+        {
+            Cancelled = true;
+            return SkillResult.InvalidTarget;
         }
         if (caster is Character laborOwner && laborOwner.LaborPower < GetLaborCost(laborOwner))
         {
