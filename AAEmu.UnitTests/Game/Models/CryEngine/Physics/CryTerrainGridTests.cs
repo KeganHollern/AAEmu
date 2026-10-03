@@ -7,6 +7,39 @@ namespace AAEmu.UnitTests.Game.Models.CryEngine.Physics;
 public sealed class CryTerrainGridTests
 {
     [Test]
+    public async Task PlacementBox_DetectsShallowAndBuriedTerrainButAllowsDeepWater()
+    {
+        using var stream = Map(4, Node(3, Enumerable.Repeat(Pack(10), 9).ToArray()));
+        var grid = CryTerrainGrid.Read(stream, Vector2.Zero);
+        var query = new CryBox(new(2, 2, 12), new(0.25f, 0.25f, 1), Matrix4x4.CreateRotationZ(0.7f));
+        await Assert.That(grid.IntersectBox(query)).IsEqualTo(CryIntersection.Clear);
+        await Assert.That(grid.IntersectBox(query with { Center = new(2, 2, 10.5f) })).IsEqualTo(CryIntersection.Intersects);
+        await Assert.That(grid.IntersectBox(query with { Center = new(2, 2, 2) })).IsEqualTo(CryIntersection.Intersects);
+    }
+
+    [Test]
+    public async Task PlacementBox_UsesInteriorPeakAndAuthoredHoles()
+    {
+        using var peak = Map(4, Node(3, [Pack(0), Pack(0), Pack(0), Pack(0), Pack(20), Pack(0), Pack(0), Pack(0), Pack(0)]));
+        var grid = CryTerrainGrid.Read(peak, Vector2.Zero);
+        var query = new CryBox(new(2, 2, 12), new(1.9f, 1.9f, 1), Matrix4x4.Identity);
+        await Assert.That(grid.IntersectBox(query)).IsEqualTo(CryIntersection.Intersects);
+        using var hole = Map(2, Node(2, [Pack(20, 31), Pack(20), Pack(20), Pack(20)]));
+        await Assert.That(CryTerrainGrid.Read(hole, Vector2.Zero).IntersectBox(query with { Center = new(1, 1, 12), HalfSize = new(0.4f) }))
+            .IsEqualTo(CryIntersection.Clear);
+    }
+
+    [Test]
+    public async Task PlacementBox_UnknownTerrainFailsAndUnrelatedTileIsClear()
+    {
+        using var stream = Map(4, Node(0, []));
+        var grid = CryTerrainGrid.Read(stream, Vector2.Zero);
+        var query = new CryBox(new(2, 2, 12), Vector3.One, Matrix4x4.Identity);
+        await Assert.That(grid.IntersectBox(query)).IsEqualTo(CryIntersection.Indeterminate);
+        await Assert.That(grid.IntersectBox(query with { Center = new(20, 20, 12) })).IsEqualTo(CryIntersection.Clear);
+    }
+
+    [Test]
     [Arguments(0)]
     [Arguments(16)]
     [Arguments(30)]

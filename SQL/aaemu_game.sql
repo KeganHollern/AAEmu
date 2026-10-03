@@ -819,3 +819,27 @@ CREATE TABLE IF NOT EXISTS `bot_reports` (
   PRIMARY KEY (`reported_id`, `reporter_id`),
   KEY `idx_bot_reports_reporter` (`reporter_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+CREATE TABLE IF NOT EXISTS `shipyards` (
+    `id` INT UNSIGNED NOT NULL,
+    `template_id` INT UNSIGNED NOT NULL,
+    `owner_id` INT UNSIGNED NOT NULL,
+    `owner_name` VARCHAR(128) NOT NULL,
+    `faction_id` INT UNSIGNED NOT NULL,
+    `world_id` INT UNSIGNED NOT NULL,
+    `instance_id` INT UNSIGNED NOT NULL,
+    `x` FLOAT NOT NULL,
+    `y` FLOAT NOT NULL,
+    `z` FLOAT NOT NULL,
+    `yaw` FLOAT NOT NULL,
+    `spawned` DATETIME(6) NOT NULL,
+    `hp` INT NOT NULL,
+    `mp` INT NOT NULL,
+    `state_hp` INT NOT NULL,
+    `current_step` INT NOT NULL,
+    `current_action` INT NOT NULL,
+    `ceremony_end` DATETIME(6) NULL,
+    `completion_item_id` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (`id`),
+    KEY `world_instance` (`world_id`, `instance_id`),
+    KEY `owner` (`owner_id`)
+) ENGINE=InnoDB DEFAULT COLLATE='utf8mb4_general_ci';

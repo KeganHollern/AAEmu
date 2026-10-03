@@ -3,10 +3,12 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.Units.Static;
+using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.Game.Models.Game.Shipyard;
 
-public sealed class Shipyard : Unit
+public sealed partial class Shipyard : Unit
 {
     public override float Scale => 1.0f;
     private readonly object _lock = new();
@@ -15,6 +17,7 @@ public sealed class Shipyard : Unit
     private int _baseAction;
     private int _numAction;
     private int _currentStep;
+    private int _hpBeforeDeath;
     private ShipyardsTemplate _template;
 
     public override UnitTypeFlag TypeFlag { get => UnitTypeFlag.Shipyard; }
@@ -57,9 +60,8 @@ public sealed class Shipyard : Unit
             _currentStep = value;
             _isDirty = true;
             ModelId = _currentStep == -1 ? Template.MainModelId : Template.ShipyardSteps[_currentStep].ModelId;
-            if (_currentStep <= 0) { return; }
-
             BaseAction = 0;
+            if (_currentStep <= 0) { return; }
             for (var i = 0; i < _currentStep; i++)
                 BaseAction += Template.ShipyardSteps[i].NumActions;
         }
@@ -68,7 +70,6 @@ public sealed class Shipyard : Unit
     public Shipyard()
     {
         IsDirty = true;
-        Events.OnDeath += OnDeath;
     }
 
     public override void AddVisibleObject(Character character)
@@ -288,10 +289,39 @@ public sealed class Shipyard : Unit
 
     #endregion
 
-    private void OnDeath(object sender, EventArgs args)
+    public override void ReduceCurrentHp(BaseUnit attacker, int value, KillReason killReason = KillReason.Damage)
     {
-        Logger.Debug("Shipyard died ObjId:{0} - TemplateId:{1} - {2}", ObjId, ShipyardData.TemplateId, ShipyardData.OwnerName);
-        ShipyardManager.Instance.RemoveShipyard(this);
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!Retiring && !Retired)
+                base.ReduceCurrentHp(attacker, value, killReason);
+        }
+    }
+
+    public override void PostUpdateCurrentHp(BaseUnit attacker, int oldHp, int newHp,
+        KillReason killReason = KillReason.Damage)
+    {
+        _hpBeforeDeath = oldHp;
+        try
+        {
+            base.PostUpdateCurrentHp(attacker, oldHp, newHp, killReason);
+        }
+        finally
+        {
+            _hpBeforeDeath = 0;
+        }
+    }
+
+    public override void DoDie(BaseUnit killer, KillReason killReason)
+    {
+        var previousHp = _hpBeforeDeath;
+        ShipyardManager.Instance.DestroyShipyard(this, () => base.DoDie(killer, killReason), () =>
+        {
+            if (previousHp <= 0)
+                return;
+            Hp = previousHp;
+            BroadcastPacket(new SCUnitPointsPacket(ObjId, Hp, Mp), true);
+        });
     }
 
     public void AddBuildAction()
@@ -327,6 +357,8 @@ public sealed class Shipyard : Unit
         var dirty = _isDirty;
         var dataStep = ShipyardData.Step;
         var dataActions = ShipyardData.Actions;
+        var ceremonyEnd = CeremonyEnd;
+        var completionItemId = CompletionItemId;
         return () =>
         {
             lock (_lock)
@@ -338,6 +370,8 @@ public sealed class Shipyard : Unit
                 _isDirty = dirty;
                 ShipyardData.Step = dataStep;
                 ShipyardData.Actions = dataActions;
+                CeremonyEnd = ceremonyEnd;
+                CompletionItemId = completionItemId;
             }
         };
     }

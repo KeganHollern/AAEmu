@@ -21,7 +21,8 @@ public class SaveManager(
     IAuctionManager auctionManager,
     ICrimeManager crimeManager,
     IWorldManager worldManager,
-    IZoneManager zoneManager) : Singleton<SaveManager>, ISaveManager
+    IZoneManager zoneManager,
+    IShipyardManager shipyardManager = null) : Singleton<SaveManager>, ISaveManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -93,6 +94,7 @@ public class SaveManager(
             {
                 housingManager.Save(context.Connection, context.Transaction);
                 crimeManager.Save(context.Connection, context.Transaction);
+                shipyardManager?.Save(context);
                 zoneManager.Save(context.Connection, context.Transaction);
                 foreach (var world in worldManager.GetWorlds())
                 {

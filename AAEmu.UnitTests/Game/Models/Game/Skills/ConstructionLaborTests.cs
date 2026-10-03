@@ -174,6 +174,8 @@ public sealed class ConstructionLaborTests
         var queue = (ConcurrentDictionary<uint, AAEmu.Game.Models.Tasks.Task>)GetField(_tasks, "_queue");
         await Assert.That(result).IsEqualTo(success);
         await Assert.That(shipyard.ShipyardData.Step).IsEqualTo(success ? 1000 : 1);
+        await Assert.That(shipyard.CompletionItemId).IsEqualTo(success ? 1000UL : 0UL);
+        await Assert.That(shipyard.CeremonyEnd == DateTime.MinValue).IsEqualTo(!success);
         await Assert.That(_owner.Inventory.Bag.Items.Count).IsEqualTo(success ? 1 : 0);
         await Assert.That(queue.Count).IsEqualTo(success ? 1 : 0);
         await Assert.That(_owner.Packets.Count).IsEqualTo(success ? 1 : 0);
@@ -189,6 +191,39 @@ public sealed class ConstructionLaborTests
             () => CraftEffect.AdvanceShipyardConstruction(_owner, shipyard, 99, skill))).IsFalse();
         await Assert.That(_owner.LaborPower).IsEqualTo((short)20);
         await Assert.That(shipyard.NumAction).IsEqualTo(1);
+        await Assert.That(_owner.Packets).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task RetiredShipyard_RejectsConstructionAndLaunchWithoutPayment(bool complete, bool retired)
+    {
+        var shipyard = NewShipyard(true);
+        if (complete)
+            shipyard.AddBuildAction();
+        shipyard.Retired = retired;
+        shipyard.Retiring = !retired;
+        var step = shipyard.CurrentStep;
+        var actions = shipyard.NumAction;
+        var skill = NewSkill("success");
+
+        var result = SkillLaborBatch.Run(_owner, skill, true, () =>
+        {
+            if (complete)
+                CraftEffect.CompleteShipyardConstruction(_owner, shipyard, skill);
+            else
+                CraftEffect.AdvanceShipyardConstruction(_owner, shipyard, 50, skill);
+        });
+
+        await Assert.That(result).IsFalse();
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)20);
+        await Assert.That(_owner.Inventory.Bag.Items).IsEmpty();
+        await Assert.That(shipyard.CurrentStep).IsEqualTo(step);
+        await Assert.That(shipyard.NumAction).IsEqualTo(actions);
+        await Assert.That(shipyard.CompletionItemId).IsEqualTo(0UL);
         await Assert.That(_owner.Packets).IsEmpty();
     }
 

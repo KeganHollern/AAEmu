@@ -223,6 +223,51 @@ public sealed class CryTerrainGrid
         return CryIntersection.Intersects;
     }
 
+    /// <summary>Tests a placement box against the solid terrain below each authored triangle.</summary>
+    public CryIntersection IntersectBox(CryBox box)
+    {
+        if (!Finite(box.Center) || !Finite(box.HalfSize) ||
+            box.HalfSize.X < 0 || box.HalfSize.Y < 0 || box.HalfSize.Z < 0)
+            return CryIntersection.Indeterminate;
+        var bounds = new CryBounds(-box.HalfSize, box.HalfSize).Transform(
+            box.Orientation * Matrix4x4.CreateTranslation(box.Center));
+        if (bounds.Max.X < Bounds.Min.X || bounds.Min.X > Bounds.Max.X ||
+            bounds.Max.Y < Bounds.Min.Y || bounds.Min.Y > Bounds.Max.Y)
+            return CryIntersection.Clear;
+        for (var x = Cell(bounds.Min.X, Origin.X); x <= Cell(bounds.Max.X, Origin.X); x++)
+        for (var y = Cell(bounds.Min.Y, Origin.Y); y <= Cell(bounds.Max.Y, Origin.Y); y++)
+        {
+            var surface = _surfaces[SurfaceIndex(x, y)];
+            if (surface == Hole)
+                continue;
+            var a = new Vector3(Origin.X + x * UnitSize, Origin.Y + y * UnitSize, Height(x, y));
+            var b = new Vector3(a.X + UnitSize, a.Y, Height(x + 1, y));
+            var c = new Vector3(a.X, a.Y + UnitSize, Height(x, y + 1));
+            var d = new Vector3(b.X, c.Y, Height(x + 1, y + 1));
+            if (surface == Unavailable || !Finite(a) || !Finite(b) || !Finite(c) || !Finite(d))
+                return CryIntersection.Indeterminate;
+            if (MathF.Max(MathF.Max(a.Z, b.Z), MathF.Max(c.Z, d.Z)) < bounds.Min.Z)
+                continue;
+            // Close the terrain column below the query. This also rejects an entirely
+            // buried box, whose faces do not cross the upper terrain triangles.
+            var bottom = MathF.Min(bounds.Min.Z, MathF.Min(MathF.Min(a.Z, b.Z), MathF.Min(c.Z, d.Z))) - 1;
+            Vector3[] vertices = [a, b, c, d, a with { Z = bottom }, b with { Z = bottom },
+                c with { Z = bottom }, d with { Z = bottom }];
+            ushort[] indices = [0,1,2, 1,3,2, 4,6,5, 5,6,7, 0,4,1, 1,4,5,
+                1,5,3, 3,5,7, 3,7,2, 2,7,6, 2,6,0, 0,6,4];
+            var mesh = new CryGeometryPart(new CryTriangleMesh(vertices, indices, []),
+                Matrix4x4.Identity, CryGeometryLayerRules.Solid, "", "terrain");
+            var result = CryGeometryQueries.IntersectBox(mesh, Matrix4x4.Identity, box, Matrix4x4.Identity);
+            if (result != CryIntersection.Clear)
+                return result;
+            // A small box may be wholly inside one solid terrain column.
+            if (box.Center.X >= a.X && box.Center.X <= b.X && box.Center.Y >= a.Y && box.Center.Y <= c.Y &&
+                box.Center.Z <= SampleHeight(box.Center.X, box.Center.Y))
+                return CryIntersection.Intersects;
+        }
+        return CryIntersection.Clear;
+    }
+
     private void AddNode(Vector3 min, Vector3 max, Vector2 fileOrigin, int size, ushort[] packed,
         float offset, float range)
     {
