@@ -29,7 +29,7 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public class SlaveManager(WorldInstance parentWorldInstance)
+public partial class SlaveManager(WorldInstance parentWorldInstance)
 {
     private enum RemovalRequest { Player, VisibilityTimeout, Cleanup }
 
@@ -358,13 +358,25 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         world.Physics.RemoveShip(slaveInfo);
         owner?.BroadcastPacket(new SCSlaveDespawnPacket(slaveInfo.ObjId), true);
         owner?.BroadcastPacket(new SCSlaveRemovedPacket(owner.ObjId, slaveInfo.TlId), true);
-        lock (_slaveListLock)
+        // Item skill effects use this same lock even when their labor cost is zero.
+        // Do not let a replacement publish a new location between removal and clear.
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            World.RemoveObject(slaveInfo);
-        }
+            lock (_slaveListLock)
+                World.RemoveObject(slaveInfo);
 
-        slaveInfo.Despawn = DateTime.UtcNow.AddSeconds(slaveInfo.Template.PortalTime + 0.5f);
-        World.SpawnManager.AddDespawn(slaveInfo);
+            slaveInfo.Despawn = DateTime.UtcNow.AddSeconds(slaveInfo.Template.PortalTime + 0.5f);
+            World.SpawnManager.AddDespawn(slaveInfo);
+            if (slaveInfo.SummoningItem is SummonSlave summonItem)
+            {
+                // A rejected removal retains the active location. Accepted removal
+                // clears it after the actor leaves the world, including delayed cleanup.
+                summonItem.ClearSummonLocation();
+                summonItem.IsDirty = true;
+                owner?.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.UpdateSummonMateItem,
+                    new ItemUpdate(summonItem), []));
+            }
+        }
         return true;
     }
 
@@ -442,7 +454,7 @@ public class SlaveManager(WorldInstance parentWorldInstance)
     internal static Vector3 GetItemSpawnDestination(PositionAndRotation ownerPosition,
         WorldSpawnPosition spawnerPosition, Transform positionOverride, float spawnYOffset)
     {
-        if (positionOverride != null && !positionOverride.Local.IsOrigin())
+        if (positionOverride != null)
             return positionOverride.World.Position;
         var position = spawnerPosition == null ? ownerPosition.Clone() : new PositionAndRotation(
             spawnerPosition.X, spawnerPosition.Y, spawnerPosition.Z,
@@ -494,7 +506,7 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         var tlId = (ushort)TlIdManager.Instance.GetNextId();
         var objId = ObjectIdManager.Instance.GetNextId();
 
-        using var spawnPos = positionOverride ?? new Transform(null);
+        using var spawnPos = positionOverride?.CloneDetached() ?? new Transform(null);
         spawnPos.InstanceId = World.Id;
         var spawnOffsetPos = new Vector3();
 
@@ -540,7 +552,7 @@ public class SlaveManager(WorldInstance parentWorldInstance)
         #endregion
 
         // Put it at the correct location
-        if (spawnPos.Local.IsOrigin())
+        if (positionOverride == null)
         {
             if (owner == null && useSpawner == null)
             {

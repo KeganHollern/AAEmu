@@ -1,5 +1,7 @@
-﻿using System.Numerics;
+﻿using System.Buffers.Binary;
+using System.Numerics;
 using AAEmu.Commons.Network;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Items.Templates;
 
@@ -29,8 +31,22 @@ public class SummonSlave : Item
         }
     }
 
-    // TODO: Actually use this location for saving the data in ItemDetails
-    public Vector3 SummonLocation { get; set; }
+    // r208022 stores only packed world X and Y in the final 16 detail bytes.
+    public Vector3 SummonLocation
+    {
+        get => new(Helpers.ConvertLongX(BinaryPrimitives.ReadInt64LittleEndian(_locationDetails)),
+            Helpers.ConvertLongY(BinaryPrimitives.ReadInt64LittleEndian(_locationDetails.AsSpan(8))), 0);
+        set
+        {
+            BinaryPrimitives.WriteInt64LittleEndian(_locationDetails, Helpers.ConvertLongX(value.X));
+            BinaryPrimitives.WriteInt64LittleEndian(_locationDetails.AsSpan(8), Helpers.ConvertLongY(value.Y));
+        }
+    }
+
+    internal bool HasSummonLocation => BinaryPrimitives.ReadInt64LittleEndian(_locationDetails) != 0 &&
+        BinaryPrimitives.ReadInt64LittleEndian(_locationDetails.AsSpan(8)) != 0;
+
+    internal void ClearSummonLocation() => Array.Clear(_locationDetails);
 
     internal ErrorMessageType GetSpawnError(DateTime now, out uint secondsRemaining)
     {
@@ -67,8 +83,7 @@ public class SummonSlave : Item
         IsDestroyed = stream.ReadByte();
         var repairTime = stream.ReadInt64();
         _repairStartTime = repairTime == 0 ? DateTime.MinValue : AAEmu.Commons.Utils.Helpers.UnixTime(repairTime);
-        // The client copies this fixed union body unchanged. Preserve its location
-        // fields without assigning unconfirmed meanings to individual bytes.
+        // Keep exact packed values on load. The native range gate reads both i64 coordinates.
         _locationDetails = stream.ReadBytes(16);
     }
 

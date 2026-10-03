@@ -301,8 +301,8 @@ public sealed class SlaveRemovalTests
     [Arguments(true, true)]
     public async Task PlayerRemoval_SaveFailureKeepsVehiclePassengersAndAttachments(bool automatic, bool throws)
     {
-        _slave.Id = 123;
-        typeof(Slave).GetProperty(nameof(Slave.SummoningItem))!.SetValue(_slave, new SummonSlave());
+        var summonItem = SetSavedSummonLocation();
+        var beforeDetails = SummonDetails(summonItem);
         Attach(_owner, _slave);
         var doodad = new Doodad { ObjId = 22, IsPersistent = true, ParentWorld = _world };
         doodad.Transform.Parent = _slave.Transform;
@@ -330,6 +330,9 @@ public sealed class SlaveRemovalTests
         await Assert.That(_slave.AttachedCharacters[AttachPointKind.Driver]).IsSameReferenceAs(_owner);
         await Assert.That(doodad.IsPersistent).IsTrue();
         await Assert.That(doodad.Transform.Parent).IsSameReferenceAs(_slave.Transform);
+        await Assert.That(SummonDetails(summonItem).SequenceEqual(beforeDetails)).IsTrue();
+        await Assert.That(summonItem.IsDirty).IsFalse();
+        await Assert.That(ItemUpdates()).IsEqualTo(0);
     }
 
     [Test]
@@ -358,7 +361,102 @@ public sealed class SlaveRemovalTests
 
         await Assert.That(_slave.AttachmentsRetired).IsTrue();
         await Assert.That(_world.GetAllSlaves()).IsEmpty();
-        await Assert.That(_session.Packets).IsEmpty();
+        await Assert.That(ItemUpdates()).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments("player", false)]
+    [Arguments("visibility-timeout", false)]
+    [Arguments("cleanup", false)]
+    [Arguments("player", true)]
+    public async Task AcceptedRemoval_ClearsSavedSummonLocationOnceAfterVehicleLeavesWorld(string removal, bool partialPair)
+    {
+        var summonItem = SetSavedSummonLocation();
+        var beforeDetails = SummonDetails(summonItem);
+        if (partialPair)
+        {
+            Array.Clear(beforeDetails, 13, 8);
+            summonItem.ReadDetails(new PacketStream(beforeDetails));
+        }
+        var locationAtSave = false;
+        _world.SlaveManager.SaveForRemoval = vehicle =>
+        {
+            locationAtSave = ReferenceEquals(vehicle, _slave) && SummonDetails(summonItem).SequenceEqual(beforeDetails) &&
+                ReferenceEquals(_world.SlaveManager.GetSlaveByObjId(_slave.ObjId), _slave);
+            return true;
+        };
+        if (removal == "visibility-timeout")
+            ExpireVisibility();
+
+        if (removal == "cleanup")
+            _world.SlaveManager.RemoveAndDespawnAllActiveOwnedSlaves(_owner);
+        else
+            await Assert.That(removal == "player"
+                ? _world.SlaveManager.Delete(_owner, _slave.ObjId)
+                : _world.SlaveManager.RemoveActiveSlave(_owner, _slave.TlId)).IsTrue();
+
+        var afterDetails = SummonDetails(summonItem);
+        await Assert.That(locationAtSave).IsTrue();
+        await Assert.That(_world.GetAllSlaves()).IsEmpty();
+        await Assert.That(_slave.AttachmentsRetired).IsTrue();
+        await Assert.That(Despawns().Contains(_slave)).IsTrue();
+        await Assert.That(summonItem.HasSummonLocation).IsFalse();
+        await Assert.That(summonItem.SummonLocation).IsEqualTo(Vector3.Zero);
+        await Assert.That(summonItem.IsDirty).IsTrue();
+        await Assert.That(afterDetails[..13].SequenceEqual(beforeDetails[..13])).IsTrue();
+        await Assert.That(afterDetails[13..].All(value => value == 0)).IsTrue();
+        await Assert.That(ItemUpdates()).IsEqualTo(1);
+
+        _world.SlaveManager.RemoveAndDespawnAllActiveOwnedSlaves(_owner);
+        await Assert.That(_world.SlaveManager.Delete(_owner, _slave.ObjId)).IsFalse();
+        await Assert.That(ItemUpdates()).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments("combat")]
+    [Arguments("cargo")]
+    [Arguments("visibility")]
+    public async Task RejectedRemoval_PreservesSavedSummonLocationWithoutItemUpdate(string reason)
+    {
+        var summonItem = SetSavedSummonLocation();
+        var beforeDetails = SummonDetails(summonItem);
+        if (reason == "combat")
+            _slave.IsInBattle = true;
+        else if (reason == "cargo")
+            AddCargo(false);
+        else
+            _slave.IsVisible = false;
+
+        await Assert.That(_world.SlaveManager.Delete(_owner, _slave.ObjId)).IsFalse();
+
+        await AssertUnchanged();
+        await Assert.That(SummonDetails(summonItem).SequenceEqual(beforeDetails)).IsTrue();
+        await Assert.That(summonItem.IsDirty).IsFalse();
+        await Assert.That(ItemUpdates()).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task DeathItemUpdate_ClearsLocationAndRepairStateWithoutChangingScrollIdentity()
+    {
+        var summonItem = SetSavedSummonLocation();
+        var beforeDetails = SummonDetails(summonItem);
+
+        typeof(Slave).GetMethod("MarkSummoningItemAsDestroyed", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(_slave, null);
+
+        var afterDetails = SummonDetails(summonItem);
+        await Assert.That(_slave.SummoningItem).IsSameReferenceAs(summonItem);
+        await Assert.That(summonItem.Id).IsEqualTo(400UL);
+        await Assert.That(summonItem.OwnerId).IsEqualTo((ulong)_owner.Id);
+        await Assert.That(summonItem.Count).IsEqualTo(1);
+        await Assert.That(summonItem.SlotType).IsEqualTo(SlotType.Inventory);
+        await Assert.That(afterDetails[..4].SequenceEqual(beforeDetails[..4])).IsTrue();
+        await Assert.That(summonItem.IsDestroyed).IsEqualTo((byte)1);
+        await Assert.That(summonItem.RepairStartTime).IsEqualTo(DateTime.MinValue);
+        await Assert.That(summonItem.HasSummonLocation).IsFalse();
+        await Assert.That(afterDetails[13..].All(value => value == 0)).IsTrue();
+        await Assert.That(summonItem.IsDirty).IsTrue();
+        await Assert.That(ItemUpdates()).IsEqualTo(1);
     }
 
     [Test]
@@ -443,6 +541,30 @@ public sealed class SlaveRemovalTests
         slave.Region.AddObject(slave);
         return slave;
     }
+
+    private SummonSlave SetSavedSummonLocation()
+    {
+        var item = new SummonSlave
+        {
+            Id = 400, SlaveType = 2, SlaveDbId = 123, Count = 1,
+            SlotType = SlotType.Inventory, Slot = 0, OwnerId = _owner.Id,
+            RepairStartTime = new DateTime(2026, 9, 27, 12, 0, 0, DateTimeKind.Utc),
+            SummonLocation = new Vector3(123.25f, 456.75f, 0), IsDirty = false
+        };
+        _slave.Id = item.SlaveDbId;
+        typeof(Slave).GetProperty(nameof(Slave.SummoningItem))!.SetValue(_slave, item);
+        return item;
+    }
+
+    private static byte[] SummonDetails(SummonSlave item)
+    {
+        var stream = new PacketStream();
+        item.WriteDetails(stream);
+        return stream.GetBytes();
+    }
+
+    private int ItemUpdates() => _session.Packets.Count(packet =>
+        BitConverter.ToUInt16(packet, 6) == SCOffsets.SCItemTaskSuccessPacket);
 
     private Doodad AddCargo(bool templateOnly)
     {

@@ -1509,7 +1509,11 @@ public partial class Skill
             // Template can be null for some reason.
             if (effect.Template != null)
             {
-                var thisTargetCaster = target.ObjId == targetCaster.ObjId
+                // SummonPos effects execute on the caster, but SpawnSlave consumes the
+                // original type-1 position target produced by the r208022 skill client.
+                var preserveSlavePosition = Template.TargetType == SkillTargetType.SummonPos &&
+                    effect.Template is SpecialEffect { SpecialEffectTypeId: SpecialType.SpawnSlave };
+                var thisTargetCaster = preserveSlavePosition || target.ObjId == targetCaster.ObjId
                     ? targetCaster
                     : new SkillCastUnitTarget(target.ObjId);
 

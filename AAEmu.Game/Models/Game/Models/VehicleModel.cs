@@ -2,6 +2,13 @@
 
 public class VehicleModel : Model
 {
+    // r208022 stores these limits in degrees. CSTurretState carries radians.
+    public float TurretPitchAngleMin { get; set; }
+    public float TurretPitchAngleMax { get; set; }
+    public float TurretYawAngleMin { get; set; }
+    public float TurretYawAngleMax { get; set; }
+    public bool InstalledTurret { get; set; }
+
     /*
      *id
        normal

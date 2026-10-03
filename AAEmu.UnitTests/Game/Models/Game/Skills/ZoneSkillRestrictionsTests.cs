@@ -607,16 +607,23 @@ public sealed class ZoneSkillRestrictionsTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task SlaveDestination_UsesOwnerForAbsentOrOriginOverride(bool originOverride)
+    public async Task SlaveDestination_UsesOwnerForAbsentOverride()
     {
-        using var positionOverride = originOverride ? new Transform(null) : null;
         var source = new PositionAndRotation(130, 10, 100, 0, 0, 0);
         var expected = source.Clone();
         expected.AddDistanceToFront(5);
-        await Assert.That(SlaveManager.GetItemSpawnDestination(source, null, positionOverride, 1))
+        await Assert.That(SlaveManager.GetItemSpawnDestination(source, null, null, 1))
             .IsEqualTo(expected.Position);
+        await Assert.That(source.Position).IsEqualTo(new Vector3(130, 10, 100));
+    }
+
+    [Test]
+    public async Task SlaveDestination_PreservesExplicitOriginOverride()
+    {
+        using var positionOverride = new Transform(null);
+        var source = new PositionAndRotation(130, 10, 100, 0, 0, 0);
+        await Assert.That(SlaveManager.GetItemSpawnDestination(source, null, positionOverride, 50))
+            .IsEqualTo(Vector3.Zero);
         await Assert.That(source.Position).IsEqualTo(new Vector3(130, 10, 100));
     }
 

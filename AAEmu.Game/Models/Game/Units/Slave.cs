@@ -861,11 +861,14 @@ public class Slave : Unit
     {
         if (SummoningItem is not SummonSlave item)
             return;
-        item.IsDestroyed = 1;
-        item.RepairStartTime = DateTime.MinValue;
-        item.SummonLocation = Vector3.Zero;
-        item.IsDirty = true;
-        Summoner.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.MateDeath, new ItemUpdate(item), []));
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            item.IsDestroyed = 1;
+            item.RepairStartTime = DateTime.MinValue;
+            item.ClearSummonLocation();
+            item.IsDirty = true;
+            Summoner.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.MateDeath, new ItemUpdate(item), []));
+        }
     }
 
     /// <summary>

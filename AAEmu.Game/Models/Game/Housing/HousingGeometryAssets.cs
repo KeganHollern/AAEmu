@@ -150,10 +150,11 @@ public sealed class HousingGeometryAssets
     public HousingWaterGeometry GetWater(WorldTemplate world) => _water.GetOrAdd(world,
         template => new Lazy<HousingWaterGeometry>(() => HousingWaterGeometry.Load(template, _openFile))).Value;
 
-    public IReadOnlyList<CryWaterVolumeInstance> GetPrefabWater(WorldInstance world, IEnumerable<House> houses)
+    public IReadOnlyList<CryWaterVolumeInstance> GetPrefabWater(WorldInstance world, IEnumerable<House> houses,
+        IEnumerable<Doodad> doodads = null)
     {
         var instances = new List<(DateTime Time, uint ObjectId, CryWaterVolumeInstance Water)>();
-        foreach (var doodad in world.GetAllDoodads())
+        foreach (var doodad in doodads ?? world.GetAllDoodads())
         {
             if (doodad.Template == null)
                 continue;
