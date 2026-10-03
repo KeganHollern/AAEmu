@@ -298,7 +298,7 @@ public abstract class BaseCombatBehavior : Behavior
 
         // We might want to optimize this somehow.
         var aggroList = Ai.Owner.AggroTable.Values;
-        var abusers = aggroList.OrderByDescending(o => o.TotalAggro).Select(o => o.Owner).ToList();
+        var abusers = aggroList.OrderByDescending(o => o.TotalAggro).ThenBy(o => o.Owner.ObjId).Select(o => o.Owner).ToList();
 
         foreach (var abuser in abusers)
         {

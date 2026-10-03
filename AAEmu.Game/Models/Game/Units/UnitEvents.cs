@@ -9,6 +9,24 @@ namespace AAEmu.Game.Models.Game.Units;
 
 public class UnitEvents
 {
+    internal void AddDeathHandler(EventHandler<OnDeathArgs> handler) => UpdateSubscription(ref OnDeath, handler, true);
+    internal void RemoveDeathHandler(EventHandler<OnDeathArgs> handler) => UpdateSubscription(ref OnDeath, handler, false);
+
+    internal static void UpdateSubscription<T>(ref EventHandler<T> handlers, EventHandler<T> handler, bool add)
+        where T : EventArgs
+    {
+        // Different NPCs mutate the same target's delegate fields. A local NPC
+        // lock cannot serialize those updates. Preserve all concurrent subscribers.
+        EventHandler<T> previous;
+        EventHandler<T> updated;
+        do
+        {
+            previous = Volatile.Read(ref handlers);
+            updated = (EventHandler<T>)(add ? Delegate.Combine(previous, handler) : Delegate.Remove(previous, handler));
+        }
+        while (!ReferenceEquals(Interlocked.CompareExchange(ref handlers, updated, previous), previous));
+    }
+
     /********************************************************
      *  Please dont uncomment unless you implement these!   *
      *           Commented = Not Invoked!!!                 *

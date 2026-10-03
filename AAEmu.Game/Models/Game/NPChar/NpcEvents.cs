@@ -30,7 +30,7 @@ public partial class Npc
                     break;
                 case SkillUseConditionKind.OnDeath:
                     Logger.Trace($"Registering OnDeath event for npc objId: {ObjId}, templateId: {TemplateId}, skill {skill.SkillId}");
-                    Events.OnDeath += OnDeath;
+                    Events.AddDeathHandler(OnDeath);
                     //int invocationCount = npc.Events.OnDeath.GetInvocationList().GetLength(0);
                     break;
                 case SkillUseConditionKind.InAlert:
@@ -82,7 +82,7 @@ public partial class Npc
                     break;
                 case SkillUseConditionKind.OnDeath:
                     Logger.Trace($"Unregistering OnDeath event for npc objId: {ObjId}, templateId: {TemplateId}, skill {skill.SkillId}");
-                    Events.OnDeath -= OnDeath;
+                    Events.RemoveDeathHandler(OnDeath);
                     break;
                 case SkillUseConditionKind.InAlert:
                     Logger.Trace($"Unregistering InAlert event for npc objId: {ObjId}, templateId: {TemplateId}, skill {skill.SkillId}");

@@ -8,6 +8,7 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game.AI.v2.Behaviors.Common;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Expeditions;
@@ -16,6 +17,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.NpcGroup;
 using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Plots.Tree;
@@ -1659,76 +1661,146 @@ public class Unit : BaseUnit, IUnit
     /// <returns>Returns true if it's initial aggro</returns>
     public bool AddUnitAggro(AggroKind kind, Unit unit, int amount)
     {
-        //var player = unit as Character; // TODO player.Region становится равным null | player.Region becomes null
-        var player = unit as Character;
+        return AddUnitAggroCore(kind, unit, amount, false);
+    }
+
+    public bool TryAddAssistanceAggro(Unit unit)
+    {
+        return AddUnitAggroCore(AggroKind.Damage, unit, 1, true);
+    }
+
+    private bool AddUnitAggroCore(AggroKind kind, Unit unit, int amount, bool initialOnly, bool requireCurrentAggro = false)
+    {
+        if (unit == null)
+            return false;
+        if (Buffs.CheckBuffTag((uint)TagsEnum.NoFight) || Buffs.CheckBuffTag((uint)TagsEnum.Returning) ||
+            (unit.Buffs?.CheckBuffTag((uint)TagsEnum.NoFight) ?? false) ||
+            (unit.Buffs?.CheckBuffTag((uint)TagsEnum.Returning) ?? false))
+        {
+            ClearAggroOfUnit(unit);
+            return false;
+        }
+
         var npc = this as Npc;
-        var isNewAggro = false;
-        // Character player = null;
-        // if (unit is not Npc and not Units.Mate and not Slave)
-        // {
-        //     player = (Character)unit;
-        // }
-        // player?.SendMessage(ChatType.System, $"AddUnitAggro {player.Name} + {amount} for {this.ObjId}");
-
-        // check self buff tags
-        if (Buffs.CheckBuffTag((uint)TagsEnum.NoFight) || Buffs.CheckBuffTag((uint)TagsEnum.Returning))
+        Aggro aggro;
+        bool added;
+        int damageDelta;
+        int healDelta;
+        lock (AggroTable)
         {
-            ClearAggroOfUnit(unit);
-            return false;
-        }
+            if (npc != null && (npc.Despawned || npc.CombatRetired || npc.IsDead || npc.Hp <= 0 ||
+                npc.Ai?.GetCurrentBehavior() is ReturnStateBehavior or DeadBehavior))
+                return false;
+            if (requireCurrentAggro && AggroTable.IsEmpty)
+                return false;
+            if (initialOnly && (npc == null || IsInBattle || !AggroTable.IsEmpty ||
+                !ReferenceEquals(npc.Ai?.Owner, npc) || unit.Hp <= 0 || unit.IsDead ||
+                unit is Npc { Despawned: true } or Npc { CombatRetired: true } ||
+                !ReferenceEquals(ParentWorld, unit.ParentWorld) ||
+                !ReferenceEquals(ParentWorld?.GetUnit(ObjId), this) ||
+                !ReferenceEquals(ParentWorld?.GetUnit(unit.ObjId), unit) ||
+                npc.Ai?.GetCurrentBehavior() is ReturnStateBehavior or DeadBehavior))
+                return false;
 
-        // check target buff tags
-        if ((unit.Buffs?.CheckBuffTag((uint)TagsEnum.NoFight) ?? false) || (unit.Buffs?.CheckBuffTag((uint)TagsEnum.Returning) ?? false))
-        {
-            ClearAggroOfUnit(unit);
-            return false;
-        }
+            // Actual damage/taunt input owns tagging. Shared copies below do not.
+            if (kind == AggroKind.Damage)
+                CharacterTagging.AddTagger(unit, amount);
 
-
-        //Add Tagging if it was damage aggro
-        if (kind == AggroKind.Damage)
-            CharacterTagging.AddTagger(unit, amount);
-
-        amount = (int)(amount * (unit.AggroMul / 100.0f));
-        amount = (int)(amount * (IncomingAggroMul / 100.0f));
-
-        if (AggroTable.TryGetValue(unit.ObjId, out var aggro))
-        {
-            aggro.AddAggro(kind, amount);
-            isNewAggro = true;
-        }
-        else
-        {
-            aggro = new Aggro(unit);
-            aggro.AddAggro(kind, amount);
-            if (AggroTable.TryAdd(unit.ObjId, aggro))
+            amount = (int)(amount * (unit.AggroMul / 100.0f));
+            amount = (int)(amount * (IncomingAggroMul / 100.0f));
+            added = !TryGetCurrentAggro(unit, out aggro);
+            if (added)
             {
-                unit.Events.OnHealed += OnAbuserHealed;
-                unit.Events.OnDeath += OnAbuserDied;
+                aggro = new Aggro(unit);
+                AggroTable[unit.ObjId] = aggro;
+                UnitEvents.UpdateSubscription(ref unit.Events.OnHealed, OnAbuserHealed, true);
+                UnitEvents.UpdateSubscription(ref unit.Events.OnDeath, OnAbuserDied, true);
             }
+            var previousDamage = aggro.DamageAggro;
+            var previousHeal = aggro.HealAggro;
+            aggro.AddAggro(kind, amount);
+            damageDelta = aggro.DamageAggro - previousDamage;
+            healDelta = aggro.HealAggro - previousHeal;
+        }
 
-            // TODO: make this party/raid wide? Take into account pets/slaves?
-            // If there is a quest starter attached to this NPC, start it when unit gets added for the first time
-            // to the aggro list
-            if (npc != null)
+        // No group operation or quest/AI callback runs under the local mutation lock.
+        npc?.GroupInstance?.AddSharedThreat(npc, unit, aggro, damageDelta, healDelta);
+        CompleteAggroUpdate(unit, aggro, added, true);
+        // Preserve the legacy return value for normal callers. Assistance needs a
+        // distinct success result for its atomic initial-entry operation.
+        return initialOnly || !added;
+    }
+
+    internal Action SetSharedAggro(Unit unit, int damage, int heal, bool sourceEffect = false, NpcGroupInstance group = null)
+    {
+        Aggro aggro;
+        bool added;
+        lock (AggroTable)
+        {
+            if (this is not Npc npc || npc.Despawned || npc.CombatRetired || npc.IsDead || npc.Hp <= 0 ||
+                !ReferenceEquals(npc.ParentWorld?.GetUnit(npc.ObjId), npc) ||
+                unit.Hp <= 0 || unit.IsDead || unit is Npc { Despawned: true } or Npc { CombatRetired: true } ||
+                !ReferenceEquals(ParentWorld, unit.ParentWorld) ||
+                !ReferenceEquals(ParentWorld?.GetUnit(unit.ObjId), unit) ||
+                !ReferenceEquals(npc.Ai?.Owner, npc) ||
+                npc.Ai?.GetCurrentBehavior() is ReturnStateBehavior or DeadBehavior ||
+                (group != null && (group.IsRetired || !ReferenceEquals(npc.GroupInstance, group))))
+                return null;
+
+            added = !TryGetCurrentAggro(unit, out aggro);
+            if (added)
             {
-                if (npc.Template.EngageCombatGiveQuestId > 0 && player is not null)
-                {
-                    if (!player.Quests.IsQuestComplete(npc.Template.EngageCombatGiveQuestId) &&
-                        !player.Quests.HasQuest(npc.Template.EngageCombatGiveQuestId))
-                        player.Quests.AddQuestFromNpc(npc.Template.EngageCombatGiveQuestId, npc.ObjId);
-                }
+                aggro = new Aggro(unit);
+                AggroTable[unit.ObjId] = aggro;
+                UnitEvents.UpdateSubscription(ref unit.Events.OnHealed, OnAbuserHealed, true);
+                UnitEvents.UpdateSubscription(ref unit.Events.OnDeath, OnAbuserDied, true);
             }
+            // The source already applied modifiers and the healing threat factor.
+            aggro.SetAmounts(damage, heal);
+        }
+        return () => CompleteAggroUpdate(unit, aggro, added, sourceEffect);
+    }
 
-            // Send initial hit packet as well
-            unit.SendPacketToPlayers([this, unit], new SCCombatFirstHitPacket(this.ObjId, unit.ObjId, 0));
+    // Caller holds the local aggro lock. Object IDs can be reused after removal.
+    private bool TryGetCurrentAggro(Unit unit, out Aggro aggro)
+    {
+        if (!AggroTable.TryGetValue(unit.ObjId, out aggro))
+            return false;
+        if (ReferenceEquals(aggro.Owner, unit))
+            return true;
+        AggroTable.TryRemove(unit.ObjId, out _);
+        UnitEvents.UpdateSubscription(ref aggro.Owner.Events.OnHealed, OnAbuserHealed, false);
+        UnitEvents.UpdateSubscription(ref aggro.Owner.Events.OnDeath, OnAbuserDied, false);
+        if (aggro.Owner is Character oldPlayer)
+        {
+            lock (oldPlayer.IsInAggroListOf)
+                oldPlayer.IsInAggroListOf.Remove(ObjId);
+        }
+        aggro = null;
+        return false;
+    }
 
-            // The first-hit packet already flips the CLIENT into combat stance.
-            // Mirror it on the server: without this, a player who is sight-aggroed
-            // and flees before any damage lands never gets a falling IsInBattle
-            // edge, so SCCombatCleared is never sent and the client stays in
-            // combat until relog. With the flag set, the combat timeout in
-            // CombatTick emits the clear once activity stops.
+    private void CompleteAggroUpdate(Unit unit, Aggro aggro, bool added, bool sourceEffect)
+    {
+        var npc = this as Npc;
+        if (npc != null && (npc.Despawned || npc.CombatRetired || npc.IsDead || npc.Hp <= 0))
+            return;
+        if (!AggroTable.TryGetValue(unit.ObjId, out var current) || !ReferenceEquals(current, aggro))
+            return;
+
+        var player = unit as Character;
+        if (added)
+        {
+            if (sourceEffect && npc?.Template.EngageCombatGiveQuestId > 0 && player != null &&
+                !player.Quests.IsQuestComplete(npc.Template.EngageCombatGiveQuestId) &&
+                !player.Quests.HasQuest(npc.Template.EngageCombatGiveQuestId))
+                player.Quests.AddQuestFromNpc(npc.Template.EngageCombatGiveQuestId, npc.ObjId);
+
+            // A quest callback can remove its giver. Do not restore combat after that cleanup.
+            if (npc is { Despawned: true } or { CombatRetired: true } || !AggroTable.TryGetValue(unit.ObjId, out current) ||
+                !ReferenceEquals(current, aggro))
+                return;
+            unit.SendPacketToPlayers([this, unit], new SCCombatFirstHitPacket(ObjId, unit.ObjId, 0));
             if (unit.Hp > 0 && !unit.IsInBattle)
             {
                 unit.IsInBattle = true;
@@ -1737,20 +1809,20 @@ public class Unit : BaseUnit, IUnit
         }
 
         if (player == null)
-            return isNewAggro;
-
-        if (aggro.TotalAggro > 0 && !IsDead && Hp > 0 && !player.IsInAggroListOf.ContainsKey(this.ObjId))
+            return;
+        lock (AggroTable)
         {
-            player.IsInAggroListOf.Add(this.ObjId, this);
+            if (IsDead || Hp <= 0 || npc is { Despawned: true } or { CombatRetired: true } ||
+                !AggroTable.TryGetValue(unit.ObjId, out current) || !ReferenceEquals(current, aggro))
+                return;
+            if (aggro.TotalAggro > 0)
+            {
+                lock (player.IsInAggroListOf)
+                    player.IsInAggroListOf.TryAdd(ObjId, this);
+            }
         }
-        //player?.Quests.OnAggro(this);
-        // инициируем событие
-        //Task.Run(() => QuestManager.Instance.DoOnAggroEvents(player, this));
-        if (npc != null)
-        {
+        if (sourceEffect && npc != null)
             QuestManager.Instance.DoOnAggroEvents(player, npc);
-        }
-        return isNewAggro;
     }
 
     public void ClearAggroOfUnit(Unit unit)
@@ -1758,42 +1830,42 @@ public class Unit : BaseUnit, IUnit
         if (unit is null)
             return;
 
-        if (unit is Character targetPlayer)
+        bool removed;
+        lock (AggroTable)
         {
-            targetPlayer.IsInAggroListOf.Remove(ObjId);
-            // Also remove from assault lists if both are players
-            if (this is Character thisPlayer)
+            // A late death callback from an old object must not clear its replacement.
+            if (AggroTable.TryGetValue(unit.ObjId, out var current) && !ReferenceEquals(current.Owner, unit))
+                return;
+            removed = AggroTable.TryRemove(unit.ObjId, out var aggro);
+            if (removed)
             {
-                thisPlayer.AssaultOn.Remove(targetPlayer.Id);
-                targetPlayer.AssaultedBy.Remove(thisPlayer.Id);
+                // Use the retained owner if this target already left the world registry.
+                UnitEvents.UpdateSubscription(ref aggro.Owner.Events.OnHealed, OnAbuserHealed, false);
+                UnitEvents.UpdateSubscription(ref aggro.Owner.Events.OnDeath, OnAbuserDied, false);
+            }
+            if (unit is Character targetPlayer)
+            {
+                lock (targetPlayer.IsInAggroListOf)
+                    targetPlayer.IsInAggroListOf.Remove(ObjId);
+                if (this is Character thisPlayer)
+                {
+                    thisPlayer.AssaultOn.Remove(targetPlayer.Id);
+                    targetPlayer.AssaultedBy.Remove(thisPlayer.Id);
+                }
             }
         }
 
-        // var player = unit as Character;
-        // player?.SendMessage($"ClearAggroOfUnit {player.Name} for {this.ObjId}");
-
-        var lastAggroCount = AggroTable.Count;
-        if (lastAggroCount <= 0)
-        {
-            return;
-        }
-        if (AggroTable.TryRemove(unit.ObjId, out _))
-        {
-            unit.Events.OnHealed -= OnAbuserHealed;
-            unit.Events.OnDeath -= OnAbuserDied;
-        }
-        else
-        {
-            Logger.Warn($"Failed to remove unit[{unit.ObjId}] aggro from NPC[{ObjId}]");
-        }
-
-        if (AggroTable.Count != lastAggroCount)
-            (this as Npc)?.CheckIfEmptyAggroToReturn(unit);
+        var npc = this as Npc;
+        npc?.GroupInstance?.PruneSharedThreat();
+        if (removed)
+            npc?.CheckIfEmptyAggroToReturn(unit);
     }
 
     public void OnAbuserHealed(object sender, OnHealedArgs args)
     {
-        AddUnitAggro(AggroKind.Heal, args.Healer, args.HealAmount);
+        if (this is Npc npc && npc.GroupInstance?.HandleSharedHealing(npc, args) == true)
+            return;
+        AddUnitAggroCore(AggroKind.Heal, args.Healer, args.HealAmount, false, true);
     }
 
     public void OnAbuserDied(object sender, OnDeathArgs args)
@@ -1811,8 +1883,8 @@ public class Unit : BaseUnit, IUnit
             var unit = table.Value.Owner?.ParentWorld.GetUnit(table.Key);
             if (unit != null)
             {
-                unit.Events.OnHealed -= OnAbuserHealed;
-                unit.Events.OnDeath -= OnAbuserDied;
+                UnitEvents.UpdateSubscription(ref unit.Events.OnHealed, OnAbuserHealed, false);
+                UnitEvents.UpdateSubscription(ref unit.Events.OnDeath, OnAbuserDied, false);
             }
         }
     }

@@ -21,7 +21,7 @@ using NLog;
 
 namespace AAEmu.Game.Models.Game.NPChar;
 
-public class NpcSpawner : Spawner<Npc>
+public partial class NpcSpawner : Spawner<Npc>
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
@@ -31,7 +31,7 @@ public class NpcSpawner : Spawner<Npc>
     private int _scheduledCount;
     private HashSet<Npc> _pendingRespawns = [];
     // Вычисляемое свойство, возвращающее текущее количество NPC из SpawnedNpcs для данного SpawnerId.
-    private int CurrentSpawnCount => SpawnedNpcs.TryGetValue(SpawnerId, out var list) ? list.Count : 0;
+    private int CurrentSpawnCount => CountPopulation();
     private bool IsSpawnScheduled { get; set; } = false;
     private bool IsDespawnScheduled { get; set; } = false;
     // ReSharper disable once InconsistentNaming
@@ -113,6 +113,7 @@ public class NpcSpawner : Spawner<Npc>
         {
             _isActiveOverride = true;
             _pendingRespawns.Clear();
+            CancelGroupRespawns(false);
             IsSpawnScheduled = false;
             IsDespawnScheduled = false;
         }
@@ -149,6 +150,7 @@ public class NpcSpawner : Spawner<Npc>
 
             // Drop pending respawn bookkeeping so nothing pops back up after the wipe.
             _pendingRespawns.Clear();
+            CancelGroupRespawns(true);
             IsSpawnScheduled = false;
             Interlocked.Exchange(ref _scheduledCount, 0);
         }
@@ -190,11 +192,14 @@ public class NpcSpawner : Spawner<Npc>
                 if (!IsSpawningScheduleEnabled())
                 {
                     _pendingRespawns.Clear();
+                    CancelGroupRespawns(true);
                     IsSpawnScheduled = false;
                     Interlocked.Exchange(ref _scheduledCount, 0);
                     DespawnNpcs();
                     return;
                 }
+
+                ProcessGroupRespawns(DateTime.UtcNow);
 
                 if (!IsPlayerInSpawnRadius() && CurrentSpawnCount > 0)
                 {
@@ -745,10 +750,13 @@ public class NpcSpawner : Spawner<Npc>
     /// </summary>
     public override Npc ForceSpawn(uint objId)
     {
-        if (SpawnedNpcs.Count == 0)
-            InitializeSpawnableNpcs(Template);
-
-        return Spawn(objId);
+        lock (_spawnLock)
+        {
+            RetireEmptySuppressedGroups();
+            if (SpawnedNpcs.Count == 0)
+                InitializeSpawnableNpcs(Template);
+            return Spawn(objId);
+        }
     }
 
     public Npc ForceSpawnOwned(TowerDefenseSpawnToken token)
@@ -758,6 +766,7 @@ public class NpcSpawner : Spawner<Npc>
             return null;
         lock (_spawnLock)
         {
+            RetireEmptySuppressedGroups();
             var existing = SpawnedNpcs.TryGetValue(SpawnerId, out var before)
                 ? before.Select(npc => npc.ObjId).ToHashSet()
                 : [];
@@ -770,8 +779,7 @@ public class NpcSpawner : Spawner<Npc>
                 var spawned = SpawnedNpcs.TryGetValue(SpawnerId, out var after)
                     ? after.FirstOrDefault(npc => !existing.Contains(npc.ObjId))
                     : null;
-                if (spawned?.Spawner != null)
-                    spawned.Spawner.RespawnTime = 0;
+                spawned?.Spawner?.SuppressAutomaticRespawn(spawned);
                 return spawned;
             }
             finally
@@ -867,7 +875,11 @@ public class NpcSpawner : Spawner<Npc>
                 if (npc == null || npc.Despawned)
                     return;
                 // Если условия позволяют, планируем респаун
-                if (IsSpawningScheduleEnabled() && RespawnTime > 0 && AreOtherNpcsInSpawnZone().Item2 + _scheduledCount < Template.MaxPopulation)
+                if (npc.GroupInstance != null)
+                {
+                    QueueGroupRespawn(npc);
+                }
+                else if (IsSpawningScheduleEnabled() && RespawnTime > 0 && AreOtherNpcsInSpawnZone().Item2 + _scheduledCount < Template.MaxPopulation)
                 {
                     // Планируем респаун и обновляем _scheduledCount
                     IncrementCount(true);
@@ -939,6 +951,13 @@ public class NpcSpawner : Spawner<Npc>
             if (npc == null || npc.Despawned)
                 return;
 
+            var groupMember = npc.GroupInstance != null;
+            if (groupMember)
+            {
+                QueueGroupRespawn(npc);
+                Despawn(npc);
+                return;
+            }
             npc.Delete();
 
             // Schedules respawn if necessary
@@ -970,6 +989,7 @@ public class NpcSpawner : Spawner<Npc>
 
         lock (_spawnLock)
         {
+            CancelGroupRespawns(true);
             foreach (var npc in npcs.ToList())
             {
                 if (npc == null || npc.Despawned || npc.Despawn != DateTime.MinValue)
@@ -1086,6 +1106,8 @@ public class NpcSpawner : Spawner<Npc>
 
                 lock (_spawnLock)
                 {
+                    if (npcTemplate.MemberType == "NpcGroup" && CurrentSpawnCount >= Template.MaxPopulation)
+                        break;
                     // Спавним NPC по шаблону
                     var spawned = SpawnNpcDefinition(npcTemplate);
                     if (spawned == null || spawned.Count == 0)
@@ -1222,8 +1244,20 @@ public class NpcSpawner : Spawner<Npc>
         lock (_spawnLock)
         {
             if (_scheduledCount > 0)
-                Interlocked.Add(ref _scheduledCount, -n.Count);
+                Interlocked.Exchange(ref _scheduledCount, Math.Max(0, _scheduledCount - CountSpawnedOccurrences(n)));
         }
+    }
+
+    internal static int CountSpawnedOccurrences(IEnumerable<Npc> npcs)
+    {
+        var groups = new HashSet<AAEmu.Game.Models.Game.NpcGroup.NpcGroupInstance>();
+        var count = 0;
+        foreach (var npc in npcs)
+        {
+            if (npc.GroupInstance == null || groups.Add(npc.GroupInstance))
+                count++;
+        }
+        return count;
     }
 
     private void IncrementCount(bool respawn = false)
@@ -1266,13 +1300,6 @@ public class NpcSpawner : Spawner<Npc>
 
         try
         {
-            // Creates the NPC
-            var npc = NpcManager.Instance.Create(ParentWorld, 0, npcTemplate.MemberId);
-            if (npc == null)
-            {
-                Logger.Warn($"Failed to create NPC from template {npcTemplate.SpawnerId}:{npcTemplate.MemberId}");
-                return null;
-            }
             // Spawns the NPC
             var spawned = npcTemplate.Spawn(this, ownerId);
             if (spawned == null || spawned.Count == 0)
@@ -1280,21 +1307,13 @@ public class NpcSpawner : Spawner<Npc>
                 Logger.Warn($"No NPCs spawned from template {npcTemplate.SpawnerId}:{npcTemplate.MemberId}");
                 return null;
             }
-            // Adds the spawned NPC to the list
-            if (spawned.Count > 0)
+            // The definition publishes each member once. Track the whole occurrence.
+            lock (_spawnLock)
             {
-                var spawnedNpc = spawned.First();
-                lock (_spawnLock) // Synchronizes access to the list
-                {
+                foreach (var spawnedNpc in spawned)
                     AddNpcToSpawned(spawnedNpc.Spawner.SpawnerId, spawnedNpc);
-                }
-
-                spawnedNpc.Spawn();
-
-                return spawnedNpc;
             }
-            Logger.Warn($"Failed to retrieve spawned NPC from template {npcTemplate.SpawnerId}:{npcTemplate.MemberId}");
-            return null;
+            return spawned.First();
         }
         catch (Exception ex)
         {
@@ -1347,10 +1366,7 @@ public class NpcSpawner : Spawner<Npc>
 
             foreach (var npc in n)
             {
-                if (npc.Spawner != null)
-                {
-                    npc.Spawner.RespawnTime = 0;
-                }
+                npc.Spawner?.SuppressAutomaticRespawn(npc);
 
                 if (effect.UseSummonerFaction)
                 {
@@ -1394,10 +1410,7 @@ public class NpcSpawner : Spawner<Npc>
             AddNpcToSpawned(SpawnerId, npc);
         }
 
-        if (_scheduledCount > 0)
-        {
-            Interlocked.Add(ref _scheduledCount, -n.Count);
-        }
+        DecrementCount(n);
     }
 
     private void AddNpcToSpawned(uint key, Npc newNpc)
@@ -1433,6 +1446,7 @@ public class NpcSpawner : Spawner<Npc>
         var clone = (T)obj.MemberwiseClone();
         clone.Position = obj.Position?.Clone();
         clone._pendingRespawns = [];
+        clone._groups = [];
         clone.IsSpawnScheduled = false;
         clone._scheduledCount = 0;
 

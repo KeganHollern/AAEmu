@@ -160,6 +160,10 @@ public class SpawnManager(WorldInstance parentWorld)
                     // pinned spawner stays dark until a dungeon script calls Activate(), while an
                     // active one is picked up by the world tick like any other spawner.
                     var authoredTemplate = NpcGameData.Instance.GetNpcSpawnerTemplate(id);
+                    // An explicit authored group keeps its member types and population rules.
+                    // Ordinary capture points retain their existing single-NPC template.
+                    if (authoredTemplate?.Npcs.Any(member => member.MemberType == "NpcGroup") == true)
+                        npcSpawner.Template = CloneExplicitGroupTemplate(authoredTemplate);
                     if (authoredTemplate != null)
                         npcSpawner.Template.ActivationState = authoredTemplate.ActivationState;
                     npcSpawner.ParentWorld = World;
@@ -197,6 +201,17 @@ public class SpawnManager(WorldInstance parentWorld)
             throw new InvalidDataException($"Event placement '{spawner.EventPlacementId}' must set StartInactive=true.");
         if (!EventPlacements.TryAdd(spawner.EventPlacementId, spawner))
             throw new InvalidDataException($"Duplicate event placement id '{spawner.EventPlacementId}' in world {World.Template?.Name}.");
+    }
+
+    internal static NpcSpawnerTemplate CloneExplicitGroupTemplate(NpcSpawnerTemplate template)
+    {
+        var clone = Helpers.Clone(template);
+        clone.Npcs = template.Npcs.Select(member => new NpcSpawnerNpc
+        {
+            Id = member.Id, NpcSpawnerTemplateId = member.NpcSpawnerTemplateId,
+            MemberId = member.MemberId, MemberType = member.MemberType, Weight = member.Weight
+        }).ToList();
+        return clone;
     }
 
     /// <summary>
@@ -1456,12 +1471,8 @@ public class SpawnManager(WorldInstance parentWorld)
         // Npc
         foreach (var npcSpawners in NpcSpawners.Values.SelectMany(x => x).ToList())
         {
-            foreach (var npc in npcSpawners.SpawnedNpcs.Values.SelectMany(n => n).ToList())
-            {
-                npc.UnregisterNpcEvents();
-                npcSpawners.Despawn(npc);
-            }
-            npcSpawners.SpawnedNpcs.Clear();
+            npcSpawners.Deactivate();
+            npcSpawners.DespawnAll();
             npcSpawners.ParentWorld = null;
         }
         NpcSpawners.Clear();

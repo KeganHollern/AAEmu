@@ -34,6 +34,7 @@ public abstract class NpcAi
     private readonly Dictionary<Behavior, List<Transition>> _transitions;
     private Behavior _currentBehavior;
     private Behavior _defaultBehavior;
+    private int _pendingAggroTargetUpdate;
     public DateTime _nextAlertCheckTime = DateTime.MinValue;
     public DateTime _alertEndTime = DateTime.MinValue;
 
@@ -58,6 +59,23 @@ public abstract class NpcAi
     public AiPathHandler PathHandler { get; set; }
 
     public Unit AiFollowUnitObj { get; set; }
+
+    internal bool FollowGroupFormation(TimeSpan delta)
+    {
+        if (Owner?.GroupInstance == null || Owner.IsInBattle ||
+            !Owner.GroupInstance.TryGetFormationPoint(Owner, out var target, out var tension))
+            return false;
+        var distance = Vector3.Distance(Owner.Transform.World.Position, target);
+        if (distance == 0 || distance < tension)
+            Owner.StopMovement();
+        else
+        {
+            var speed = GetRealMovementSpeed(Owner.BaseMoveSpeed);
+            Owner.MoveTowards(target, (float)(speed * delta.TotalSeconds), GetRealMovementFlags(speed), 0);
+        }
+        IdlePosition = target;
+        return true;
+    }
 
     // Persistent arguments for AiCommands queue
     public string AiFileName { get; set; } = string.Empty;
@@ -143,6 +161,18 @@ $"Trying to set Npc {Owner.TemplateId}:{Owner.ObjId} current behavior, but it is
 
     public void Tick(TimeSpan delta)
     {
+        var owner = Owner;
+        if (owner == null)
+            return;
+
+        // Assistance can arrive from another NPC's AI tick. Consume its notification
+        // here so transitions never run while the caller holds a combat-state lock.
+        if (Interlocked.Exchange(ref _pendingAggroTargetUpdate, 0) != 0 &&
+            !owner.IsDead && !owner.Despawned && !owner.CombatRetired && ReferenceEquals(owner.Ai, this))
+            OnAggroTargetChanged();
+        if (Owner == null)
+            return;
+
         // Keep ticking NPCs that are mid-combat even when their own region has
         // no player activity: a mob chasing a fleeing player can cross into an
         // empty region, and freezing it there would strand it in Attack state
@@ -203,6 +233,8 @@ $"Trying to set Npc {Owner.TemplateId}:{Owner.ObjId} current behavior, but it is
     {
         Transition(TransitionEvent.OnNoAggroTarget);
     }
+
+    internal void RequestAggroTargetUpdate() => Interlocked.Exchange(ref _pendingAggroTargetUpdate, 1);
 
     public void OnAggroTargetChanged()
     {

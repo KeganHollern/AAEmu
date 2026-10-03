@@ -201,7 +201,7 @@ public sealed class House : Unit
         Level = 1;
         AttachedDoodads = [];
         IsDirty = true;
-        Events.OnDeath += OnDeath;
+        Events.AddDeathHandler(OnDeath);
     }
 
     public void AddBuildAction() => AddBuildAction(true);

@@ -82,7 +82,7 @@ public class BuffTriggersHandler(Buff buff)
                     break;
                 case Buffs.BuffEventTriggerKind.Death:
                     trigger = new BuffTrigger(buff, triggerTemplate);
-                    buff.Caster.Events.OnDeath += trigger.Execute;
+                    buff.Caster.Events.AddDeathHandler(trigger.Execute);
                     _triggers.Add(trigger);
                     break;
                 case Buffs.BuffEventTriggerKind.Unmount:
@@ -161,7 +161,7 @@ public class BuffTriggersHandler(Buff buff)
                 case Buffs.BuffEventTriggerKind.RemoveOnDamage:
                     break;
                 case Buffs.BuffEventTriggerKind.Death:
-                    buff.Caster.Events.OnDeath -= trigger.Execute;
+                    buff.Caster.Events.RemoveDeathHandler(trigger.Execute);
                     break;
                 case Buffs.BuffEventTriggerKind.Unmount:
                     break;

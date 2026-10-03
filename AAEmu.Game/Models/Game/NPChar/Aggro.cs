@@ -55,4 +55,13 @@ public class Aggro(Unit owner)
     }
 
     public void RemoveAggro(AggroKind kind, int amount) => AddAggro(kind, -amount);
+
+    internal void SetAmounts(int damage, int heal)
+    {
+        lock (_lock)
+        {
+            _damageAggro = damage;
+            _healAggro = heal;
+        }
+    }
 }

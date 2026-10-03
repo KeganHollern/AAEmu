@@ -344,53 +344,16 @@ public abstract class Behavior
         return res;
     }
 
-    public void UpdateAggroHelp(Unit abuser, int radius = 200)
+    public void UpdateAggroHelp(Unit abuser)
     {
-        bool needHelp;
-        var npcs = WorldManager.GetAround<Npc>(Ai.Owner, Ai.Owner.Template.AttackStartRangeScale * radius);
-        if (npcs == null)
-        {
+        var source = Ai?.Owner;
+        if (source == null)
             return;
-        }
 
-        foreach (var npc in npcs
-                     .Where(npc => !npc.IsInBattle && npc.Template.AcceptAggroLink)
-                     .Where(npc => npc.GetDistanceTo(Ai.Owner) <= npc.Template.AggroLinkHelpDist))
-        {
-            if (npc.Template.Aggression && npc.Template.AggroLinkSpecialRuleId == AggroLinkSpecialRuleKind.None)
-            {
-                needHelp = true;
-            }
-            else
-            {
-                if (!(npc.Template.AggroLinkSightCheck && npc.CanSeeTarget(abuser)))
-                {
-                    continue;
-                }
-
-                switch (npc.Template.AggroLinkSpecialRuleId)
-                {
-                    case AggroLinkSpecialRuleKind.FactionHelp when npc.Faction.Id == Ai.Owner.Faction.Id:
-                    case AggroLinkSpecialRuleKind.FriendlyHelp when npc.GetRelationStateTo(Ai.Owner) == RelationState.Friendly:
-                    case AggroLinkSpecialRuleKind.NeutralHelp when npc.GetRelationStateTo(Ai.Owner) == RelationState.Neutral:
-                    case AggroLinkSpecialRuleKind.EveryoneHelp:
-                        needHelp = true;
-                        break;
-                    case AggroLinkSpecialRuleKind.None:
-                    default:
-                        needHelp = false;
-                        break;
-                }
-            }
-
-            if (!needHelp)
-            {
-                continue;
-            }
-
-            npc.Ai.Owner.AddUnitAggro(AggroKind.Damage, abuser, 1);
-            npc.Ai.OnAggroTargetChanged();
-        }
+        // The receiver's authored help distance governs eligibility. A source NPC's
+        // attack-start scale must not hide an otherwise eligible nearby helper.
+        foreach (var helper in WorldManager.GetAround<Npc>(source))
+            NpcAggroLink.TryHelp(source, helper, abuser);
     }
 
     public void SetWeaponRange(Skill skill, BaseUnit target)

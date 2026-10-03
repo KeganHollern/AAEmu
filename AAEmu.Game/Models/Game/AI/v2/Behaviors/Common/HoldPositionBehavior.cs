@@ -65,6 +65,8 @@ public class HoldPositionBehavior : BaseCombatBehavior
         ProcessSkillUsage();
 
         // 3. Optional follow default NPC
+        if (Ai.FollowGroupFormation(delta))
+            return;
         if (!_isFollowingNpc)
             ProcessNpcFollowing();
 

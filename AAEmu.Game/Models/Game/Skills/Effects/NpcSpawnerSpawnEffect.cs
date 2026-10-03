@@ -68,50 +68,45 @@ public class NpcSpawnerSpawnEffect : EffectTemplate
                 if (childToken != null)
                     spawner.Deactivate();
 
-                npc.Spawner.RespawnTime = 0; // запретим респавн
+                ApplySpawnedOccurrence(npc, caster, target);
                 Logger.Info($"NpcSpawnerSpawnEffect: Do Spawn effect id={Id}, Npc unitId={spawner.UnitId} spawnerId={SpawnerId} worldId={caster.Transform.WorldId}");
-
-                if (UseSummonerAggroTarget)
-                {
-                    if (LifeTime == 0)
-                    {
-                        // Npc attacks Npc for Q3886 & Q3887
-                        var units = WorldManager.GetAround<Npc>(npc, npc.Ai.Owner.Template.SightRangeScale * 30f);
-                        if (units is not { Count: not 0 })
-                            continue;
-
-                        foreach (var n in units.Where(n => npc.Ai.Owner.CanAttack(n)))
-                        {
-                            Logger.Info($"NpcSpawnerSpawnEffect: npc={n.TemplateId}:{npc.ObjId} attack the npc={npc.TemplateId}:{npc.ObjId}");
-                            npc.Ai.Owner.AddUnitAggro(AggroKind.Damage, n, 1);
-                            npc.Ai.OnAggroTargetChanged();
-
-                            n.Ai.Owner.AddUnitAggro(AggroKind.Damage, npc, 1);
-                        }
-                        //npc.Ai.GoToCombat();
-                    }
-                    else
-                    {
-                        // Npc attacks the character
-                        if (target is Npc targetNpc)
-                        {
-                            npc.Ai.Owner.AddUnitAggro(AggroKind.Damage, targetNpc, 1);
-                        }
-                        else
-                        {
-                            npc.Ai.Owner.AddUnitAggro(AggroKind.Damage, (Unit)caster, 1);
-                        }
-
-                        npc.Ai.OnAggroTargetChanged();
-                        //npc.Ai.GoToCombat();
-                    }
-                }
-
-                if (LifeTime > 0)
-                {
-                    TaskManager.Instance.Schedule(new NpcSpawnerDoDespawnTask(npc), TimeSpan.FromSeconds(LifeTime));
-                }
             }
         }
+    }
+
+    internal void ApplySpawnedOccurrence(Npc first, BaseUnit caster, BaseUnit target)
+    {
+        first.Spawner.SuppressAutomaticRespawn(first);
+        var members = first.GroupInstance?.GetMembers() ?? [first];
+        foreach (var npc in members)
+        {
+            if (UseSummonerAggroTarget && npc.Ai != null)
+            {
+                if (LifeTime == 0)
+                {
+                    // Preserve the ordinary effect's nearby hostile-NPC target rule.
+                    var units = WorldManager.GetAround<Npc>(npc, npc.Template.SightRangeScale * 30f);
+                    foreach (var enemy in units.Where(enemy => npc.CanAttack(enemy)))
+                    {
+                        npc.AddUnitAggro(AggroKind.Damage, enemy, 1);
+                        npc.Ai?.OnAggroTargetChanged();
+                        enemy.AddUnitAggro(AggroKind.Damage, npc, 1);
+                    }
+                }
+                else
+                {
+                    npc.AddUnitAggro(AggroKind.Damage, target is Npc targetNpc ? targetNpc : (Unit)caster, 1);
+                    npc.Ai?.OnAggroTargetChanged();
+                }
+            }
+
+            if (LifeTime > 0)
+                ScheduleDespawn(npc, TimeSpan.FromSeconds(LifeTime));
+        }
+    }
+
+    protected virtual void ScheduleDespawn(Npc npc, TimeSpan delay)
+    {
+        TaskManager.Instance.Schedule(new NpcSpawnerDoDespawnTask(npc), delay);
     }
 }
