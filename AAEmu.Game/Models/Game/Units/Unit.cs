@@ -1084,7 +1084,11 @@ public class Unit : BaseUnit, IUnit
         {
             var oldFactionId = Faction?.Id ?? 0;
             // BroadcastPacket(new SCUnitFactionChangedPacket(ObjId, Name, Faction?.Id ?? 0, factionId, false), true);
-            Faction = FactionManager.Instance.GetFaction(factionId);
+            var faction = FactionManager.Instance.GetFaction(factionId);
+            if (player != null)
+                ChatManager.Instance.UserChannels.ChangeFaction(player, faction);
+            else
+                Faction = faction;
             BroadcastPacket(new SCUnitFactionChangedPacket(ObjId, Name, oldFactionId, Faction.Id, false), true);
             if (Faction.Id == FactionsEnum.Pirate)
             {

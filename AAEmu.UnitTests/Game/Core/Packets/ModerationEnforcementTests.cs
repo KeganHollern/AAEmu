@@ -31,6 +31,7 @@ public class ModerationEnforcementTests
     [Arguments(ChatType.Trade)]
     [Arguments(ChatType.Shout)]
     [Arguments(ChatType.GroupFind)]
+    [Arguments(ChatType.User)]
     public async Task MutedChat_StopsBeforeAnyChannelDispatch(ChatType type)
     {
         var field = typeof(Singleton<ModerationManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -47,6 +48,8 @@ public class ModerationEnforcementTests
             connection.ActiveChar = new Character(new UnitCustomModelParams()) { AccountId = 20, Connection = connection };
             var body = new PacketStream().Write((short)type).Write((short)0).Write(0)
                 .Write("target").Write("muted text").Write((byte)0).Write(0);
+            for (var index = 0; index < 4; index++)
+                body.Write((ushort)0).Write((ushort)0);
             body.Rollback();
 
             // No world/channel/spam manager exists. Reaching those paths fails this test.

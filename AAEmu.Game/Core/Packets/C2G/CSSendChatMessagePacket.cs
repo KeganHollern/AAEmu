@@ -14,14 +14,19 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
 {
     public override void Read(PacketStream stream)
     {
-        var type = (ChatType)stream.ReadInt16();
-        var unk1 = stream.ReadInt16();
-        var unk2 = stream.ReadInt32();
-
-        var targetName = stream.ReadString();
-        var message = stream.ReadString();
+        var key = stream.ReadUInt64();
+        var type = (ChatType)(short)key;
+        var targetName = UserChatWire.ReadString(stream, 128);
+        var message = UserChatWire.ReadString(stream, 1023);
         var languageType = stream.ReadByte();
         var ability = stream.ReadInt32();
+        // r208022 always serializes four ranges. Their meaning is not needed for channel routing.
+        for (var index = 0; index < 4; index++)
+        {
+            _ = stream.ReadUInt16();
+            _ = stream.ReadUInt16();
+        }
+        UserChatWire.End(stream);
 
         if (message.StartsWith(CommandManager.CommandPrefix))
         {
@@ -48,6 +53,9 @@ public class CSSendChatMessagePacket() : GamePacket(CSOffsets.CSSendChatMessageP
         // Sidenote: Trino mixed up /faction and /nation back then, it was supposed to be the other way around
         switch (type)
         {
+            case ChatType.User:
+                ChatManager.Instance.UserChannels.Send(Connection, key, message, ability, languageType);
+                break;
             case ChatType.Whisper: //whisper
                 SendWhisper(Connection.ActiveChar, WorldManager.Instance.GetCharacter(targetName), message, ability, languageType);
                 break;
