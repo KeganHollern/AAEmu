@@ -144,6 +144,8 @@ public class Inventory
     /// </summary>
     public void Send()
     {
+        // The stablemaster quote reads the level byte from this initial item snapshot.
+        Owner.Mates?.SynchronizeSummonItemDetails();
         Owner.SendPacket(new SCCharacterInvenInitPacket(Owner.NumInventorySlots, (uint)Owner.NumBankSlots));
         SendFragmentedInventory(SlotType.Inventory, Owner.NumInventorySlots, Bag.GetSlottedItemsList().ToArray());
         SendFragmentedInventory(SlotType.Bank, (byte)Owner.NumBankSlots, Warehouse.GetSlottedItemsList().ToArray());

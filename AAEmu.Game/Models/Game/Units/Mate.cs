@@ -485,7 +485,7 @@ public sealed partial class Mate : Unit
     /// <summary>
     /// Update the Item Data if it was summoned by an item
     /// </summary>
-    private void UpdateMateItemData()
+    internal void UpdateMateItemData()
     {
         if (ItemId > 0)
         {

@@ -1,3 +1,5 @@
+﻿using System.Runtime.ExceptionServices;
+
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
@@ -184,6 +186,52 @@ public sealed partial class Mate
             BroadcastPacket(new SCUnitPointsPacket(ObjId, Hp, Mp), true);
             PublishSummonItem();
         });
+    }
+
+    internal Action PrepareStablemasterRecovery()
+    {
+        var injured = IsInjured;
+        var downed = IsDowned;
+        var hp = Hp;
+        var mp = Mp;
+        IsInjured = false;
+        IsDowned = false;
+        Hp = Math.Max(1, hp);
+        return () =>
+        {
+            IsInjured = injured;
+            IsDowned = downed;
+            Hp = hp;
+            Mp = mp;
+        };
+    }
+
+    internal void PublishStablemasterRecovery()
+    {
+        Exception notificationFailure = null;
+        foreach (var id in new[] { InjuryBuffId, DownedBuffId })
+        {
+            try
+            {
+                // Exit marks the buff finished and removes it from the owner before
+                // the dispel packet. RemoveBuff sends that packet before removal.
+                Buffs.GetEffectFromBuffId(id)?.Exit();
+            }
+            catch (Exception exception)
+            {
+                notificationFailure ??= exception;
+            }
+        }
+        try
+        {
+            BroadcastPacket(new SCUnitPointsPacket(ObjId, Hp, Mp), true);
+        }
+        catch (Exception exception)
+        {
+            notificationFailure ??= exception;
+        }
+        if (notificationFailure != null)
+            ExceptionDispatchInfo.Capture(notificationFailure).Throw();
     }
 
     private void PublishSummonItem()

@@ -39,6 +39,32 @@ public class CharacterMates(Character owner)
         return _mates.Values;
     }
 
+    internal void SynchronizeSummonItemDetails()
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (Owner.Inventory == null)
+                return;
+            foreach (var saved in _mates.Values)
+            {
+                if (saved.Owner != Owner.Id || saved.Level is 0 or > byte.MaxValue ||
+                    Owner.Inventory.GetItemById(saved.ItemId) is not SummonMate item ||
+                    item.Count <= 0 || item.Template is not SummonMateTemplate ||
+                    item.SlotType is not (SlotType.Inventory or SlotType.Bank) ||
+                    !ReferenceEquals(item._holdingContainer,
+                        item.SlotType == SlotType.Inventory ? Owner.Inventory.Bag : Owner.Inventory.Warehouse) ||
+                    !ReferenceEquals(item._holdingContainer.GetItemBySlot(item.Slot), item) ||
+                    TradeReservation.GetReservedCount(item) != 0)
+                    continue;
+                if (item.DetailLevel == saved.Level && item.DetailMateExp == saved.Xp)
+                    continue;
+                item.DetailLevel = (byte)saved.Level;
+                item.DetailMateExp = saved.Xp;
+                item.IsDirty = true;
+            }
+        }
+    }
+
     private MateDb CreateNewMate(ulong itemId, NpcTemplate npcTemplate)
     {
         if (_mates.ContainsKey(itemId)) return null;
@@ -150,6 +176,7 @@ public class CharacterMates(Character owner)
         mount.Mp = Math.Min(mount.Mp, mount.MaxMp);
 
         mount.RefreshInjuryBuffs();
+        mount.UpdateMateItemData();
 
         //Logger.Warn($"Spawn the pet:{mount.ObjId} X={mount.Transform.World.Position.X} Y={mount.Transform.World.Position.Y}");
         Owner.ParentWorld.MateManager.AddActiveMateAndSpawn(Owner, mount, item);
