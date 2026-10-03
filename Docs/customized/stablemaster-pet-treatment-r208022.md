@@ -31,8 +31,14 @@ Float conversions affect the result. The regression test contains all 256 level-
 
 The stock skill and buff descriptions confirm injury removal through stablemaster treatment.
 They do not define the HP or MP result. The confirmation and result packets do not define that result either.
-The candidate preserves current HP and MP, with a minimum of 1 HP for old dead records.
-The user decision on that proposed server rule remains pending. It is not a confirmed retail rule.
+The user requested the behavior closest to retail and delegated this detail.
+This release uses the confirmed injury cure and preserves current HP and MP. Old dead records receive a minimum of 1 HP.
+The injury limit and movement penalty end, so ordinary recovery can resume.
+The immediate HP/MP amount remains unconfirmed. This minimal choice does not assert a verified retail refill amount.
+
+The [February 13, 2013 guide](https://forums.craftingworlds.com/threads/archeage-battle-pets-the-wolf.2282/) describes the same injury and paid treatment.
+It does not state the health or mana immediately after treatment.
+Later revival-cooldown rules and current private-server potions do not establish the result for this client version.
 
 ## Server behavior
 

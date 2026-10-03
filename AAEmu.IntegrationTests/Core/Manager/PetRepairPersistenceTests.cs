@@ -67,7 +67,8 @@ public sealed partial class PlayerMailSendPersistenceTests
             var loaded = Assert.IsType<SummonMate>(graph.ReloadLifecycle().Items.GetItemByItemId(item.Id));
             Assert.False(loaded.DetailInjured);
             Assert.Equal(SlotType.Bank, loaded.SlotType);
-            Assert.True(ReloadPersistentMate(graph.Sender, item.Id).Hp > 0);
+            Assert.Equal(Math.Max(1, savedHp), ReloadPersistentMate(graph.Sender, item.Id).Hp);
+            Assert.Equal(45, ReloadPersistentMate(graph.Sender, item.Id).Mp);
             Assert.Equal(10000L - cost, Scalar($"SELECT money FROM characters WHERE id={graph.Sender.Id}"));
         }
     }

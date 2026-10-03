@@ -278,6 +278,13 @@ public sealed class PetRepairTests
         await Assert.That(item.IsDirty).IsEqualTo(success);
         await Assert.That(_owner.Money).IsEqualTo(success ? 99795L : 100000L);
         await Assert.That(_buffRemovals).IsEqualTo(success ? 2 : 0);
+        await Assert.That(mate.Hp).IsEqualTo(1);
+        await Assert.That(mate.Mp).IsEqualTo(37);
+        if (success)
+        {
+            mate.Hp = 10; // Treatment removes the injury cap so ordinary recovery can resume.
+            await Assert.That(mate.Hp).IsEqualTo(10);
+        }
         if (!success)
         {
             await Assert.That(saved.UpdatedAt).IsEqualTo(oldDate);
