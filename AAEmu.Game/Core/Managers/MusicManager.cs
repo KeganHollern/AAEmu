@@ -1,6 +1,7 @@
 ﻿using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
@@ -11,7 +12,8 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public class MusicManager(IMusicIdManager musicIdManager, IItemManager itemManager) : Singleton<MusicManager>, IMusicManager
+public class MusicManager(IMusicIdManager musicIdManager, IItemManager itemManager, MusicNoteGameData musicNoteGameData)
+    : Singleton<MusicManager>, IMusicManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -78,13 +80,36 @@ public class MusicManager(IMusicIdManager musicIdManager, IItemManager itemManag
         return true;
     }
 
-    public void UploadSong(uint charId, string title, string song, ulong itemId)
+    public bool UploadSong(Character player, string title, string song, ulong itemId)
     {
         lock (SaveManager.PersistenceSyncRoot)
-            _uploadQueue[charId] = new SongData
+        {
+            if (!CanSaveSong(player, title, song))
             {
-                AuthorId = charId, Title = title, Song = song, SourceItemId = itemId
+                RejectUpload(player);
+                return false;
+            }
+            _uploadQueue[player.Id] = new SongData
+            {
+                AuthorId = player.Id, Title = title, Song = song, SourceItemId = itemId
             };
+            return true;
+        }
+    }
+
+    internal void RejectUpload(Character player)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            _uploadQueue.Remove(player.Id);
+            player.SendErrorMessage(ErrorMessageType.UserNoteCannotSave);
+        }
+    }
+
+    private bool CanSaveSong(Character player, string title, string song)
+    {
+        return player.Actability?.Actabilities.TryGetValue((uint)ActabilityType.Artistry, out var artistry) == true &&
+            musicNoteGameData.TryGetLimit(artistry.Step, out var limit) && MusicNoteRules.IsValid(title, song, limit);
     }
 
     public bool CreateSheetMusic(Character player, Item sourceItem)
@@ -95,9 +120,16 @@ public class MusicManager(IMusicIdManager musicIdManager, IItemManager itemManag
         if (sourceItem == null || !ReferenceEquals(player.Inventory.GetItemById(sourceItem.Id), sourceItem) ||
             !ReferenceEquals(sourceItem._holdingContainer, player.Inventory.Bag) ||
             TradeReservation.GetReservedCount(sourceItem) != 0 ||
-            !_uploadQueue.TryGetValue(player.Id, out var upload) || upload.SourceItemId != sourceItem.Id ||
-            upload.Title == null || upload.Title.Length > 128 || upload.Song == null)
+            !_uploadQueue.TryGetValue(player.Id, out var upload) || upload.SourceItemId != sourceItem.Id)
             return batch.Fail();
+
+        // Rank can change between upload and the paid skill. The batch holds the
+        // same persistence lock as proficiency regrades and upload replacement.
+        if (!CanSaveSong(player, upload.Title, upload.Song))
+        {
+            RejectUpload(player);
+            return batch.Fail();
+        }
 
         // Consume first: one last sheet of paper can free the output slot in a full bag.
         if (!batch.Inventory.TryConsume(player.Inventory.Bag, sourceItem, 1))

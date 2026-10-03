@@ -218,6 +218,7 @@ public static class Program
                 services.AddSingleton<ModelManager>();
                 services.AddSingleton<IModelManager>(sp => sp.GetRequiredService<ModelManager>());
 
+                services.AddSingleton<AAEmu.Game.GameData.MusicNoteGameData>();
                 services.AddSingleton<MusicManager>();
                 services.AddSingleton<IMusicManager>(sp => sp.GetRequiredService<MusicManager>());
 
