@@ -186,6 +186,8 @@ public class NpcGameData : Singleton<NpcGameData>, IGameDataLoader
 
         foreach (var (_, npcSpawnerNpc) in NpcSpawnerTemplateNpcs)
         {
+            if (npcSpawnerNpc.MemberType != "Npc")
+                continue;
             if (!NpcMemberAndSpawnerTemplateIds.TryGetValue(npcSpawnerNpc.MemberId, out var value))
             {
                 NpcMemberAndSpawnerTemplateIds.Add(npcSpawnerNpc.MemberId, [npcSpawnerNpc.NpcSpawnerTemplateId]);
@@ -269,6 +271,8 @@ public class NpcGameData : Singleton<NpcGameData>, IGameDataLoader
     /// <param name="nsn"></param>
     public void AddMemberAndSpawnerTemplateIds(NpcSpawnerNpc nsn)
     {
+        if (nsn.MemberType != "Npc")
+            return;
         if (!NpcMemberAndSpawnerTemplateIds.TryGetValue(nsn.MemberId, out var npcMemberAndSpawnerTemplate))
             NpcMemberAndSpawnerTemplateIds.Add(nsn.MemberId, [nsn.NpcSpawnerTemplateId]);
         else

@@ -1,5 +1,4 @@
-﻿using System.Collections.Concurrent;
-using AAEmu.Commons.Utils;
+﻿using AAEmu.Commons.Utils;
 using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.Models.Game.NpcGroup;
 using AAEmu.Game.Utils.DB;
@@ -11,27 +10,29 @@ namespace AAEmu.Game.GameData;
 [GameData]
 public class NpcGroupGameData : Singleton<NpcGroupGameData>, IGameDataLoader
 {
-    private readonly ConcurrentDictionary<int, NpcGroup> _npcGroups = new();
-    private readonly ConcurrentDictionary<int, ConcurrentDictionary<int, NpcGroupMember>> _npcGroupMembers = new();
+    private sealed record Snapshot(Dictionary<int, NpcGroup> Groups,
+        Dictionary<int, Dictionary<int, NpcGroupMember>> Members);
+
+    private Snapshot _snapshot = new([], []);
 
     public NpcGroup GetNpcGroup(int id)
     {
-        _npcGroups.TryGetValue(id, out var npcGroup);
+        Volatile.Read(ref _snapshot).Groups.TryGetValue(id, out var npcGroup);
         return npcGroup;
     }
 
     public List<NpcGroupMember> GetNpcGroupMembers(int npcGroupId)
     {
-        if (_npcGroupMembers.TryGetValue(npcGroupId, out var members))
+        if (Volatile.Read(ref _snapshot).Members.TryGetValue(npcGroupId, out var members))
         {
-            return members.Values.ToList();
+            return members.Values.OrderBy(member => member.Id).ToList();
         }
         return [];
     }
 
     public NpcGroupMember GetNpcGroupMember(int npcGroupId, int memberId)
     {
-        if (_npcGroupMembers.TryGetValue(npcGroupId, out var members))
+        if (Volatile.Read(ref _snapshot).Members.TryGetValue(npcGroupId, out var members))
         {
             members.TryGetValue(memberId, out var member);
             return member;
@@ -41,13 +42,15 @@ public class NpcGroupGameData : Singleton<NpcGroupGameData>, IGameDataLoader
 
     public void Load(SqliteConnection connection)
     {
-        LoadNpcGroups(connection);
-        LoadNpcGroupMembers(connection);
+        var groups = LoadNpcGroups(connection);
+        var members = LoadNpcGroupMembers(connection);
+        Volatile.Write(ref _snapshot, new Snapshot(groups, members));
     }
 
-    private void LoadNpcGroups(SqliteConnection connection)
+    private static Dictionary<int, NpcGroup> LoadNpcGroups(SqliteConnection connection)
     {
         using var command = connection.CreateCommand();
+        var groups = new Dictionary<int, NpcGroup>();
         command.CommandText = "SELECT * FROM npc_groups";
         command.Prepare();
         using var sqliteReader = command.ExecuteReader();
@@ -60,13 +63,15 @@ public class NpcGroupGameData : Singleton<NpcGroupGameData>, IGameDataLoader
             template.AggroRuleId = reader.GetInt32("aggro_rule_id");
             template.EnableRespawn = reader.GetBoolean("enable_respawn", true);
 
-            _npcGroups.TryAdd(template.Id, template);
+            groups.Add(template.Id, template);
         }
+        return groups;
     }
 
-    private void LoadNpcGroupMembers(SqliteConnection connection)
+    private static Dictionary<int, Dictionary<int, NpcGroupMember>> LoadNpcGroupMembers(SqliteConnection connection)
     {
         using var command = connection.CreateCommand();
+        var groups = new Dictionary<int, Dictionary<int, NpcGroupMember>>();
         command.CommandText = "SELECT * FROM npc_group_members";
         command.Prepare();
         using var sqliteReader = command.ExecuteReader();
@@ -84,10 +89,11 @@ public class NpcGroupGameData : Singleton<NpcGroupGameData>, IGameDataLoader
             template.FormationOffsetZ = reader.GetFloat("formation_offset_z");
             template.FormationTension = reader.GetFloat("formation_tension");
 
-            if (!_npcGroupMembers.ContainsKey(template.NpcGroupId))
-                _npcGroupMembers[template.NpcGroupId] = new ConcurrentDictionary<int, NpcGroupMember>();
-            _npcGroupMembers[template.NpcGroupId][template.Id] = template;
+            if (!groups.TryGetValue(template.NpcGroupId, out var members))
+                groups.Add(template.NpcGroupId, members = []);
+            members.Add(template.Id, template);
         }
+        return groups;
     }
 
     public void PostLoad()

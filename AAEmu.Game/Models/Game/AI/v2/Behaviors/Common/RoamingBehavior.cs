@@ -31,6 +31,9 @@ public class RoamingBehavior : BaseCombatBehavior
         if (!CheckAggression())
             CheckAlert();
 
+        if (ReferenceEquals(Ai.GetCurrentBehavior(), this) && Ai.FollowGroupFormation(delta))
+            return;
+
         if (_targetRoamPosition.Equals(Vector3.Zero) && DateTime.UtcNow > _nextRoaming)
         {
             UpdateRoaming();

@@ -2,6 +2,8 @@
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game.NpcGroup;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Route;
 using AAEmu.Game.Models.Game.World;
@@ -21,11 +23,11 @@ public class NpcSpawnerNpc : Spawner<Npc>
     /// </summary>
     public uint NpcSpawnerTemplateId { get; init; }
     /// <summary>
-    /// NpcTemplateId
+    /// NPC template ID or NPC group ID, selected by MemberType.
     /// </summary>
     public uint MemberId { get; set; }
     /// <summary>
-    /// MemberType should be "Npc" here
+    /// Authored member type: "Npc" or "NpcGroup".
     /// </summary>
     public string MemberType { get; set; }
     /// <summary>
@@ -82,11 +84,19 @@ public class NpcSpawnerNpc : Spawner<Npc>
     /// <returns></returns>
     private List<Npc> SpawnNpc(NpcSpawner npcSpawner, uint ownerId = 0)
     {
-        var npcs = new List<Npc>();
-        var npc = NpcManager.Instance.Create(npcSpawner.ParentWorld, 0, MemberId);
+        var npc = PrepareNpc(npcSpawner, ownerId, MemberId, npcSpawner.Position);
+        if (npc == null)
+            return null;
+        return PublishNpc(npc) ? [npc] : [];
+    }
+
+    protected virtual Npc PrepareNpc(NpcSpawner npcSpawner, uint ownerId, uint npcTemplateId,
+        WorldSpawnPosition authoredPosition)
+    {
+        var npc = NpcManager.Instance.Create(npcSpawner.ParentWorld, 0, npcTemplateId);
         if (npc == null)
         {
-            Logger.Warn($"Npc {MemberId}, from spawner Id {npcSpawner.Id} not exist at db. Spawner Position: {npcSpawner.Position}");
+            Logger.Warn($"Npc {npcTemplateId}, from spawner Id {npcSpawner.Id} not exist at db. Spawner Position: {npcSpawner.Position}");
             return null;
         }
 
@@ -97,22 +107,22 @@ public class NpcSpawnerNpc : Spawner<Npc>
 
         npc.RegisterNpcEvents();
 
-        Logger.Trace($"Spawn npc templateId {MemberId} objId {npc.ObjId} from spawnerId {NpcSpawnerTemplateId} at Position: {npcSpawner.Position}");
+        Logger.Trace($"Spawn npc templateId {npcTemplateId} objId {npc.ObjId} from spawnerId {NpcSpawnerTemplateId} at Position: {npcSpawner.Position}");
 
         GroundSurfaceResult? groundSurface = null;
         if (!npc.CanFly && !npcSpawner.PreserveAuthoredHeight &&
             npcSpawner.ParentWorld.Template.GeoData.TryGetGroundSurface(
-                npcSpawner.Position.AsPositionVector(), out var sampledSurface))
+                authoredPosition.AsPositionVector(), out var sampledSurface))
         {
             groundSurface = sampledSurface;
         }
 
-        var runtimeSpawnPosition = CreateRuntimeSpawnPosition(npcSpawner.Position, groundSurface,
+        var runtimeSpawnPosition = CreateRuntimeSpawnPosition(authoredPosition, groundSurface,
             npcSpawner.PreserveAuthoredHeight);
         npc.Transform.ApplyWorldSpawnPosition(runtimeSpawnPosition);
         if (npc.Transform == null)
         {
-            Logger.Error($"Can't spawn npc {MemberId} from spawnerId {NpcSpawnerTemplateId}. Transform is null.");
+            Logger.Error($"Can't spawn npc {npcTemplateId} from spawnerId {NpcSpawnerTemplateId}. Transform is null.");
             return null;
         }
 
@@ -133,14 +143,30 @@ public class NpcSpawnerNpc : Spawner<Npc>
                                  npcSpawner.ParentWorld.Id == WorldManager.DefaultInstanceId
             ? (int)Random.Shared.Next(npc.Spawner.Template.SpawnDelayMin, npc.Spawner.Template.SpawnDelayMax)
             : 0;
-        SpawnAndRaiseOnSpawn(npc);
+        return npc;
+    }
+
+    protected virtual bool PublishNpc(Npc npc)
+    {
+        PublishNpcObject(npc);
+        npc.GroupInstance?.SynchronizeCombat(npc);
+        return CompleteNpcSpawn(npc);
+    }
+
+    protected virtual void PublishNpcObject(Npc npc) => npc.Spawn();
+
+    protected virtual bool CompleteNpcSpawn(Npc npc)
+    {
+        var npcSpawner = npc.Spawner;
+        if (npc.TowerDefenseSpawnToken?.Lifetime.IsCancelled != true)
+            npc.Events.OnSpawn(npc, new OnSpawnArgs { Npc = npc });
 
         if (npc.TowerDefenseSpawnToken is { } eventToken &&
             !npc.ParentWorld.EventSpawnOwnership.Register(npc, eventToken))
         {
             npc.ActivePlotState?.RequestCancellation();
             npcSpawner.Despawn(npc);
-            return [];
+            return false;
         }
 
         var world = WorldManager.Instance.GetWorld(npc.Transform.InstanceId);
@@ -153,8 +179,7 @@ public class NpcSpawnerNpc : Spawner<Npc>
                 Logger.Warn($"Failed to load {npcSpawner.FollowPath} for NPC {npc.TemplateId} ({npc.ObjId})");
         }
 
-        npcs.Add(npc);
-        return npcs;
+        return true;
     }
 
     /// <summary>
@@ -197,6 +222,81 @@ public class NpcSpawnerNpc : Spawner<Npc>
     /// <returns></returns>
     private List<Npc> SpawnNpcGroup(NpcSpawner npcSpawner, uint ownerId = 0)
     {
-        return SpawnNpc(npcSpawner, ownerId);
+        var template = NpcGroupGameData.Instance.GetNpcGroup(checked((int)MemberId));
+        var members = NpcGroupGameData.Instance.GetNpcGroupMembers(checked((int)MemberId));
+        if (template == null || members.Count == 0)
+        {
+            Logger.Warn("No members for NPC group {0} in spawner {1}", MemberId, npcSpawner.Id);
+            return [];
+        }
+
+        var group = new NpcGroupInstance(template, npcSpawner, npcSpawner.Position);
+        var prepared = new List<Npc>(members.Count);
+        try
+        {
+            foreach (var member in members.OrderByDescending(member => member.IsLeader).ThenBy(member => member.Id))
+            {
+                var position = CreateGroupMemberPosition(group.Anchor, member);
+                var npc = PrepareNpc(npcSpawner, ownerId, checked((uint)member.NpcId), position);
+                if (npc == null)
+                    throw new InvalidDataException($"NPC group {MemberId} has unavailable NPC {member.NpcId}.");
+                prepared.Add(npc);
+                group.Attach(member, npc);
+            }
+
+            npcSpawner.RegisterGroup(group, this, ownerId);
+            // Publish every member before any on-spawn effect can resolve or assist a sibling.
+            foreach (var npc in prepared)
+                PublishNpcObject(npc);
+            foreach (var npc in prepared)
+                group.SynchronizeCombat(npc);
+            foreach (var npc in prepared)
+                if (!CompleteNpcSpawn(npc))
+                    throw new InvalidOperationException($"NPC group {MemberId} could not publish every member.");
+            return prepared;
+        }
+        catch
+        {
+            foreach (var npc in prepared)
+                DiscardNpc(npc);
+            npcSpawner.UnregisterGroup(group);
+            throw;
+        }
+    }
+
+    protected virtual void DiscardNpc(Npc npc) => npc.Spawner.Despawn(npc);
+
+    internal Npc RespawnGroupMember(NpcGroupInstance group, NpcGroupMember member, uint ownerId)
+    {
+        var npc = PrepareNpc(group.Spawner, ownerId, checked((uint)member.NpcId), CreateGroupMemberPosition(group.Anchor, member));
+        if (npc == null)
+            return null;
+        try
+        {
+            group.Attach(member, npc);
+            if (PublishNpc(npc))
+                return npc;
+        }
+        catch
+        {
+            DiscardNpc(npc);
+            group.Detach(npc);
+            throw;
+        }
+        DiscardNpc(npc);
+        group.Detach(npc);
+        return null;
+    }
+
+    internal static WorldSpawnPosition CreateGroupMemberPosition(WorldSpawnPosition anchor, NpcGroupMember member)
+    {
+        var position = anchor.Clone();
+        // Server interpretation: authored offsets use the spawner's local yaw basis.
+        var cosine = MathF.Cos(anchor.Yaw);
+        var sine = MathF.Sin(anchor.Yaw);
+        position.X += member.FormationOffsetX * cosine - member.FormationOffsetY * sine;
+        position.Y += member.FormationOffsetX * sine + member.FormationOffsetY * cosine;
+        position.Z += member.FormationOffsetZ;
+        return position;
     }
 }

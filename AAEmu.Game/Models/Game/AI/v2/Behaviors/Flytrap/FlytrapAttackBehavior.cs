@@ -141,13 +141,11 @@ public class FlytrapAttackBehavior : Behavior
     {
         // We might want to optimize this somehow...
         var aggroList = Ai.Owner.AggroTable.Values;
-        var abusers = aggroList.OrderByDescending(o => o.TotalAggro).Select(o => o.Owner).ToList();
+        var abusers = aggroList.OrderByDescending(o => o.TotalAggro).ThenBy(o => o.Owner.ObjId).Select(o => o.Owner).ToList();
 
         foreach (var abuser in abusers)
         {
             Ai.Owner.LookTowards(abuser.Transform.World.Position);
-            if (Ai.AlreadyTargeted)
-                return true;
 
             if (AppConfiguration.Instance.World.GeoDataMode)
             {
@@ -155,10 +153,12 @@ public class FlytrapAttackBehavior : Behavior
                 // geodata enabled and not the main world
                 if (Ai.Owner.UnitIsVisible(abuser) && !abuser.IsDead)
                 {
+                    var targetChanged = !ReferenceEquals(Ai.Owner.CurrentAggroTarget, abuser) || !Ai.AlreadyTargeted;
                     Ai.Owner.CurrentAggroTarget = abuser;
                     Ai.Owner.SetTarget(abuser);
                     UpdateAggroHelp(abuser);
-                    Ai.Owner.FindPath(abuser);
+                    if (targetChanged)
+                        Ai.Owner.FindPath(abuser);
                     return true;
                 }
             }

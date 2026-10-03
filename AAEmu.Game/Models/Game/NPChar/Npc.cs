@@ -14,6 +14,7 @@ using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Models;
+using AAEmu.Game.Models.Game.NpcGroup;
 using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
@@ -39,7 +40,10 @@ public partial class Npc : Unit
     public NpcTemplate Template { get; set; }
     //public Item[] Equip { get; set; }
     public NpcSpawner Spawner { get; set; }
+    public NpcGroupInstance GroupInstance { get; internal set; }
+    public NpcGroupMember GroupMember { get; internal set; }
     internal bool Despawned { get; set; }
+    internal bool CombatRetired { get; private set; }
     public TowerDefenseSpawnToken TowerDefenseSpawnToken { get; internal set; }
     public DateTime DeadTime { get; set; } = DateTime.MinValue;
 
@@ -964,26 +968,14 @@ public partial class Npc : Unit
 
     private void ClearAllAggroTargetsAndCheckCombatState()
     {
-        List<Character> playerAggroList = [];
-        // Generate a list of all player that we had aggro on
-        foreach (var (objId, aggro) in AggroTable)
+        // Remove each entry through the normal cleanup path before discarding it.
+        // The retained owner also works after the target leaves the world registry.
+        foreach (var aggro in AggroTable.Values.ToArray())
         {
-            var unit = aggro.Owner.ParentWorld.GetGameObject(objId);
-            if (unit is Character player)
-                playerAggroList.Add(player);
-        }
-        // Clear the aggro table
-        AggroTable.Clear();
-
-        // Check if those target players still have aggro on something else, if not, clear their combat timers
-        foreach (var player in playerAggroList)
-        {
-            ClearAggroOfUnit(player);
-            if (player.IsInAggroListOf.Count <= 0)
-            {
-                // Cancel combat
+            var target = aggro.Owner;
+            ClearAggroOfUnit(target);
+            if (target is Character player && player.IsInAggroListOf.Count == 0)
                 player.IsInBattle = false;
-            }
         }
     }
 
@@ -1041,11 +1033,10 @@ public partial class Npc : Unit
 
     public override void ClearAllAggro()
     {
-        base.ClearAllAggro();
-
+        CharacterTagging.ClearAllTaggers();
         var lastAggroCount = AggroTable.Count;
         ClearAllAggroTargetsAndCheckCombatState();
-        if (lastAggroCount > 0)
+        if (lastAggroCount > 0 && !IsDead && !Despawned && !CombatRetired)
             CheckIfEmptyAggroToReturn();
     }
 
@@ -1064,7 +1055,7 @@ public partial class Npc : Unit
         //     // TaskManager.Instance.Schedule(new UnitMove(new Track(), this), TimeSpan.FromMilliseconds(100));
         // }
         AddUnitAggro(AggroKind.Damage, attacker, amount);
-        Ai.OnAggroTargetChanged();
+        Ai?.OnAggroTargetChanged();
 
         /*
         var topAbuser = AggroTable.GetTopTotalAggroAbuserObjId();
@@ -1381,6 +1372,12 @@ public partial class Npc : Unit
 
     public override void Delete()
     {
+        lock (AggroTable)
+            CombatRetired = true;
+        if (Ai != null)
+            Ai.ShouldTick = false;
+        GroupInstance?.Detach(this);
+        ClearAllAggro();
         ActivePlotState?.RequestCancellation();
         if (ParentWorld?.EventSpawnOwnership.TryGet(ObjId, out var owned) == true && ReferenceEquals(owned.Npc, this))
             ParentWorld.EventSpawnOwnership.Unregister(ObjId);
