@@ -15,6 +15,7 @@ namespace AAEmu.Game.Core.Managers;
 // ReSharper disable once ClassNeverInstantiated.Global
 public class ChatManager : Singleton<ChatManager>, IChatManager
 {
+    internal UserChatChannels UserChannels { get; } = new();
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     /// <summary>
@@ -81,6 +82,7 @@ public class ChatManager : Singleton<ChatManager>, IChatManager
     /// <param name="character"></param>
     public void LeaveAllChannels(Character character)
     {
+        UserChannels.LeaveAll(character);
         foreach (var c in FactionChannels)
             c.Value?.LeaveChannel(character);
         foreach (var c in CourtRoomChannels)
