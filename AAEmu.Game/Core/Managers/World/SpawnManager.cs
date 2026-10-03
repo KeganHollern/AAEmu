@@ -1,4 +1,4 @@
-using AAEmu.Commons.Exceptions;
+﻿using AAEmu.Commons.Exceptions;
 using AAEmu.Commons.IO;
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
@@ -416,6 +416,8 @@ public class SpawnManager(WorldInstance parentWorld)
             doodadsSpawned += SpawnPersistentDoodads(DoodadOwnerType.Character);
             Logger.Info($"{doodadsSpawned} doodads loaded in {World}.");
         }
+
+        ShipyardManager.Instance.LoadPlayerShipyards(World);
 
         // Start timers
         var respawnThread = new Thread(CheckRespawns) { Name = $"RespawnThread_{World.Id}_{World.Template.Id}" };

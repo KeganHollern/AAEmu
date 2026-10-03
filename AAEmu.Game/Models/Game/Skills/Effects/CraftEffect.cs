@@ -127,7 +127,7 @@ public class CraftEffect : EffectTemplate
     internal static void AdvanceShipyardConstruction(Character character, Shipyard.Shipyard shipyard,
         uint usedSkill, Skill skill)
     {
-        if (shipyard.CurrentStep < 0 ||
+        if (shipyard.Retiring || shipyard.Retired || shipyard.CurrentStep < 0 ||
             !shipyard.Template.ShipyardSteps.TryGetValue(shipyard.CurrentStep, out var step) || step.SkillId != usedSkill)
         {
             skill.Cancelled = true;
@@ -135,7 +135,13 @@ public class CraftEffect : EffectTemplate
             return;
         }
         var batch = SkillLaborBatch.Current;
-        batch?.Enlist(null, shipyard.CaptureConstructionState());
+        if (batch == null)
+        {
+            SkillLaborBatch.Run(character, skill, false,
+                () => AdvanceShipyardConstruction(character, shipyard, usedSkill, skill));
+            return;
+        }
+        batch.Enlist(shipyard.Save, shipyard.CaptureConstructionState());
         shipyard.AddBuildAction();
         shipyard.ShipyardData.Actions = shipyard.CurrentStep == -1 ? shipyard.AllAction : shipyard.CurrentAction;
         shipyard.ShipyardData.Step = shipyard.CurrentStep == -1
@@ -154,7 +160,7 @@ public class CraftEffect : EffectTemplate
     internal static void CompleteShipyardConstruction(Character character, Shipyard.Shipyard shipyard, Skill skill)
     {
         var batch = SkillLaborBatch.Current;
-        if (shipyard.ShipyardData.Type2 != character.Id || shipyard.CurrentStep != -1 ||
+        if (shipyard.Retiring || shipyard.Retired || shipyard.ShipyardData.Type2 != character.Id || shipyard.CurrentStep != -1 ||
             shipyard.ShipyardData.Step == 1000)
         {
             skill.Cancelled = true;
@@ -166,13 +172,15 @@ public class CraftEffect : EffectTemplate
             ShipyardManager.Instance.ShipyardCompletedTask(shipyard);
             return;
         }
-        batch.Enlist(null, shipyard.CaptureConstructionState());
-        if (!batch.Inventory.TryGrant(character.Inventory.Bag, shipyard.Template.ItemId, 1, 0))
+        batch.Enlist(shipyard.Save, shipyard.CaptureConstructionState());
+        if (!batch.Inventory.TryGrant(character.Inventory.Bag, shipyard.Template.ItemId, 1, out var items, 0))
         {
             batch.Fail();
             return;
         }
         shipyard.ShipyardData.Step = 1000;
+        shipyard.CompletionItemId = items.Single().Id;
+        shipyard.CeremonyEnd = DateTime.UtcNow.AddMilliseconds(shipyard.Template.CeremonyAnimTime);
         batch.AfterCommit(() =>
         {
             character.BroadcastPacket(new SCShipyardStatePacket(shipyard.ShipyardData), true);

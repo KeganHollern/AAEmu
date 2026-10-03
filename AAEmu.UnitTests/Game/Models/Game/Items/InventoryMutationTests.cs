@@ -1,4 +1,5 @@
 ﻿using System.Reflection;
+using System.Numerics;
 
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
@@ -20,6 +21,7 @@ using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Taxations;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Loots;
@@ -36,8 +38,11 @@ public sealed class InventoryMutationTests
         .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
     private static readonly FieldInfo s_questManagerInstance = typeof(Singleton<QuestManager>)
         .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+    private static readonly FieldInfo s_accountManagerInstance = typeof(Singleton<AccountManager>)
+        .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
     private ItemManager _previousItems;
     private QuestManager _previousQuests;
+    private AccountManager _previousAccounts;
     private Dictionary<ulong, Item> _allItems;
     private List<ulong> _deleted;
     private Dictionary<uint, ItemTemplate> _templates;
@@ -49,6 +54,8 @@ public sealed class InventoryMutationTests
     {
         _previousItems = (ItemManager)s_itemManagerInstance.GetValue(null);
         _previousQuests = (QuestManager)s_questManagerInstance.GetValue(null);
+        _previousAccounts = (AccountManager)s_accountManagerInstance.GetValue(null);
+        s_accountManagerInstance.SetValue(null, new AccountManager(null, null, TimeProvider.System));
         var ids = Mock.Of<IItemIdManager>();
         // Repeated allocation lets tests force failure on a later new stack.
         ids.GetNextId().Returns(1_000U);
@@ -85,6 +92,7 @@ public sealed class InventoryMutationTests
     {
         s_itemManagerInstance.SetValue(null, _previousItems);
         s_questManagerInstance.SetValue(null, _previousQuests);
+        s_accountManagerInstance.SetValue(null, _previousAccounts);
     }
 
     [Test]
@@ -921,6 +929,61 @@ public sealed class InventoryMutationTests
     }
 
     [Test]
+    [Arguments(ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater)]
+    [Arguments(ErrorMessageType.CraftLocatingUnitIsTooCloseToOther)]
+    [Arguments(ErrorMessageType.CraftLocatingUnitIsTooCloseToUnit)]
+    [Arguments(ErrorMessageType.CraftLocatingUnitIsNotExist)]
+    public async Task Shipyard_RejectedGeometry_KeepsPaymentAndDoesNotAllocateIds(ErrorMessageType rejection)
+    {
+        var design = AddItem(1, 100, 1);
+        var material = AddItem(2, 200, 3);
+        var (manager, shipyard, objectIds, shipyardIds) = CreateShipyardPurchase();
+        shipyard.Template.ShipyardSteps.Add(0, new ShipyardSteps { ModelId = 10, NumActions = 2 });
+        manager._shipyardsTemplate.Add(1, shipyard.Template);
+        SetField(manager, "_designShipyards", new Dictionary<uint, uint> { [100] = 1 });
+        var world = new WorldInstance(new WorldTemplate
+            { Id = WorldManager.DefaultWorldTemplateId, CellX = 1, CellY = 1 }, 0, true, 0);
+        var worlds = new WorldManager(null, null, null, null, null);
+        SetField(worlds, "_worlds", new System.Collections.Concurrent.ConcurrentDictionary<uint, WorldInstance>(
+            new Dictionary<uint, WorldInstance> { [0] = world }));
+        var worldField = typeof(Singleton<WorldManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousWorlds = worldField.GetValue(null);
+        var zones = new ZoneManager(null, null);
+        SetField(zones, "_zones", new Dictionary<uint, Zone> { [0] = new() });
+        var field = typeof(Singleton<ZoneManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previous = field.GetValue(null);
+        var geometryCalls = 0;
+        var commits = 0;
+        manager.PlacementGeometry = (_, _, _) => { geometryCalls++; return rejection; };
+        manager.CommitPersistence = (_, _) => { commits++; return true; };
+        try
+        {
+            field.SetValue(null, zones);
+            worldField.SetValue(null, worlds);
+            _owner.ParentWorld = world;
+            _owner.Transform.Local.SetPosition(20, 20, 10);
+            var request = new ShipyardPlacementRequest(1, new Vector3(20, 25, 9.9f), 0, design.Id,
+                new(-Vector3.One, Vector3.One), false);
+
+            await Assert.That(manager.Create(_owner, request)).IsNull();
+
+            await Assert.That(geometryCalls).IsEqualTo(1);
+            await Assert.That(commits).IsEqualTo(0);
+            await Assert.That(_owner.Money).IsEqualTo(100L);
+            await Assert.That(design.Count).IsEqualTo(1);
+            await Assert.That(material.Count).IsEqualTo(3);
+            await Assert.That(_bag.Items).Count().IsEqualTo(2);
+            objectIds.GetNextId().WasCalled(Times.Never);
+            shipyardIds.GetNextId().WasCalled(Times.Never);
+        }
+        finally
+        {
+            field.SetValue(null, previous);
+            worldField.SetValue(null, previousWorlds);
+        }
+    }
+
+    [Test]
     public async Task GradeChange_FailedLaterDebit_RestoresGradeAndDirtyState()
     {
         var item = AddItem(1, 100, 1);
@@ -1098,9 +1161,13 @@ public sealed class InventoryMutationTests
         var shipyardIds = Mock.Of<IShipyardIdManager>();
         shipyardIds.GetNextId().Returns(60U);
         var manager = new ShipyardManager(Mock.Of<ITaskManager>().Object, objectIds.Object, shipyardIds.Object,
-            Mock.Of<IWorldManager>().Object, taxations.Object, skills.Object);
+            Mock.Of<IWorldManager>().Object, taxations.Object, skills.Object)
+        {
+            CommitPersistence = (_, _) => true
+        };
         var shipyard = new Shipyard
         {
+            SourceDesignItemId = 1,
             Template = new ShipyardsTemplate { Id = 1, OriginItemId = 100, TaxationId = 1 },
             ShipyardData = new ShipyardData { Type2 = _owner.Id, OwnerName = _owner.Name }
         };

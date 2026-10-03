@@ -122,6 +122,15 @@ public sealed class GameMySqlFixture : IAsyncLifetime
         await command.ExecuteNonQueryAsync();
         await command.ExecuteNonQueryAsync();
 
+        // Shipyards did not have a persistence table before this update.
+        command.CommandText = "DROP TABLE `shipyards`";
+        await command.ExecuteNonQueryAsync();
+        var shipyardUpdatePath = Path.Combine(AppContext.BaseDirectory, "SQL", "updates",
+            "2026-10-02_aaemu_game_shipyards.sql");
+        command.CommandText = await File.ReadAllTextAsync(shipyardUpdatePath);
+        await command.ExecuteNonQueryAsync();
+        await command.ExecuteNonQueryAsync();
+
         var builder = new MySqlConnectionStringBuilder(_connectionString);
         MySQL.SetConfiguration(new MySqlConnectionSettings
         {

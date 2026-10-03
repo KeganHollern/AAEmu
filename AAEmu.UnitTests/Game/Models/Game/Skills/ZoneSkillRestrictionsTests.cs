@@ -13,6 +13,7 @@ using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -27,6 +28,7 @@ using AAEmu.Game.Models.Game.Skills.Plots;
 using AAEmu.Game.Models.Game.Skills.Plots.Tree;
 using AAEmu.Game.Models.Game.Skills.Plots.Type;
 using AAEmu.Game.Models.Game.Skills.Static;
+using AAEmu.Game.Models.Game.Shipyard;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
@@ -44,6 +46,41 @@ public sealed class ZoneSkillRestrictionsTests
     private readonly Dictionary<FieldInfo, object> _previousInstances = [];
     private ZoneManager _zones;
     private ProbeUnit _caster;
+
+    [Test]
+    [Arguments("source", ErrorMessageType.ItemCannotUseHere)]
+    [Arguments("destination", ErrorMessageType.ItemCannotUseHere)]
+    [Arguments("closed", ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater)]
+    [Arguments("wrong-design", ErrorMessageType.NotEnoughItem)]
+    [Arguments("wrong-template", ErrorMessageType.NotEnoughItem)]
+    [Arguments("nonpersistent-world", ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater)]
+    public async Task Shipyard_PreflightUsesBothZonePositionsAndExactDesignMapping(string rejection, ErrorMessageType expected)
+    {
+        var item = new Item { Id = 700, TemplateId = 150, Count = 1,
+            Template = new ItemTemplate { Id = 150, UseSkillId = 15802 } };
+        var character = CreateItemCharacter(item);
+        character.ParentWorld.Template.Id = WorldManager.DefaultWorldTemplateId;
+        character.Transform.Local.SetPosition(rejection == "source" ? 110 : 130, 10, 100);
+        var position = new Vector3(rejection == "destination" ? 110 : 130, 10, 109.9f);
+        if (rejection == "closed")
+            _zones.GetZoneByKey(3000).Closed = true;
+        if (rejection == "nonpersistent-world")
+            character.ParentWorld.Template.Id = WorldManager.DefaultWorldTemplateId + 1;
+        var template = new ShipyardsTemplate { Id = 1, OriginItemId = 150 };
+        template.ShipyardSteps.Add(0, new ShipyardSteps { ModelId = 1 });
+        var manager = new ShipyardManager(null, null, null, WorldManager.Instance, null, null);
+        manager._shipyardsTemplate.Add(1, template);
+        SetField(manager, "_designShipyards", new Dictionary<uint, uint> { [150] = rejection == "wrong-template" ? 2u : 1u });
+        var request = new ShipyardPlacementRequest(1, position, 0, rejection == "wrong-design" ? 701UL : 700UL,
+            new(-Vector3.One, Vector3.One), false);
+        await Assert.That(manager.CheckPlacement(character, request, out _)).IsEqualTo(expected);
+        var geometryCalled = false;
+        manager.PlacementGeometry = (_, _, _) => { geometryCalled = true; return ErrorMessageType.NoErrorMessage; };
+        await Assert.That(manager.Create(character, request)).IsNull();
+        await Assert.That(geometryCalled).IsFalse();
+        await Assert.That(item.Count).IsEqualTo(1);
+        await Assert.That(character.Inventory.Bag.GetItemByItemId(item.Id)).IsSameReferenceAs(item);
+    }
 
     [Before(Test)]
     public void SetUp()

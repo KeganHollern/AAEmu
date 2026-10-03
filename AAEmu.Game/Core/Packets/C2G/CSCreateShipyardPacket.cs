@@ -1,4 +1,5 @@
-﻿using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Exceptions;
+using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
@@ -10,6 +11,14 @@ public class CSCreateShipyardPacket() : GamePacket(CSOffsets.CSCreateShipyardPac
 {
     public override void Read(PacketStream stream)
     {
+        var request = ReadRequest(stream);
+        ShipyardManager.Instance.Create(Connection.ActiveChar, request);
+    }
+
+    internal static ShipyardPlacementRequest ReadRequest(PacketStream stream)
+    {
+        if (stream.LeftBytes != 61)
+            throw new MarshalException("CSCreateShipyard requires its 61-byte r208022 body.");
         var id = stream.ReadUInt32();
         var x = Helpers.ConvertLongX(stream.ReadInt64());
         var y = Helpers.ConvertLongY(stream.ReadInt64());
@@ -24,13 +33,8 @@ public class CSCreateShipyardPacket() : GamePacket(CSOffsets.CSCreateShipyardPac
         var mAABBmxZ = stream.ReadSingle();
         var autoUseAAPoint = stream.ReadBoolean();
 
-        var shipyardData = new ShipyardData { TemplateId = id, X = x, Y = y, Z = z,
-            zRot = zRot,
-            Id = designItem,
-            Step = 0
-        };
-
-        Logger.Warn("CreateShipyard, Id: {0}, X: {1}, Y: {2}, Z: {3}, DesignItem: {4}", id, x, y, z, designItem);
-        ShipyardManager.Instance.Create(Connection.ActiveChar, shipyardData);
+        // r208022 397bc060: the bounds describe the preview model before its pose is applied.
+        return new(id, new(x, y, z), zRot, designItem,
+            new(new(mAABBmnX, mAABBmnY, mAABBmnZ), new(mAABBmxX, mAABBmxY, mAABBmxZ)), autoUseAAPoint);
     }
 }

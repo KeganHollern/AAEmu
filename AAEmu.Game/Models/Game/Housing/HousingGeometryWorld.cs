@@ -88,6 +88,26 @@ public sealed class HousingGeometryWorld(HousingGeometryAssets assets, WorldInst
 
     public CryIntersection IntersectBox(CryBox box) => _scene.IntersectBox(box);
 
+    public CryIntersection IntersectBox(CryBox box, int entityMask)
+    {
+        var result = _scene.IntersectBox(box, entityMask);
+        if (result != CryIntersection.Clear || (entityMask & 0x100) == 0)
+            return result;
+        var bounds = new CryBounds(-box.HalfSize, box.HalfSize).Transform(
+            box.Orientation * Matrix4x4.CreateTranslation(box.Center));
+        for (var y = Cell(bounds.Min.Y); y <= Cell(bounds.Max.Y); y++)
+        for (var x = Cell(bounds.Min.X); x <= Cell(bounds.Max.X); x++)
+        {
+            var terrain = GetTerrain(x, y);
+            if (terrain == null)
+                return CryIntersection.Indeterminate;
+            result = terrain.IntersectBox(box);
+            if (result != CryIntersection.Clear)
+                return result;
+        }
+        return CryIntersection.Clear;
+    }
+
     public CryIntersection Raycast(Vector3 origin, Vector3 vector, out CrySceneRayHit hit)
     {
         hit = default;

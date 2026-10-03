@@ -60,13 +60,13 @@ public sealed class CryGeometryScene(Func<CryBounds, IEnumerable<CryGeometryInst
         }
     }
 
-    public CryIntersection IntersectBox(CryBox box)
+    public CryIntersection IntersectBox(CryBox box, int entityMask = 0x1f)
     {
         var bounds = new CryBounds(-box.HalfSize, box.HalfSize).Transform(
             box.Orientation * Matrix4x4.CreateTranslation(box.Center));
         foreach (var instance in queryInstances(bounds))
         {
-            if ((instance.EntityType & 0x1f) == 0 || instance.RayOnly)
+            if ((instance.EntityType & entityMask) == 0 || instance.RayOnly)
                 continue;
             if (HasUnresolvedCollisionPose(instance.Asset))
                 return CryIntersection.Indeterminate;

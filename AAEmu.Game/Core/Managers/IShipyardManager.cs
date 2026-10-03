@@ -5,6 +5,7 @@ namespace AAEmu.Game.Core.Managers;
 
 public interface IShipyardManager : ILoadable, IInitializable
 {
-    Shipyard Create(Character owner, ShipyardData shipyardData);
+    void Save(PersistenceSaveContext context);
+    Shipyard Create(Character owner, ShipyardPlacementRequest request);
     void ShipyardCompletedTask(Shipyard shipyard);
 }

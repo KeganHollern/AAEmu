@@ -15,13 +15,14 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectIdManager, IShipyardIdManager shipyardIdManager, IWorldManager worldManager, ITaxationsManager taxationsManager, ISkillManager skillManager) : Singleton<ShipyardManager>, IShipyardManager
+public partial class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectIdManager, IShipyardIdManager shipyardIdManager, IWorldManager worldManager, ITaxationsManager taxationsManager, ISkillManager skillManager) : Singleton<ShipyardManager>, IShipyardManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     public Dictionary<uint, ShipyardsTemplate> _shipyardsTemplate = [];
     private Dictionary<uint, Shipyard> _shipyard = [];
-    private List<uint> _removedShipyards = [];
+    internal Func<IReadOnlyCollection<Character>, Action<PersistenceSaveContext>, bool> CommitPersistence { get; set; } =
+        (participants, write) => SaveManager.Instance.TryCommitEconomy(participants, write);
 
     public void Initialize()
     {
@@ -37,7 +38,7 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
         taskManager.Schedule(shipyardTickStartTask, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
     }
 
-    public Shipyard Create(Character owner, ShipyardData shipyardData)
+    private Shipyard Create(Character owner, ShipyardData shipyardData)
     {
         if (!_shipyardsTemplate.TryGetValue(shipyardData.TemplateId, out var template) ||
             !template.ShipyardSteps.ContainsKey(shipyardData.Step))
@@ -59,11 +60,11 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
 
         var shipyard = new Shipyard
         {
-            Transform = { InstanceId = owner.ParentWorld.Id }, TemplateId = shipyardData.TemplateId, // duplicate Id
-            Id = shipyardData.TemplateId,
+            ParentWorld = owner.ParentWorld, TemplateId = shipyardData.TemplateId,
             Template = template,
             Faction = owner.Faction,
-            Level = 30
+            Level = 30,
+            SourceDesignItemId = shipyardData.Id
         };
         shipyard.Hp = shipyard.MaxHp;
         shipyard.Name = owner.Name;
@@ -97,15 +98,19 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
 
     internal bool TryInstallPaidShipyard(Character character, Shipyard shipyard)
     {
+        if (character == null || shipyard == null || shipyard.Retiring || shipyard.Retired)
+            return false;
         lock (SaveManager.PersistenceSyncRoot)
+        lock (AccountManager.Instance.GetAccountSyncRoot(character.AccountId))
         {
-            if (character == null || character.Id != shipyard.ShipyardData.Type2 ||
+            if (SkillLaborBatch.Current != null || IsCurrent(shipyard) || character.Id != shipyard.ShipyardData.Type2 ||
                 !taxationsManager.Taxations.TryGetValue((uint)shipyard.Template.TaxationId, out var taxation) ||
                 taxation.Tax > int.MaxValue)
                 return false;
             var designId = shipyard.Template.OriginItemId;
-            var design = character.Inventory.Bag.Items.FirstOrDefault(item => item.TemplateId == designId);
-            if (design == null)
+            var design = character.Inventory.Bag.GetItemByItemId(shipyard.SourceDesignItemId);
+            if (design == null || design.TemplateId != designId || design.OwnerId != character.Id ||
+                design.Count < 1)
                 return false;
             var reagents = skillManager.GetSkillReagentsBySkillId(design.Template.UseSkillId);
             var products = skillManager.GetSkillProductsBySkillId(design.Template.UseSkillId);
@@ -128,6 +133,7 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
             try
             {
                 shipId = shipyardIdManager.GetNextId();
+                shipyard.Id = shipId;
                 shipyard.ObjId = objId;
                 shipyard.ShipyardData.ObjId = objId;
                 shipyard.ShipyardData.Id = shipId;
@@ -139,6 +145,24 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
                 if (shipId != 0)
                     shipyardIdManager.ReleaseId(shipId);
                 throw;
+            }
+            bool committed;
+            try
+            {
+                committed = CommitPersistence([character], shipyard.Save);
+            }
+            catch
+            {
+                // A commit exception has an unknown outcome. Keep the prepared state.
+                mutation.PreservePreparedState();
+                throw;
+            }
+            if (!committed)
+            {
+                _shipyard.Remove(shipId);
+                shipyardIdManager.ReleaseId(shipId);
+                objectIdManager.ReleaseId(objId);
+                return false;
             }
             try
             {
@@ -156,117 +180,106 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
 
     public void RemoveShipyard(Shipyard shipyard)
     {
-        var shipId = (uint)shipyard.ShipyardData.Id;
-        // Remove Shipyard from Shipyard tables
-        _removedShipyards.Add(shipId);
-        _shipyard.Remove(shipId);
-        shipyardIdManager.ReleaseId(shipId);
-        objectIdManager.ReleaseId(shipyard.ObjId);
-        shipyard.Delete();
+        RetireShipyard(shipyard, false, null);
+    }
+
+    internal void DestroyShipyard(Shipyard shipyard, Action publishDeath, Action restoreDeath = null)
+    {
+        RetireShipyard(shipyard, true, publishDeath, restoreDeath);
     }
 
     public void ShipyardCompleted(Shipyard shipyard)
     {
-        var character = worldManager.GetCharacter(shipyard.ShipyardData.OwnerName);
-        var found = character.Inventory.Bag.GetAllItemsByTemplate(shipyard.Template.ItemId, -1, out var foundItems, out _);
-        if (found)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            // calculate skillData
-            var skillData = (SkillItem)SkillCaster.GetByType(SkillCasterType.Item);
-            skillData.ItemId = foundItems[0].Id;
-            shipyard.ParentWorld.SlaveManager.Create(character, skillData, true, shipyard.Transform);
+            if (!IsCurrent(shipyard) || shipyard.ShipyardData.Step != 1000)
+                return;
+            if (shipyard.CeremonyEnd > DateTime.UtcNow)
+            {
+                ScheduleCompletion(shipyard);
+                return;
+            }
+            var character = worldManager.GetCharacterById(shipyard.ShipyardData.Type2);
+            var item = character?.Inventory.Bag.GetItemByItemId(shipyard.CompletionItemId);
+            if (!RetireShipyard(shipyard, false, null))
+                return;
+            if (item != null && item.TemplateId == shipyard.Template.ItemId &&
+                ReferenceEquals(character.ParentWorld, shipyard.ParentWorld))
+            {
+                var skillData = new SkillItem { ItemId = item.Id };
+                shipyard.ParentWorld.SlaveManager.Create(character, skillData, true, shipyard.Transform);
+            }
         }
-        RemoveShipyard(shipyard);
     }
 
     public void ShipyardCompletedTask(Shipyard shipyard)
     {
-        var character = worldManager.GetCharacter(shipyard.ShipyardData.OwnerName);
-        character.Inventory.Bag.AcquireDefaultItem(ItemTaskType.Shipyard, shipyard.Template.ItemId, 1, 0);
-        var shipyardCompleteTask = new ShipyardCompleteTask { _shipyard = shipyard };
+        var character = worldManager.GetCharacterById(shipyard.ShipyardData.Type2);
+        if (character == null)
+            return;
+        var skill = new Skill(new Models.Game.Skills.Templates.SkillTemplate())
+        {
+            CommitLaborBatch = (owner, write) => CommitPersistence([owner], write)
+        };
+        SkillLaborBatch.Run(character, skill, false,
+            () => Models.Game.Skills.Effects.CraftEffect.CompleteShipyardConstruction(character, shipyard, skill),
+            ItemTaskType.Shipyard);
+    }
 
-        shipyard.ShipyardData.Step = 1000; // last step, the ceremony of launching the ship
-        character.BroadcastPacket(new SCShipyardStatePacket(shipyard.ShipyardData), true);
-
-        var animTime = shipyard.Template.CeremonyAnimTime;
-        taskManager.Schedule(shipyardCompleteTask, TimeSpan.FromMilliseconds(animTime));
+    internal void ScheduleCompletion(Shipyard shipyard)
+    {
+        var delay = shipyard.CeremonyEnd - DateTime.UtcNow;
+        taskManager.Schedule(new ShipyardCompleteTask { _shipyard = shipyard },
+            delay > TimeSpan.Zero ? delay : TimeSpan.Zero);
     }
 
     public void ShipyardTick()
     {
-        foreach (var shipyard in _shipyard)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            UpdateShipyardInfo(shipyard.Value);
+            foreach (var shipyard in _shipyard.Values.ToArray())
+            {
+                if (shipyard.Retiring)
+                    continue;
+                if (shipyard.ShipyardData.Step == 1000)
+                {
+                    if (shipyard.CeremonyEnd <= DateTime.UtcNow)
+                        ShipyardCompleted(shipyard);
+                    continue;
+                }
+                if (shipyard.Hp <= 0)
+                {
+                    DestroyShipyard(shipyard, null);
+                    continue;
+                }
+                UpdateShipyardInfo(shipyard, true);
+            }
         }
     }
 
-    private void UpdateShipyardInfo(Shipyard shipyard)
+    private void UpdateShipyardInfo(Shipyard shipyard, bool applyDecay)
     {
-        var isDecaying = DateTime.UtcNow >= shipyard.ShipyardData.Spawned.AddDays(3);
-
-        SetProtectionBuff(shipyard, isDecaying);
-        SetDecayBuff(shipyard, isDecaying);
-    }
-
-    private void SetProtectionBuff(Shipyard shipyard, bool isDecay)
-    {
-        if (!isDecay)
+        var timeLeft = shipyard.ShipyardData.Spawned.AddMilliseconds(shipyard.Template.TaxDuration) - DateTime.UtcNow;
+        var isDecaying = timeLeft <= TimeSpan.Zero;
+        var desired = isDecaying ? BuffConstants.Deterioration : BuffConstants.TaxProtection;
+        var removed = isDecaying ? BuffConstants.TaxProtection : BuffConstants.Deterioration;
+        if (shipyard.Buffs.CheckBuff((uint)removed))
+            shipyard.Buffs.RemoveBuff((uint)removed);
+        if (!shipyard.Buffs.CheckBuff((uint)desired))
         {
-            var duration = shipyard.ShipyardData.Spawned - DateTime.UtcNow;
-            var mins = Math.Round(duration.TotalMinutes) * 60000;
-
-            var timeleft = shipyard.Template.TaxDuration + mins;
-
-            if (shipyard.Buffs.CheckBuff((uint)BuffConstants.TaxProtection))
-                return;
-
-            var protectionBuffTemplate = skillManager.GetBuffTemplate((uint)BuffConstants.TaxProtection);
-            if (protectionBuffTemplate != null)
-            {
-                var casterObj = new SkillCasterUnit(shipyard.ObjId);
-                shipyard.Buffs.AddBuff(new Buff(shipyard, shipyard, casterObj, protectionBuffTemplate, null, DateTime.UtcNow), 0, (int)timeleft);
-            }
-            else
-            {
-                Logger.Error("Unable to find Protection Buff template");
-            }
+            var template = skillManager.GetBuffTemplate((uint)desired);
+            if (template != null)
+                shipyard.Buffs.AddBuff(new Buff(shipyard, shipyard, new SkillCasterUnit(shipyard.ObjId), template,
+                    null, DateTime.UtcNow), 0, isDecaying ? 0 : (int)Math.Min(int.MaxValue, Math.Ceiling(timeLeft.TotalMilliseconds)));
         }
-        else
+        if (isDecaying && applyDecay)
         {
-            if (shipyard.Buffs.CheckBuff((uint)BuffConstants.TaxProtection))
-                shipyard.Buffs.RemoveBuff((uint)BuffConstants.TaxProtection);
-        }
-    }
-
-    private void SetDecayBuff(Shipyard shipyard, bool isDecay)
-    {
-        if (isDecay)
-        {
-            if (shipyard.Buffs.CheckBuff((uint)BuffConstants.Deterioration))
+            shipyard.ReduceCurrentHp(shipyard, 7);
+            if (IsCurrent(shipyard))
             {
-                shipyard.ReduceCurrentHp(shipyard, 7);
-                var character = worldManager.GetCharacter(shipyard.ShipyardData.OwnerName);
-                character.SendPacket(new SCUnitStatePacket(shipyard));
-                character.SendPacket(new SCShipyardStatePacket(shipyard.ShipyardData));
-
-                return;
+                shipyard.BroadcastPacket(new SCUnitStatePacket(shipyard), true);
+                shipyard.BroadcastPacket(new SCShipyardStatePacket(shipyard.ShipyardData), true);
             }
-
-            var protectionBuffTemplate = skillManager.GetBuffTemplate((uint)BuffConstants.Deterioration);
-            if (protectionBuffTemplate != null)
-            {
-                var casterObj = new SkillCasterUnit(shipyard.ObjId);
-                shipyard.Buffs.AddBuff(new Buff(shipyard, shipyard, casterObj, protectionBuffTemplate, null, DateTime.UtcNow));
-            }
-            else
-            {
-                Logger.Error("Unable to find Deterioration Debuff template");
-            }
-        }
-        else
-        {
-            if (shipyard.Buffs.CheckBuff((uint)BuffConstants.Deterioration))
-                shipyard.Buffs.RemoveBuff((uint)BuffConstants.Deterioration);
         }
     }
 
@@ -328,6 +341,8 @@ public class ShipyardManager(ITaskManager taskManager, IObjectIdManager objectId
                     }
                 }
             }
+            LoadSalvageRewards(connection);
+            _designShipyards = ReadDesignShipyards(connection);
         }
     }
 }
