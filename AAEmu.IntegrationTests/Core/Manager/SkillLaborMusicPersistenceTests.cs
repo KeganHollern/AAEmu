@@ -1,5 +1,6 @@
-using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
@@ -21,6 +22,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         using var graph = new SendGraph();
         using var services = new LaborBuffServices();
         var player = graph.Sender;
+        using var limits = new MusicLimitServices(player);
         player.InitializeLaborCache(20, DateTime.UtcNow);
         Execute($"INSERT INTO accounts(account_id,labor) VALUES({player.AccountId},20) ON DUPLICATE KEY UPDATE labor=20");
         var source = graph.AddItem(0);
@@ -42,9 +44,9 @@ public sealed partial class PlayerMailSendPersistenceTests
             Assert.True(graph.Items.AddItem(sheet));
             return sheet;
         });
-        var music = new MusicManager(ids.Object, items.Object);
-        music.UploadSong(player.Id, "Labor composition", "MML@cdef;", source.Id);
-        var skill = new Skill(new SkillTemplate { Id = 22215, ConsumeLaborPower = 10 });
+        var music = new MusicManager(ids.Object, items.Object, limits.Data);
+        Assert.True(music.UploadSong(player, "Labor composition", "MML@cdef;", source.Id));
+        var skill = new Skill(new SkillTemplate { Id = 22215, ConsumeLaborPower = 10, ActabilityGroupId = (int)ActabilityType.Artistry });
         if (failBeforeCommit)
             skill.CommitLaborBatch = (_, write) => graph.Save.TryCommitEconomy(SkillLaborBatch.Current.Participants, context =>
             {
@@ -62,6 +64,9 @@ public sealed partial class PlayerMailSendPersistenceTests
             Scalar($"SELECT COALESCE(SUM(count),0) FROM items WHERE id={source.Id}"));
         Assert.Equal(failBeforeCommit ? 0 : 1, Scalar($"SELECT COUNT(*) FROM items WHERE id={sheet.Id}"));
         Assert.Equal(failBeforeCommit ? sourceCount : sourceCount - 1, source.Count);
+        Assert.Equal(failBeforeCommit ? 7 : 17, player.Actability.Actabilities[(uint)ActabilityType.Artistry].Point);
+        Assert.Equal(failBeforeCommit ? 7 : 17,
+            Scalar($"SELECT point FROM actabilities WHERE owner={player.Id} AND id={(uint)ActabilityType.Artistry}"));
         ids.Verify(manager => manager.ReleaseId(songId), failBeforeCommit ? Times.Once() : Times.Never());
         if (failBeforeCommit)
         {
@@ -75,10 +80,10 @@ public sealed partial class PlayerMailSendPersistenceTests
             var loaded = Assert.IsType<MusicSheetItem>(graph.ReloadLifecycle().Items.GetItemByItemId(sheet.Id));
             Assert.Equal(songId, loaded.SongId);
             Assert.Equal(player.Id, loaded.MadeUnitId);
-            var reloadedMusic = new MusicManager(ids.Object, items.Object);
+            var reloadedMusic = new MusicManager(ids.Object, items.Object, limits.Data);
             reloadedMusic.Load();
             Assert.Equal("MML@cdef;", reloadedMusic.GetSongById(loaded.SongId).Song);
-            var repeat = new Skill(new SkillTemplate { Id = 22215, ConsumeLaborPower = 10 });
+            var repeat = new Skill(new SkillTemplate { Id = 22215, ConsumeLaborPower = 10, ActabilityGroupId = (int)ActabilityType.Artistry });
             Assert.False(SkillLaborBatch.Run(player, repeat, true, () => music.CreateSheetMusic(player, source)));
             Assert.Equal(10, player.LaborPower);
             Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM music WHERE id={songId}"));
@@ -91,12 +96,14 @@ public sealed partial class PlayerMailSendPersistenceTests
         using var graph = new SendGraph();
         using var services = new LaborBuffServices();
         var player = graph.Sender;
+        using var limits = new MusicLimitServices(player);
         player.InitializeLaborCache(20, DateTime.UtcNow);
         var source = graph.AddItem(0);
+        var otherSource = graph.AddItem(1);
         var ids = new Mock<IMusicIdManager>();
-        var music = new MusicManager(ids.Object, Mock.Of<IItemManager>());
-        music.UploadSong(player.Id, "Mismatched paper", "MML@c;", source.Id + 1);
-        var skill = new Skill(new SkillTemplate { Id = 22215, ConsumeLaborPower = 10 });
+        var music = new MusicManager(ids.Object, Mock.Of<IItemManager>(), limits.Data);
+        Assert.True(music.UploadSong(player, "Mismatched paper", "MML@c;", otherSource.Id));
+        var skill = new Skill(new SkillTemplate { Id = 22215, ConsumeLaborPower = 10, ActabilityGroupId = (int)ActabilityType.Artistry });
         Assert.False(SkillLaborBatch.Run(player, skill, true, () => music.CreateSheetMusic(player, source)));
         Assert.Equal(20, player.LaborPower);
         Assert.Equal(5, source.Count);

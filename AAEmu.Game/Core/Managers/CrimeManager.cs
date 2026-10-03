@@ -14,6 +14,7 @@ using AAEmu.Game.Models.Game.CommonFarm.Static;
 using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
+using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Units;
@@ -400,15 +401,45 @@ public class CrimeManager() : Singleton<CrimeManager>, ICrimeManager
     /// <returns></returns>
     public Doodad GenerateEvidenceFromTheft(Character criminal, Doodad stolenDoodad)
     {
-        if (stolenDoodad.OwnerType != DoodadOwnerType.Character)
-            return null;
-        if (criminal is null)
-            return null;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!CanGenerateTheftEvidence(criminal, stolenDoodad))
+                return null;
 
-        return GenerateEvidence(criminal,
-            criminal.Gender == Gender.Female ? DoodadConstants.FootprintFemale : DoodadConstants.FootprintMale,
-            stolenDoodad.Transform.World.Position, stolenDoodad.Transform.World.Rotation,
-            stolenDoodad.OwnerId, stolenDoodad.TemplateId);
+            return GenerateEvidence(criminal,
+                criminal.Gender == Gender.Female ? DoodadConstants.FootprintFemale : DoodadConstants.FootprintMale,
+                stolenDoodad.Transform.World.Position, stolenDoodad.Transform.World.Rotation,
+                stolenDoodad.OwnerId, stolenDoodad.TemplateId);
+        }
+    }
+
+    internal bool CanGenerateTheftEvidence(Character criminal, Doodad stolenDoodad)
+    {
+        if (criminal?.Faction == null || criminal.Id == 0 || criminal.Faction.Id == FactionsEnum.Invalid || stolenDoodad == null ||
+            stolenDoodad.OwnerType != DoodadOwnerType.Character || stolenDoodad.OwnerId == 0 ||
+            stolenDoodad.OwnerId == criminal.Id)
+            return false;
+
+        // Check existence even for an active owner. A deleted character can still
+        // have an old world object until the separate deletion lifecycle removes it.
+        // Never cache this row: an offline owner's faction or deletion state can change.
+        using var connection = MySQL.CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT faction_id FROM characters WHERE id=@id AND deleted=0";
+        command.Parameters.AddWithValue("@id", stolenDoodad.OwnerId);
+        var storedFactionId = command.ExecuteScalar();
+        if (storedFactionId == null || storedFactionId == DBNull.Value)
+            return false;
+
+        var activeOwner = WorldManager.Instance.GetCharacterById(stolenDoodad.OwnerId);
+        var ownerFaction = activeOwner != null
+            ? activeOwner.Faction
+            : FactionManager.Instance.GetFaction((FactionsEnum)Convert.ToUInt32(storedFactionId));
+
+        // Use political relations, not GetRelationStateTo: a duel temporarily
+        // makes two friendly characters hostile without changing theft rules.
+        return ownerFaction != null && ownerFaction.Id != FactionsEnum.Invalid &&
+            criminal.Faction.GetRelationState(ownerFaction) == RelationState.Friendly;
     }
 
     public void ArchiveEvidence(CrimeEvent crimeEvent, DateTime time)
