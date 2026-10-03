@@ -206,6 +206,8 @@ public class ModerationManager : Singleton<ModerationManager>, IModerationManage
     public bool TryResolveTarget(string value, out ModerationTarget target)
     {
         target = null;
+        if (string.IsNullOrEmpty(value))
+            return false;
         if (value.StartsWith("account:", StringComparison.OrdinalIgnoreCase))
         {
             if (!uint.TryParse(value.AsSpan(8), out var accountId) || accountId == 0)
@@ -214,8 +216,12 @@ public class ModerationManager : Singleton<ModerationManager>, IModerationManage
             return true;
         }
 
-        var numeric = uint.TryParse(value, out var characterId);
-        var live = numeric ? WorldManager.Instance.GetCharacterById(characterId) : WorldManager.Instance.GetCharacter(value);
+        if (!uint.TryParse(value, out var characterId))
+            characterId = NameManager.Instance.GetCharacterId(value.NormalizeName());
+        if (characterId == 0)
+            return false;
+
+        var live = WorldManager.Instance.GetCharacterById(characterId);
         if (live != null && live.AccountId > 0)
         {
             target = new ModerationTarget(live.AccountId, live.Id, live.Name);
@@ -223,10 +229,10 @@ public class ModerationManager : Singleton<ModerationManager>, IModerationManage
         }
         using var connection = MySQL.CreateConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = numeric
-            ? "SELECT account_id, id, name FROM characters WHERE id=@target AND deleted=0 LIMIT 1"
-            : "SELECT account_id, id, name FROM characters WHERE name=@target AND deleted=0 LIMIT 1";
-        command.Parameters.AddWithValue("@target", numeric ? (object)characterId : value);
+        // The SQL name collation equates Eva and Éva. Resolve the registered name
+        // first so an offline moderation request cannot select another account.
+        command.CommandText = "SELECT account_id, id, name FROM characters WHERE id=@target AND deleted=0 LIMIT 1";
+        command.Parameters.AddWithValue("@target", characterId);
         using var reader = command.ExecuteReader();
         if (!reader.Read() || reader.GetUInt32("account_id") == 0)
             return false;

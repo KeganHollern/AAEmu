@@ -27,7 +27,6 @@ public partial class AppConfiguration
     public NetworkConfig LoginNetwork { get; set; }
     public NetworkConfig WebApiNetwork { get; set; }
     public NetworkConfig HealthNetwork { get; set; }
-    public string CharacterNameRegex { get; set; }
     public int MaxConcurencyThreadPool { get; set; }
     public bool HeightMapsEnable { get; set; }
     public string DiscordToken { get; set; }

@@ -1,5 +1,4 @@
-﻿using System.Text.RegularExpressions;
-using AAEmu.Commons.Utils;
+﻿using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
@@ -7,6 +6,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Names;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
@@ -22,7 +22,6 @@ namespace AAEmu.Game.Core.Managers;
 public class MateManager(WorldInstance parentWorldInstance)
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
-    private Regex _nameRegex;
 
     private Dictionary<uint, List<Mate>> _activeMates = []; // ownerId, Mount
     private readonly HashSet<Mate> _matesBeingRemoved = [];
@@ -171,13 +170,18 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// <returns></returns>
     public Mate RenameMount(GameConnection connection, uint tlId, string newName)
     {
-        var mateInfo = GetOwnedMate(connection.ActiveChar, tlId);
-        if (mateInfo == null)
-            return null;
-        if (string.IsNullOrWhiteSpace(newName) || newName.Length == 0 || !_nameRegex.IsMatch(newName)) return null;
-        mateInfo.Name = newName.NormalizeName();
-        mateInfo.BroadcastPacket(new SCUnitNameChangedPacket(mateInfo.ObjId, newName), false);
-        return mateInfo;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            var mateInfo = GetOwnedMate(connection?.ActiveChar, tlId);
+            if (mateInfo == null || !NameRules.IsWellFormed(newName) || newName[0] == ' ' || newName[^1] == ' ')
+                return null;
+            var normalizedName = newName.NormalizeName();
+            if (NameRules.Validate(normalizedName, NameType.Summon) != NameValidationResult.Valid)
+                return null;
+            mateInfo.Name = normalizedName;
+            mateInfo.BroadcastPacket(new SCUnitNameChangedPacket(mateInfo.ObjId, normalizedName), false);
+            return mateInfo;
+        }
     }
 
     /// <summary>
@@ -583,7 +587,6 @@ public class MateManager(WorldInstance parentWorldInstance)
     /// </summary>
     public void Load()
     {
-        _nameRegex = new Regex(AppConfiguration.Instance.CharacterNameRegex, RegexOptions.Compiled);
         lock (_activeMatesLock)
         {
             _activeMates = [];

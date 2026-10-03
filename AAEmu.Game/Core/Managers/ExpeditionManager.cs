@@ -1,5 +1,4 @@
 ﻿using System.Numerics;
-using System.Text.RegularExpressions;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
@@ -11,6 +10,7 @@ using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Names;
 using AAEmu.Game.Models.Game.Expeditions;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
@@ -23,7 +23,6 @@ namespace AAEmu.Game.Core.Managers;
 public class ExpeditionManager(IExpeditionIdManager expeditionIdManager, ITeamManager teamManager, IWorldManager worldManager, IChatManager chatManager) : Singleton<ExpeditionManager>, IExpeditionManager
 {
     //private ExpeditionConfig _config;
-    private Regex _nameRegex;
 
     private Dictionary<FactionsEnum, Expedition> _expeditions = [];
     private static readonly object s_syncRoot = SaveManager.PersistenceSyncRoot;
@@ -72,7 +71,6 @@ public class ExpeditionManager(IExpeditionIdManager expeditionIdManager, ITeamMa
     public void Load()
     {
         _expeditions = [];
-        _nameRegex = new Regex(AppConfiguration.Instance.Expedition.NameRegex, RegexOptions.Compiled);
 
         using (var connection = MySQL.CreateConnection())
         {
@@ -683,11 +681,13 @@ public class ExpeditionManager(IExpeditionIdManager expeditionIdManager, ITeamMa
 
     private ErrorMessageType GetNameError(string name, Expedition renamed = null)
     {
-        if (string.IsNullOrWhiteSpace(name) || name.Length > 32)
+        var validation = NameRules.Validate(name, NameType.Faction);
+        if (validation == NameValidationResult.Length)
             return ErrorMessageType.ExpeditionNameLength;
-        var match = _nameRegex.Match(name);
-        if (!match.Success || match.Index != 0 || match.Length != name.Length)
+        if (validation == NameValidationResult.Characters)
             return ErrorMessageType.ExpeditionNameCharacter;
+        if (validation == NameValidationResult.Reserved)
+            return ErrorMessageType.ExpeditionNameBadlist;
         if (_expeditions.Values.Any(expedition => !ReferenceEquals(expedition, renamed) &&
                 string.Equals(name, expedition.Name, StringComparison.OrdinalIgnoreCase)))
             return ErrorMessageType.ExpeditionNameExist;

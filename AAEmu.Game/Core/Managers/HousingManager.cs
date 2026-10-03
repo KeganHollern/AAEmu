@@ -13,6 +13,7 @@ using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Names;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Housing;
@@ -683,10 +684,14 @@ public partial class HousingManager(
         lock (SaveManager.PersistenceSyncRoot)
         {
             var house = GetHouseByTlId(tlId);
-            if (!IsActiveSaleHouse(house) || connection?.ActiveChar == null || house.OwnerId != connection.ActiveChar.Id)
+            if (!IsActiveSaleHouse(house) || connection?.ActiveChar == null || house.OwnerId != connection.ActiveChar.Id ||
+                !NameRules.IsWellFormed(name))
                 return;
 
-            house.Name = string.Concat(name.Substring(0, 1).ToUpper(), name.AsSpan(1));
+            var normalizedName = string.Concat(name.Substring(0, 1).ToUpper(), name.AsSpan(1));
+            if (NameRules.Validate(normalizedName, NameType.Summon) != NameValidationResult.Valid)
+                return;
+            house.Name = normalizedName;
             house.IsDirty = true; // Manually set the IsDirty on House level
             connection.SendPacket(new SCUnitNameChangedPacket(house.ObjId, house.Name));
         }

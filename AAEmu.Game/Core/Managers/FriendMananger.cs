@@ -135,29 +135,15 @@ public class FriendMananger : Singleton<FriendMananger>, IFriendManager
 
     public static Friend GetFriendInfo(string name)
     {
-        var friend = WorldManager.Instance.GetCharacter(name);
-        if (friend != null) return FormatFriend(friend);
+        if (string.IsNullOrEmpty(name))
+            return null;
+        // Use the same identity for online and offline friends. The SQL name
+        // collation conflates accepted names such as Eva and Éva.
+        var friendId = NameManager.Instance.GetCharacterId(name.NormalizeName());
+        if (friendId == 0)
+            return null;
 
-        uint friendId = 0;
-        using (var connection = MySQL.CreateConnection())
-        {
-            using (var command = connection.CreateCommand())
-            {
-                command.CommandText = "SELECT * FROM characters WHERE `name` = @name";
-                command.Parameters.AddWithValue("@name", name);
-                command.Prepare();
-                using (var reader = command.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        friendId = reader.GetUInt32("id");
-                    }
-                }
-            }
-        }
-
-        var friendInfo = GetFriendInfo([friendId]);
-        return friendInfo.Count > 0 ? GetFriendInfo([friendId])[0] : null;
+        return GetFriendInfo([friendId]).FirstOrDefault();
     }
 
     private static Friend FormatFriend(Character friend)

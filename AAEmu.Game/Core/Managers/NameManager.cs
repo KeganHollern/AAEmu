@@ -1,18 +1,17 @@
-﻿using System.Text.RegularExpressions;
-using AAEmu.Commons.Utils;
+﻿using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game.Names;
 using AAEmu.Game.Models.StaticValues;
 using Microsoft.Extensions.Options;
 using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public partial class NameManager(Lazy<ICharacterManager> characterManager = null, IOptions<AppConfiguration> options = null) : Singleton<NameManager>, INameManager
+public class NameManager(Lazy<ICharacterManager> characterManager = null, IOptions<AppConfiguration> options = null) : Singleton<NameManager>, INameManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
-    private Regex _characterNameRegex;
     private Dictionary<uint, string> _characterIds = [];
     private Dictionary<string, uint> _characterNames = [];
     private Dictionary<uint, uint> _characterAccounts = [];
@@ -34,18 +33,8 @@ public partial class NameManager(Lazy<ICharacterManager> characterManager = null
 
     public NameManager() : this(null, null) { }
 
-    private const string DefaultCharacterNameRegexPattern = "^[a-zA-Z0-9а-яА-Я]{1,18}$";
-    [GeneratedRegex(DefaultCharacterNameRegexPattern)]
-    private static partial Regex DefaultCharacterNameRegex();
-
     public void Load()
     {
-        if (options?.Value.CharacterNameRegex is { } characterNameRegex &&
-            characterNameRegex != DefaultCharacterNameRegexPattern)
-        {
-            _characterNameRegex = new Regex(characterNameRegex, RegexOptions.Compiled);
-        }
-
         using (var connection = MySQL.CreateConnection())
         {
             using (var command = connection.CreateCommand())
@@ -84,12 +73,6 @@ public partial class NameManager(Lazy<ICharacterManager> characterManager = null
         Dictionary<string, uint> characterNames,
         Dictionary<uint, uint> characterAccounts)
     {
-        if (options?.Value.CharacterNameRegex is { } characterNameRegex &&
-            characterNameRegex != DefaultCharacterNameRegexPattern)
-        {
-            _characterNameRegex = new Regex(characterNameRegex, RegexOptions.Compiled);
-        }
-
         _characterIds = characterIds;
         _characterNames = characterNames;
         _characterAccounts = characterAccounts;
@@ -97,7 +80,7 @@ public partial class NameManager(Lazy<ICharacterManager> characterManager = null
 
     public CharacterCreateError ValidateCharacterName(string name)
     {
-        if (_characterNames.TryGetValue(name, out var existingId))
+        if (name != null && _characterNames.TryGetValue(name, out var existingId))
         {
             if (characterManager?.Value.IsCharacterPendingDeletion(name) == true)
                 return CharacterCreateError.Failed;
@@ -105,15 +88,11 @@ public partial class NameManager(Lazy<ICharacterManager> characterManager = null
             return CharacterCreateError.NameAlreadyExists;
         }
 
-        if (string.IsNullOrWhiteSpace(name) || !ValidatesName(name.AsSpan()))
+        if (NameRules.Validate(name, NameType.Character, options?.Value.DefaultLanguage) != NameValidationResult.Valid)
             return CharacterCreateError.InvalidCharacters;
 
         return CharacterCreateError.Ok;
     }
-
-    private bool ValidatesName(ReadOnlySpan<char> name) =>
-        (_characterNameRegex ?? DefaultCharacterNameRegex())
-        .IsMatch(name);
 
     public void AddCharacter(uint characterId, string name, uint accountId)
     {

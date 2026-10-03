@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Names;
 
 using MySql.Data.MySqlClient;
 
@@ -86,6 +87,9 @@ public class CharacterPortals(Character owner)
 
     public void AddPrivatePortal(float x, float y, float z, float zRot, uint zoneId, string name)
     {
+        if (NameRules.Validate(name, NameType.Portal) != NameValidationResult.Valid)
+            return;
+
         // TODO - Only working by command
         var newPortal = new Portal
         {
@@ -104,6 +108,9 @@ public class CharacterPortals(Character owner)
 
     public bool ChangePrivatePortalName(uint id, string name)
     {
+        if (NameRules.Validate(name, NameType.Portal) != NameValidationResult.Valid)
+            return false;
+
         if (PrivatePortals.TryGetValue(id, out var privatePortal))
         {
             privatePortal.Name = name;

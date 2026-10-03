@@ -185,7 +185,7 @@ public sealed class HousingSaleAuthorizationTests
             plan.PurchasedState.Apply(house);
 
         manager.ChangeHousePermission(oldConnection, house.TlId, HousingPermission.Public);
-        manager.ChangeHouseName(oldConnection, house.TlId, "stale owner name");
+        manager.ChangeHouseName(oldConnection, house.TlId, "Staleowner");
         manager.Demolish(oldConnection, house, false, false);
 
         await Assert.That(house.OwnerId).IsEqualTo(buyer.Id);

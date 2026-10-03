@@ -1,8 +1,7 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
-using System.Text.RegularExpressions;
 
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
@@ -65,7 +64,6 @@ public sealed class ExpeditionAuthorizationTests
             PersistExpedition = _ => _saves++
         };
         SetInstance(_manager);
-        SetField(_manager, "_nameRegex", new Regex("^[a-zA-Zа-яА-Я ]{3,32}$"));
         _owner = MakeCharacter(1);
         _officer = MakeCharacter(2);
         _member = MakeCharacter(3);
@@ -119,7 +117,6 @@ public sealed class ExpeditionAuthorizationTests
             var team = Mock.Of<ITeamManager>();
             team.GetActiveTeamByUnit(_owner.Id).Returns(new Team { Members = [new(_owner), new(_member)] });
             var manager = new ExpeditionManager(_ids.Object, team.Object, _world, _chat);
-            SetField(manager, "_nameRegex", new Regex("^[a-zA-Z ]{3,32}$"));
             manager.CreateExpedition("New Guild", _owner.Connection);
             var body = new PacketStream(_owner.Session.Packets.Single()[8..]);
             await Assert.That(body.ReadInt16()).IsEqualTo((short)(reason == "same_alliance"
@@ -356,12 +353,12 @@ public sealed class ExpeditionAuthorizationTests
     [Arguments(3, false)]
     [Arguments(32, false)]
     [Arguments(32, true)]
-    public async Task Rename_NameBoundaries_AcceptsTheConfiguredCharacters(int length, bool cyrillic)
+    public async Task Rename_NameBoundaries_UsesTheNativeEnglishCharacters(int length, bool cyrillic)
     {
         var name = new string(cyrillic ? 'Я' : 'A', length);
-        await Assert.That(_manager.Rename(_owner, _guild.Id, name, true)).IsTrue();
-        await Assert.That(_guild.Name).IsEqualTo(name);
-        await Assert.That(_saves).IsEqualTo(1);
+        await Assert.That(_manager.Rename(_owner, _guild.Id, name, true)).IsEqualTo(!cyrillic);
+        await Assert.That(_guild.Name).IsEqualTo(cyrillic ? "Guild" : name);
+        await Assert.That(_saves).IsEqualTo(cyrillic ? 0 : 1);
     }
 
     [Test]
