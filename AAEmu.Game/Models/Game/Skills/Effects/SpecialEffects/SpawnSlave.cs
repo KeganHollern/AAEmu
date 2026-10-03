@@ -1,4 +1,5 @@
 ﻿using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
@@ -20,11 +21,9 @@ public class SpawnSlave : SpecialEffectAction
         int value3,
         int value4)
     {
-        // TODO ...
-        if (caster is Character) { Logger.Debug($"Special effects: SpawnSlave value1 {value1}, value2 {value2}, value3 {value3}, value4 {value4}"); }
-
         if (caster is Character owner && casterObj is SkillItem skillData &&
-            owner.ParentWorld.SlaveManager.Create(owner, skillData))
+            SlavePlacementRequest.TryReadTarget(targetObj, out var request) &&
+            owner.ParentWorld.SlaveManager.Create(owner, skillData, request))
             return;
 
         skill.Cancelled = true;

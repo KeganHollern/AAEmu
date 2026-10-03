@@ -5,6 +5,7 @@ namespace AAEmu.Game.Models.CryEngine.Physics;
 public sealed record CryGeometryInstance(uint ObjectId, CryGeometryAsset Asset, Matrix4x4 Transform, int EntityType = 1, bool RayOnly = false)
 {
     public bool IsVegetation { get; init; }
+    public bool HasUnresolvedCollision { get; init; }
 }
 public readonly record struct CrySceneRayHit(CryRayHit Hit, uint ObjectId, bool IsTerrain, int PickingIndex = 0);
 
@@ -13,7 +14,7 @@ public sealed class CryGeometryScene(Func<CryBounds, IEnumerable<CryGeometryInst
     Func<CryGeometryPart, bool> includePart)
 {
     public CryIntersection Raycast(Vector3 origin, Vector3 direction, float maximumDistance,
-        out CrySceneRayHit hit)
+        out CrySceneRayHit hit, uint ignoredObjectId = 0)
     {
         hit = default;
         var end = origin + direction * maximumDistance;
@@ -21,9 +22,9 @@ public sealed class CryGeometryScene(Func<CryBounds, IEnumerable<CryGeometryInst
         var found = false;
         foreach (var instance in queryInstances(bounds))
         {
-            if ((instance.EntityType & 7) == 0)
+            if ((instance.EntityType & 7) == 0 || ignoredObjectId != 0 && instance.ObjectId == ignoredObjectId)
                 continue;
-            if (HasUnresolvedCollisionPose(instance.Asset))
+            if (instance.HasUnresolvedCollision || HasUnresolvedCollisionPose(instance.Asset))
                 return CryIntersection.Indeterminate;
             foreach (var part in instance.RayOnly ? instance.Asset.Parts.Where(includePart) : SelectParts(instance, CryGeometryQueryUsage.Ray))
             {
@@ -68,7 +69,7 @@ public sealed class CryGeometryScene(Func<CryBounds, IEnumerable<CryGeometryInst
         {
             if ((instance.EntityType & entityMask) == 0 || instance.RayOnly)
                 continue;
-            if (HasUnresolvedCollisionPose(instance.Asset))
+            if (instance.HasUnresolvedCollision || HasUnresolvedCollisionPose(instance.Asset))
                 return CryIntersection.Indeterminate;
             foreach (var part in SelectParts(instance, CryGeometryQueryUsage.PlacementOverlap))
             {

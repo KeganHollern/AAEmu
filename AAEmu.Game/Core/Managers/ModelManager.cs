@@ -55,6 +55,16 @@ public class ModelManager : Singleton<ModelManager>, IModelManager
         return null;
     }
 
+    internal static void ReadTurretSettings(SQLiteWrapperReader reader, VehicleModel model)
+    {
+        // SQLite numeric conversion matches the client, including text 'f' -> 0.
+        model.TurretPitchAngleMin = reader.GetFloat("turret_pitch_angle_min");
+        model.TurretPitchAngleMax = reader.GetFloat("turret_pitch_angle_max");
+        model.TurretYawAngleMin = reader.GetFloat("turret_yaw_angle_min");
+        model.TurretYawAngleMax = reader.GetFloat("turret_yaw_angle_max");
+        model.InstalledTurret = reader.GetBoolean("installed_turret", true);
+    }
+
     public bool IsFlyOrSwim(uint modelId)
     {
         if (!_modelTypes.TryGetValue(modelId, out var modelType))
@@ -174,6 +184,7 @@ public class ModelManager : Singleton<ModelManager>, IModelManager
                             WheeledVehicleRearOptimalSa = reader.GetFloat("wheeled_vehicle_rear_optimal_sa")
                         };
 
+                        ReadTurretSettings(reader, model);
                         _models["VehicleModel"].TryAdd(model.Id, model);
                     }
                 }

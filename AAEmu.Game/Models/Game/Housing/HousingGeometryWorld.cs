@@ -108,14 +108,14 @@ public sealed class HousingGeometryWorld(HousingGeometryAssets assets, WorldInst
         return CryIntersection.Clear;
     }
 
-    public CryIntersection Raycast(Vector3 origin, Vector3 vector, out CrySceneRayHit hit)
+    public CryIntersection Raycast(Vector3 origin, Vector3 vector, out CrySceneRayHit hit, uint ignoredObjectId = 0)
     {
         hit = default;
         var length = vector.Length();
         if (!float.IsFinite(length) || length <= 0)
             return CryIntersection.Indeterminate;
         var direction = vector / length;
-        var result = _scene.Raycast(origin, direction, length, out hit);
+        var result = _scene.Raycast(origin, direction, length, out hit, ignoredObjectId);
         if (result == CryIntersection.Indeterminate)
             return result;
         var end = origin + vector;

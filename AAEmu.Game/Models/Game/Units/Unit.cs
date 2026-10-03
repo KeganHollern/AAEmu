@@ -22,6 +22,7 @@ using AAEmu.Game.Models.Game.Skills.Plots.Tree;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Static;
 using AAEmu.Game.Models.Game.Units.Route;
 using AAEmu.Game.Models.Game.Units.Static;
@@ -45,6 +46,12 @@ public class Unit : BaseUnit, IUnit
     internal object AttachmentSyncRoot { get; } = new();
     // Access under AttachmentSyncRoot. Retirement precedes passenger cleanup.
     internal bool AttachmentsRetired { get; set; }
+    private TurretAimState _turretAim = new(0f, 0f);
+    internal TurretAimState TurretAim
+    {
+        get => Volatile.Read(ref _turretAim);
+        set => Volatile.Write(ref _turretAim, value);
+    }
     public GameStanceType CollisionStance { get; set; } = GameStanceType.Combat;
     private SkillController _activeSkillController;
     public SkillController ActiveSkillController
@@ -1156,8 +1163,9 @@ public class Unit : BaseUnit, IUnit
                 stream.Write(false); // isHarvested
                 break;
             case ModelPostureType.TurretState: // slave
-                stream.Write(0f); // pitch
-                stream.Write(0f); // yaw
+                var aim = unit.TurretAim;
+                stream.Write(aim.Pitch);
+                stream.Write(aim.Yaw);
                 break;
         }
     }
