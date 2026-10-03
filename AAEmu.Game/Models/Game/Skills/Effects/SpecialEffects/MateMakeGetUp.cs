@@ -1,5 +1,4 @@
-﻿using AAEmu.Game.Models.Game.Char;
-using AAEmu.Game.Models.Game.Units;
+﻿using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 
@@ -18,7 +17,6 @@ public class MateMakeGetUp : SpecialEffectAction
         int value3,
         int value4)
     {
-        // TODO ...
-        if (caster is Character) { Logger.Debug("Special effects: MateMakeGetUp value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4); }
+        MateRecovery.GetUp(caster, casterObj, targetObj, skill);
     }
 }

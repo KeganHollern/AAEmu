@@ -91,7 +91,7 @@ public class Unit : BaseUnit, IUnit
     public byte Level { get; set; }
 
     private int _deathHandled;
-    public int Hp
+    public virtual int Hp
     {
         get;
         set
@@ -430,7 +430,7 @@ public class Unit : BaseUnit, IUnit
             }
         }
 
-        Hp = Math.Max(Hp - value, GetMinimumHealthAfterDamage(attacker, killReason));
+        Hp = GetHealthAfterDamage(attacker, value, killReason);
         SkillCastReactions.OnDamage(this, oldHp - Hp, DateTime.UtcNow);
 
         BroadcastPacket(new SCUnitPointsPacket(ObjId, Hp, Hp > 0 ? Mp : 0), true);
@@ -439,6 +439,11 @@ public class Unit : BaseUnit, IUnit
     }
 
     protected virtual int GetMinimumHealthAfterDamage(BaseUnit attacker, KillReason killReason) => 0;
+
+    protected virtual int GetHealthAfterDamage(BaseUnit attacker, int damage, KillReason killReason)
+    {
+        return Math.Max(Hp - damage, GetMinimumHealthAfterDamage(attacker, killReason));
+    }
 
     /// <summary>
     /// Called at the end of ReduceCurrentHp() and can be overriden and handles things like death

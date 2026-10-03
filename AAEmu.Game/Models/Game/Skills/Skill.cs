@@ -229,10 +229,18 @@ public partial class Skill
             return SkillResult.NoTarget;
         }
 
+        var mateRecoveryResult = MateRecovery.Check(caster, casterCaster, targetCaster, this);
+        if (mateRecoveryResult != SkillResult.Success)
+        {
+            Cancelled = true;
+            return mateRecoveryResult;
+        }
+
         if (!CanSettleLaborEffects(caster, target))
             return SkillResult.InvalidSkill;
 
-        var failedRequirement = SkillRequirementsGameData.Instance.GetFailedRequirement(Template, caster, target);
+        var failedRequirement = SkillRequirementsGameData.Instance.GetFailedRequirement(Template, caster,
+            MateRecovery.RequirementTarget(Template, caster, target));
         if (failedRequirement != 0)
         {
             Cancelled = true;
@@ -467,6 +475,11 @@ public partial class Skill
     {
         if (caster is not Unit)
             return null;
+
+        // r208022 Get Up sends an owned Mate as its explicit unit target despite
+        // the compact's Self target type. Preserve that target for range and effects.
+        if (MateRecovery.IsGetUpSkill(Template))
+            return MateRecovery.GetOwnedTarget(caster as Character, targetCaster);
 
         var target = caster;
         if (targetCaster == null || skillCaster == null) // проверяем, так как иногда бывает null
@@ -762,6 +775,12 @@ public partial class Skill
     private void CastCore(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject)
     {
         if (caster is not Unit unit) { return; }
+
+        if (!MateRecovery.Validate(caster, casterCaster, targetCaster, this))
+        {
+            Stop(caster);
+            return;
+        }
 
         if (!ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
         {
@@ -1101,7 +1120,8 @@ public partial class Skill
             if (_triggeredLaborBatch != null && ReferenceEquals(_triggeredLaborBatch, SkillLaborBatch.Current))
                 ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
             else if (caster is Character laborOwner && (Template.ConsumeLaborPower > 0 ||
-                     Template.Effects.Any(effect => effect.Template is RecoverExpEffect or RepairSlaveEffect) || Dyeing.IsDyeingSkill(this)))
+                     Template.Effects.Any(effect => effect.Template is RecoverExpEffect or RepairSlaveEffect) ||
+                     Dyeing.IsDyeingSkill(this) || MateRecovery.IsRecoverySkill(Template)))
             {
                 lock (SaveManager.PersistenceSyncRoot)
                 {
@@ -1131,6 +1151,8 @@ public partial class Skill
     private void ApplyEffectsCore(BaseUnit caster, SkillCaster casterCaster, BaseUnit targetSelf, SkillCastTarget targetCaster, SkillObject skillObject)
     {
         if (caster is not Unit unit)
+            return;
+        if (!MateRecovery.Validate(caster, casterCaster, targetCaster, this))
             return;
         if (!CanSettleLaborEffects(caster, targetSelf) || !ItemSocketing.ValidateSkill(caster, casterCaster, targetCaster, this))
             return;
