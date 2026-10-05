@@ -37,7 +37,7 @@ using static AAEmu.Game.Models.Game.Units.Buffs;
 
 namespace AAEmu.Game.Models.Game.Units;
 
-public class Unit : BaseUnit, IUnit
+public partial class Unit : BaseUnit, IUnit
 {
     public virtual UnitTypeFlag TypeFlag { get => UnitTypeFlag.None; }
     public virtual BaseUnitType BaseUnitType { get; set; } = BaseUnitType.Invalid;
@@ -1866,8 +1866,8 @@ public class Unit : BaseUnit, IUnit
 
         var npc = this as Npc;
         npc?.GroupInstance?.PruneSharedThreat();
-        if (removed)
-            npc?.CheckIfEmptyAggroToReturn(unit);
+        if (removed && npc is { IsDead: false, Despawned: false, CombatRetired: false, Hp: > 0 })
+            npc.CheckIfEmptyAggroToReturn(npc);
     }
 
     public void OnAbuserHealed(object sender, OnHealedArgs args)

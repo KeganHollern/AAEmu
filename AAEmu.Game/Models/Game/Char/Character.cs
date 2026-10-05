@@ -1523,6 +1523,8 @@ public partial class Character : Unit, ICharacter
             Abilities.AddActiveExp(expDelta); // TODO ... or all?
         
         SendPacket(new SCExpChangedPacket(ObjId, expDelta, shouldAddAbilityExp));
+        if (shouldAddAbilityExp)
+            Skills?.RefreshLearnedSkillRanks();
 
         if (leveledUp)
         {

@@ -784,6 +784,7 @@ internal sealed class AuctionMailClaimManager : IAuctionMailClaimManager
                         character.ObjId,
                         salePlan.ExperienceChange,
                         true));
+                    character.Skills?.RefreshLearnedSkillRanks();
                     if (salePlan.LevelAfter > salePlan.LevelBefore)
                     {
                         character.BroadcastPacket(

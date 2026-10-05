@@ -38,6 +38,8 @@ public class SpecialEffect : EffectTemplate
             skillUse.IsItemProc = source.IsItemProc;
             skillUse.ItemProcLevel = source.ItemProcLevel;
         }
+        if (action is SpecialEffects.ExplodeBuff explodeBuff)
+            explodeBuff.Source = source;
         if (source.Skill?.Template.EffectRepeatCount > 1)
         {
             for (var i = 0; i < source.Skill.Template.EffectRepeatCount; i++)

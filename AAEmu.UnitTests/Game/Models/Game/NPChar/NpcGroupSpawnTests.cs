@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System.Collections.Concurrent;
+using System.Reflection;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
@@ -62,6 +63,9 @@ public sealed class NpcGroupSpawnTests
         WorldManager.DefaultInstanceId = 0;
         _world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, 0);
         _world.SpawnManager = new SpawnManager(_world);
+        var worlds = (ConcurrentDictionary<uint, WorldInstance>)typeof(WorldManager)
+            .GetField("_worlds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(WorldManager.Instance)!;
+        worlds[_world.Id] = _world;
     }
 
     [After(Test)]
@@ -202,6 +206,31 @@ public sealed class NpcGroupSpawnTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EffectRemoval_PreservesPartialAndWholeGroupRespawnRules(bool enabled)
+    {
+        _data.GetNpcGroup(50).EnableRespawn = enabled;
+        var (spawner, definition, members) = SpawnTrackedGroup();
+        var group = members[0].GroupInstance;
+
+        spawner.DespawnFromEffect(members[1]);
+        spawner.DespawnFromEffect(members[1]);
+        spawner.ProcessGroupRespawns(DateTime.UtcNow.AddSeconds(61));
+
+        await Assert.That(definition.Positions.Count).IsEqualTo(enabled ? 4 : 3);
+        await Assert.That(group.GetMembers().Length).IsEqualTo(enabled ? 3 : 2);
+        foreach (var member in group.GetMembers())
+            spawner.DespawnFromEffect(member);
+        spawner.ProcessGroupRespawns(DateTime.UtcNow.AddSeconds(61));
+        spawner.DoSpawn();
+
+        await Assert.That(group.IsRetired).IsTrue();
+        await Assert.That(definition.Positions.Count).IsEqualTo(enabled ? 7 : 6);
+        await Assert.That(spawner.SpawnedNpcs[9571].Count).IsEqualTo(3);
+    }
+
+    [Test]
     public async Task ExplicitReset_CancelsPendingMemberReplacement()
     {
         _data.GetNpcGroup(50).EnableRespawn = true;
@@ -333,6 +362,9 @@ public sealed class NpcGroupSpawnTests
     {
         _world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, instanceId);
         _world.SpawnManager = new SpawnManager(_world);
+        var worlds = (ConcurrentDictionary<uint, WorldInstance>)typeof(WorldManager)
+            .GetField("_worlds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(WorldManager.Instance)!;
+        worlds[_world.Id] = _world;
         _data.GetNpcGroup(50).EnableRespawn = true;
         var (spawner, definition, members) = SpawnTrackedGroup(delay);
         foreach (var npc in members)
@@ -374,6 +406,9 @@ public sealed class NpcGroupSpawnTests
     {
         _world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, owned ? 0u : 1u);
         _world.SpawnManager = new SpawnManager(_world);
+        var worlds = (ConcurrentDictionary<uint, WorldInstance>)typeof(WorldManager)
+            .GetField("_worlds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(WorldManager.Instance)!;
+        worlds[_world.Id] = _world;
         var token = new TowerDefenseSpawnToken("occurrence", "event", "site", 1, 1, "action");
         var (spawner, definition, members) = SpawnTrackedGroup(60, owned ? token : null);
         var oldGroup = members[0].GroupInstance;
