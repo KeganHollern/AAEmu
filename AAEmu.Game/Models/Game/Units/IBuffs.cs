@@ -30,6 +30,7 @@ public interface IBuffs
     void RemoveBadBuffsFromCaster(uint casterObjId);
     void RemoveBuffs(BuffKind kind, int count, uint buffTagId = 0);
     void RemoveBuffs(uint buffTagId, int count);
+    bool TryConsumeActiveBuff(Buff buff);
     void RemoveEffect(Buff buff);
     void RemoveEffect(uint index);
     void RemoveEffect(uint templateId, uint skillId);

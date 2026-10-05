@@ -1,4 +1,4 @@
-﻿using AAEmu.Game.Models.Game.Char;
+﻿using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
@@ -18,7 +18,10 @@ public class LoseTarget : SpecialEffectAction
         int value3,
         int value4)
     {
-        // TODO ...
-        if (caster is Character) { Logger.Debug("Special effects: LoseTarget value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4); }
+        if (target is not Unit unit)
+            return;
+
+        unit.CurrentTarget = null;
+        unit.BroadcastPacket(new SCTargetChangedPacket(unit.ObjId, 0), true);
     }
 }

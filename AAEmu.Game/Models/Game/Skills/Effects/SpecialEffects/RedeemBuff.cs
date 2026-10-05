@@ -1,5 +1,4 @@
-﻿using AAEmu.Game.Models.Game.Char;
-using AAEmu.Game.Models.Game.Units;
+﻿using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 
@@ -18,7 +17,22 @@ public class RedeemBuff : SpecialEffectAction
         int value3,
         int value4)
     {
-        // TODO ...
-        if (caster is Character) { Logger.Debug("Special effects: RedeemBuff value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4); }
+        if (caster is not Unit owner || target != caster || owner.IsDead)
+            return;
+
+        var amount = BuffSpecialEffectRules.RollResourceAmount(owner.MaxMp, value1, value2, value3);
+        foreach (var buff in BuffSpecialEffectRules.GetRemovableGoodBuffs(owner, time))
+        {
+            if (!owner.Buffs.TryConsumeActiveBuff(buff))
+                continue;
+
+            new RestoreManaEffect { UseFixedValue = true, FixedMin = amount, FixedMax = amount }
+                .Apply(owner, casterObj, owner, targetObj, castObj, new EffectSource(skill), skillObject, time);
+            return;
+        }
+
+        // Absorb Effect's next authored effect grants Inspired. It needs a consumed buff.
+        if (skill != null)
+            skill.Cancelled = true;
     }
 }

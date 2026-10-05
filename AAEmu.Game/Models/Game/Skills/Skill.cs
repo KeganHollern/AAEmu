@@ -1852,6 +1852,8 @@ AlwaysHit:
                 || hitType == SkillHitType.RangedParry
                 || hitType == SkillHitType.RangedBlock
                 || hitType == SkillHitType.RangedMiss
+                || hitType == SkillHitType.SpellMiss
+                || hitType == SkillHitType.SpellResist
                 || hitType == SkillHitType.Immune;
         }
         Logger.Error($"Unit[{objId}] was not found in the CbtDiceRolls.");
