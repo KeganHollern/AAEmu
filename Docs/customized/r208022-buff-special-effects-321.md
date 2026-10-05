@@ -51,6 +51,8 @@ Eligible effects are active, unexpired, beneficial, non-system buffs that are no
 The recipient must satisfy buff requirements and immunity checks.
 The transferred buff keeps its remaining duration, ability level, and charges.
 The recipient becomes its caster and owner.
+The transfer also preserves `IsItemProc` and `ItemProcLevel` so ticks retain proc origin and level.
+The new buff uses the thief's current duel context and does not retain the original skill.
 The normal lifecycle sends the removal and creation packets and updates stat modifiers.
 A claim under the buff collection lock selects 1 special-effect consumer for each buff instance.
 It rejects competing special-effect consumers and claims from removal callbacks.
@@ -60,6 +62,11 @@ The claim does not make all current buff timer transitions atomic.
 A longer copy on the recipient remains active when the enemy loses its shorter copy.
 The shared miss check now rejects `SpellMiss` and `SpellResist`.
 The old check omitted both outcomes.
+
+Item `28426` supplies proc `93`, which casts skill `22707` and creates buff `6286`.
+That active Good, non-system buff runs tick effect `31731`, which references `HealEffect` `439`.
+These rows match in all 3 inspected compacts.
+The transfer test captures the next tick's source and checks its proc marker, item level, and level modifier.
 
 The server selects eligible buffs by instance index, as the current dispel path does.
 This order is a server policy. The exact client does not establish retail selection order.
@@ -110,7 +117,7 @@ No human gameplay result is claimed by the automated tests.
 
 ## Automated checks
 
-The shared Debug build passed, and all 21 buff cases passed in the 39-case special-effect run.
+The shared Debug build passed, and all 22 buff cases passed in the 41-case special-effect run.
 They cover packet bodies, duration, level, charges, eligible buffs, and repeated transfer.
 They also cover dead targets, spell misses, recipient requirements, and a longer recipient buff.
 The consumption tests cover concurrent calls and a removal callback.

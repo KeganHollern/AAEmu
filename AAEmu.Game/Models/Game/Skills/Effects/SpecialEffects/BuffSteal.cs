@@ -39,7 +39,9 @@ public class BuffSteal : SpecialEffectAction
             var stolen = new Buff(thief, thief, casterObj, buff.Template, null, time)
             {
                 AbLevel = buff.AbLevel,
-                Charge = buff.Charge
+                Charge = buff.Charge,
+                IsItemProc = buff.IsItemProc,
+                ItemProcLevel = buff.ItemProcLevel
             };
             if (victim.Buffs.TryConsumeActiveBuff(buff))
                 thief.Buffs.AddBuff(stolen, forcedDuration: remaining);
