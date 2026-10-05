@@ -46,6 +46,8 @@ public partial class Character
                 foreach (var id in active)
                     Achievements?.UpdateAbilityLevel(id, Abilities.GetAbilityLevel(id));
             SendPacket(new SCExpChangedPacket(ObjId, amount, addAbilityExperience));
+            if (addAbilityExperience)
+                Skills?.RefreshLearnedSkillRanks();
             if (levelAfter > oldLevel)
             {
                 Expedition?.OnCharacterRefresh(this);

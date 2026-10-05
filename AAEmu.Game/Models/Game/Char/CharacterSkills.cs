@@ -147,6 +147,30 @@ public class CharacterSkills(Character owner)
             Owner.SendPacket(new SCSkillLearnedPacket(skill));
     }
 
+    // The client stores learned ability ranks separately from ability experience.
+    // Publish only after the experience reward commits, using the same rank as a new cast.
+    internal void RefreshLearnedSkillRanks()
+    {
+        lock (Owner.StorePurchaseSyncRoot)
+        {
+            foreach (var skill in Skills.Values.OrderBy(skill => skill.Id))
+            {
+                var template = skill.Template;
+                if (!IsSelectedPlayerAbility(template.AbilityId, Owner.Ability1, Owner.Ability2, Owner.Ability3))
+                    continue;
+
+                var level = template.LevelStep > 0
+                    ? (byte)((Owner.GetAbLevel(template.AbilityId) - template.AbilityLevel) / template.LevelStep + 1)
+                    : (byte)1;
+                if (level <= skill.Level)
+                    continue;
+
+                skill.Level = level;
+                Owner.SendPacket(new SCSkillUpgradedPacket(skill));
+            }
+        }
+    }
+
     /// <summary>
     /// Try to learn a Passive Skill
     /// </summary>

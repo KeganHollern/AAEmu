@@ -808,6 +808,70 @@ public sealed class AuctionMailClaimManagerTests
         await Assert.That(mail.Body.Attachments).IsEmpty();
     }
 
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task GetAttached_SaleExperiencePublishesOneRankOnlyAfterCommit(bool succeeds)
+    {
+        var experienceField = typeof(Singleton<ExperienceManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousExperience = experienceField.GetValue(null);
+        var experience = new ExperienceManager();
+        var loader = Mock.Of<IExperienceLevelTemplateLoader>();
+        loader.Load().Returns(new[]
+        {
+            new AAEmu.Game.Models.Game.ExperienceLevelTemplate { Level = 1, TotalExp = 0 },
+            new AAEmu.Game.Models.Game.ExperienceLevelTemplate { Level = 2, TotalExp = 100 },
+            new AAEmu.Game.Models.Game.ExperienceLevelTemplate { Level = 3, TotalExp = 200 }
+        });
+        experience.Load(loader.Object, 3, 3);
+        experienceField.SetValue(null, experience);
+        try
+        {
+            var store = new InMemoryAuctionMailClaimStore { FailCommitDefinitively = !succeeds };
+            var manager = new AuctionMailClaimManager(store, new FakeTimeProvider(_claimTime), _ => _accountSyncRoot,
+                (owner, mail, now) => CreateSalePlan(owner, mail, now) with
+                {
+                    ExperienceAfter = 200, ExperienceChange = 200, LevelAfter = 3,
+                    AbilityExperienceAfter = owner.Abilities.Abilities.ToDictionary(pair => pair.Key,
+                        pair => pair.Key == AbilityType.Fight ? 200 : pair.Value.Exp),
+                    AbilityLevelsAfter = owner.Abilities.Abilities.ToDictionary(pair => pair.Key,
+                        pair => (byte)(pair.Key == AbilityType.Fight ? 3 : 1))
+                }, _ => { }, _ => { }, persistSourceState: _ => true);
+            var session = new RecordingSession();
+            var (character, mails) = CreateCharacter(manager, session);
+            character.Ability1 = AbilityType.Fight;
+            character.Ability2 = AbilityType.None;
+            character.Ability3 = AbilityType.None;
+            character.Skills = new CharacterSkills(character);
+            var learned = new Skill(new AAEmu.Game.Models.Game.Skills.Templates.SkillTemplate
+                { Id = 101, AbilityId = AbilityType.Fight, AbilityLevel = 1, LevelStep = 1 });
+            character.Skills.Skills.Add(learned.Id, learned);
+            var sale = AddSaleMail(character, 250);
+            var rankAtCommit = (byte)0;
+            store.OnPersisting = (_, _) => rankAtCommit = learned.Level;
+
+            var claimed = mails.GetAttached(sale.Id, true, false, true);
+
+            await Assert.That(claimed).IsEqualTo(succeeds);
+            await Assert.That(rankAtCommit).IsEqualTo((byte)1);
+            await Assert.That(learned.Level).IsEqualTo((byte)(succeeds ? 3 : 1));
+            await Assert.That(session.Packets.Count(packet => HasOpcode(packet, SCOffsets.SCSkillUpgradedPacket)))
+                .IsEqualTo(succeeds ? 1 : 0);
+            if (succeeds)
+            {
+                var xpIndex = session.Packets.FindIndex(packet => HasOpcode(packet, SCOffsets.SCExpChangedPacket));
+                var rankIndex = session.Packets.FindIndex(packet => HasOpcode(packet, SCOffsets.SCSkillUpgradedPacket));
+                await Assert.That(xpIndex >= 0 && rankIndex > xpIndex).IsTrue();
+                await Assert.That(mails.GetAttached(sale.Id, true, false, true)).IsTrue();
+                await Assert.That(session.Packets.Count(packet => HasOpcode(packet, SCOffsets.SCSkillUpgradedPacket))).IsEqualTo(1);
+            }
+        }
+        finally
+        {
+            experienceField.SetValue(null, previousExperience);
+        }
+    }
+
     private AuctionMailClaimManager CreateManager(
         InMemoryAuctionMailClaimStore store,
         List<ulong> forgottenItemIds = null,
