@@ -63,6 +63,10 @@ NPC callbacks record the failure and use the normal quest evaluation queue.
 They do not acquire the quest persistence lock while a spawner can hold its own lock.
 Quest evaluation checks the failure before component side effects and before step advancement.
 This also prevents Start alternatives or score completion from overriding the guard failure.
+A compare-exchange operation orders guard failure and completion.
+If removal wins that operation, the Ready or Reward transition fails.
+If completion wins, a later NPC callback cannot change the result.
+Report events and normal quest advancement use this same decision.
 
 Ready, Reward, Fail, Drop, and final quest cleanup remove the guard subscriptions.
 The subscriptions continue across Start, Supply, and Progress steps.
@@ -80,6 +84,9 @@ Do not release this candidate as a complete fix until that rule has tests and do
 - A Start guard continues through Progress.
 - Direct `Npc.Delete` fails the quest without an AI object.
 - NPC removal does not wait for the quest persistence lock.
+- Removal after the last guard check still blocks the Ready transition.
+- Removal during old-step cleanup cannot reverse a completed guard decision.
+- A direct Ready request cannot override a pending or processed guard failure.
 - Terminal steps and final cleanup remove the subscriptions.
 - A different world cannot supply the bound guard.
 - A guard death does not fail another owner's separate quest attempt.
@@ -110,6 +117,9 @@ Record a blocked objective separately if an NPC path or content gap prevents the
 Do not mark the guard check complete from service readiness or unit tests alone.
 
 Candidate validation on 2026-10-06 passed a Release build with 0 errors.
-The direct TUnit runner passed all 13 guard tests and all 278 tests selected by `Quest*`.
+The direct TUnit runner passed all 17 guard tests and all 282 tests selected by `Quest*`.
 The build used the local .NET 10 SDK and cached NuGet packages.
 No compact, MySQL, or client files changed.
+
+The completion race test failed against candidate `f537f6ff3` with the expected incorrect successful completion.
+It passes with the atomic guard decision.

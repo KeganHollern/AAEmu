@@ -13,7 +13,13 @@ public partial class Quest
     private readonly HashSet<uint> _activeGuardTemplates = [];
     private readonly ConcurrentDictionary<uint, Npc> _guardNpcs = [];
     private bool _guardEventsAttached;
-    private volatile bool _guardFailed;
+    private volatile bool _guardConstraintActivated;
+    private const int GuardActive = 0;
+    private const int GuardFailed = 1;
+    private const int GuardCompleted = 2;
+    private int _guardState;
+
+    private bool HasGuardFailed => Volatile.Read(ref _guardState) == GuardFailed;
 
     internal void ActivateGuard(uint npcTemplateId)
     {
@@ -22,6 +28,7 @@ public partial class Quest
             if (npcTemplateId == 0 || Step is not (QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress))
                 return;
 
+            _guardConstraintActivated = true;
             _activeGuardTemplates.Add(npcTemplateId);
             if (!_guardEventsAttached)
             {
@@ -45,7 +52,7 @@ public partial class Quest
         lock (SaveManager.PersistenceSyncRoot)
         {
             if (npc == null || !_activeGuardTemplates.Contains(npc.TemplateId) ||
-                _guardNpcs.ContainsKey(npc.TemplateId) || _guardFailed ||
+                _guardNpcs.ContainsKey(npc.TemplateId) || Volatile.Read(ref _guardState) != GuardActive ||
                 Owner is not Character owner || npc.ParentWorld != owner.ParentWorld ||
                 Step is not (QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress))
                 return;
@@ -63,9 +70,9 @@ public partial class Quest
         {
             if (_guardNpcs.TryGetValue(npcTemplateId, out var npc) &&
                 (npc.IsDead || npc.Hp <= 0 || npc.Despawned || npc.CombatRetired))
-                _guardFailed = true;
+                Interlocked.CompareExchange(ref _guardState, GuardFailed, GuardActive);
 
-            if (!_guardFailed)
+            if (!HasGuardFailed)
                 return true;
 
             FailGuard();
@@ -83,11 +90,16 @@ public partial class Quest
     {
         // NpcSpawner can hold its spawn lock here. Do not take the persistence lock
         // in this callback: quest side effects can acquire that spawn lock in reverse order.
-        if (_guardNpcs.TryGetValue(npc.TemplateId, out var bound) && ReferenceEquals(bound, npc))
-        {
-            _guardFailed = true;
+        if (_guardNpcs.TryGetValue(npc.TemplateId, out var bound) && ReferenceEquals(bound, npc) &&
+            Interlocked.CompareExchange(ref _guardState, GuardFailed, GuardActive) == GuardActive)
             _questManager.EnqueueEvaluation(this);
-        }
+    }
+
+    private bool TryCompleteGuard()
+    {
+        // The Ready transition and NPC removal compete for one decision. Once completion
+        // wins, a later callback cannot fail the quest. Once removal wins, Ready is rejected.
+        return Interlocked.CompareExchange(ref _guardState, GuardCompleted, GuardActive) != GuardFailed;
     }
 
     private void FailGuard()
@@ -115,6 +127,7 @@ public partial class Quest
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            Interlocked.CompareExchange(ref _guardState, GuardCompleted, GuardActive);
             foreach (var npc in _guardNpcs.Values)
             {
                 npc.Events.RemoveDeathHandler(OnGuardDied);

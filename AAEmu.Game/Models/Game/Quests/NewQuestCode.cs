@@ -75,14 +75,14 @@ public partial class Quest
         if (!QuestSteps.TryGetValue(Step, out var questStep))
             return false;
 
-        if (_guardFailed && Step is QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress)
+        if (HasGuardFailed && Step is QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress)
         {
             FailGuard();
             return false;
         }
 
         var res = questStep.RunComponents();
-        if (_guardFailed && Step is QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress)
+        if (HasGuardFailed && Step is QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress)
         {
             FailGuard();
             return false;
@@ -103,6 +103,8 @@ public partial class Quest
         if (res)
         {
             GoToNextStep();
+            if (HasGuardFailed && Step == QuestComponentKind.Fail)
+                return false;
         }
 
         // Send update to player
@@ -145,6 +147,8 @@ public partial class Quest
                     break;
                 case QuestComponentKind.Progress:
                     Step = QuestComponentKind.Ready; // When Objectives completed, go to Ready
+                    if (Step != QuestComponentKind.Ready)
+                        return; // A guard removal can win the atomic completion decision.
                     Status = QuestStatus.Ready;
                     break;
                 case QuestComponentKind.Fail:
@@ -236,6 +240,12 @@ public partial class Quest
     {
         if (value == _step)
             return;
+        if (value is QuestComponentKind.Ready or QuestComponentKind.Reward &&
+            _guardConstraintActivated && !TryCompleteGuard())
+        {
+            FailGuard();
+            return;
+        }
         // var oldValue = _step;
         // Owner?.SendMessage($"Quest {TemplateId}, Begin Step Change {oldValue} => {value}");
 

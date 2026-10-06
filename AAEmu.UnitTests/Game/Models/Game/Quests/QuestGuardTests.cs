@@ -79,6 +79,73 @@ public sealed class QuestGuardTests
     }
 
     [Test]
+    public async Task RemovalAfterFinalGuardCheck_PreventsReadyTransition()
+    {
+        var (quest, owner, talk) = CreateQuest();
+        var npc = CreateNpc(81);
+        Talk(talk, owner, npc);
+        quest.QuestSteps.Add(QuestComponentKind.Ready, new QuestStep(QuestComponentKind.Ready, quest));
+        var template = Mock.Of<IQuestTemplate>();
+        template.Components.Returns(quest.Template.Components);
+        var scoreReads = 0;
+        template.Score.Returns(() =>
+        {
+            // RunComponents reads Score first. The second read is the completion
+            // override in RunCurrentStep, after its last guard check but before Ready.
+            if (++scoreReads == 2)
+                npc.Delete();
+            return 0;
+        });
+        quest.Template = template.Object;
+
+        var completed = quest.RunCurrentStep();
+
+        await Assert.That(scoreReads).IsEqualTo(2);
+        await Assert.That(completed).IsFalse();
+        await Assert.That(quest.Step).IsEqualTo(QuestComponentKind.Fail);
+        await Assert.That(quest.Status).IsEqualTo(QuestStatus.Failed);
+        _manager.DoQueuedEvaluations();
+        await Assert.That(quest.Step).IsEqualTo(QuestComponentKind.Fail);
+    }
+
+    [Test]
+    public async Task RemovalAfterCompletionDecision_DoesNotFailReadyQuest()
+    {
+        var (quest, owner, talk) = CreateQuest();
+        var npc = CreateNpc(81);
+        Talk(talk, owner, npc);
+        quest.QuestSteps.Add(QuestComponentKind.Ready, new QuestStep(QuestComponentKind.Ready, quest));
+        var progress = quest.QuestSteps[QuestComponentKind.Progress].Components[15273];
+        progress.Acts.Add(new QuestAct(progress, new RemovalOnFinalize(progress.Template, npc)));
+
+        var completed = quest.RunCurrentStep();
+        _manager.DoQueuedEvaluations();
+
+        await Assert.That(completed).IsTrue();
+        await Assert.That(npc.CombatRetired).IsTrue();
+        await Assert.That(quest.Step).IsEqualTo(QuestComponentKind.Ready);
+        await Assert.That(quest.Status).IsEqualTo(QuestStatus.Ready);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DirectReadyTransition_CannotOverrideGuardFailure(bool processFailureFirst)
+    {
+        var (quest, owner, talk) = CreateQuest();
+        var npc = CreateNpc(81);
+        Talk(talk, owner, npc);
+        npc.Delete();
+        if (processFailureFirst)
+            _manager.DoQueuedEvaluations();
+
+        quest.Step = QuestComponentKind.Ready;
+
+        await Assert.That(quest.Step).IsEqualTo(QuestComponentKind.Fail);
+        await Assert.That(quest.Status).IsEqualTo(QuestStatus.Failed);
+    }
+
+    [Test]
     public async Task AddQuestFromNpc_BindsValidatedAcceptorBeforeActiveQuestRegistration()
     {
         using var models = new QuestInteractionTestModels();
@@ -295,6 +362,13 @@ public sealed class QuestGuardTests
 
     private static void SetParentWorld(GameObject source, WorldInstance world) =>
         typeof(GameObject).GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(source, world);
+
+    private sealed class RemovalOnFinalize(QuestComponentTemplate component, Npc npc) : QuestActTemplate(component)
+    {
+        public override bool RunAct(Quest quest, QuestAct questAct, int currentObjectiveCount) => true;
+
+        public override void FinalizeAction(Quest quest, QuestAct questAct) => npc.Delete();
+    }
 
     private sealed class TestNpc : Npc
     {
