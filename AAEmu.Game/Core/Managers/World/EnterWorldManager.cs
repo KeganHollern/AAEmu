@@ -252,6 +252,7 @@ public class EnterWorldManager(
     {
         if (activeChar != null)
         {
+            GameConnection.RunDisconnectStep(() => activeChar.Quests?.PrepareEscortQuestsForDisconnect());
             GameConnection.RunDisconnectStep(() => TradeManager.Instance.CancelTrade(activeChar, 0));
             activeChar.DisabledSetPosition = true;
             GameConnection.RunDisconnectStep(() => activeChar.IsOnline = false);

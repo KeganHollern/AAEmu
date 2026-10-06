@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Models.Game.Quests.Templates;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.GameData;
@@ -50,7 +51,13 @@ public class QuestActObjSphere(QuestComponentTemplate parentComponent) : QuestAc
             return;
 
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnEnterSphere: Quest: {questAct.QuestComponent.Parent.Parent.TemplateId}, Owner {questAct.QuestComponent.Parent.Parent.Owner.Name} ({questAct.QuestComponent.Parent.Parent.Owner.Id}), ComponentId {args.SphereQuest.ComponentId}");
-        SetObjective(questAct, 1);
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!questAct.QuestComponent.Parent.Parent.CanApplyGuardProgressEvent(questAct))
+                return;
+            SetObjective(questAct, 1);
+            questAct.QuestComponent.Parent.Parent.EvaluateGuardProgress();
+        }
     }
 
     public override void OnExitSphere(QuestAct questAct, object sender, OnExitSphereArgs args)
@@ -64,10 +71,14 @@ public class QuestActObjSphere(QuestComponentTemplate parentComponent) : QuestAc
 
     internal void ClearLocationState(QuestAct questAct)
     {
-        if (SphereGameData.Instance.GetSphere(SphereId)?.TriggerConditionId == AreaSphereTriggerCondition.TriggerEveryNTimeAfter)
-            return;
-
-        SetObjective(questAct, 0);
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!questAct.QuestComponent.Parent.Parent.CanApplyGuardProgressEvent(questAct))
+                return;
+            if (SphereGameData.Instance.GetSphere(SphereId)?.TriggerConditionId == AreaSphereTriggerCondition.TriggerEveryNTimeAfter)
+                return;
+            SetObjective(questAct, 0);
+        }
     }
 
 }

@@ -44,6 +44,7 @@ public partial class Npc : Unit
     public NpcGroupMember GroupMember { get; internal set; }
     internal bool Despawned { get; set; }
     internal bool CombatRetired { get; private set; }
+    internal event Action<Npc> Removing;
     public TowerDefenseSpawnToken TowerDefenseSpawnToken { get; internal set; }
     public DateTime DeadTime { get; set; } = DateTime.MinValue;
 
@@ -1374,6 +1375,10 @@ public partial class Npc : Unit
     {
         lock (AggroTable)
             CombatRetired = true;
+        // Every removal path reaches Delete, including direct script and lifetime removal.
+        // Do not reuse the AI despawn-skill event, which some paths already dispatched.
+        Removing?.Invoke(this);
+        Removing = null;
         if (Ai != null)
             Ai.ShouldTick = false;
         GroupInstance?.Detach(this);

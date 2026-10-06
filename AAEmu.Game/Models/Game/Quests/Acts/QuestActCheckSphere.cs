@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Models.Game.Quests.Templates;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 
@@ -44,7 +45,13 @@ public class QuestActCheckSphere(QuestComponentTemplate parentComponent) : Quest
             args.SphereQuest.ComponentId != ParentComponent.Id)
             return;
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnEnterSphere: Quest {questAct.QuestComponent.Parent.Parent.TemplateId}, Owner {questAct.QuestComponent.Parent.Parent.Owner.Name} ({questAct.QuestComponent.Parent.Parent.Owner.Id}), SphereId {SphereId}");
-        questAct.OverrideObjectiveCompleted = true;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!questAct.QuestComponent.Parent.Parent.CanApplyGuardProgressEvent(questAct))
+                return;
+            questAct.OverrideObjectiveCompleted = true;
+            questAct.QuestComponent.Parent.Parent.EvaluateGuardProgress();
+        }
     }
 
     public override void OnExitSphere(QuestAct questAct, object sender, OnExitSphereArgs args)
@@ -53,6 +60,11 @@ public class QuestActCheckSphere(QuestComponentTemplate parentComponent) : Quest
             args.SphereQuest.ComponentId != ParentComponent.Id)
             return;
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnExitSphere: Quest {questAct.QuestComponent.Parent.Parent.TemplateId}, Owner {questAct.QuestComponent.Parent.Parent.Owner.Name} ({questAct.QuestComponent.Parent.Parent.Owner.Id}), SphereId {SphereId}");
-        questAct.OverrideObjectiveCompleted = false;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!questAct.QuestComponent.Parent.Parent.CanApplyGuardProgressEvent(questAct))
+                return;
+            questAct.OverrideObjectiveCompleted = false;
+        }
     }
 }

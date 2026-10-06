@@ -1015,6 +1015,24 @@ public class CharacterQuests(Character owner, IGameScheduleManager schedules = n
         }
     }
 
+    internal void PersistActiveQuest(Quest quest)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (ActiveQuests.TryGetValue(quest.TemplateId, out var active) && ReferenceEquals(active, quest))
+                (_activeQuestPersistenceOverride ?? FlushQuest)(quest);
+        }
+    }
+
+    internal void PrepareEscortQuestsForDisconnect()
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            foreach (var quest in ActiveQuests.Values.ToArray())
+                quest.PrepareGuardForDisconnect();
+        }
+    }
+
     /// <summary>
     /// Immediately persists one active quest row. Quest state otherwise only
     /// reaches the database inside the periodic or logout Character.Save, so an
