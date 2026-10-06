@@ -190,6 +190,8 @@ public class GameConnection
             LeaveTask = null;
             if (ActiveChar != null)
             {
+                // Evaluate escort completion while the character remains in-world, before cleanup changes its conditions.
+                RunDisconnectStep(() => ActiveChar.Quests?.PrepareEscortQuestsForDisconnect());
                 RunDisconnectStep(() => ChatManager.Instance.LeaveAllChannels(ActiveChar));
                 RunDisconnectStep(() => AreaTriggerManager.Instance.EvictUnit(ActiveChar));
                 RunDisconnectStep(() => TradeManager.Instance.CancelTrade(ActiveChar, 0));

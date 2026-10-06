@@ -545,7 +545,7 @@ public partial class Quest : PacketMarshaler
     /// Activates a quest after all of its persisted state has been deserialized and the quest has been
     /// registered with its owner.
     /// </summary>
-    internal void RestoreLoadedState()
+    internal void RestoreLoadedState(bool interruptedSession = true)
     {
         // Older saves can contain Fail with Progress status because failed quests often have no Fail component.
         if (_step == QuestComponentKind.Fail)
@@ -563,6 +563,9 @@ public partial class Quest : PacketMarshaler
             _questManager.FailQuest(Owner, TemplateId);
             return;
         }
+
+        if (interruptedSession && FailInterruptedGuardOnRestore())
+            return;
 
         _restoringLoadedState = true;
         try

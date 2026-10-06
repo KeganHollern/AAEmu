@@ -29,7 +29,7 @@ public partial class Quest
     internal void ActivateRestart()
     {
         InitializeQuestActs();
-        RestoreLoadedState();
+        RestoreLoadedState(interruptedSession: false);
         try
         {
             Owner.SendPacket(new SCQuestContextStartedPacket(this, ComponentId));

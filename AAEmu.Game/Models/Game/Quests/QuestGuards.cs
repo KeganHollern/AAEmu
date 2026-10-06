@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests.Static;
+using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Quests;
@@ -47,7 +48,7 @@ public partial class Quest
         }
     }
 
-    internal void BindGuardNpc(Npc npc)
+    internal bool BindGuardNpc(Npc npc)
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
@@ -55,12 +56,13 @@ public partial class Quest
                 _guardNpcs.ContainsKey(npc.TemplateId) || Volatile.Read(ref _guardState) != GuardActive ||
                 Owner is not Character owner || npc.ParentWorld != owner.ParentWorld ||
                 Step is not (QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress))
-                return;
+                return false;
 
             _guardNpcs.TryAdd(npc.TemplateId, npc);
             npc.Events.AddDeathHandler(OnGuardDied);
             npc.Removing += OnGuardRemoved;
             CheckGuard(npc.TemplateId);
+            return true;
         }
     }
 
@@ -111,16 +113,120 @@ public partial class Quest
             _questManager.FailQuest(Owner, TemplateId);
     }
 
+    internal bool CanApplyGuardProgressEvent(QuestAct act)
+    {
+        if (!_guardConstraintActivated)
+            return true;
+        return Volatile.Read(ref _guardState) == GuardActive && Step == QuestComponentKind.Progress &&
+            Owner.Quests.ActiveQuests.TryGetValue(TemplateId, out var active) && ReferenceEquals(active, this) &&
+            QuestSteps.TryGetValue(Step, out var step) &&
+            step.Components.TryGetValue(act.QuestComponent.Template.Id, out var component) &&
+            ReferenceEquals(component, act.QuestComponent) && component.Acts.Contains(act);
+    }
+
+    private void CheckpointGuardCompletion()
+    {
+        if (_guardConstraintActivated && Volatile.Read(ref _guardState) == GuardCompleted &&
+            Step is QuestComponentKind.Ready or QuestComponentKind.Reward && QuestSteps.ContainsKey(Step))
+        {
+            // Quests without a Ready component pass through it to Reward. Persist only
+            // a real step, after its activation, so a reload can continue normally.
+            Status = QuestStatus.Ready;
+            Owner.Quests.PersistActiveQuest(this);
+        }
+    }
+
+    internal void CheckpointGuardStart(bool newlyBound)
+    {
+        if (newlyBound)
+            Owner.Quests.PersistActiveQuest(this);
+    }
+
+    internal void EvaluateGuardProgress()
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!_guardNpcs.IsEmpty && !IsRestoringLoadedState && Step == QuestComponentKind.Progress)
+                RunCurrentStep();
+        }
+    }
+
+    private bool HasStartedGuardInSavedProgress()
+    {
+        var currentOrder = GetActiveStepOrder(Step);
+        if (currentOrder < 0)
+            return false;
+
+        var guards = QuestSteps.Values
+            .Where(step => GetActiveStepOrder(step.ThisStep) is var order && order >= 0 && order <= currentOrder)
+            .SelectMany(step => step.Components.Values)
+            .SelectMany(component => component.Acts)
+            .Where(act => act.Template is QuestActCheckGuard { NpcId: > 0 })
+            .ToArray();
+        foreach (var guard in guards)
+        {
+            var npcId = ((QuestActCheckGuard)guard.Template).NpcId;
+            if (guard.QuestComponent.Template.KindId == QuestComponentKind.Start &&
+                QuestAcceptorType == QuestAcceptorType.Npc && AcceptorId == npcId)
+                return true;
+
+            // Some quests put their guard and talk in separate Progress components.
+            if (QuestSteps.TryGetValue(QuestComponentKind.Progress, out var progress) &&
+                progress.Components.Values.SelectMany(component => component.Acts).Any(act =>
+                    act.Template is QuestActObjTalk talk && talk.NpcId == npcId &&
+                    talk.ThisComponentObjectiveIndex < Objectives.Length && Objectives[talk.ThisComponentObjectiveIndex] > 0))
+                return true;
+        }
+        return false;
+    }
+
+    private bool FailInterruptedGuardOnRestore()
+    {
+        if (!HasStartedGuardInSavedProgress())
+            return false;
+
+        _guardConstraintActivated = true;
+        Interlocked.CompareExchange(ref _guardState, GuardFailed, GuardActive);
+        // No step was activated on this new runtime object. Do not finalize unstarted acts.
+        _step = QuestComponentKind.Invalid;
+        _questManager.FailQuest(Owner, TemplateId);
+        Owner.Quests.PersistActiveQuest(this);
+        return true;
+    }
+
+    internal void PrepareGuardForDisconnect()
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!_guardNpcs.IsEmpty || HasStartedGuardInSavedProgress())
+            {
+                // Evaluate this quest only. Draining the manager queue would invert its lock order.
+                EvaluateGuardProgress();
+                if (Step is QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress &&
+                    Interlocked.CompareExchange(ref _guardState, GuardFailed, GuardActive) != GuardCompleted)
+                    FailGuard();
+            }
+            ReleaseGuardBindings();
+        }
+    }
+
     private void OnGuardQuestStepChanged(object sender, OnQuestStepChangedArgs args)
     {
-        if (args.QuestId == TemplateId &&
-            args.Step is QuestComponentKind.Fail or QuestComponentKind.Ready or QuestComponentKind.Drop or QuestComponentKind.Reward)
-            ReleaseGuardBindings();
+        if (args.QuestId != TemplateId ||
+            args.Step is not (QuestComponentKind.Fail or QuestComponentKind.Ready or QuestComponentKind.Drop or QuestComponentKind.Reward))
+            return;
+
+        ReleaseGuardBindings();
+        if (args.Step == QuestComponentKind.Fail)
+        {
+            Status = QuestStatus.Failed;
+            Owner.Quests.PersistActiveQuest(this);
+        }
     }
 
     private void OnGuardOwnerDisconnected(object sender, OnDisconnectArgs args)
     {
-        ReleaseGuardBindings();
+        PrepareGuardForDisconnect();
     }
 
     internal void ReleaseGuardBindings()
