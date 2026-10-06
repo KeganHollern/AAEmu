@@ -517,6 +517,7 @@ public partial class Quest : PacketMarshaler
     /// </summary>
     public void FinalizeQuestActs()
     {
+        ReleaseGuardBindings();
         foreach (var questStep in QuestSteps.Values)
         {
             foreach (var questComponent in questStep.Components.Values)

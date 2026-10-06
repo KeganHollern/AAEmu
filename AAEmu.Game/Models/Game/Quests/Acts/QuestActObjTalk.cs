@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Models.Game.Quests.Templates;
+﻿using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Quests.Acts;
@@ -52,6 +53,9 @@ public class QuestActObjTalk(QuestComponentTemplate parentComponent) : QuestActT
             return;
 
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnTalkMade: Quest: {questAct.QuestComponent.Parent.Parent.TemplateId}, Owner {player.Name} ({player.Id}), NpcId {args.NpcId}, Source {args.SourcePlayer.Name} ({args.SourcePlayer.Id})");
+        // Keep the exact occurrence from the validated interaction, including an eligible
+        // shared talk. Another NPC with this template must not replace the protected unit.
+        questAct.QuestComponent.Parent.Parent.BindGuardNpc(args.Transform?.GameObject as Npc);
         SetObjective(questAct, 1);
 
         if (isSourcePlayer)

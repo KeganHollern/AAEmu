@@ -75,7 +75,18 @@ public partial class Quest
         if (!QuestSteps.TryGetValue(Step, out var questStep))
             return false;
 
+        if (_guardFailed && Step is QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress)
+        {
+            FailGuard();
+            return false;
+        }
+
         var res = questStep.RunComponents();
+        if (_guardFailed && Step is QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress)
+        {
+            FailGuard();
+            return false;
+        }
 
         // HackFix: added to account for missing Ready step on Quests that use a Score + LetItBeDone
         if (
