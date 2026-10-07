@@ -221,7 +221,7 @@ public partial class CharacterManager
         DeleteCharacterWorldAssets(character, false);
         gameConnection?.SendPacket(new SCCharacterDeletedPacket(character.Id, character.Name));
         gameConnection?.SendPacket(new SCDeleteCharacterResponsePacket(character.Id, 1, character.DeleteRequestTime, character.DeleteTime));
-        Logger.Info("Deleted Account:{0} Id:{1} Name:{2}", character.AccountId, character.Id, character.Name);
+        Logger.Info("Deleted character Id:{0}", character.Id);
         return true;
     }
 }
