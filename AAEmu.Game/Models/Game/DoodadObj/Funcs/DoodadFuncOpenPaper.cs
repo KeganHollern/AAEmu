@@ -11,7 +11,9 @@ public class DoodadFuncOpenPaper : DoodadFuncTemplate
 
     public override void Use(BaseUnit caster, Doodad owner, uint skillId, int nextPhase = 0)
     {
-        Logger.Trace("DoodadFuncOpenPaper");
-
+        // r208022 displays this locally (native 393b8450) and sends CSChangeDoodadPhase
+        // only for a positive next phase. The packet validates and applies that transition.
+        // A server skill must not repeat it or treat next_phase=-1 as object removal.
+        owner.ToNextPhase = false;
     }
 }

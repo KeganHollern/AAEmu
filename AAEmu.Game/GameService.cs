@@ -137,6 +137,7 @@ public sealed class GameService : IHostedService, IDisposable
         Logger.Info("Stopping daemon...");
 
         // Stop admission and drain packet/disconnect work before the final checkpoint.
+        UiDataSaveManager.Instance.Dispose();
         GameNetwork.Instance.Stop();
         StreamNetwork.Instance.Stop();
         await LoginNetwork.Instance.StopAsync();
@@ -156,6 +157,7 @@ public sealed class GameService : IHostedService, IDisposable
 
         TickManager.Instance.Stop();
         TimeManager.Instance.Stop();
+        SusManager.Instance.Dispose();
 
         ClientFileManager.ClearSources();
     }

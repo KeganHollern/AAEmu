@@ -7,6 +7,12 @@
         "Port": 1239,
         "NumConnections": 10
     },
+    "GameNetworkLimits": {
+        "MaxConnections": 1024,
+        "MaxConnectionsPerAddress": 16,
+        "AuthenticationTimeoutSeconds": 10,
+        "PacketsPerSecond": 1000
+    },
     "StreamNetwork": {
         "Host": "*",
         "Port": 1250

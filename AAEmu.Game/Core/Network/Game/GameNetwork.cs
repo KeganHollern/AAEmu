@@ -332,6 +332,7 @@ public class GameNetwork : Singleton<GameNetwork>
 
     public void Start()
     {
+        AppConfiguration.Instance.GameNetworkLimits.Validate();
         var config = AppConfiguration.Instance.Network;
         _server = new Server(config.Host.Equals("*") ? IPAddress.Any : IPAddress.Parse(config.Host), config.Port, _handler);
         _server.Start();

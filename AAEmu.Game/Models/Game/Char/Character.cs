@@ -53,6 +53,7 @@ public partial class Character : Unit, ICharacter
     public static Dictionary<uint, uint> UsedCharacterObjIds { get; } = [];
 
     private readonly Dictionary<ushort, string> _options;
+    private readonly HashSet<ushort> _dirtyOptions = [];
 
     public List<IDisposable> Subscribers { get; set; }
     public override CharacterEvents Events { get; } = new();
@@ -176,6 +177,8 @@ public partial class Character : Unit, ICharacter
             }
         }
     }
+    public bool IsDeleted { get; internal set; }
+
     public DateTime DeleteRequestTime { get; set; }
     public DateTime TransferRequestTime { get; set; }
     public DateTime DeleteTime { get; set; }
@@ -2178,42 +2181,65 @@ public partial class Character : Unit, ICharacter
 
     public void SetOption(ushort key, string value)
     {
-        _options[key] = value;
+        lock (SaveManager.PersistenceSyncRoot)
+            _options[key] = value;
     }
 
-    /// <summary>
-    /// Persists a single UI-option row immediately. UI data (quest-tracker
-    /// checkboxes, keybinds, window layout) otherwise only reaches the database
-    /// inside the periodic or logout Character.Save, so an abrupt server stop
-    /// discarded every update received since the last tick. Options arrive
-    /// rarely (UI events, logout), so a direct write per update is cheap.
-    /// </summary>
+    /// <summary>Marks UI state for the one-second coalesced save and the normal logout checkpoint.</summary>
     public void SaveOption(ushort key)
     {
-        if (!_options.TryGetValue(key, out var value))
-            return;
-
-        try
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            using var connection = MySQL.CreateConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = "REPLACE INTO `options` (`key`,`value`,`owner`) VALUES (@key,@value,@owner)";
-            command.Parameters.AddWithValue("@key", key);
-            command.Parameters.AddWithValue("@value", value);
-            command.Parameters.AddWithValue("@owner", Id);
-            command.ExecuteNonQuery();
+            if (_options.ContainsKey(key))
+                _dirtyOptions.Add(key);
         }
-        catch (Exception e)
+    }
+
+    internal bool HasPendingUiData
+    {
+        get { lock (SaveManager.PersistenceSyncRoot) return !IsDeleted && _dirtyOptions.Count > 0; }
+    }
+
+    internal void SaveUiOptions(MySqlConnection connection, MySqlTransaction transaction,
+        PersistenceSaveContext context, bool onlyDirty)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            Logger.Warn(e, $"Failed to persist ui option {key} for {Name} ({Id})");
+            var options = _options.Where(pair => !onlyDirty || _dirtyOptions.Contains(pair.Key)).ToArray();
+            if (options.Length == 0 || !CanWritePersistentState(connection, transaction))
+                return;
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            var values = new List<string>(options.Length);
+            for (var index = 0; index < options.Length; ++index)
+            {
+                values.Add($"(@key{index},@value{index},@owner)");
+                command.Parameters.AddWithValue($"@key{index}", options[index].Key);
+                command.Parameters.AddWithValue($"@value{index}", options[index].Value);
+            }
+            command.Parameters.AddWithValue("@owner", Id);
+            command.CommandText = "REPLACE INTO `options` (`key`,`value`,`owner`) VALUES " + string.Join(',', values);
+            command.ExecuteNonQuery();
+            context?.AfterCommit(() => AcknowledgeUiOptions(options));
+        }
+    }
+
+    internal void AcknowledgeUiOptions(IReadOnlyList<KeyValuePair<ushort, string>> options)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            foreach (var pair in options)
+            {
+                if (_options.TryGetValue(pair.Key, out var current) && current == pair.Value)
+                    _dirtyOptions.Remove(pair.Key);
+            }
         }
     }
 
     public string GetOption(ushort key)
     {
-        if (_options.TryGetValue(key, out var option))
-            return option;
-        return "";
+        lock (SaveManager.PersistenceSyncRoot)
+            return _options.GetValueOrDefault(key, string.Empty);
     }
 
     /// <summary>
@@ -2927,11 +2953,35 @@ public partial class Character : Unit, ICharacter
         return Save(context.Connection, context.Transaction, context);
     }
 
+    internal bool CanWritePersistentState(MySqlConnection connection, MySqlTransaction transaction, bool allowMissing = false)
+    {
+        if (IsDeleted)
+            return false;
+        // Keep this row lock in the transaction that writes the child records.
+        // A different Character instance may still contain the old active state.
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT deleted FROM characters WHERE id=@id AND account_id=@account FOR UPDATE";
+        command.Parameters.AddWithValue("@id", Id);
+        command.Parameters.AddWithValue("@account", AccountId);
+        var deleted = command.ExecuteScalar();
+        if (deleted == null)
+            return allowMissing;
+        if (!Convert.ToBoolean(deleted))
+            return true;
+        IsDeleted = true;
+        return false;
+    }
+
     private bool Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
     {
         bool result;
         try
         {
+            // Full saves also create new characters. Independent child writers
+            // must require an existing active row through the helper's default.
+            if (!CanWritePersistentState(connection, transaction, allowMissing: true))
+                return true;
             var unitModelParams = ModelParams.Write(new PacketStream()).GetBytes();
 
             var updated = DateTime.UtcNow;
@@ -2944,7 +2994,7 @@ public partial class Character : Unit, ICharacter
                 // ----
                 command.CommandText =
                     "REPLACE INTO `characters` " +
-                    "(`id`,`account_id`,`name`,`race`,`gender`,`unit_model_params`,`level`,`experience`,`recoverable_exp`," +
+                    "(`id`,`account_id`,`deleted`,`name`,`race`,`gender`,`unit_model_params`,`level`,`experience`,`recoverable_exp`," +
                     "`hp`,`mp`,`consumed_lp`,`ability1`,`ability2`,`ability3`," +
                     "`world_id`,`zone_id`,`x`,`y`,`z`,`roll`,`pitch`,`yaw`," +
                     "`faction_id`,`faction_name`,`expedition_id`,`family`,`dead_count`,`dead_time`,`rez_wait_duration`,`rez_time`,`rez_penalty_duration`,`leave_time`," +
@@ -2955,7 +3005,7 @@ public partial class Character : Unit, ICharacter
                     "`arrest_count`, `accept_guilty_count`, `accept_trial_count`, `not_guilty_count`, `guilty_count`, `evidence_reported_count`, `bot_reported_count`, `reported_as_bot_count`," +
                     "`offline_guilty_time`,`offline_guilty_region`" +
                     ") VALUES (" +
-                    "@id,@account_id,@name,@race,@gender,@unit_model_params,@level,@experience,@recoverable_exp," +
+                    "@id,@account_id,@deleted,@name,@race,@gender,@unit_model_params,@level,@experience,@recoverable_exp," +
                     "@hp,@mp,@consumed_lp,@ability1,@ability2,@ability3," +
                     "@world_id,@zone_id,@x,@y,@z,@yaw,@pitch,@roll," +
                     "@faction_id,@faction_name,@expedition_id,@family,@dead_count,@dead_time,@rez_wait_duration,@rez_time,@rez_penalty_duration,@leave_time," +
@@ -2969,6 +3019,7 @@ public partial class Character : Unit, ICharacter
 
                 command.Parameters.AddWithValue("@id", Id);
                 command.Parameters.AddWithValue("@account_id", AccountId);
+                command.Parameters.AddWithValue("@deleted", IsDeleted);
                 command.Parameters.AddWithValue("@name", Name);
                 command.Parameters.AddWithValue("@race", (byte)Race);
                 command.Parameters.AddWithValue("@gender", (byte)Gender);
@@ -3056,22 +3107,7 @@ public partial class Character : Unit, ICharacter
                 command.ExecuteNonQuery();
             }
 
-            using (var command = connection.CreateCommand())
-            {
-                command.Connection = connection;
-                command.Transaction = transaction;
-
-                foreach (var pair in _options)
-                {
-                    command.CommandText =
-                        "REPLACE INTO `options` (`key`,`value`,`owner`) VALUES (@key,@value,@owner)";
-                    command.Parameters.AddWithValue("@key", pair.Key);
-                    command.Parameters.AddWithValue("@value", pair.Value);
-                    command.Parameters.AddWithValue("@owner", Id);
-                    command.ExecuteNonQuery();
-                    command.Parameters.Clear();
-                }
-            }
+            SaveUiOptions(connection, transaction, context, onlyDirty: false);
 
             // Inventory?.Save(connection, transaction);
             Abilities?.Save(connection, transaction);

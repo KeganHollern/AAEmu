@@ -23,6 +23,7 @@ public partial class AppConfiguration
     public string SecretKey { get; set; }
     public DBConnections Connections { get; set; }
     public NetworkConfig Network { get; set; }
+    public GameNetworkLimitsConfig GameNetworkLimits { get; set; } = new();
     public NetworkConfig StreamNetwork { get; set; }
     public NetworkConfig LoginNetwork { get; set; }
     public NetworkConfig WebApiNetwork { get; set; }

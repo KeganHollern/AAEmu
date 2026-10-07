@@ -8,6 +8,7 @@ public interface INameManager : ILoadable
     uint GetCharacterId(string normalizedCharacterName);
     uint GetCharacterAccount(uint characterId);
     CharacterCreateError ValidateCharacterName(string name);
+    void MarkCharacterDeleted(uint characterId, string deletedName, bool releaseName);
     void AddCharacter(uint characterId, string name, uint accountId);
     void RemoveCharacterId(uint characterId);
     bool NoNamesRegistered();

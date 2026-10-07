@@ -257,6 +257,9 @@ public static class Program
                 services.AddSingleton<SusManager>();
                 services.AddSingleton<ISusManager>(sp => sp.GetRequiredService<SusManager>());
 
+                services.AddSingleton<UiDataSaveManager>();
+                services.AddSingleton<IUiDataSaveManager>(sp => sp.GetRequiredService<UiDataSaveManager>());
+
                 services.AddSingleton<TaskManager>();
                 services.AddSingleton<ITaskManager>(sp => sp.GetRequiredService<TaskManager>());
 
