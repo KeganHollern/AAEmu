@@ -2197,7 +2197,7 @@ public partial class Character : Unit, ICharacter
 
     internal bool HasPendingUiData
     {
-        get { lock (SaveManager.PersistenceSyncRoot) return _dirtyOptions.Count > 0; }
+        get { lock (SaveManager.PersistenceSyncRoot) return !IsDeleted && _dirtyOptions.Count > 0; }
     }
 
     internal void SaveUiOptions(MySqlConnection connection, MySqlTransaction transaction,
@@ -2206,7 +2206,7 @@ public partial class Character : Unit, ICharacter
         lock (SaveManager.PersistenceSyncRoot)
         {
             var options = _options.Where(pair => !onlyDirty || _dirtyOptions.Contains(pair.Key)).ToArray();
-            if (options.Length == 0)
+            if (options.Length == 0 || !CanWritePersistentState(connection, transaction))
                 return;
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
@@ -2953,27 +2953,35 @@ public partial class Character : Unit, ICharacter
         return Save(context.Connection, context.Transaction, context);
     }
 
+    internal bool CanWritePersistentState(MySqlConnection connection, MySqlTransaction transaction, bool allowMissing = false)
+    {
+        if (IsDeleted)
+            return false;
+        // Keep this row lock in the transaction that writes the child records.
+        // A different Character instance may still contain the old active state.
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT deleted FROM characters WHERE id=@id AND account_id=@account FOR UPDATE";
+        command.Parameters.AddWithValue("@id", Id);
+        command.Parameters.AddWithValue("@account", AccountId);
+        var deleted = command.ExecuteScalar();
+        if (deleted == null)
+            return allowMissing;
+        if (!Convert.ToBoolean(deleted))
+            return true;
+        IsDeleted = true;
+        return false;
+    }
+
     private bool Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
     {
         bool result;
         try
         {
-            // A timer or another session can delete a different Character instance.
-            // Lock the durable tombstone before writing any character-owned state.
-            if (IsDeleted)
+            // Full saves also create new characters. Independent child writers
+            // must require an existing active row through the helper's default.
+            if (!CanWritePersistentState(connection, transaction, allowMissing: true))
                 return true;
-            using (var deleted = connection.CreateCommand())
-            {
-                deleted.Transaction = transaction;
-                deleted.CommandText = "SELECT deleted FROM characters WHERE id=@id AND account_id=@account FOR UPDATE";
-                deleted.Parameters.AddWithValue("@id", Id);
-                deleted.Parameters.AddWithValue("@account", AccountId);
-                if (Convert.ToBoolean(deleted.ExecuteScalar() ?? false))
-                {
-                    IsDeleted = true;
-                    return true;
-                }
-            }
             var unitModelParams = ModelParams.Write(new PacketStream()).GetBytes();
 
             var updated = DateTime.UtcNow;

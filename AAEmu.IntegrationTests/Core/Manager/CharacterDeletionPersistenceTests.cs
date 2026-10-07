@@ -267,6 +267,7 @@ public sealed partial class PlayerMailSendPersistenceTests
     private static GameConnection DeletionConnection(Character player, List<byte[]> packets = null)
     {
         var session = new Mock<ISession>();
+        session.SetupGet(value => value.Ip).Returns(System.Net.IPAddress.Loopback);
         session.Setup(value => value.SendPacket(It.IsAny<byte[]>())).Callback<byte[]>(bytes => packets?.Add(bytes));
         var connection = new GameConnection(session.Object);
         Assert.True(connection.TryAuthenticate(player.AccountId));

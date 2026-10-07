@@ -102,6 +102,11 @@ the same gate. Dirty state clears only after a confirmed commit. Failed batches
 retain dirty values for the next tick. A later value cannot be cleared by an
 older acknowledgement.
 
+The UI writer checks and locks the owning character row in the same transaction.
+It skips deleted or missing characters and requires the matching account ID.
+This shares the deletion guard from issue #439. A stale character object cannot
+recreate options after deletion. Other valid characters in the batch still save.
+
 Normal character saves and logout still write every option. Shutdown stops the
 UI timer before Game connections drain through their normal saves. A hard
 process stop can lose the latest pending UI changes. With fewer than 128 dirty
@@ -148,7 +153,9 @@ logout-style option save, audit SQL parameterization, the batch size, and the
 last shutdown batch.
 
 The focused Release build passed. The 63 focused unit and regression tests passed.
-The 3 local MySQL tests passed. The parent release work runs the full suites on
+The 3 original local MySQL tests passed. Combined-source tests also cover stale
+deleted owners, missing owners, account mismatches, and valid characters in the
+same UI batch. The parent release work runs the full suites on
 the combined release source.
 
 Human validation remains necessary after deployment:

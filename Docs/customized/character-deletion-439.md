@@ -38,7 +38,9 @@ not delete shared houses or their contents through an inventory query.
 
 The character row remains as a tombstone. `Character.Save` checks and locks that row
 before any character or child write. It skips a deleted row and includes `deleted`
-in normal saves. Autosave also skips a known deleted character. Item and container
+in normal saves. Autosave also skips a known deleted character.
+The independent UI timer uses the same row check before it writes options. It also
+rejects missing character rows. A stale UI object cannot recreate deleted options. Item and container
 caches remove committed personal assets. Their IDs stay reserved for the process
 lifetime. Historical name and account lookup remains available, but a released
 name and its tombstone do not become playable mail recipients.
