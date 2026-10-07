@@ -1,20 +1,56 @@
-﻿using AAEmu.Commons.Network;
+using System.Text;
+using AAEmu.Commons.Network;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Models.Game.Char;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
 public class CSSaveUIDataPacket() : GamePacket(CSOffsets.CSSaveUIDataPacket, 1)
 {
+    private static readonly UTF8Encoding s_utf8 = new(false, true);
+
     public override void Read(PacketStream stream)
     {
-        var uiDataType = stream.ReadUInt16();
-        var id = stream.ReadUInt32();
-        var data = stream.ReadString();
+        var player = Connection.ActiveChar;
+        if (player == null || !Connection.IsAuthenticated || Connection.IsClosed ||
+            player.AccountId != Connection.AccountId || !TryReadData(stream, out var key, out var ownerId, out var data) ||
+            ownerId != player.Id)
+        {
+            Connection.Shutdown();
+            return;
+        }
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            player.SetOption(key, data);
+            // The shared timer coalesces repeated values. Logout also saves all UI data.
+            player.SaveOption(key);
+        }
+    }
 
-        Connection.ActiveChar.SetOption(uiDataType, data);
-        // Write through to the database: UI data is client-authoritative state
-        // (quest tracker, keybinds); losing it on an abrupt server stop showed
-        // up as "all my quests are unchecked" after reconnecting (issue #28).
-        Connection.ActiveChar.SaveOption(uiDataType);
+    internal static bool TryReadData(PacketStream stream, out ushort key, out uint ownerId, out string data)
+    {
+        key = 0;
+        ownerId = 0;
+        data = null;
+        if (stream.LeftBytes < 8)
+            return false;
+        key = stream.ReadUInt16();
+        ownerId = stream.ReadUInt32();
+        var length = stream.ReadUInt16();
+        if (!CharacterUiData.IsServerKey(key) || ownerId == 0 || length > CharacterUiData.MaximumBytes || stream.LeftBytes != length)
+            return false;
+        var bytes = stream.ReadBytes(length);
+        if (bytes.AsSpan().Contains((byte)0))
+            return false;
+        try
+        {
+            data = s_utf8.GetString(bytes);
+            return true;
+        }
+        catch (DecoderFallbackException)
+        {
+            return false;
+        }
     }
 }

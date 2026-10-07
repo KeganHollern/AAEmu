@@ -53,6 +53,7 @@ public partial class Character : Unit, ICharacter
     public static Dictionary<uint, uint> UsedCharacterObjIds { get; } = [];
 
     private readonly Dictionary<ushort, string> _options;
+    private readonly HashSet<ushort> _dirtyOptions = [];
 
     public List<IDisposable> Subscribers { get; set; }
     public override CharacterEvents Events { get; } = new();
@@ -2180,42 +2181,65 @@ public partial class Character : Unit, ICharacter
 
     public void SetOption(ushort key, string value)
     {
-        _options[key] = value;
+        lock (SaveManager.PersistenceSyncRoot)
+            _options[key] = value;
     }
 
-    /// <summary>
-    /// Persists a single UI-option row immediately. UI data (quest-tracker
-    /// checkboxes, keybinds, window layout) otherwise only reaches the database
-    /// inside the periodic or logout Character.Save, so an abrupt server stop
-    /// discarded every update received since the last tick. Options arrive
-    /// rarely (UI events, logout), so a direct write per update is cheap.
-    /// </summary>
+    /// <summary>Marks UI state for the one-second coalesced save and the normal logout checkpoint.</summary>
     public void SaveOption(ushort key)
     {
-        if (!_options.TryGetValue(key, out var value))
-            return;
-
-        try
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            using var connection = MySQL.CreateConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = "REPLACE INTO `options` (`key`,`value`,`owner`) VALUES (@key,@value,@owner)";
-            command.Parameters.AddWithValue("@key", key);
-            command.Parameters.AddWithValue("@value", value);
-            command.Parameters.AddWithValue("@owner", Id);
-            command.ExecuteNonQuery();
+            if (_options.ContainsKey(key))
+                _dirtyOptions.Add(key);
         }
-        catch (Exception e)
+    }
+
+    internal bool HasPendingUiData
+    {
+        get { lock (SaveManager.PersistenceSyncRoot) return _dirtyOptions.Count > 0; }
+    }
+
+    internal void SaveUiOptions(MySqlConnection connection, MySqlTransaction transaction,
+        PersistenceSaveContext context, bool onlyDirty)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            Logger.Warn(e, $"Failed to persist ui option {key} for {Name} ({Id})");
+            var options = _options.Where(pair => !onlyDirty || _dirtyOptions.Contains(pair.Key)).ToArray();
+            if (options.Length == 0)
+                return;
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            var values = new List<string>(options.Length);
+            for (var index = 0; index < options.Length; ++index)
+            {
+                values.Add($"(@key{index},@value{index},@owner)");
+                command.Parameters.AddWithValue($"@key{index}", options[index].Key);
+                command.Parameters.AddWithValue($"@value{index}", options[index].Value);
+            }
+            command.Parameters.AddWithValue("@owner", Id);
+            command.CommandText = "REPLACE INTO `options` (`key`,`value`,`owner`) VALUES " + string.Join(',', values);
+            command.ExecuteNonQuery();
+            context?.AfterCommit(() => AcknowledgeUiOptions(options));
+        }
+    }
+
+    internal void AcknowledgeUiOptions(IReadOnlyList<KeyValuePair<ushort, string>> options)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            foreach (var pair in options)
+            {
+                if (_options.TryGetValue(pair.Key, out var current) && current == pair.Value)
+                    _dirtyOptions.Remove(pair.Key);
+            }
         }
     }
 
     public string GetOption(ushort key)
     {
-        if (_options.TryGetValue(key, out var option))
-            return option;
-        return "";
+        lock (SaveManager.PersistenceSyncRoot)
+            return _options.GetValueOrDefault(key, string.Empty);
     }
 
     /// <summary>
@@ -3075,22 +3099,7 @@ public partial class Character : Unit, ICharacter
                 command.ExecuteNonQuery();
             }
 
-            using (var command = connection.CreateCommand())
-            {
-                command.Connection = connection;
-                command.Transaction = transaction;
-
-                foreach (var pair in _options)
-                {
-                    command.CommandText =
-                        "REPLACE INTO `options` (`key`,`value`,`owner`) VALUES (@key,@value,@owner)";
-                    command.Parameters.AddWithValue("@key", pair.Key);
-                    command.Parameters.AddWithValue("@value", pair.Value);
-                    command.Parameters.AddWithValue("@owner", Id);
-                    command.ExecuteNonQuery();
-                    command.Parameters.Clear();
-                }
-            }
+            SaveUiOptions(connection, transaction, context, onlyDirty: false);
 
             // Inventory?.Save(connection, transaction);
             Abilities?.Save(connection, transaction);

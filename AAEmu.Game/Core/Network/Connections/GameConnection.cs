@@ -20,6 +20,8 @@ public class GameConnection
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     private readonly ISession _session;
+    private readonly GameNetworkLimitsConfig _limits;
+    internal GamePacketRateLimiter PacketRate { get; }
     private readonly Lock _authenticationLock = new();
     private Timer _authenticationTimer;
     private int _closed;
@@ -51,9 +53,12 @@ public class GameConnection
     internal ConnectionEventLimiter UnknownPacketEvents { get; } = new();
     internal ConnectionEventLimiter StateRejectionEvents { get; } = new();
 
-    public GameConnection(ISession session)
+    public GameConnection(ISession session, GameNetworkLimitsConfig limits = null, TimeProvider timeProvider = null)
     {
         _session = session;
+        _limits = limits ?? AppConfiguration.Instance.GameNetworkLimits;
+        _limits.Validate();
+        PacketRate = new GamePacketRateLimiter(_limits.PacketsPerSecond, timeProvider);
         Subscribers = [];
 
         Characters = [];
@@ -92,7 +97,7 @@ public class GameConnection
     /// </summary>
     public void OnConnect()
     {
-        StartAuthenticationTimeout(TimeSpan.FromSeconds(10));
+        StartAuthenticationTimeout(TimeSpan.FromSeconds(_limits.AuthenticationTimeoutSeconds));
     }
 
     internal void StartAuthenticationTimeout(TimeSpan timeout)

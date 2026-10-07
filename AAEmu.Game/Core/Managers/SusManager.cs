@@ -8,7 +8,7 @@ using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public class SusManager(IWorldManager worldManager) : Singleton<SusManager>, ISusManager
+public sealed class SusManager(IWorldManager worldManager) : Singleton<SusManager>, ISusManager, IInitializable, IDisposable
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     public static string CategoryBot => "Bot";
@@ -20,38 +20,134 @@ public class SusManager(IWorldManager worldManager) : Singleton<SusManager>, ISu
     private Dictionary<uint, (Vector3 pos, float skipTime)> LastPlayerPositions { get; } = [];
     private Dictionary<uint, (Vector3 pos, float skipTime)> LastPetPositions { get; } = [];
     
-    // ReSharper disable once MemberCanBePrivate.Global
+    internal const int QueueCapacity = 1024;
+    internal const int BatchSize = 128;
+    internal const int MaximumDescriptionLength = 4096;
+    private readonly object _queueLock = new();
+    private readonly object _flushLock = new();
+    private readonly Queue<Activity> _pending = [];
+    private Timer _flushTimer;
+    private bool _stopped;
+    private long _dropped;
+    internal Action<IReadOnlyList<Activity>> WriteBatch { get; set; } = InsertBatch;
+    internal int PendingCount { get { lock (_queueLock) return _pending.Count; } }
+
+    internal sealed record Activity(DateTime OccurredAt, string Category, uint AccountId,
+        uint PlayerId, uint ZoneGroup, Vector3 Position, string Description);
+
+    public void Initialize()
+    {
+        lock (_flushLock)
+        {
+            if (!_stopped && _flushTimer == null)
+                _flushTimer = new Timer(_ => FlushPending(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        }
+    }
+
+    // Success means that the bounded queue accepted the record. It does not imply a database commit.
     public bool LogActivity(string category, uint accountId, uint playerId, uint zoneGroup, Vector3 position, string description)
     {
-        try
+        lock (_queueLock)
         {
-            using var connection = MySQL.CreateConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText =
-                "INSERT INTO audit_char_sus (sus_category, sus_account, sus_character, zone_group, x, y, z, description) " +
-                "VALUES (@sus_category, @sus_account, @sus_character, @zone_group, @x, @y, @z, @description)";
-            command.Parameters.AddWithValue("@sus_category", category);
-            command.Parameters.AddWithValue("@sus_account", accountId);
-            command.Parameters.AddWithValue("@sus_character", playerId);
-            command.Parameters.AddWithValue("@zone_group", zoneGroup);
-            command.Parameters.AddWithValue("@x", position.X);
-            command.Parameters.AddWithValue("@y", position.Y);
-            command.Parameters.AddWithValue("@z", position.Z);
-            command.Parameters.AddWithValue("@description", description);
-            command.Prepare();
-            if (command.ExecuteNonQuery() <= 0)
+            if (_stopped || _pending.Count >= QueueCapacity ||
+                !float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z))
             {
-                Logger.Error($"Saving suspisious activity failed: {category} - {description}");
+                ++_dropped;
                 return false;
             }
-            Logger.Warn(description);
+            _pending.Enqueue(new Activity(DateTime.UtcNow, LimitText(category, 64), accountId, playerId,
+                zoneGroup, position, LimitText(description, MaximumDescriptionLength)));
+            return true;
         }
-        catch (Exception ex)
-        {
-            Logger.Error($"Saving suspisious activity failed: {category} - {description} - {ex}");
+    }
+
+    private static string LimitText(string value, int maximum)
+    {
+        if (value == null || value.Length <= maximum)
+            return value ?? string.Empty;
+        var length = char.IsHighSurrogate(value[maximum - 1]) ? maximum - 1 : maximum;
+        return value[..length];
+    }
+
+    internal bool FlushPending(bool drain = false)
+    {
+        // Timer callbacks can overlap after a slow database response. Keep one writer.
+        if (!Monitor.TryEnter(_flushLock))
             return false;
+        try
+        {
+            if (_stopped && !drain)
+                return false;
+            Activity[] batch;
+            long dropped;
+            lock (_queueLock)
+            {
+                batch = _pending.Take(BatchSize).ToArray();
+                dropped = _dropped;
+                _dropped = 0;
+            }
+            if (dropped > 0)
+                Logger.Warn("Suspicious activity queue rejected {Count} invalid or excess records", dropped);
+            if (batch.Length == 0)
+                return true;
+            try
+            {
+                WriteBatch(batch);
+                lock (_queueLock)
+                {
+                    for (var index = 0; index < batch.Length; ++index)
+                        _pending.Dequeue();
+                }
+                Logger.Warn("Stored {Count} suspicious activity records", batch.Length);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                Logger.Error(exception, "Could not save the suspicious activity batch; the bounded queue retains it");
+                return false;
+            }
         }
-        return true;
+        finally { Monitor.Exit(_flushLock); }
+    }
+
+    private static void InsertBatch(IReadOnlyList<Activity> batch)
+    {
+        using var connection = MySQL.CreateConnection();
+        using var command = connection.CreateCommand();
+        var values = new List<string>(batch.Count);
+        for (var index = 0; index < batch.Count; ++index)
+        {
+            var activity = batch[index];
+            values.Add($"(@date{index},@category{index},@account{index},@character{index},@zone{index},@x{index},@y{index},@z{index},@description{index})");
+            command.Parameters.AddWithValue($"@date{index}", activity.OccurredAt);
+            command.Parameters.AddWithValue($"@category{index}", activity.Category);
+            command.Parameters.AddWithValue($"@account{index}", activity.AccountId);
+            command.Parameters.AddWithValue($"@character{index}", activity.PlayerId);
+            command.Parameters.AddWithValue($"@zone{index}", activity.ZoneGroup);
+            command.Parameters.AddWithValue($"@x{index}", activity.Position.X);
+            command.Parameters.AddWithValue($"@y{index}", activity.Position.Y);
+            command.Parameters.AddWithValue($"@z{index}", activity.Position.Z);
+            command.Parameters.AddWithValue($"@description{index}", activity.Description);
+        }
+        command.CommandText = "INSERT INTO audit_char_sus (sus_date, sus_category, sus_account, sus_character, zone_group, x, y, z, description) VALUES " + string.Join(',', values);
+        if (command.ExecuteNonQuery() != batch.Count)
+            throw new IOException("Suspicious activity batch did not insert every record.");
+    }
+
+    public void Dispose()
+    {
+        lock (_flushLock)
+        {
+            lock (_queueLock)
+                _stopped = true;
+            _flushTimer?.Dispose();
+            _flushTimer = null;
+            while (PendingCount > 0)
+            {
+                if (!FlushPending(drain: true))
+                    break;
+            }
+        }
     }
 
     public bool LogActivity(string category, Character player, string description)

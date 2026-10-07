@@ -139,6 +139,8 @@ public class GameProtocolHandler : BaseProtocolHandler
     {
         try
         {
+            if (connection.IsClosed)
+                return;
             var stream = new PacketStream();
             if (connection.LastPacket != null)
             {
@@ -164,6 +166,12 @@ public class GameProtocolHandler : BaseProtocolHandler
                 var packetLen = len + stream.Pos;
                 if (packetLen <= stream.Count)
                 {
+                    if (!connection.PacketRate.TryConsume())
+                    {
+                        Logger.Warn("Game packet rate exceeded on connection {ConnectionId}", connection.Id);
+                        connection.Shutdown();
+                        return;
+                    }
                     stream.Rollback();
                     var stream2 = new PacketStream();
                     stream2.Replace(stream, 0, packetLen);
