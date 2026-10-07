@@ -176,6 +176,8 @@ public partial class Character : Unit, ICharacter
             }
         }
     }
+    public bool IsDeleted { get; internal set; }
+
     public DateTime DeleteRequestTime { get; set; }
     public DateTime TransferRequestTime { get; set; }
     public DateTime DeleteTime { get; set; }
@@ -2932,6 +2934,22 @@ public partial class Character : Unit, ICharacter
         bool result;
         try
         {
+            // A timer or another session can delete a different Character instance.
+            // Lock the durable tombstone before writing any character-owned state.
+            if (IsDeleted)
+                return true;
+            using (var deleted = connection.CreateCommand())
+            {
+                deleted.Transaction = transaction;
+                deleted.CommandText = "SELECT deleted FROM characters WHERE id=@id AND account_id=@account FOR UPDATE";
+                deleted.Parameters.AddWithValue("@id", Id);
+                deleted.Parameters.AddWithValue("@account", AccountId);
+                if (Convert.ToBoolean(deleted.ExecuteScalar() ?? false))
+                {
+                    IsDeleted = true;
+                    return true;
+                }
+            }
             var unitModelParams = ModelParams.Write(new PacketStream()).GetBytes();
 
             var updated = DateTime.UtcNow;
@@ -2944,7 +2962,7 @@ public partial class Character : Unit, ICharacter
                 // ----
                 command.CommandText =
                     "REPLACE INTO `characters` " +
-                    "(`id`,`account_id`,`name`,`race`,`gender`,`unit_model_params`,`level`,`experience`,`recoverable_exp`," +
+                    "(`id`,`account_id`,`deleted`,`name`,`race`,`gender`,`unit_model_params`,`level`,`experience`,`recoverable_exp`," +
                     "`hp`,`mp`,`consumed_lp`,`ability1`,`ability2`,`ability3`," +
                     "`world_id`,`zone_id`,`x`,`y`,`z`,`roll`,`pitch`,`yaw`," +
                     "`faction_id`,`faction_name`,`expedition_id`,`family`,`dead_count`,`dead_time`,`rez_wait_duration`,`rez_time`,`rez_penalty_duration`,`leave_time`," +
@@ -2955,7 +2973,7 @@ public partial class Character : Unit, ICharacter
                     "`arrest_count`, `accept_guilty_count`, `accept_trial_count`, `not_guilty_count`, `guilty_count`, `evidence_reported_count`, `bot_reported_count`, `reported_as_bot_count`," +
                     "`offline_guilty_time`,`offline_guilty_region`" +
                     ") VALUES (" +
-                    "@id,@account_id,@name,@race,@gender,@unit_model_params,@level,@experience,@recoverable_exp," +
+                    "@id,@account_id,@deleted,@name,@race,@gender,@unit_model_params,@level,@experience,@recoverable_exp," +
                     "@hp,@mp,@consumed_lp,@ability1,@ability2,@ability3," +
                     "@world_id,@zone_id,@x,@y,@z,@yaw,@pitch,@roll," +
                     "@faction_id,@faction_name,@expedition_id,@family,@dead_count,@dead_time,@rez_wait_duration,@rez_time,@rez_penalty_duration,@leave_time," +
@@ -2969,6 +2987,7 @@ public partial class Character : Unit, ICharacter
 
                 command.Parameters.AddWithValue("@id", Id);
                 command.Parameters.AddWithValue("@account_id", AccountId);
+                command.Parameters.AddWithValue("@deleted", IsDeleted);
                 command.Parameters.AddWithValue("@name", Name);
                 command.Parameters.AddWithValue("@race", (byte)Race);
                 command.Parameters.AddWithValue("@gender", (byte)Gender);

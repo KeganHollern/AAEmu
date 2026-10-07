@@ -175,6 +175,8 @@ public class SaveManager(
                     }
                     foreach (var character in characters.Values)
                     {
+                        if (character.IsDeleted)
+                            continue;
                         if (!character.Save(context))
                             throw new InvalidOperationException($"Failed to save character {character.Id} - {character.Name}.");
                     }

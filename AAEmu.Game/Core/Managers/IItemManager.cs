@@ -14,6 +14,7 @@ namespace AAEmu.Game.Core.Managers;
 public interface IItemManager : ILoadable
 {
     void DetachArchivedMailItem(Item item);
+    void ForgetDeletedCharacterAssets(uint characterId);
     event EventHandler OnItemsLoaded;
     ItemTemplate GetTemplate(uint id);
     EquipItemSet GetEquippedItemSet(uint id);

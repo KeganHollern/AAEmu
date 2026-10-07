@@ -28,7 +28,7 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
 
         if (Connection.Characters.TryGetValue(characterId, out var character) && character.AccountId == Connection.AccountId)
         {
-            if (!Connection.TrySelectCharacter(character))
+            if (!CharacterManager.Instance.TrySelectCharacter(Connection, character))
             {
                 Connection.Shutdown();
                 return;

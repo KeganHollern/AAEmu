@@ -2033,6 +2033,38 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         itemIdManager.ReleaseId((uint)itemId);
     }
 
+    public void ForgetDeletedCharacterAssets(uint characterId)
+    {
+        if (!Monitor.IsEntered(SaveManager.PersistenceSyncRoot))
+            throw new InvalidOperationException("Character deletion requires the persistence gate.");
+        lock (_allItems)
+        {
+            foreach (var item in _allItems.Values.Where(item => item.OwnerId == characterId &&
+                         item._holdingContainer is not CofferContainer).ToArray())
+            {
+                item._holdingContainer?.Items.Remove(item);
+                item._holdingContainer?.UpdateFreeSlotCount();
+                item._holdingContainer = null;
+                item.IsDirty = false;
+                item.Count = 0;
+                ForgetCommittedItem(item.Id);
+            }
+        }
+        lock (_allPersistentContainers)
+        {
+            foreach (var container in _allPersistentContainers.Values.Where(container =>
+                         container.OwnerId == characterId && container is not CofferContainer).ToArray())
+            {
+                _allPersistentContainers.Remove(container.ContainerId);
+                container.Items.Clear();
+                container.ContainerId = 0;
+                container.IsDirty = false;
+            }
+        }
+        // Keep IDs reserved during this process lifetime. Stale references must
+        // never point to a new owner's item or container after deletion.
+    }
+
     internal void ForgetCommittedItem(ulong itemId)
     {
         lock (_removedItems)

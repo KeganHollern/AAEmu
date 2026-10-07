@@ -94,6 +94,16 @@ public class NameManager(Lazy<ICharacterManager> characterManager = null, IOptio
         return CharacterCreateError.Ok;
     }
 
+    public void MarkCharacterDeleted(uint characterId, string deletedName, bool releaseName)
+    {
+        if (_characterIds.TryGetValue(characterId, out var oldName) && releaseName &&
+            _characterNames.GetValueOrDefault(oldName) == characterId)
+            _characterNames.Remove(oldName);
+        _characterIds[characterId] = deletedName.NormalizeName();
+        // Retain historical ID/account lookup, but do not register a released
+        // tombstone as a playable recipient or overwrite another tombstone name.
+    }
+
     public void AddCharacter(uint characterId, string name, uint accountId)
     {
         var normalizedName = name.NormalizeName();
