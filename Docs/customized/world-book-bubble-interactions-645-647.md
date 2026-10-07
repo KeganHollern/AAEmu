@@ -100,14 +100,31 @@ Representative supported transitions:
 The sign has a 1000 ms timer in phase `16271`, then returns to phase `16269`.
 The other positive book rows belong to test doodad `4418`.
 
-The server uses the current 3-metre service distance in 3 dimensions.
-This is an approximation, not a recovered retail centre-distance rule.
+The server uses the current `SkillRange.Check` path with each authored skill.
+Both compact databases define these ranges:
+
+| Skill | Minimum | Maximum | Objects |
+| --- | --- | --- | --- |
+| `22584` | 0 metres | 4 metres | Buto toys |
+| `16262` | 0 metres | 4 metres | Signs and noticeboards |
+| `20743` | 0 metres | 20 metres | Executioner statue |
+| `17015` | 0 metres | 20 metres | Relief |
+
+This path includes the player model radius and the normal skill range modifiers.
+It checks distance in 3 dimensions. It rejects a missing skill template.
+A fixed 3-metre service limit would reject part of these authored ranges.
+
 The client uses `max_interaction_doodad_distance`, default `2.1`, with engine
-geometry in `39093800`. This change does not copy that geometry algorithm.
+geometry in `39093800`. Function `3989bf90` finds the minimum distance across
+geometry entries before that offset check. The local UI dispatcher follows it
+in `393b7440`, before the normal skill start. The server does not store matching
+bounds for ordinary doodad models. The skill range is a server approximation,
+not a recovered retail geometry rule. Exact edge behavior still needs the
+client checks below. This change does not change shared geometry.
 
 ## Automated validation
 
-`CSChangeDoodadPhasePacketTests` covers 35 focused cases. The cases include:
+`CSChangeDoodadPhasePacketTests` covers 42 focused cases. The cases include:
 
 - Native golden body, opcode, level, and complete response body.
 - Both function types and the 3 real positive book rows.
@@ -117,6 +134,8 @@ geometry in `39093800`. This change does not copy that geometry algorithm.
 - Invalid object, skill, phase, row, and actual-function identifiers.
 - Other function types and functions outside the current phase.
 - Permission, horizontal distance, vertical distance, world, and instance checks.
+- Authored 4-metre and 20-metre ranges, player radius, and non-finite coordinates.
+- Rejection outside each authored range and rejection of missing skill templates.
 - Pending removal, deleted objects, removed objects, and replacement objects.
 - Phase functions, phase events, and one response after a valid transition.
 - No duplicate interface action or removal from a separate server function call.
@@ -136,7 +155,7 @@ visual presentation or book page rendering. Record results in cluster issue
 [HUMAN VALIDATION 573](https://github.com/KeganHollern/aaemu-cluster/issues/573).
 Use the release that selects this source change. A GM can prepare temporary
 doodads with `/doodad spawn <templateId>`. Do not save these temporary spawns.
-Approach within 2 metres before each interaction.
+Approach each object until the client offers its interaction.
 
 1. Spawn toy `6806`. Use its interaction twice, with a short pause between uses.
    Expect the authored bubble on each use. Expect phases `18326`, `18329`, then
@@ -148,6 +167,8 @@ Approach within 2 metres before each interaction.
 3. Spawn statue `6167`. Use `/doodad phase change <objectId> 16297` to prepare it.
    Read it. Expect page `453` and phase `16295`. Repeat with relief `4374`,
    prepared at phase `10968`. Expect page `100` and phase `10743`.
+   Repeat at the outer edge where the client offers each interaction.
+   Expect the server phase change at that edge, including large object models.
 4. Spawn noticeboard `4349`. Read it twice. Expect page `104` each time.
    Its authored `next_phase=-1` leaves the board in phase `10679`.
 5. Reconnect near the test objects. Expect the current model and interaction

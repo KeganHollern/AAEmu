@@ -4,6 +4,8 @@ using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Static;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -30,9 +32,13 @@ public class CSChangeDoodadPhasePacket() : GamePacket(CSOffsets.CSChangeDoodadPh
 
         lock (SaveManager.PersistenceSyncRoot)
         {
-            var doodad = character?.ParentWorld?.GetDoodad(objId);
+            var world = character?.ParentWorld;
+            var doodad = world?.GetDoodad(objId);
             if (doodad == null || doodad.Despawn > DateTime.MinValue ||
-                !ServiceInteraction.CanReach(character, doodad, 3f))
+                character.Transform == null || doodad.Transform == null ||
+                !ReferenceEquals(world, doodad.ParentWorld) ||
+                character.Transform.InstanceId != doodad.Transform.InstanceId ||
+                character.Transform.WorldId != doodad.Transform.WorldId)
                 return false;
 
             // The client identifies an authored transition. It cannot select an arbitrary phase.
@@ -41,7 +47,14 @@ public class CSChangeDoodadPhasePacket() : GamePacket(CSOffsets.CSChangeDoodadPh
                 candidate.GroupId == doodad.FuncGroupId && candidate.FuncKey == funcKey &&
                 candidate.SkillId == skillId && candidate.NextPhase == nextPhase &&
                 candidate.FuncType is nameof(DoodadFuncBubble) or nameof(DoodadFuncOpenPaper));
-            if (func == null || !DoodadPermissionRules.Demand(character, doodad, func.PermId))
+            if (func == null)
+                return false;
+
+            // Use the normal authored skill range. A fixed service distance rejects
+            // large objects whose interaction skills allow up to 20 metres.
+            var template = SkillManager.Instance.GetSkillTemplate(func.SkillId);
+            if (template == null || SkillRange.Check(new Skill(template), character, doodad) != SkillResult.Success ||
+                !DoodadPermissionRules.Demand(character, doodad, func.PermId))
                 return false;
 
             doodad.DoChangePhase(character, func.NextPhase);

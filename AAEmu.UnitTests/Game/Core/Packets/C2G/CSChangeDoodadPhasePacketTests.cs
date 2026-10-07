@@ -18,6 +18,9 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
+using AAEmu.Game.Models.Game.Models;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.UnitTests.Utils.Mocks;
@@ -34,6 +37,7 @@ public sealed class CSChangeDoodadPhasePacketTests
     private RecordingPhaseFunction _phase;
     private WorldManager _worlds;
     private Dictionary<uint, List<DoodadFunc>> _functions;
+    private Dictionary<uint, SkillTemplate> _skills;
 
     [Before(Test)]
     public void SetUp()
@@ -62,6 +66,26 @@ public sealed class CSChangeDoodadPhasePacketTests
             [nameof(RecordingPhaseFunction)] = new() { [1] = _phase }
         });
         Install(manager);
+        var skills = new SkillManager(Mock.Of<IAnimationManager>().Object, Mock.Of<IPlotManager>().Object);
+        _skills = new Dictionary<uint, SkillTemplate>
+        {
+            [22584] = new() { Id = 22584, MinRange = 0, MaxRange = 4, WeaponSlotForRangeId = -1, TargetType = SkillTargetType.Doodad },
+            [16262] = new() { Id = 16262, MinRange = 0, MaxRange = 4, WeaponSlotForRangeId = -1, TargetType = SkillTargetType.Doodad },
+            [20743] = new() { Id = 20743, MinRange = 0, MaxRange = 20, WeaponSlotForRangeId = -1, TargetType = SkillTargetType.Doodad },
+            [17015] = new() { Id = 17015, MinRange = 0, MaxRange = 20, WeaponSlotForRangeId = -1, TargetType = SkillTargetType.Doodad }
+        };
+        SetField(skills, "_skills", _skills);
+        Install(skills);
+        var models = new ModelManager();
+        SetField(models, "_modelTypes", new Dictionary<uint, ModelType>
+        {
+            [1] = new() { Id = 1, SubType = "ActorModel", SubId = 1 }
+        });
+        SetField(models, "_models", new Dictionary<string, Dictionary<uint, Model>>
+        {
+            ["ActorModel"] = new() { [1] = new ActorModel { Id = 1, Radius = 0.5f } }
+        });
+        Install(models);
         _worlds = new WorldManager(Mock.Of<ITickManager>().Object, Mock.Of<IWorldIdManager>().Object,
             new Lazy<IZoneManager>(() => Mock.Of<IZoneManager>().Object),
             new Lazy<IIndunManager>(() => Mock.Of<IIndunManager>().Object),
@@ -143,6 +167,7 @@ public sealed class CSChangeDoodadPhasePacketTests
         _functions[phase] = [_function];
         _doodad.TemplateId = templateId;
         _doodad.FuncGroupId = phase;
+        _doodad.Transform.Local.SetPosition(_skills[skillId].MaxRange, 0, 0);
 
         Send(Body(skillId: skillId, phase: nextPhase, funcKey: rowId));
 
@@ -225,8 +250,10 @@ public sealed class CSChangeDoodadPhasePacketTests
     }
 
     [Test]
-    [Arguments(3.01f, 0f)]
-    [Arguments(0f, 3.01f)]
+    [Arguments(4.01f, 0f)]
+    [Arguments(0f, 4.01f)]
+    [Arguments(float.NaN, 0f)]
+    [Arguments(float.PositiveInfinity, 0f)]
     public async Task Read_RejectsHorizontalAndVerticalDistance(float x, float z)
     {
         _doodad.Transform.Local.SetPosition(x, 0, z);
@@ -235,11 +262,44 @@ public sealed class CSChangeDoodadPhasePacketTests
     }
 
     [Test]
-    public async Task Read_AcceptsTheCurrentThreeMetreServiceBoundary()
+    public async Task Read_AcceptsTheAuthoredFourMetreToyRange()
     {
-        _doodad.Transform.Local.SetPosition(3, 0, 0);
+        _doodad.Transform.Local.SetPosition(4, 0, 0);
         Send(Body());
         await Assert.That(_doodad.FuncGroupId).IsEqualTo(18329u);
+    }
+
+    [Test]
+    [Arguments(16262u, 4.01f)]
+    [Arguments(20743u, 20.01f)]
+    [Arguments(17015u, 20.01f)]
+    public async Task Read_RejectsBeyondEachAuthoredBookRange(uint skillId, float distance)
+    {
+        _function.FuncType = nameof(DoodadFuncOpenPaper);
+        _function.SkillId = skillId;
+        _doodad.Transform.Local.SetPosition(distance, 0, 0);
+        Send(Body(skillId: skillId));
+        await AssertUnchanged();
+    }
+
+    [Test]
+    public async Task Read_PreservesTheNormalPlayerModelRadius()
+    {
+        _character.ModelId = 1;
+        _doodad.Transform.Local.SetPosition(4.51f, 0, 0);
+        Send(Body());
+        await AssertUnchanged();
+        _doodad.Transform.Local.SetPosition(4.5f, 0, 0);
+        Send(Body());
+        await Assert.That(_doodad.FuncGroupId).IsEqualTo(18329u);
+    }
+
+    [Test]
+    public async Task Read_RejectsMissingSkillTemplates()
+    {
+        _skills.Clear();
+        Send(Body());
+        await AssertUnchanged();
     }
 
     [Test]
