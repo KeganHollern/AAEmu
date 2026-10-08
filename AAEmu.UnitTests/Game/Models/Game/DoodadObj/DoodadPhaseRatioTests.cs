@@ -46,6 +46,8 @@ public sealed class DoodadPhaseRatioTests
     [Test]
     [Arguments("exact")]
     [Arguments("partial")]
+    [Arguments("weather_7055")]
+    [Arguments("partial_7286")]
     [Arguments("overflow_8000")]
     [Arguments("overflow_5000")]
     [Arguments("overflow_50000")]
@@ -56,6 +58,9 @@ public sealed class DoodadPhaseRatioTests
         {
             "exact" => (new[] { 2000, 3000, 5000 }, new[] { 2000, 3000, 5000 }, 0),
             "partial" => (new[] { 2000, 3000 }, new[] { 2000, 3000 }, 5000),
+            "weather_7055" => (new[] { 2000, 2000, 2000, 2000, 2000 },
+                new[] { 2000, 2000, 2000, 2000, 2000 }, 0),
+            "partial_7286" => (new[] { 3300, 3300, 3300 }, new[] { 3300, 3300, 3300 }, 100),
             "overflow_8000" => (new[] { 8000, 8000 }, new[] { 8000, 2000 }, 0),
             "overflow_5000" => (new[] { 5000, 5000, 5000 }, new[] { 5000, 5000, 0 }, 0),
             "overflow_50000" => (new[] { 50000, 50000 }, new[] { 10000, 0 }, 0),
