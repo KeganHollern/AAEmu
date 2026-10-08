@@ -1113,7 +1113,9 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
                 }
             }
 
-            // TODO: doodad_func_exchange_items( id INT, doodad_func_exchange_id INT, item_id INT, loot_pack_id INT )
+            // The r208022 exchange_items row is orphaned: doodad_func_exchanges and
+            // its phase references are empty. Do not infer an exchange operation from it.
+            // See Docs/customized/World-Items-142-651.md.
 
             // doodad_func_exchanges
             using (var command = connection.CreateCommand())
@@ -2510,11 +2512,11 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
                 {
                     while (reader.Read())
                     {
-                        var func = new DoodadFuncTreeByProductsCollect
+                        var func = new DoodadFuncTreeByproductsCollect
                         {
                             Id = reader.GetUInt32("id")
                         };
-                        _funcTemplates["DoodadFuncTreeByProductsCollect"].Add(func.Id, func);
+                        _funcTemplates["DoodadFuncTreeByproductsCollect"].Add(func.Id, func);
                     }
                 }
             }
@@ -3151,6 +3153,10 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
         // For Coffers validate if select option is applicable
         if (doodad is DoodadCoffer)
         {
+            // The r208022 coffer dialog sends only the four HousingPermission values.
+            if (data is < (int)HousingPermission.Private or > (int)HousingPermission.Family)
+                return false;
+
             switch (data)
             {
                 case (int)HousingPermission.Family when player.Family <= 0:

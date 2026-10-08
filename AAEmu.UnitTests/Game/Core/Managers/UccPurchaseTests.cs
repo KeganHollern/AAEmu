@@ -210,6 +210,29 @@ public sealed class UccPurchaseTests
     }
 
     [Test]
+    public async Task LegacyImprint_DoesNotAuthorizeStampMakerPurchase()
+    {
+        _printer.TemplateId = 2633;
+        _printer.CurrentFuncs.Clear();
+        _printer.CurrentFuncs.Add(new DoodadFunc
+        {
+            FuncId = 1, FuncType = nameof(DoodadFuncUccImprint), SkillId = 13764, NextPhase = 5692
+        });
+        _character.CurrentInteractionObject = null;
+
+        new DoodadFuncUccImprint { Id = 1 }.Use(_character, _printer, 13764, 5692);
+        await Assert.That(_character.CurrentInteractionObject).IsNull();
+
+        // Remembering the legacy object must not bypass the authored StampMaker check.
+        _character.CurrentInteractionObject = _printer;
+        await Assert.That(_uccs.StartUpload(_connection, 99, 0, Simple())).IsFalse();
+        await Assert.That(_uccs.ConfirmDefaultUcc(_connection, 0)).IsFalse();
+        await Assert.That(_commits).IsEqualTo(0);
+        await Assert.That(_character.Money).IsEqualTo(100000L);
+        await Assert.That(_character.Inventory.Bag.Items.Count).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task DuplicateStart_PreservesFirstUploadAndDisconnectReleasesItsState()
     {
         var first = Simple();

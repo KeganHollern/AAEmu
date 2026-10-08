@@ -732,6 +732,29 @@ public class DoodadManagerTests
     }
 
     [Test]
+    public async Task GetFuncTemplate_TreeByproductsCompactName_ResolvesRegisteredType()
+    {
+        // Both r208022 compacts and the native loader use this exact case-sensitive name.
+        const string compactType = "DoodadFuncTreeByproductsCollect";
+        var type = typeof(DoodadFuncTemplate).Assembly.GetType(
+            $"AAEmu.Game.Models.Game.DoodadObj.Funcs.{compactType}");
+        await Assert.That(type).IsNotNull();
+        await Assert.That(type!.BaseType).IsEqualTo(typeof(DoodadFuncTemplate));
+
+        var template = (DoodadFuncTemplate)Activator.CreateInstance(type)!;
+        template.Id = 6;
+        var manager = new DoodadManager(Mock.Of<IObjectIdManager>().Object,
+            Mock.Of<IDoodadIdManager>().Object, Mock.Of<IItemManager>().Object,
+            new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>().Object), Mock.Of<ISusManager>().Object);
+        SetPrivateField(manager, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
+        {
+            [type.Name] = new() { [template.Id] = template }
+        });
+
+        await Assert.That(manager.GetFuncTemplate(6, compactType)).IsSameReferenceAs(template);
+    }
+
+    [Test]
     public async Task GetFuncTemplate_TypeNotFound_ReturnsNull()
     {
         // Arrange
