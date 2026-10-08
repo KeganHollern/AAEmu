@@ -12,6 +12,10 @@ public class CSUnhangPacket() : GamePacket(CSOffsets.CSUnhangPacket, 1)
 {
     public override void Read(PacketStream stream)
     {
+        // r208022 sends the local character u24 and the reason u32, without a target ID.
+        if (stream.LeftBytes != 7)
+            return;
+
         var unitObjId = stream.ReadBc();
         // var targetObjId = stream.ReadBc(); // Not used in 1.2
         var targetObjId = 0u;
@@ -23,16 +27,15 @@ public class CSUnhangPacket() : GamePacket(CSOffsets.CSUnhangPacket, 1)
         Logger.Trace($"Unhang, unitObjId: {unitObjId}, targetObjId: {targetObjId}, Reason: {reason}");
         // For 1.2 the targetObjId is not sent, so we will need to grab our saved value from Transform
         // Later this can also be used to verify if it's the correct object
-        Slave? stickySlave = null;
-        var character = Connection.ActiveChar.ParentWorld.GetBaseUnit(unitObjId);
-        if (character != null)
-        {
-            stickySlave = character.Transform.StickyParent?.GameObject as Slave;
-            targetObjId = character.Transform.StickyParent?.GameObject?.ObjId ?? 0;
-            character.Transform.StickyParent = null;
-        }
+        var character = Connection?.ActiveChar;
+        if (character == null || unitObjId != character.ObjId)
+            return;
 
-        Connection.ActiveChar.BroadcastPacket(new SCUnhungPacket(unitObjId, targetObjId, reason), false);
+        var stickySlave = character.Transform.StickyParent?.GameObject as Slave;
+        targetObjId = character.Transform.StickyParent?.GameObject?.ObjId ?? 0;
+        character.Transform.StickyParent = null;
+
+        character.BroadcastPacket(new SCUnhungPacket(unitObjId, targetObjId, reason), false);
 
         if (stickySlave != null)
             ShipHarpoonRopeController.BreakRopeForClients(stickySlave, cutouted: false);

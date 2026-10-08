@@ -11,7 +11,8 @@ public class DoodadFuncDigTerrain : DoodadFuncTemplate
 
     public override void Use(BaseUnit caster, Doodad owner, uint skillId, int nextPhase = 0)
     {
+        // r208022 ClientDoodad::Init reads this descriptor and creates the terrain effect locally.
+        // This is not a gathering action. See Docs/customized/Profession-Doodads-644.md.
         Logger.Trace("DoodadFuncDigTerrain");
-
     }
 }

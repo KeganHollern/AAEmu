@@ -15,25 +15,33 @@ public sealed class TaskManagerIntervalTests
         var oldTrigger = DateTime.MinValue;
         var newTrigger = DateTime.MinValue;
         var accepted = false;
+        using var tickFinished = new ManualResetEventSlim();
         var task = new CallbackTask(current =>
         {
+            // Tick queues the callback before it selects the next trigger. Wait for
+            // that selection before reading the baseline for this interval change.
+            tickFinished.Wait();
             oldTrigger = current.TriggerTime;
             accepted = manager.UpdateRepeatInterval(current, TimeSpan.FromSeconds(1));
             newTrigger = current.TriggerTime;
             finished.SetResult();
         });
         manager.Schedule(task, TimeSpan.FromSeconds(-1), TimeSpan.FromSeconds(2));
+        var initialTrigger = task.TriggerTime;
         try
         {
             typeof(TaskManager).GetMethod("Tick", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(manager, [TimeSpan.FromMilliseconds(50)]);
+            tickFinished.Set();
             await finished.Task.WaitAsync(TimeSpan.FromSeconds(10));
         }
         finally
         {
+            tickFinished.Set();
             manager.Stop();
         }
         await Assert.That(accepted).IsTrue();
+        await Assert.That(oldTrigger).IsGreaterThan(initialTrigger);
         await Assert.That(newTrigger).IsEqualTo(oldTrigger.AddSeconds(-1));
         await Assert.That(task.RepeatInterval).IsEqualTo(TimeSpan.FromSeconds(1));
         await Assert.That(task.ExecuteCount).IsEqualTo(1);

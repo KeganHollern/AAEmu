@@ -336,6 +336,18 @@ public class Doodad : BaseUnit
     /// </summary>
     public int CumulativePhaseRatio { get; set; }
 
+    protected virtual int RollPhaseRatio() => Random.Shared.Next(10000);
+
+    internal bool TrySelectPhaseRatio(int ratio)
+    {
+        // One ordered, half-open interval per row. The approved server rule keeps
+        // unallocated probability and clips excess weight to the remaining range.
+        var start = CumulativePhaseRatio;
+        var end = (int)Math.Min(10000L, start + Math.Max(0L, ratio));
+        CumulativePhaseRatio = end;
+        return PhaseRatio >= start && PhaseRatio < end;
+    }
+
     /// <summary>
     /// Used to indicate the starting phase of the doodad should be overriden when loading player doodads
     /// </summary>
@@ -696,7 +708,10 @@ public class Doodad : BaseUnit
                 return false; // no phase functions for FuncGroupId
             }
 
-            //CumulativePhaseRatio = 0; // не требуется
+            // RatioChange and RatioRespawn share one roll for this phase's ordered
+            // alternatives. Unrelated phase functions do not consume probability.
+            PhaseRatio = RollPhaseRatio();
+            CumulativePhaseRatio = 0;
             var stop = false;
 
             // Perform the phase functions one after the other
@@ -705,8 +720,6 @@ public class Doodad : BaseUnit
                 if (phaseFunc == null) { continue; }
                 if (suppressTodPhaseOverride && phaseFunc.FuncType == nameof(DoodadFuncTod)) { continue; }
 
-                PhaseRatio = Random.Shared.Next(0, 10000); // проверяем шанс для каждой фазовой функции
-
                 stop = phaseFunc.Use(caster, this);
                 if (stop)
                 {
@@ -714,11 +727,17 @@ public class Doodad : BaseUnit
                 }
             }
 
-            if (OverridePhase != 0 && stop && FuncGroupId != OverridePhase)
+            if (OverridePhase != 0 && stop)
             {
-                nextPhase = OverridePhase;
+                var selectedPhase = OverridePhase;
+                // A self-transition also consumes its override. It must not replace
+                // the next interaction's authored destination.
                 OverridePhase = 0;
-                continue;
+                if (FuncGroupId != selectedPhase)
+                {
+                    nextPhase = selectedPhase;
+                    continue;
+                }
             }
 
             if (!_deleted)
@@ -1205,6 +1224,7 @@ public class Doodad : BaseUnit
         var overrideTime = OverridePhaseTime;
         var deleted = _deleted;
         var data = Data;
+        var ratio = PhaseRatio;
         var cumulative = CumulativePhaseRatio;
         var itemId = ItemId;
         var itemTemplateId = ItemTemplateId;
@@ -1229,6 +1249,7 @@ public class Doodad : BaseUnit
             OverridePhaseTime = overrideTime;
             _deleted = deleted;
             Data = data;
+            PhaseRatio = ratio;
             CumulativePhaseRatio = cumulative;
             ItemId = itemId;
             ItemTemplateId = itemTemplateId;
