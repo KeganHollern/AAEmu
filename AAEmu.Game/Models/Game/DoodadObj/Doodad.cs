@@ -727,11 +727,17 @@ public class Doodad : BaseUnit
                 }
             }
 
-            if (OverridePhase != 0 && stop && FuncGroupId != OverridePhase)
+            if (OverridePhase != 0 && stop)
             {
-                nextPhase = OverridePhase;
+                var selectedPhase = OverridePhase;
+                // A self-transition also consumes its override. It must not replace
+                // the next interaction's authored destination.
                 OverridePhase = 0;
-                continue;
+                if (FuncGroupId != selectedPhase)
+                {
+                    nextPhase = selectedPhase;
+                    continue;
+                }
             }
 
             if (!_deleted)
