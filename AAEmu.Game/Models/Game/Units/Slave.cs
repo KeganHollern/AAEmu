@@ -49,6 +49,8 @@ public class Slave : Unit
     /// <summary>Sub-sbyte smoothing so rudder/throttle do not stair-step when quantized for physics and packets.</summary>
     public float ThrottleSmoothed { get; set; }
     public float Speed { get; set; }
+    /// <summary>Last accepted vehicle movement velocity in metres per second.</summary>
+    public Vector3 VehicleVelocity { get; set; }
     /// <summary>
     /// Last non-zero movement direction sign for ship handling (-1 backward, +1 forward).
     /// Used to keep steering behavior stable when speed hovers around zero.

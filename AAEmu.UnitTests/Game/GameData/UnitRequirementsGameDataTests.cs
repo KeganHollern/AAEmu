@@ -6,6 +6,7 @@ using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Spheres;
+using AAEmu.UnitTests.Utils.Mocks;
 
 using Microsoft.Data.Sqlite;
 
@@ -77,6 +78,57 @@ public sealed class UnitRequirementsGameDataTests
         await Assert.That(result.ResultKey).IsEqualTo(SkillResultKeys.skill_urk_target_npc);
         await Assert.That(result.ResultUShort).IsEqualTo((ushort)0);
         await Assert.That(result.ResultUInt).IsEqualTo(4242u);
+    }
+
+    [Test]
+    [Arguments(0, 0, true)]
+    [Arguments(9, 0, true)]
+    [Arguments(10, 0, false)]
+    [Arguments(0, 1, false)]
+    [Arguments(9, 6, false)]
+    public async Task CanComponentRun_JuryQualification_UsesBothAuthoredPointConditions(
+        int infamy, int juryPoints, bool expected)
+    {
+        // Components 21905 and 21908 require infamy <= 9 and jury points <= 0.
+        var data = CreateData("QuestComponent",
+            new UnitReqs { KindType = UnitReqsKindType.CrimeRecord, Value1 = 1, Value2 = 9 },
+            new UnitReqs { KindType = UnitReqsKindType.JuryPoint, Value1 = 1, Value2 = 0 });
+        var player = new CharacterMock { InfamyPoint = infamy, JuryPoint = juryPoints };
+        var component = new QuestComponentTemplate(new QuestTemplate()) { Id = OwnerId };
+
+        await Assert.That(data.CanComponentRun(component, player)).IsEqualTo(expected);
+    }
+
+    [Test]
+    [Arguments(0, 5, false)]
+    [Arguments(0, 6, true)]
+    [Arguments(9, 6, true)]
+    [Arguments(10, 6, false)]
+    [Arguments(9, 7, true)]
+    public async Task CanComponentRun_ExecutionerQualification_UsesBothAuthoredPointConditions(
+        int infamy, int juryPoints, bool expected)
+    {
+        // Components 22064 and 22070 require infamy <= 9 and jury points >= 6.
+        var data = CreateData("QuestComponent",
+            new UnitReqs { KindType = UnitReqsKindType.CrimeRecord, Value1 = 1, Value2 = 9 },
+            new UnitReqs { KindType = UnitReqsKindType.JuryPoint, Value1 = 0, Value2 = 6 });
+        var player = new CharacterMock { InfamyPoint = infamy, JuryPoint = juryPoints };
+        var component = new QuestComponentTemplate(new QuestTemplate()) { Id = OwnerId };
+
+        await Assert.That(data.CanComponentRun(component, player)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task CanUseSkill_LegacyCraftLearningRequirement_MatchesClientSuccess()
+    {
+        // r208022 explicitly skips kind 19. Craft 169 belongs to legacy skill 10603.
+        var data = CreateData("Skill",
+            new UnitReqs { KindType = UnitReqsKindType.CanLearnCraft, Value1 = 169 });
+        var result = data.CanUseSkill(new SkillTemplate { Id = OwnerId }, new Unit(), null);
+
+        await Assert.That(result.ResultKey).IsEqualTo(SkillResultKeys.ok);
+        await Assert.That(result.ResultUShort).IsEqualTo((ushort)0);
+        await Assert.That(result.ResultUInt).IsEqualTo(0u);
     }
 
     private static bool Evaluate(UnitRequirementsGameData data, string ownerType, bool orUnitReqs)

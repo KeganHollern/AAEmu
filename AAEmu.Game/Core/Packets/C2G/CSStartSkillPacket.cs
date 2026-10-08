@@ -42,6 +42,7 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         var world = Connection.ActiveChar?.ParentWorld ?? WorldManager.Instance.GetWorld(WorldManager.DefaultInstanceId);
 
         var skillResult = SkillResult.Success;
+        ushort skillResultErrorUShort = 0;
         var skillResultErrorValue = 0u;
         Skill skill = null;
         var isOwnUnitCast = skillCaster is SkillCasterUnit && skillCaster.ObjId == Connection.ActiveChar.ObjId;
@@ -61,7 +62,7 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
             else
             {
                 skill = new Skill(template, Connection.ActiveChar);
-                skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+                skillResult = skill.Use(Connection.ActiveChar, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorUShort, out skillResultErrorValue);
             }
         }
         else if (skillCaster is SkillCasterMount scm)
@@ -73,16 +74,16 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
                     skillId, out var mountAttachedSkill))
             {
                 Logger.Warn($"StartSkill: Character {Connection.ActiveChar.ObjId} attempted unauthorized mount skill {skillId}");
-                SendFailure(skillId, skillCaster, skillCastTarget, skill, skillObject, SkillResult.InvalidSkill, 0);
+                SendFailure(skillId, skillCaster, skillCastTarget, skill, skillObject, SkillResult.InvalidSkill, 0, 0);
                 return;
             }
             var slave = caster as Slave;
 
             // Use the main skill on the mate/slave
-            var mountPrimaryResult = skill.Use(caster, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+            var mountPrimaryResult = skill.Use(caster, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorUShort, out skillResultErrorValue);
             if (mountPrimaryResult != SkillResult.Success)
             {
-                SendFailure(skillId, skillCaster, skillCastTarget, skill, skillObject, mountPrimaryResult, skillResultErrorValue);
+                SendFailure(skillId, skillCaster, skillCastTarget, skill, skillObject, mountPrimaryResult, skillResultErrorUShort, skillResultErrorValue);
                 return;
             }
             if (slave != null)
@@ -106,11 +107,12 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
             skillCaster = new SkillCasterUnit(rider.ObjId);
             skillCastTarget = new SkillCastUnitTarget(riderTarget.ObjId);
             skillObject = new SkillObject();
+            skillResultErrorUShort = 0;
             skillResultErrorValue = 0;
             var riderTemplate = SkillManager.Instance.GetSkillTemplate(skillId);
             skill = new Skill(riderTemplate ?? new SkillTemplate { Id = skillId });
             skillResult = riderTemplate == null ? SkillResult.InvalidSkill :
-                skill.Use(rider, skillCaster, skillCastTarget, skillObject, true, out skillResultErrorValue);
+                skill.Use(rider, skillCaster, skillCastTarget, skillObject, true, out skillResultErrorUShort, out skillResultErrorValue);
         }
         else if (skillCaster is SkillItem)
         {
@@ -119,7 +121,7 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
             var template = SkillManager.Instance.GetSkillTemplate(skillId);
             skill = new Skill(template ?? new SkillTemplate { Id = skillId });
             skillResult = template == null ? SkillResult.InvalidSkill :
-                skill.Use(player, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+                skill.Use(player, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorUShort, out skillResultErrorValue);
         }
         else
         {
@@ -139,7 +141,7 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
             {
                 if (player.Skills.Skills.ContainsKey(skillId))
                     player.Skills.ComboState.Clear();
-                skillResult = skill.Use(player, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorValue);
+                skillResult = skill.Use(player, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorUShort, out skillResultErrorValue);
                 if (skillResult == SkillResult.Success && skillId is 2 or 3 or 4)
                 {
                     player.IsAutoAttack = true;
@@ -149,11 +151,11 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         }
 
         if (skillResult != SkillResult.Success)
-            SendFailure(skillId, skillCaster, skillCastTarget, skill, skillObject, skillResult, skillResultErrorValue);
+            SendFailure(skillId, skillCaster, skillCastTarget, skill, skillObject, skillResult, skillResultErrorUShort, skillResultErrorValue);
     }
 
     private void SendFailure(uint skillId, SkillCaster caster, SkillCastTarget target, Skill skill,
-        SkillObject skillObject, SkillResult result, uint detail)
+        SkillObject skillObject, SkillResult result, ushort detailUShort, uint detail)
     {
         // The confirmed failure body is a skill-started packet without a fired/stopped packet.
         var packet = new SCSkillStartedPacket(skillId, 0, caster, target, skill, skillObject)
@@ -161,6 +163,7 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
             RealCastTimeDiv10 = 0, BaseCastTimeDiv10 = 0
         };
         packet.SetSkillResult(result);
+        packet.SetResultUShort(detailUShort);
         packet.SetResultUInt(detail);
         Connection.ActiveChar.SendPacket(packet);
     }

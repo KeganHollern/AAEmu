@@ -8,6 +8,7 @@ public class VehicleModel : Model
     public float TurretYawAngleMin { get; set; }
     public float TurretYawAngleMax { get; set; }
     public bool InstalledTurret { get; set; }
+    public bool UseWheeledVehicleSimulation { get; set; }
 
     /*
      *id
