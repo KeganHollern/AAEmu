@@ -1,15 +1,23 @@
-﻿using System.Reflection;
+﻿using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
 
+using AAEmu.Commons.Network;
+using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Crafts;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
@@ -19,6 +27,8 @@ public sealed class CharacterCraftReservationTests
 {
     private static readonly FieldInfo s_items = typeof(Singleton<ItemManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
     private static readonly FieldInfo s_quests = typeof(Singleton<QuestManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+    private static readonly FieldInfo s_skills = typeof(Singleton<SkillManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+    private object _previousSkills;
     private object _previousItems;
     private object _previousQuests;
     private bool _previousDebugInfo;
@@ -32,6 +42,10 @@ public sealed class CharacterCraftReservationTests
     public void SetUp()
     {
         _previousItems = s_items.GetValue(null);
+        _previousSkills = s_skills.GetValue(null);
+        var skills = new SkillManager(null, null);
+        SetField(skills, "_skills", new Dictionary<uint, SkillTemplate> { [50] = new() { Id = 50 } });
+        s_skills.SetValue(null, skills);
         _previousQuests = s_quests.GetValue(null);
         _previousDebugInfo = AppConfiguration.Instance.DebugInfo;
         AppConfiguration.Instance.DebugInfo = false;
@@ -70,6 +84,7 @@ public sealed class CharacterCraftReservationTests
     public void TearDown()
     {
         s_items.SetValue(null, _previousItems);
+        s_skills.SetValue(null, _previousSkills);
         s_quests.SetValue(null, _previousQuests);
         AppConfiguration.Instance.DebugInfo = _previousDebugInfo;
     }
@@ -162,6 +177,84 @@ public sealed class CharacterCraftReservationTests
         Arm(recipe);
         Assert.Throws<NullReferenceException>(() => _craft.EndCraft());
         await Assert.That(_craft.IsCrafting).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false, false, ErrorMessageType.NotEnoughRequiredItem)]
+    [Arguments(true, false, ErrorMessageType.BackpackOccupied)]
+    [Arguments(true, true, ErrorMessageType.NotEnoughRequiredItem)]
+    public async Task CraftAdmission_OnlyAutoEquippedProductsNeedTheBackpackSlot(
+        bool backpackProduct, bool bindsOnEquip, ErrorMessageType expectedError)
+    {
+        var carriedPack = CarryPack();
+        if (backpackProduct)
+            _templates[200] = new BackpackTemplate
+            {
+                Id = 200, MaxCount = 1, BackpackType = BackpackType.TradePack,
+                BindType = bindsOnEquip ? ItemBindType.BindOnEquip : ItemBindType.Normal
+            };
+        var session = new RecordingSession();
+        _owner.Connection = new GameConnection(session) { ActiveChar = _owner };
+
+        // There are no materials. A bag product must reach that check even while
+        // a pack occupies the equipment slot. An auto-equipped pack must stop first.
+        _craft.Craft(Recipe(), 1, 0);
+
+        var bytes = session.Packets.Single();
+        await Assert.That(BitConverter.ToUInt16(bytes, 6)).IsEqualTo(SCOffsets.SCErrorMsgPacket);
+        var body = new PacketStream(bytes[8..]);
+        await Assert.That(body.ReadInt16()).IsEqualTo((short)ErrorMessageType.CraftCantActAnyMore);
+        await Assert.That(body.ReadInt16()).IsEqualTo((short)expectedError);
+        await Assert.That(body.ReadUInt32()).IsEqualTo(0U);
+        await Assert.That(body.ReadBoolean()).IsFalse();
+        await Assert.That(body.Pos).IsEqualTo(body.Count);
+        await Assert.That(_craft.IsCrafting).IsFalse();
+        await Assert.That(_owner.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack)).IsSameReferenceAs(carriedPack);
+        await Assert.That(_owner.Inventory.Bag.Items).IsEmpty();
+    }
+
+    [Test]
+    public async Task BagProductCompletion_LeavesCarriedPackEquipped()
+    {
+        var carriedPack = CarryPack();
+        var material = Material(3);
+        Arm(Recipe());
+
+        _craft.EndCraft();
+
+        await Assert.That(_owner.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack)).IsSameReferenceAs(carriedPack);
+        await Assert.That(_owner.Inventory.Bag.Items.Single().TemplateId).IsEqualTo(200U);
+        await Assert.That(_owner.Inventory.Bag.Items.Single().Count).IsEqualTo(1);
+        await Assert.That(material.Count).IsEqualTo(0);
+        await Assert.That(_craft.IsCrafting).IsFalse();
+    }
+
+    private Backpack CarryPack()
+    {
+        var template = new BackpackTemplate { Id = 300, MaxCount = 1, BackpackType = BackpackType.TradePack };
+        _templates[300] = template;
+        var container = _owner.Inventory.Equipment;
+        var item = new Backpack
+        {
+            Id = 2, TemplateId = 300, Template = template, Count = 1, OwnerId = _owner.Id,
+            SlotType = SlotType.Equipment, Slot = (int)EquipmentItemSlot.Backpack, _holdingContainer = container
+        };
+        container.Items.Add(item);
+        _allItems.Add(item.Id, item);
+        return item;
+    }
+
+    private sealed class RecordingSession : ISession
+    {
+        internal List<byte[]> Packets { get; } = [];
+        public IPAddress Ip => IPAddress.Loopback;
+        public uint SessionId => 1;
+        public Socket Socket => null;
+        public void SendPacket(byte[] packet) => Packets.Add(packet.ToArray());
+        public void AddAttribute(string name, object attribute) { }
+        public object GetAttribute(string name) => null;
+        public void ClearAttribute(string name) { }
+        public void Close() { }
     }
 
     private static Craft Recipe() => new()

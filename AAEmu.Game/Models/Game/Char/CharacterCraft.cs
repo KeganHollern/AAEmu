@@ -89,10 +89,11 @@ public class CharacterCraft(Character owner)
         Count = count;
         DoodadId = doodadId;
 
-        // check if you are equipped with a backpack or glider
-        if (!Owner.Inventory.CanReplaceGliderInBackpackSlot())
+        // Only auto-equipped products need the backpack slot. Ordinary workbench
+        // products go into the bag even when the character carries a trade pack.
+        if (craft.CraftProducts.Any(product => ItemManager.Instance.IsAutoEquipTradePack(product.ItemId)) &&
+            !Owner.Inventory.CanReplaceGliderInBackpackSlot())
         {
-            // TODO verified
             Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.BackpackOccupied, 0, false);
             CancelCraft();
             return;

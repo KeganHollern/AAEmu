@@ -1,9 +1,19 @@
-using AAEmu.Game.Models.Game.Char;
+﻿using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
 
 public class CharacterCraftTests
 {
+    [Test]
+    public async Task CraftPackInteraction_DoesNotAdvanceTheStationPhase()
+    {
+        var station = new Doodad { ToNextPhase = true };
+        new DoodadFuncCraftPack { CraftPackId = 33 }.Use(null, station, 0, -1);
+        await Assert.That(station.ToNextPhase).IsFalse();
+    }
+
     [Test]
     [Arguments(0u, new uint[] { }, 0u, new uint[] { }, true)]
     [Arguments(568u, new uint[] { }, 568u, new uint[] { }, true)]
