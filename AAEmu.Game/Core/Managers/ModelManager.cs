@@ -65,6 +65,11 @@ public class ModelManager : Singleton<ModelManager>, IModelManager
         model.InstalledTurret = reader.GetBoolean("installed_turret", true);
     }
 
+    internal static void ReadVehicleSimulationSettings(SQLiteWrapperReader reader, VehicleModel model)
+    {
+        model.UseWheeledVehicleSimulation = reader.GetBoolean("use_wheeled_vehicle_simulation", true);
+    }
+
     public bool IsFlyOrSwim(uint modelId)
     {
         if (!_modelTypes.TryGetValue(modelId, out var modelType))
@@ -185,6 +190,7 @@ public class ModelManager : Singleton<ModelManager>, IModelManager
                         };
 
                         ReadTurretSettings(reader, model);
+                        ReadVehicleSimulationSettings(reader, model);
                         _models["VehicleModel"].TryAdd(model.Id, model);
                     }
                 }

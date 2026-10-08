@@ -146,6 +146,13 @@ public partial class Skill
     /// <returns></returns>
     public SkillResult Use(BaseUnit caster, SkillCaster casterCaster, SkillCastTarget targetCaster, SkillObject skillObject, bool bypassGcd, out uint skillResultValueUInt)
     {
+        return Use(caster, casterCaster, targetCaster, skillObject, bypassGcd, out _, out skillResultValueUInt);
+    }
+
+    public SkillResult Use(BaseUnit caster, SkillCaster casterCaster, SkillCastTarget targetCaster, SkillObject skillObject,
+        bool bypassGcd, out ushort skillResultValueUShort, out uint skillResultValueUInt)
+    {
+        skillResultValueUShort = 0;
         if (!TryEnterExecution(caster as Character, out var execution))
         {
             Cancelled = true;
@@ -153,11 +160,13 @@ public partial class Skill
             return SkillResult.ItemLocked;
         }
         using (execution)
-            return UseCore(caster, casterCaster, targetCaster, skillObject, bypassGcd, out skillResultValueUInt);
+            return UseCore(caster, casterCaster, targetCaster, skillObject, bypassGcd, out skillResultValueUShort, out skillResultValueUInt);
     }
 
-    private SkillResult UseCore(BaseUnit caster, SkillCaster casterCaster, SkillCastTarget targetCaster, SkillObject skillObject, bool bypassGcd, out uint skillResultValueUInt)
+    private SkillResult UseCore(BaseUnit caster, SkillCaster casterCaster, SkillCastTarget targetCaster, SkillObject skillObject,
+        bool bypassGcd, out ushort skillResultValueUShort, out uint skillResultValueUInt)
     {
+        skillResultValueUShort = 0;
         skillResultValueUInt = 0;
         // Check if the source is an actual Unit
         if (caster is not Unit unit)
@@ -220,6 +229,7 @@ public partial class Skill
             if (character != null)
                 Logger.Warn($"{character.Name} ({character.Id}) failed requirements to use skill {Template?.Id} - {requirementResult.ResultKey}");
             Cancelled = true;
+            skillResultValueUShort = requirementResult.ResultUShort;
             skillResultValueUInt = requirementResult.ResultUInt;
             return SkillResultHelper.SkillResultErrorKeyToId(requirementResult.ResultKey);
         }

@@ -22,7 +22,7 @@ public enum UnitReqsKindType : uint
     TargetBuff = 0x10,                  // BuffId, unused, target must have buff
     TargetCombat = 0x11,                // unused, unused, target must not be in combat
     // 0x12
-    CanLearnCraft = 0x13,               // CraftId, unused, must not have learned craft
+    CanLearnCraft = 0x13,               // Legacy craft ID; r208022 player validation explicitly skips this kind
     DoodadRange = 0x14,                 // DoodadId, range, range seems to be in millimeters
     EquipShield = 0x15,                 // always 1, unused, have a shield equipped. 1 Might be the shield style?
     NoBuff = 0x16,                      // BuffId, 0 or 1, must not have the buff, don't know what the 0 or 1 means
@@ -47,17 +47,17 @@ public enum UnitReqsKindType : uint
     Tod = 0x29,                         // TimeOfDay Start, TimeOfDay End, format is in-game hours x 100 (e.g. 1150 => 11h30)
     MotherFaction = 0x2A,               // FactionId, unused, mother faction must be
     ActAbilityPoint = 0x2B,             // ActAbilityId, Points, requires points amount of act ability to use
-    CrimePoint = 0x2C,                  // points min, points max
+    CrimePoint = 0x2C,                  // comparison (0: >=, nonzero: <=), crime-point threshold
     HonorPoint = 0x2D,                  // points min, points max
-    CrimeRecord = 0x2E,                 // min val, max val, val seems to be more of a standing rating that record count, 0=has crime point, 1= has no crime points, 9=???
-    JuryPoint = 0x2F,                   // can be jury, unknown, value1 seems like a "can be jury" flag, not sure about the 2nd
+    CrimeRecord = 0x2E,                 // comparison (0: >=, nonzero: <=), infamy-point threshold
+    JuryPoint = 0x2F,                   // comparison (0: >=, nonzero: <=), jury-point threshold
     SourceOwnerType = 0x30,             // unused, unused, no idea how this is supposed to be owner type, all values are 0 and only used for AiEvents
     Appellation = 0x31,                 // unused, unused, there are no entries using this
     LivingPoint = 0x32,                 // unused, unused, there are no entries using this
     InZone = 0x33,                      // Zone ID, unused, Must be inside Zone ID
     OutZone = 0x34,                     // Zone ID, unused, Must be outside Zone ID (unused)
     DominionOwner = 0x35,               // unused, unused, looks like this is meant for castle area rulers
-    VerdictOnly = 0x36,                 // unused, unused, target must be suspect (used to catch bots)
+    VerdictOnly = 0x36,                 // unused, unused, caster must have nonzero jury points
     FactionMatchOnly = 0x37,            // FactionId, unused, must be of faction (used for pirates 161)
     MotherFactionOnly = 0x38,           // FactionId, unused, must be of given mother faction
     NationOwner = 0x39,                 // unused, unused, must be nation monarch
@@ -71,7 +71,7 @@ public enum UnitReqsKindType : uint
     HealthMargin = 0x41,                // Health Margin, unused, margin <= max - current, there are no entries using this
     ManaMargin = 0x42,                  // Mana Margin, unused, margin <= max - current, there are no entries using this
     LaborPowerMargin = 0x43,            // Labor Margin, unused, minimum amount of labor below cap (margin <= max - current)
-    NotOnMovingPhysicalVehicle = 0x44,  // unused, unused, must not be driving/sitting on a moving vehicle
+    NotOnMovingPhysicalVehicle = 0x44,  // unused, unused, physical wheeled vehicle driver must not exceed 5 m/s
     MaxLevel = 0x45,                    // MaxLevel, unused, maximum allowed level to use
     ExpeditionOwner = 0x46,             // unused, unused, must be guild owner, unused
     ExpeditionMember = 0x47,            // unused, unused, must be guild member, unused

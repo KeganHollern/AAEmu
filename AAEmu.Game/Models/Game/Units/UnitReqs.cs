@@ -91,9 +91,10 @@ public class UnitReqs
             case UnitReqsKindType.TargetCombat:
                 return Ret(SkillResultKeys.skill_urk_target_combat, targetUnit is { IsInBattle: false });
 
-            // case UnitReqsKindType.CanLearnCraft:
-            //     // Learnable crafts is not implemented
-            //     return ret(SkillResultKeys.skill_urk_can_learn_craft, player != null && !player.Craft.LearnedCraft(Value1));
+            case UnitReqsKindType.CanLearnCraft:
+                // The r208022 player dispatcher explicitly skips this legacy requirement.
+                // Current designs are craft materials, not learned recipes. See r208022-unit-requirements.md.
+                return Ret(SkillResultKeys.skill_urk_can_learn_craft, true);
 
             case UnitReqsKindType.DoodadRange:
                 if (owner == null)
@@ -203,22 +204,20 @@ public class UnitReqs
                     player?.Actability.Actabilities.GetValueOrDefault(Value1)?.Point >= Value2);
 
             case UnitReqsKindType.CrimePoint:
-                // No specific key for this?
-                return Ret(SkillResultKeys.skill_failure, true); //  player?.CrimePoint >= Value1 && player.CrimePoint <= Value2);
+                return RetWithValue(SkillResultKeys.skill_urk_crime_point, Value1,
+                    player != null && MeetsPointRequirement(player.CrimePoint));
 
             case UnitReqsKindType.HonorPoint:
                 return Ret(SkillResultKeys.skill_urk_honor_point,
                     player?.HonorPoint >= Value1 && player.HonorPoint <= Value2);
 
             case UnitReqsKindType.CrimeRecord:
-                // TODO: Verify if CrimeRecord is correct here
-                // No specific key for this?
-                return Ret(SkillResultKeys.skill_failure, true); // player?.CrimeRecord >= Value1 && player.CrimeRecord <= Value2);
+                return RetWithValue(SkillResultKeys.skill_urk_crime_record, Value1,
+                    player != null && MeetsPointRequirement(player.InfamyPoint));
 
             case UnitReqsKindType.JuryPoint:
-                // TODO: Is this correct? 
-                // No specific key for this?
-                return Ret(SkillResultKeys.skill_failure, player?.JuryPoint >= Value1);
+                return RetWithValue(SkillResultKeys.skill_urk_jury_point, Value1,
+                    player != null && MeetsPointRequirement(player.JuryPoint));
 
             case UnitReqsKindType.SourceOwnerType:
                 // TODO: Not sure if this is supposed the unit itself, or it's owner/summoner
@@ -247,9 +246,8 @@ public class UnitReqs
             // case UnitReqsKindType.DominionOwner: // Needs Castle and Siege implementation
 
             case UnitReqsKindType.VerdictOnly:
-                // This needs implementation of the used to arrest Prime Suspects
-                // For now, return always true as the only skill that uses it, also checks for the target buff already
-                return Ret(SkillResultKeys.skill_urk_verdict_only, true);
+                // Native r208022 checks the caster's jury privilege, independently of the target's suspect buff.
+                return Ret(SkillResultKeys.skill_urk_verdict_only, player != null && player.JuryPoint != 0);
 
             case UnitReqsKindType.FactionMatchOnly:
                 // Is this the same as UnitReqsKindType.FactionMatch ? 
@@ -282,10 +280,7 @@ public class UnitReqs
                 return RetWithValue(SkillResultKeys.skill_urk_labor_power_margin, Value1, Value1 <= remainingLaborMargin);
 
             case UnitReqsKindType.NotOnMovingPhysicalVehicle:
-                // Just return true for now
-                // This requires checking parents and bindings
-                // No specific key for this?
-                return Ret(SkillResultKeys.skill_failure, true);
+                return PhysicalVehicleRequirements.Validate(player);
 
             case UnitReqsKindType.MaxLevel:
                 return Ret(SkillResultKeys.skill_urk_max_level, player?.Level <= Value1);
@@ -344,4 +339,8 @@ public class UnitReqs
                 return new UnitReqsValidationResult(SkillResultKeys.ok, 0, 0);
         }
     }
+
+    // r208022 uses Value1 as the comparison direction, not a lower bound.
+    // Zero means at least Value2; every nonzero value means at most Value2.
+    private bool MeetsPointRequirement(int points) => Value1 == 0 ? points >= Value2 : points <= Value2;
 }

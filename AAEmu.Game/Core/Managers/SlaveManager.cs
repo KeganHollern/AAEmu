@@ -189,6 +189,8 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
             }
 
             slave.AttachedCharacters.Add(attachPoint, character);
+            if (attachPoint == AttachPointKind.Driver)
+                slave.VehicleVelocity = Vector3.Zero;
             character.AttachedPoint = attachPoint;
             character.Transform.StickyParent = null;
             character.Transform.Parent = slave.Transform;

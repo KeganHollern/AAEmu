@@ -1,4 +1,6 @@
-﻿using AAEmu.Commons.Network;
+﻿using System.Numerics;
+
+using AAEmu.Commons.Network;
 
 namespace AAEmu.Game.Models.Game.Units.Movements;
 
@@ -12,6 +14,11 @@ public class VehicleMoveType : MoveType
     public float AngVelZ { get; set; }
     public float Steering { get; set; }
     public List<float> WheelAngVel { get; set; } = [];
+    // r208022 MoveInfo type 2 decodes each signed short over the 30 m/s range.
+    public Vector3 LinearVelocity => new(
+        VelX * (1f / short.MaxValue) * 30f,
+        VelY * (1f / short.MaxValue) * 30f,
+        VelZ * (1f / short.MaxValue) * 30f);
 
     public override void Read(PacketStream stream)
     {

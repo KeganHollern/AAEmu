@@ -128,6 +128,12 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                     // Make sure driver is attached to car
                     character.Transform.Parent = car.Transform;
                     car.Transform.Local.SetPosition(vmt.X, vmt.Y, vmt.Z, rotDegX, rotDegY, rotDegZ);
+                    lock (car.AttachmentSyncRoot)
+                    {
+                        if (!IsSlaveDriver(car, character))
+                            return;
+                        car.VehicleVelocity = vmt.LinearVelocity;
+                    }
                     car.BroadcastPacket(new SCOneUnitMovementPacket(_objId, vmt), true);
                     car.Transform.FinalizeTransform(); // Propagate position updates to all children
                     break;
