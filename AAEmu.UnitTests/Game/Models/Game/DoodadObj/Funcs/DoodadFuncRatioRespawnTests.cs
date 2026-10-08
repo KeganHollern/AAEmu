@@ -51,7 +51,7 @@ public sealed class DoodadFuncRatioRespawnTests
             UnitId = 2768,
             SpawnResult = new Doodad { TemplateId = TargetTemplateId }
         };
-        var owner = CreateOwner(spawner, 1000, 5000);
+        var owner = CreateOwner(spawner, 1000, 0);
         var function = new DoodadFuncRatioRespawn { Ratio = 2000, SpawnDoodadId = TargetTemplateId };
 
         var stopped = function.Use(null, owner);
@@ -67,40 +67,73 @@ public sealed class DoodadFuncRatioRespawnTests
     public async Task Use_RatioMiss_KeepsCurrentDoodad()
     {
         var spawner = new RecordingDoodadSpawner { Id = 10, UnitId = 2768 };
-        var owner = CreateOwner(spawner, 3000, 5000);
+        var owner = CreateOwner(spawner, 3000, 0);
         var function = new DoodadFuncRatioRespawn { Ratio = 2000, SpawnDoodadId = TargetTemplateId };
 
         var stopped = function.Use(null, owner);
 
         await Assert.That(stopped).IsFalse();
         await Assert.That(spawner.Calls).IsEmpty();
-        await Assert.That(owner.CumulativePhaseRatio).IsEqualTo(3000);
+        await Assert.That(owner.CumulativePhaseRatio).IsEqualTo(2000);
     }
 
     [Test]
     public async Task Use_MissingSpawner_KeepsCurrentDoodad()
     {
-        var owner = CreateOwner(null, 1000, 5000);
+        var owner = CreateOwner(null, 1000, 0);
         var function = new DoodadFuncRatioRespawn { Ratio = 2000, SpawnDoodadId = TargetTemplateId };
 
         var stopped = function.Use(null, owner);
 
         await Assert.That(stopped).IsFalse();
-        await Assert.That(owner.CumulativePhaseRatio).IsEqualTo(3000);
+        await Assert.That(owner.CumulativePhaseRatio).IsEqualTo(2000);
     }
 
     [Test]
-    public async Task Use_UnknownTarget_KeepsCurrentDoodad()
+    [Arguments(0u)]
+    [Arguments(999999u)]
+    public async Task Use_UnknownTarget_KeepsCurrentDoodad(uint targetId)
     {
         var spawner = new RecordingDoodadSpawner { Id = 10, UnitId = 2768 };
-        var owner = CreateOwner(spawner, 1000, 5000);
-        var function = new DoodadFuncRatioRespawn { Ratio = 2000, SpawnDoodadId = 999999 };
+        var owner = CreateOwner(spawner, 1000, 0);
+        var function = new DoodadFuncRatioRespawn { Ratio = 2000, SpawnDoodadId = targetId };
 
         var stopped = function.Use(null, owner);
 
         await Assert.That(stopped).IsFalse();
         await Assert.That(spawner.Calls).IsEmpty();
-        await Assert.That(owner.CumulativePhaseRatio).IsEqualTo(3000);
+        await Assert.That(owner.CumulativePhaseRatio).IsEqualTo(2000);
+    }
+
+    [Test]
+    [Arguments(2999, false)]
+    [Arguments(3000, true)]
+    [Arguments(4999, true)]
+    [Arguments(5000, false)]
+    public async Task Use_OrderedInterval_UsesInclusiveStartAndExclusiveEnd(int roll, bool expectedHit)
+    {
+        var spawner = new RecordingDoodadSpawner { Id = 10, UnitId = 2768,
+            SpawnResult = new Doodad { TemplateId = TargetTemplateId } };
+        var owner = CreateOwner(spawner, roll, 3000);
+        var function = new DoodadFuncRatioRespawn { Ratio = 2000, SpawnDoodadId = TargetTemplateId };
+
+        await Assert.That(function.Use(null, owner)).IsEqualTo(expectedHit);
+        await Assert.That(owner.CumulativePhaseRatio).IsEqualTo(5000);
+        await Assert.That(spawner.SpawnCalls).IsEqualTo(expectedHit ? 1 : 0);
+    }
+
+    [Test]
+    public async Task Use_InvalidSelectedTarget_DoesNotGiveItsIntervalToTheNextRow()
+    {
+        var spawner = new RecordingDoodadSpawner { Id = 10, UnitId = 2768 };
+        var owner = CreateOwner(spawner, 1000, 0);
+        var invalid = new DoodadFuncRatioRespawn { Ratio = 2000, SpawnDoodadId = 999999 };
+        var next = new DoodadFuncRatioRespawn { Ratio = 8000, SpawnDoodadId = TargetTemplateId };
+
+        await Assert.That(invalid.Use(null, owner)).IsFalse();
+        await Assert.That(next.Use(null, owner)).IsFalse();
+        await Assert.That(owner.CumulativePhaseRatio).IsEqualTo(10000);
+        await Assert.That(spawner.Calls).IsEmpty();
     }
 
     private static Doodad CreateOwner(DoodadSpawner spawner, int phaseRatio, int cumulativeRatio)
