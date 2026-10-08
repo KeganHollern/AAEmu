@@ -15,14 +15,13 @@ public class DoodadFuncRatioRespawn : DoodadPhaseFuncTemplate
         Logger.Trace("DoodadFuncRatioRespawn : Ratio {0}, SpawnDoodadId {1}", Ratio, SpawnDoodadId);
 
         // Replace the marker with the selected doodad through its authored spawner.
-        if (owner.PhaseRatio <= Ratio && (owner.Spawner?.Id ?? 0) > 0)
+        if (owner.TrySelectPhaseRatio(Ratio) && (owner.Spawner?.Id ?? 0) > 0)
         {
             var spawner = owner.Spawner;
             if (!DoodadManager.Instance.Exist(SpawnDoodadId))
             {
                 Logger.Error(
                     $"DoodadFuncRatioRespawn: Spawn template {SpawnDoodadId} does not exist (spawner={spawner.Id}, currentTemplate={owner.TemplateId}).");
-                owner.CumulativePhaseRatio -= Ratio;
                 return false;
             }
 
@@ -45,7 +44,6 @@ public class DoodadFuncRatioRespawn : DoodadPhaseFuncTemplate
             return true; // Interrupt the phase functions because the source doodad no longer exists.
         }
 
-        owner.CumulativePhaseRatio -= Ratio;
         return false;
     }
 }
