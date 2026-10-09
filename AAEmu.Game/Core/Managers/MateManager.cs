@@ -224,6 +224,8 @@ public class MateManager(WorldInstance parentWorldInstance)
             character.AttachedPoint = attachPoint;
             character.IsVisible = true;
         }
+        if (attachPoint == AttachPointKind.Driver)
+            mateInfo.ResetRidingMovement();
         character.BroadcastPacket(new SCUnitAttachedPacket(character.ObjId, attachPoint, reason, mateInfo.ObjId), true);
         character.Buffs.TriggerRemoveOn(BuffRemoveOn.Mount);
     }
@@ -299,6 +301,8 @@ public class MateManager(WorldInstance parentWorldInstance)
         }
 
         mate.StopUpdateXp();
+        if (seat == AttachPointKind.Driver)
+            mate.ResetRidingMovement();
         occupant.BroadcastPacket(new SCUnitDetachedPacket(occupant.ObjId, reason), true);
         occupant.Events.OnUnmount(actor, new OnUnmountArgs());
         mate.Buffs.TriggerRemoveOn(BuffRemoveOn.Unmount);

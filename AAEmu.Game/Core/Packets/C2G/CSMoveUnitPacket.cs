@@ -77,6 +77,9 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
         var previousPosition = targetUnit.Transform.Local.Position;
         var previousParent = targetUnit.Transform.Parent;
         var previousRotation = targetUnit.Transform.Local.Rotation;
+        var previousWorldPosition = targetUnit.Transform.World.Position;
+        var previousWorldId = targetUnit.Transform.WorldId;
+        var previousInstanceId = targetUnit.Transform.InstanceId;
 
         // We are not controlling our main character
         switch (_moveType)
@@ -314,6 +317,11 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                         new SCOneUnitMovementPacket(_objId, dmt),
                         ShouldIncludeTargetCharacter(character, targetUnit));
                     targetUnit.Transform.FinalizeTransform();
+                    if (targetUnit is Mate movedMate)
+                        movedMate.RecordRidingMileage(character, previousWorldPosition,
+                            previousParent == null && movedMate.Transform.WorldId == previousWorldId &&
+                            movedMate.Transform.InstanceId == previousInstanceId,
+                            dmt.Flags.HasFlag(MoveTypeFlags.HasScTypeAndPhase), DateTime.UtcNow);
                     if (targetUnit is Unit castUnit)
                         SkillCastReactions.OnMovement(castUnit, previousPosition, targetUnit.Transform.Local.Position,
                             ReferenceEquals(previousParent, targetUnit.Transform.Parent),
