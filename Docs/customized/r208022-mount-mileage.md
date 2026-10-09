@@ -4,6 +4,8 @@ This record supports [cluster issue #490](https://github.com/KeganHollern/aaemu-
 The source base is `7802607b7f0029042956a78d9b5b58aff7aa8b6b`.
 The application base is `b10eb50440fa309fad262c8b54541fa79bcd5364`.
 The review date is 2026-10-08.
+The user approved the custom XP rule on 2026-10-08.
+This change needs no client release, database schema change, or compact edit.
 
 ## Input identity
 
@@ -90,9 +92,9 @@ No movement path increases that counter.
 The database already stores mileage in `mates.mileage`, and the spawn packet already sends it.
 Those storage and packet fields do not supply the missing movement calculation.
 
-## Draft mileage behavior
+## Mileage behavior
 
-The draft counts horizontal distance from accepted movement packets.
+The server counts horizontal distance from accepted movement packets.
 The current owner must occupy the driver seat of an active, persistent mount.
 The owner and mount must be alive and in the same world instance.
 Temporary summons, passengers, unmounted pets, and replaced mount objects receive no mileage.
@@ -123,21 +125,58 @@ A new summon creates a new tracker.
 Resummon, reconnect, and server restart retain the saved whole metres but discard less than 1 metre of unsaved fraction.
 The existing database schema and spawn packet already support the whole-metre total.
 
-## Pending server-rule decision
+## Approved server XP rule
 
-The following proposal awaits the user's answer:
+The user approved the following server rule:
 
 - The mileage counter records whole metres of valid mounted movement.
 - Every 2 metres give 1 base XP before the existing `World.ExpRate` multiplier.
 - The riding award has no extra multiplier for the mount's level.
 - The existing authored mate XP thresholds remain unchanged.
 
-This proposal is a server rule, not a confirmed retail formula.
-The final change must record the user's decision and the exact distance, reset, and persistence behavior.
-Tests must cover stops, rejected movement, teleports, fractional distance, and saved progress.
+This is a custom server rule, not a confirmed retail formula.
+[Research issue #683](https://github.com/KeganHollern/aaemu-cluster/issues/683) tracks the missing retail evidence.
+For each whole-metre update, the server uses the current rate at both interval endpoints:
+
+```text
+old_total = mileage before the update
+new_total = mileage after the update
+rate = current World.ExpRate
+XP award = floor(new_total * rate / 2) - floor(old_total * rate / 2)
+```
+
+The server applies the rate once through this calculation.
+It does not apply `World.ExpRate` a second time to the result.
+At rate 1, consecutive 1-metre updates give 0 XP, then 1 XP.
+An odd saved mileage total retains that half-XP credit through resummon, reconnect, and restart.
+At a fixed rate, a route gives the same XP regardless of packet frequency.
+The total also retains fractional XP credit from non-integer rates without a separate stored remainder.
+
+A rate change applies the current rate only to the next mileage interval.
+The server uses that current rate for both endpoints, so a rate increase gives no retroactive award for earlier distance.
+The server never reconstructs or replaces the mount's existing XP from its mileage total.
+The normal mount level cap still limits XP progression.
+
+The fixed 60-second award and its debug chat message are removed.
+Stationary time alone gives no riding XP.
+Combat XP uses its separate existing path.
 
 ## Human checks
 
 Manual checks belong to [HUMAN VALIDATION #573](https://github.com/KeganHollern/aaemu-cluster/issues/573).
-The published release needs checks for a measured ride, a stationary wait, dismount, resummon, and reconnect.
+The release record supplies the exact release and source commit for these planned checks.
+The checks need one owned persistent mount below the level cap and the current `World.ExpRate` value.
+The server can supply read-only mileage totals because the default client UI does not show them.
+
+1. Record the mount's XP and mileage, then ride a measured route after the first movement establishes the baseline.
+   Check the whole-metre change and the XP interval formula.
+2. Stay mounted without movement for more than 60 seconds.
+   Check that neither mileage nor XP changes and that no old debug chat message appears.
+3. Dismount, move on foot, then mount again.
+   Check that foot travel gives no mileage or riding XP and that the next ride uses a new baseline.
+4. Dismiss and resummon the mount, then repeat the check after reconnect.
+   Check that whole mileage and XP remain correct and that no award repeats from earlier distance.
+5. Check a server teleport or world transition during a mounted session.
+   Check that the position change gives no riding mileage or XP and that normal travel resumes from a new baseline.
+
 Automated tests and service readiness do not complete those checks.

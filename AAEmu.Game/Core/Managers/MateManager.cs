@@ -300,7 +300,6 @@ public class MateManager(WorldInstance parentWorldInstance)
             occupant.AttachedPoint = AttachPointKind.None;
         }
 
-        mate.StopUpdateXp();
         if (seat == AttachPointKind.Driver)
             mate.ResetRidingMovement();
         occupant.BroadcastPacket(new SCUnitDetachedPacket(occupant.ObjId, reason), true);

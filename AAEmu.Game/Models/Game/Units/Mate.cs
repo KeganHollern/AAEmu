@@ -9,8 +9,6 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Units.Static;
-using AAEmu.Game.Models.Tasks.Mate;
-using Task = AAEmu.Game.Models.Tasks.Task;
 
 namespace AAEmu.Game.Models.Game.Units;
 
@@ -54,7 +52,6 @@ public sealed partial class Mate : Unit
     public bool DespawnOnCreatorDeath { get; set; }
     public List<uint> Skills { get; set; }
     public MateDb DbInfo { get; set; }
-    public Task MateXpUpdateTask { get; set; }
     public bool IsMaxLevel => Level >= ExperienceManager.Instance.MaxMateLevel;
 
     #region Attributes
@@ -512,15 +509,23 @@ public sealed partial class Mate : Unit
             return;
 
         expDelta = (int)Math.Round(AppConfiguration.Instance.World.ExpRate * expDelta);
-        var newExperience = Experience + expDelta;
-        var newLevel = ExperienceManager.Instance.GetLevelFromExp(newExperience, Level, out var overflow, true);
-        var leveledUp = newLevel > Level;
+        AddExpCore(expDelta);
+    }
 
-        // Prevent overflow - cap the experience at the amount for the highest level
-        if (newLevel >= ExperienceManager.Instance.MaxMateLevel)
-        {
-            newExperience -= overflow;
-        }
+    // Riding awards already include the world rate and must not be scaled again.
+    private void AddExpCore(int expDelta)
+    {
+        if (expDelta <= 0 || IsMaxLevel)
+            return;
+
+        var experienceManager = ExperienceManager.Instance;
+        var maximumExperience = experienceManager.GetExpForLevel(experienceManager.MaxMateLevel, true);
+        var newExperience = (int)Math.Min((long)Experience + expDelta, maximumExperience);
+        var appliedExperience = newExperience - Experience;
+        if (appliedExperience <= 0)
+            return;
+        var newLevel = experienceManager.GetLevelFromExp(newExperience, Level, out _, true);
+        var leveledUp = newLevel > Level;
 
         Experience = newExperience;
         Level = newLevel;
@@ -530,7 +535,7 @@ public sealed partial class Mate : Unit
         DbInfo.Level = Level;
 
         var owner = WorldManager.Instance.GetCharacterByObjId(OwnerObjId);
-        owner.SendPacket(new SCExpChangedPacket(ObjId, expDelta, false));
+        owner.SendPacket(new SCExpChangedPacket(ObjId, appliedExperience, false));
 
         if (leveledUp)
         {
@@ -629,26 +634,6 @@ public sealed partial class Mate : Unit
         Mp = Math.Min(Mp, MaxMp);
         BroadcastPacket(new SCUnitPointsPacket(ObjId, Hp, Mp), false);
         PostUpdateCurrentHp(this, oldHp, Hp, KillReason.Unknown);
-    }
-
-    public void StartUpdateXp(Character owner)
-    {
-        if (MateXpUpdateTask != null)
-        {
-            return;
-        }
-        if (IsMaxLevel)
-            return;
-        MateXpUpdateTask = new MateXpUpdateTask(owner, this);
-        TaskManager.Instance.Schedule(MateXpUpdateTask, TimeSpan.FromSeconds(60));
-        //Logger.Trace("[StartUpdateXp] The current timer has been started...");
-    }
-
-    public void StopUpdateXp()
-    {
-        MateXpUpdateTask?.Cancel();
-        MateXpUpdateTask = null;
-        //Logger.Trace("[StopUpdateXp] The current timer has been canceled...");
     }
 
     public override void OnZoneChange(uint lastZoneKey, uint newZoneKey)

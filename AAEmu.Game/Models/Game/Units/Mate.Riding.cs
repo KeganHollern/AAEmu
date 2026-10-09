@@ -51,11 +51,28 @@ public sealed partial class Mate
                 var delta = (int)Math.Min(metres, (long)int.MaxValue - Mileage);
                 if (delta == 0)
                     return 0;
+                var previousMileage = Mileage;
                 Mileage += delta;
                 DbInfo.Mileage = Mileage;
                 author.SendPacket(new SCMileageChangedPacket(ObjId, delta));
+                AddExpCore(CalculateRidingExperience(previousMileage, Mileage, AppConfiguration.Instance.World.ExpRate));
                 return delta;
             }
         }
+    }
+
+    internal static int CalculateRidingExperience(int previousMileage, int currentMileage, double worldRate)
+    {
+        previousMileage = Math.Max(0, previousMileage);
+        if (currentMileage <= previousMileage || !double.IsFinite(worldRate) || worldRate <= 0)
+            return 0;
+        if (worldRate >= 2d * int.MaxValue)
+            return int.MaxValue;
+
+        // The saved total supplies fractional XP credit across stops and resummons.
+        // Both endpoints use the current rate, so a rate change grants no catch-up XP.
+        var previousExperience = Math.Floor(previousMileage * worldRate / 2);
+        var currentExperience = Math.Floor(currentMileage * worldRate / 2);
+        return (int)Math.Clamp(currentExperience - previousExperience, 0, int.MaxValue);
     }
 }

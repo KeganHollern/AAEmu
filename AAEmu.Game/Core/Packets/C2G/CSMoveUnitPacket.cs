@@ -145,7 +145,7 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                 {
                     // Logger.Debug($"{targetUnit.Name} => ActorFlags: 0x{dmt.ActorFlags:X} - ClimbData: {dmt.ClimbData:X} - GcId: {dmt.GcId}");
 
-                    // Its moving Pets, handle Pet XP for moving
+                    // Only the owner may author a mate's movement.
                     if (targetUnit is Mate mate)
                     {
                         // Only the mate's owner may author its movement.
@@ -163,11 +163,6 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
 
                         // Pet moved
                         RemoveEffects(targetUnit, _moveType);
-
-                        if (dmt.VelX != 0 || dmt.VelY != 0)
-                            mate.StartUpdateXp(character);
-                        else
-                            mate.StopUpdateXp();
 
                         foreach (var (_, passengerInfo) in mate.Passengers)
                         {
