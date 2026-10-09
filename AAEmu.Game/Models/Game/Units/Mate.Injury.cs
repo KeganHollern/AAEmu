@@ -104,7 +104,7 @@ public sealed partial class Mate
         InterruptSkills();
         IsInBattle = false;
         CurrentTarget = null;
-        StopUpdateXp();
+        ResetRidingMovement();
         foreach (var (seat, passenger) in Passengers.ToArray())
         {
             if (passenger._objId == 0)

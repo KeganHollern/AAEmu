@@ -77,6 +77,9 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
         var previousPosition = targetUnit.Transform.Local.Position;
         var previousParent = targetUnit.Transform.Parent;
         var previousRotation = targetUnit.Transform.Local.Rotation;
+        var previousWorldPosition = targetUnit.Transform.World.Position;
+        var previousWorldId = targetUnit.Transform.WorldId;
+        var previousInstanceId = targetUnit.Transform.InstanceId;
 
         // We are not controlling our main character
         switch (_moveType)
@@ -142,7 +145,7 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                 {
                     // Logger.Debug($"{targetUnit.Name} => ActorFlags: 0x{dmt.ActorFlags:X} - ClimbData: {dmt.ClimbData:X} - GcId: {dmt.GcId}");
 
-                    // Its moving Pets, handle Pet XP for moving
+                    // Only the owner may author a mate's movement.
                     if (targetUnit is Mate mate)
                     {
                         // Only the mate's owner may author its movement.
@@ -160,11 +163,6 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
 
                         // Pet moved
                         RemoveEffects(targetUnit, _moveType);
-
-                        if (dmt.VelX != 0 || dmt.VelY != 0)
-                            mate.StartUpdateXp(character);
-                        else
-                            mate.StopUpdateXp();
 
                         foreach (var (_, passengerInfo) in mate.Passengers)
                         {
@@ -314,6 +312,11 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                         new SCOneUnitMovementPacket(_objId, dmt),
                         ShouldIncludeTargetCharacter(character, targetUnit));
                     targetUnit.Transform.FinalizeTransform();
+                    if (targetUnit is Mate movedMate)
+                        movedMate.RecordRidingMileage(character, previousWorldPosition,
+                            previousParent == null && movedMate.Transform.WorldId == previousWorldId &&
+                            movedMate.Transform.InstanceId == previousInstanceId,
+                            dmt.Flags.HasFlag(MoveTypeFlags.HasScTypeAndPhase), DateTime.UtcNow);
                     if (targetUnit is Unit castUnit)
                         SkillCastReactions.OnMovement(castUnit, previousPosition, targetUnit.Transform.Local.Position,
                             ReferenceEquals(previousParent, targetUnit.Transform.Parent),
