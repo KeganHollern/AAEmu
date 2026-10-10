@@ -1,5 +1,6 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
@@ -64,6 +65,7 @@ public partial class Quest : PacketMarshaler
     /// Current Quest Status
     /// </summary>
     public QuestStatus Status { get; set; }
+    internal bool CompletionRetryPending { get; set; }
 
     /// <summary>
     /// Current Quest Step
@@ -401,6 +403,23 @@ public partial class Quest : PacketMarshaler
     }
 
     /// <summary>
+    /// Releases the committed attempt and runs its cleanup callbacks.
+    /// </summary>
+    internal void FinalizeCompletion()
+    {
+        _questManager.RemoveQuestTimer(Owner.Id, TemplateId);
+        QuestIdManager.Instance.ReleaseId((uint)Id);
+        try
+        {
+            Complete();
+        }
+        finally
+        {
+            FinalizeQuestActs();
+        }
+    }
+
+    /// <summary>
     /// Completes the quest and runs the cleanup callbacks for all acts.
     /// </summary>
     public void Complete()
@@ -547,6 +566,8 @@ public partial class Quest : PacketMarshaler
     /// </summary>
     internal void RestoreLoadedState(bool interruptedSession = true)
     {
+        // A saved Reward step already passed its authored report phase in the previous session.
+        _restoredRewardReportAccepted = _step == QuestComponentKind.Reward;
         // Older saves can contain Fail with Progress status because failed quests often have no Fail component.
         if (_step == QuestComponentKind.Fail)
             Status = QuestStatus.Failed;

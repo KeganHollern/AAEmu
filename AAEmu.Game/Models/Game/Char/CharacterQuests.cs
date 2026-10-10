@@ -19,7 +19,7 @@ using NLog;
 
 namespace AAEmu.Game.Models.Game.Char;
 
-public class CharacterQuests(Character owner, IGameScheduleManager schedules = null)
+public partial class CharacterQuests(Character owner, IGameScheduleManager schedules = null)
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private readonly Func<CompletedQuest, bool> _completedQuestPersistenceOverride;
@@ -949,6 +949,8 @@ public class CharacterQuests(Character owner, IGameScheduleManager schedules = n
 
     private void Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
     {
+        if (_completionConsistencyFailed)
+            throw new InvalidOperationException("Quest persistence stopped after an unconfirmed commit.");
         if (_removed.Count > 0)
         {
             var removedIds = _removed.ToArray();
@@ -1019,6 +1021,8 @@ public class CharacterQuests(Character owner, IGameScheduleManager schedules = n
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            if (_completionConsistencyFailed)
+                throw new InvalidOperationException("Quest persistence stopped after an unconfirmed commit.");
             if (ActiveQuests.TryGetValue(quest.TemplateId, out var active) && ReferenceEquals(active, quest))
                 (_activeQuestPersistenceOverride ?? FlushQuest)(quest);
         }

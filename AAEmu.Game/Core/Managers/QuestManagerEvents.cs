@@ -23,9 +23,16 @@ public partial class QuestManager
     /// <param name="selected">Selected reward (if any)</param>
     public void DoReportEvents(ICharacter owner, uint questContextId, uint npcObjId, uint doodadObjId, int selected)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+            DoReportEventsLocked(owner, questContextId, npcObjId, doodadObjId, selected);
+    }
+
+    private void DoReportEventsLocked(ICharacter owner, uint questContextId, uint npcObjId, uint doodadObjId, int selected)
+    {
         if ((npcObjId != 0 && doodadObjId != 0) ||
             !owner.Quests.ActiveQuests.TryGetValue(questContextId, out var quest) ||
-            quest.Step is not (QuestComponentKind.Progress or QuestComponentKind.Ready) ||
+            (quest.Step is not (QuestComponentKind.Progress or QuestComponentKind.Ready) &&
+                !(quest.Step == QuestComponentKind.Reward && quest.CompletionRetryPending)) ||
             !quest.IsValidSelectedRewardIndex(selected))
             return;
 
@@ -36,6 +43,13 @@ public partial class QuestManager
             // Is it a valid NPC?
             if (!QuestInteraction.CanInteractWithNpc((Character)owner, npc))
                 return;
+
+            if (quest.Step == QuestComponentKind.Reward)
+            {
+                if (quest.CanRetryCompletionReport(selected, npcTemplateId: npc.TemplateId))
+                    owner.Quests.TryCompleteQuest(quest);
+                return;
+            }
 
             //Connection.ActiveChar.Quests.OnReportToNpc(_npcObjId, _questContextId, _selected);
             // Initiate the event of Npc report on task completion
@@ -55,6 +69,13 @@ public partial class QuestManager
             if (!QuestInteraction.CanInteractWithDoodad((Character)owner, doodad))
                 return;
 
+            if (quest.Step == QuestComponentKind.Reward)
+            {
+                if (quest.CanRetryCompletionReport(selected, doodadTemplateId: doodad.TemplateId))
+                    owner.Quests.TryCompleteQuest(quest);
+                return;
+            }
+
             //Connection.ActiveChar.Quests.OnReportToDoodad(_doodadObjId, _questContextId, _selected);
             // Trigger the Report to Doodad event
             owner.Events?.OnReportDoodad(owner, new OnReportDoodadArgs
@@ -67,7 +88,13 @@ public partial class QuestManager
         }
         else
         {
-            quest.TryReportWithoutSource(selected);
+            if (quest.Step == QuestComponentKind.Reward)
+            {
+                if (quest.CanRetryCompletionReport(selected))
+                    owner.Quests.TryCompleteQuest(quest);
+            }
+            else
+                quest.TryReportWithoutSource(selected);
         }
     }
 
@@ -77,10 +104,19 @@ public partial class QuestManager
     /// </summary>
     public bool TryCompleteQuestAsLetItDone(ICharacter owner, uint questContextId, uint objectId, int selected)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+            return TryCompleteQuestAsLetItDoneLocked(owner, questContextId, objectId, selected);
+    }
+
+    private bool TryCompleteQuestAsLetItDoneLocked(ICharacter owner, uint questContextId, uint objectId, int selected)
+    {
         if (!owner.Quests.ActiveQuests.TryGetValue(questContextId, out var quest) ||
             !quest.Template.LetItDone ||
-            !quest.IsValidSelectedRewardIndex(selected) ||
-            quest.Step != QuestComponentKind.Progress ||
+            !quest.IsValidSelectedRewardIndex(selected))
+            return false;
+        if (quest.Step == QuestComponentKind.Reward && quest.CompletionRetryPending && selected == quest.SelectedRewardIndex)
+            return owner.Quests.TryCompleteQuest(quest);
+        if (quest.Step != QuestComponentKind.Progress ||
             quest.GetQuestObjectiveStatus() < QuestObjectiveStatus.CanEarlyComplete)
             return false;
 

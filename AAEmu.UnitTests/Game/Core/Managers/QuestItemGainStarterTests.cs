@@ -128,7 +128,10 @@ public sealed class QuestItemGainStarterTests
         var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-09-26T11:59:59Z"));
         var schedules = CreateSchedules(clock);
         var (owner, items) = CreateOwnerWithItems(7, (ItemTemplateId, 5));
-        owner.Quests = new CharacterQuests(owner, _ => true, _ => { }, _ => { }, schedules);
+        owner.Quests = new CharacterQuests(owner, _ => true, _ => { }, _ => { }, schedules)
+        {
+            QuestCompletionPersistenceOverride = (_, _) => true
+        };
         owner.Inventory.OnAcquiredItem(items[ItemTemplateId], 1, true);
         _questManager.DoQueuedEvaluations();
         var accepted = owner.Quests.ActiveQuests[QuestId];

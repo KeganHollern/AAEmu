@@ -2,6 +2,7 @@ using System.Reflection;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
@@ -152,13 +153,17 @@ public sealed class QuestCompleteObjectiveTests
 
     private static CharacterMock CreateOwner(bool persistCompletions = true)
     {
+        QuestIdManager.Instance.Initialize();
         var owner = new CharacterMock
         {
             Id = 7,
             ObjId = 70,
             Name = "Questor"
         };
-        owner.Quests = new CharacterQuests(owner, _ => persistCompletions, _ => { });
+        owner.Quests = new CharacterQuests(owner, _ => persistCompletions, _ => { })
+        {
+            QuestCompletionPersistenceOverride = (_, _) => persistCompletions
+        };
         return owner;
     }
 

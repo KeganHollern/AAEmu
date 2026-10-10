@@ -47,6 +47,7 @@ public class CharacterAchievements
     private readonly List<uint> _pendingCompletionIds = [];
     private readonly HashSet<uint> _pendingCompletionIdSet = [];
     private readonly HashSet<uint> _pendingRewardIds = [];
+    private readonly List<GamePacket> _deferredNotifications = [];
     private bool _deferredPersistenceActive;
     private bool _rewardDeliveryInProgress;
 
@@ -320,6 +321,7 @@ public class CharacterAchievements
                 throw new InvalidOperationException("Achievement persistence is already deferred.");
 
             _deferredPersistenceActive = true;
+            _deferredNotifications.Clear();
             return new DeferredPersistenceScope(this, CaptureState());
         }
         catch
@@ -329,9 +331,9 @@ public class CharacterAchievements
         }
     }
 
-    internal void SendCommittedState()
+    internal void SendCommittedState(IReadOnlyList<GamePacket> committedNotifications = null)
     {
-        foreach (var packet in CreateSnapshotPackets())
+        foreach (var packet in committedNotifications ?? CreateSnapshotPackets())
             Owner.SendPacket(packet);
 
         TryDeliverPendingRewards();
@@ -363,7 +365,10 @@ public class CharacterAchievements
                 Evaluate(_gameData.GetAchievementIdsForRecord(recordId), notifications);
 
             if (_deferredPersistenceActive)
+            {
+                _deferredNotifications.AddRange(notifications);
                 return;
+            }
 
             if (_pendingCompletionIds.Count > 0)
             {
@@ -433,7 +438,10 @@ public class CharacterAchievements
                 Evaluate(affectedAchievementIds, notifications);
 
             if (_deferredPersistenceActive)
+            {
+                _deferredNotifications.AddRange(notifications);
                 return;
+            }
 
             if (_pendingCompletionIds.Count > 0)
             {
@@ -905,6 +913,17 @@ public class CharacterAchievements
             Finish();
         }
 
+        internal IReadOnlyList<GamePacket> CreateCommittedNotifications()
+        {
+            if (_finished)
+                throw new InvalidOperationException("The deferred achievement update is already finished.");
+
+            List<GamePacket> notifications = [.. _owner._deferredNotifications];
+            foreach (var achievementId in _owner._pendingCompletionIds)
+                notifications.Add(new SCAchievementCompletedPacket(achievementId, _owner._completionTimes[achievementId]));
+            return notifications;
+        }
+
         public void Dispose()
         {
             if (_finished)
@@ -914,9 +933,16 @@ public class CharacterAchievements
             Finish();
         }
 
+        internal void PreservePreparedState()
+        {
+            if (!_finished)
+                Finish();
+        }
+
         private void Finish()
         {
             _owner._deferredPersistenceActive = false;
+            _owner._deferredNotifications.Clear();
             _finished = true;
             Monitor.Exit(_owner._syncRoot);
         }
