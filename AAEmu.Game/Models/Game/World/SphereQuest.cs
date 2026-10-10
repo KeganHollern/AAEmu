@@ -122,6 +122,12 @@ public class SphereQuestTrigger
             {
                 newInside = Sphere.Contains(position);
             }
+            else if (Quest?.HasFollowNpcTemplate(NpcTemplate) == true)
+            {
+                // Follow quests use the claimed occurrence at the authored destination.
+                // This server rule prevents a nearby clone from completing quest 1039 anywhere.
+                newInside = Quest.IsFollowNpcInsideSphere(NpcTemplate, Sphere);
+            }
             else
             {
                 var character = (Character)Owner;

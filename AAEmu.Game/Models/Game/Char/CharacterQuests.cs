@@ -7,6 +7,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
@@ -61,6 +62,8 @@ public partial class CharacterQuests(Character owner, IGameScheduleManager sched
 
         foreach (var quest in ActiveQuests.Values)
         {
+            if (!ReferenceEquals(previousWorld, world))
+                quest.ReleaseNpcControl();
             if (!quest.QuestSteps.TryGetValue(quest.Step, out var step))
                 continue;
             foreach (var component in step.Components.Values)
@@ -183,6 +186,11 @@ public partial class CharacterQuests(Character owner, IGameScheduleManager sched
     /// <returns></returns>
     public bool AddQuest(uint questId, bool forcibly = false, QuestAcceptorType questAcceptorType = QuestAcceptorType.Unknown, uint acceptorId = 0)
     {
+        return AddQuest(questId, forcibly, questAcceptorType, acceptorId, null);
+    }
+
+    private bool AddQuest(uint questId, bool forcibly, QuestAcceptorType questAcceptorType, uint acceptorId, Npc acceptedNpc)
+    {
         if (ActiveQuests.ContainsKey(questId))
         {
             if (forcibly)
@@ -254,6 +262,7 @@ public partial class CharacterQuests(Character owner, IGameScheduleManager sched
             QuestAcceptorType = questAcceptorType,
             AcceptorId = acceptorId
         };
+        quest.RecordAcceptedNpc(acceptedNpc);
 
         // If there's still a timer running for this quest, remove it
         if (QuestManager.Instance.QuestTimeoutTask.Count != 0)
@@ -349,7 +358,7 @@ public partial class CharacterQuests(Character owner, IGameScheduleManager sched
             return RejectQuestAcceptor(questId, QuestAcceptorType.Npc, npcObjId, npc.TemplateId, "template_mismatch");
 
         Owner.CurrentTarget = npc;
-        return AddQuest(questId, false, QuestAcceptorType.Npc, npc.TemplateId);
+        return AddQuest(questId, false, QuestAcceptorType.Npc, npc.TemplateId, npc);
     }
 
     /// <summary>
@@ -1033,7 +1042,10 @@ public partial class CharacterQuests(Character owner, IGameScheduleManager sched
         lock (SaveManager.PersistenceSyncRoot)
         {
             foreach (var quest in ActiveQuests.Values.ToArray())
+            {
                 quest.PrepareGuardForDisconnect();
+                quest.ReleaseNpcControl();
+            }
         }
     }
 

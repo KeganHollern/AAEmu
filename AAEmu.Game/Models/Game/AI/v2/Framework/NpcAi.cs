@@ -16,7 +16,7 @@ namespace AAEmu.Game.Models.Game.AI.v2.Framework;
 /// <summary>
 /// This is the basics of a unit's AI: The state machine. It also carries data about which unit owns it
 /// </summary>
-public abstract class NpcAi
+public abstract partial class NpcAi
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -161,9 +161,11 @@ $"Trying to set Npc {Owner.TemplateId}:{Owner.ObjId} current behavior, but it is
 
     public void Tick(TimeSpan delta)
     {
+        CheckQuestFollow();
         var owner = Owner;
-        if (owner == null)
+        if (owner == null || !ReferenceEquals(owner.Ai, this))
             return;
+        RestoreQuestFollowOnTick();
 
         // Assistance can arrive from another NPC's AI tick. Consume its notification
         // here so transitions never run while the caller holds a combat-state lock.
@@ -256,11 +258,13 @@ $"Trying to set Npc {Owner.TemplateId}:{Owner.ObjId} current behavior, but it is
 
     public virtual void GoToIdle()
     {
-        SetCurrentBehavior(BehaviorKind.Idle);
+        if (!ResumeQuestFollow())
+            SetCurrentBehavior(BehaviorKind.Idle);
     }
 
     public virtual void GoToRunCommandSet()
     {
+        CancelQuestFollowForControl();
         SetCurrentBehavior(BehaviorKind.RunCommandSet);
     }
 
@@ -281,6 +285,7 @@ $"Trying to set Npc {Owner.TemplateId}:{Owner.ObjId} current behavior, but it is
 
     public virtual void GoToFollowPath()
     {
+        CancelQuestFollowForControl();
         SetCurrentBehavior(BehaviorKind.FollowPath);
     }
 
@@ -306,6 +311,8 @@ $"Trying to set Npc {Owner.TemplateId}:{Owner.ObjId} current behavior, but it is
 
     public virtual void GoToDefaultBehavior()
     {
+        if (ResumeQuestFollow())
+            return;
         if (_defaultBehavior != null)
             SetCurrentBehavior(_defaultBehavior);
     }
@@ -329,6 +336,7 @@ $"Trying to set Npc {Owner.TemplateId}:{Owner.ObjId} current behavior, but it is
 
     public virtual void GoToDummy()
     {
+        CancelQuestFollowForControl();
         SetCurrentBehavior(BehaviorKind.Dummy);
     }
 

@@ -202,6 +202,11 @@ public partial class Quest
         // Set new Value
         _step = value;
 
+        // Retain follow through Ready: quest 851 reaches Ready as soon as its talk act succeeds.
+        // Stop at these terminal stages rather than invent a client-side follow duration.
+        if (value is QuestComponentKind.Fail or QuestComponentKind.Drop or QuestComponentKind.Reward)
+            ReleaseNpcControl();
+
         // Reset active component (used by packet only) 
         ComponentId = 0;
 
