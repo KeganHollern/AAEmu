@@ -8,6 +8,7 @@ namespace AAEmu.Game.Models.Game.Quests;
 public partial class Quest
 {
     private bool _sourceLessReportAccepted;
+    private bool _restoredRewardReportAccepted;
 
     public HashSet<uint> AppliedSideEffectActIds { get; } = [];
     public HashSet<uint> AppliedComponentEffectIds { get; } = [];
@@ -29,6 +30,25 @@ public partial class Quest
 
         // The field is unused for quests without selective rewards.
         return !hasSelectiveRewards;
+    }
+
+    internal bool CanRetryCompletionReport(int selected, uint npcTemplateId = 0, uint doodadTemplateId = 0)
+    {
+        if (!CompletionRetryPending || Step != QuestComponentKind.Reward || selected != SelectedRewardIndex)
+            return false;
+
+        var reportActs = QuestSteps.Values
+            .Where(step => step.ThisStep is QuestComponentKind.Ready or QuestComponentKind.Reward)
+            .SelectMany(step => step.Components.Values)
+            .SelectMany(component => component.Acts);
+        if (npcTemplateId != 0)
+            return reportActs.Any(act => act.Template is QuestActConReportNpc report &&
+                report.NpcId == npcTemplateId && (act.OverrideObjectiveCompleted || _restoredRewardReportAccepted));
+        if (doodadTemplateId != 0)
+            return reportActs.Any(act => act.Template is QuestActConReportDoodad report &&
+                report.DoodadId == doodadTemplateId && (act.OverrideObjectiveCompleted || _restoredRewardReportAccepted));
+        return _sourceLessReportAccepted || reportActs.Any(act => act.Template is QuestActConAutoComplete ||
+            (_restoredRewardReportAccepted && act.Template is QuestActConReportJournal));
     }
 
     internal bool TryReportWithoutSource(int selected)

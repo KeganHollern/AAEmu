@@ -5,6 +5,7 @@ using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
@@ -366,6 +367,68 @@ public sealed class QuestInteractionTests
         });
         template.Components.Add(component.Id, component);
         return template;
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RestoredRewardRetry_RequiresMatchingVisibleSourceAndSavedSelection(bool useDoodad)
+    {
+        QuestIdManager.Instance.Initialize();
+        var template = new QuestTemplate { Id = 12 };
+        var ready = new QuestComponentTemplate(template) { Id = 1, KindId = QuestComponentKind.Ready };
+        ready.ActTemplates.Add(useDoodad
+            ? new QuestActConReportDoodad(ready) { ActId = 1, DoodadId = _doodad.TemplateId }
+            : new QuestActConReportNpc(ready) { ActId = 1, NpcId = _npc.TemplateId });
+        template.Components.Add(ready.Id, ready);
+        var reward = new QuestComponentTemplate(template) { Id = 2, KindId = QuestComponentKind.Reward };
+        template.Components.Add(reward.Id, reward);
+        var quest = new Quest(template, _owner, _manager, Mock.Of<ITaskManager>().Object,
+            Mock.Of<ISkillManager>().Object, Mock.Of<IExpressTextManager>().Object, Mock.Of<IWorldManager>().Object)
+        {
+            Id = 987,
+            Step = QuestComponentKind.Reward,
+            Status = QuestStatus.Ready,
+            SelectedRewardIndex = 7
+        };
+        _owner.Quests.ActiveQuests.Add(template.Id, quest);
+        quest.ReadData(quest.WriteData());
+        quest.RestoreLoadedState();
+        var commits = 0;
+        _owner.Quests.QuestCompletionPersistenceOverride = (_, _) => { commits++; return commits > 1; };
+        quest.GoToNextStep();
+        BaseUnit source = useDoodad ? _doodad : _npc;
+        void Report(int selected)
+        {
+            _manager.DoReportEvents(_owner, quest.TemplateId,
+                useDoodad ? 0 : _npc.ObjId, useDoodad ? _doodad.ObjId : 0, selected);
+        }
+
+        source.Transform.Local.Position = new Vector3(1_000, 0, 0);
+        Report(7);
+        source.Transform.Local.Position = Vector3.Zero;
+        var originalTemplateId = useDoodad ? _doodad.TemplateId : _npc.TemplateId;
+        if (useDoodad)
+            _doodad.TemplateId = 999;
+        else
+            _npc.TemplateId = 999;
+        Report(7);
+        if (useDoodad)
+            _doodad.TemplateId = originalTemplateId;
+        else
+            _npc.TemplateId = originalTemplateId;
+        Report(8);
+
+        await Assert.That(commits).IsEqualTo(1);
+        await Assert.That(_owner.Quests.ActiveQuests[12]).IsSameReferenceAs(quest);
+        await Assert.That(quest.SelectedRewardIndex).IsEqualTo(7);
+
+        Report(7);
+        Report(7);
+
+        await Assert.That(commits).IsEqualTo(2);
+        await Assert.That(_owner.Quests.ActiveQuests).IsEmpty();
+        await Assert.That(quest.Status).IsEqualTo(QuestStatus.Completed);
     }
 
     private Quest AddActiveQuest()

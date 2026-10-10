@@ -322,6 +322,7 @@ public sealed class QuestRewardDeliveryTests
 
     private CharacterMock CreateOwner(int bagSize)
     {
+        QuestIdManager.Instance.Initialize();
         var owner = new CharacterMock { Id = 7, Name = "Questor", NumInventorySlots = 10, NumBankSlots = 10 };
         var containers = new Dictionary<ulong, ItemContainer>();
         ulong id = 1;
@@ -333,7 +334,10 @@ public sealed class QuestRewardDeliveryTests
         SetField(_items, "_allPersistentContainers", containers);
         owner.Inventory = new Inventory(owner);
         owner.Inventory.Bag.ContainerSize = bagSize;
-        owner.Quests = new CharacterQuests(owner, _ => true, _ => { }, schedules: new GameScheduleManager(null, TimeProvider.System));
+        owner.Quests = new CharacterQuests(owner, _ => true, _ => { }, schedules: new GameScheduleManager(null, TimeProvider.System))
+        {
+            QuestCompletionPersistenceOverride = (_, _) => true
+        };
         return owner;
     }
 

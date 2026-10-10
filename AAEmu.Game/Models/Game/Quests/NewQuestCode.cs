@@ -1,6 +1,4 @@
 ﻿using AAEmu.Game.Core.Packets.G2C;
-using AAEmu.Game.Models.Game.Achievement.Enums;
-using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Units;
@@ -164,60 +162,7 @@ public partial class Quest
                     Owner.Quests.DropQuest(TemplateId, true, false);
                     return;
                 case QuestComponentKind.Reward:
-                    // Reward is the last possible step
-
-                    // Mark quest as completed
-                    var completedBlock = Owner.Quests.SetCompletedQuestFlag(
-                        TemplateId,
-                        true,
-                        out var completedQuestPersisted,
-                        out var firstCompletion);
-                    if (!completedQuestPersisted)
-                    {
-                        Logger.Warn(
-                            "Quest {QuestId} remains at its reward step because its completion flag was not saved for {OwnerName} ({OwnerId})",
-                            TemplateId,
-                            Owner.Name,
-                            Owner.Id);
-                        return;
-                    }
-
-                    Status = QuestStatus.Completed;
-
-                    // copy body data for packet
-                    var body = new byte[8];
-                    completedBlock.Body.CopyTo(body, 0);
-
-                    if (Owner is Character character)
-                    {
-                        List<AchievementProgressEvent> progressEvents =
-                        [
-                            new AchievementProgressEvent(
-                                CharRecordKind.CompleteQuestType,
-                                TemplateId,
-                                0,
-                                1)
-                        ];
-                        if (firstCompletion)
-                        {
-                            progressEvents.Add(new AchievementProgressEvent(
-                                CharRecordKind.CompleteQuestCategory,
-                                Template.CategoryId,
-                                0,
-                                1));
-                        }
-
-                        character.Achievements?.Increment(progressEvents);
-                    }
-
-                    Owner.Quests.CompleteQuest(TemplateId);
-                    Owner.Events?.OnQuestComplete(Owner, new OnQuestCompleteArgs
-                    {
-                        QuestId = TemplateId,
-                        Selected = SelectedRewardIndex
-                    });
-                    Owner.SendPacket(new SCQuestContextCompletedPacket(TemplateId, body, 0));
-
+                    Owner.Quests.TryCompleteQuest(this);
                     return;
                 default:
                     Logger.Warn($"Quest GoToNextStep failed for Step:{Step}, Quest:{TemplateId}, Player:{Owner.Name} ({Owner.Id}");
