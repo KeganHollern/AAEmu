@@ -72,6 +72,8 @@ public class QuestComponent : IQuestComponent
 
         if (!Parent.Parent.AppliedComponentEffectIds.Contains(Template.Id))
         {
+            if (!Parent.Parent.TryApplyNpcControl(Template))
+                return false;
             Parent.Parent.UseSkillAndBuff(Template);
             Parent.Parent.SetNpcAggro(Template);
             Parent.Parent.AppliedComponentEffectIds.Add(Template.Id);

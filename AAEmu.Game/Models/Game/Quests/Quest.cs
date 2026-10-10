@@ -289,7 +289,9 @@ public partial class Quest : PacketMarshaler
             }
             else if (component.NpcId > 0)
             {
-                var npc = ((Character)Owner).ParentWorld.GetNpcByTemplateId(component.NpcId);
+                var npc = component.NpcAiId == QuestNpcAiName.FollowUnit
+                    ? _followNpcs.GetValueOrDefault(component.Id).Npc
+                    : ((Character)Owner).ParentWorld.GetNpcByTemplateId(component.NpcId);
                 npc?.UseSkill(component.SkillId, npc);
             }
         }
@@ -424,6 +426,7 @@ public partial class Quest : PacketMarshaler
     /// </summary>
     public void Complete()
     {
+        ReleaseNpcControl();
         foreach (var questComponentTemplate in Template.Components.Values)
         {
             foreach (var actTemplate in questComponentTemplate.ActTemplates)
@@ -536,6 +539,7 @@ public partial class Quest : PacketMarshaler
     /// </summary>
     public void FinalizeQuestActs()
     {
+        ReleaseNpcControl();
         ReleaseGuardBindings();
         foreach (var questStep in QuestSteps.Values)
         {

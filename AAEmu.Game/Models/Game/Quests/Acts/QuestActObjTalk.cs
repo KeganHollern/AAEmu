@@ -61,6 +61,8 @@ public class QuestActObjTalk(QuestComponentTemplate parentComponent) : QuestActT
         {
             if (!quest.CanApplyGuardProgressEvent(questAct))
                 return;
+            if (!quest.RememberNpcControlSource(questAct, args))
+                return;
             var newlyBound = quest.BindGuardNpc(args.Transform?.GameObject as Npc);
             SetObjective(questAct, 1);
             quest.CheckpointGuardStart(newlyBound);

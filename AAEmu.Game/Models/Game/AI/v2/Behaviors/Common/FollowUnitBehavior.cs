@@ -16,11 +16,13 @@ public class FollowUnitBehavior : BaseCombatBehavior
 
     public override void Tick(TimeSpan delta)
     {
-        if (!_enter)
+        var owner = Ai.Owner;
+        var target = Ai.AiFollowUnitObj;
+        if (!_enter || owner == null || !ReferenceEquals(owner.Ai, Ai) || owner.IsInPatrol)
             return;
 
         if (!UpdateTarget())
-            Ai.Owner.SetTarget(null);
+            owner.SetTarget(null);
 
         if (CheckAggression())
             return;
@@ -28,22 +30,28 @@ public class FollowUnitBehavior : BaseCombatBehavior
         if (CheckAlert())
             return;
 
-        if (Ai.AiFollowUnitObj == null || Ai.AiFollowUnitObj.Hp <= 0 || Ai.AiFollowUnitObj.IsDead)
+        if (target == null || target.Hp <= 0 || target.IsDead || target.ParentWorld != owner.ParentWorld ||
+            target.Transform.WorldId != owner.Transform.WorldId || target.Transform.InstanceId != owner.Transform.InstanceId)
         {
+            if (!ReferenceEquals(Ai.AiFollowUnitObj, target))
+                return;
             Ai.AiFollowUnitObj = null;
             Ai.GoToIdle();
             return;
         }
 
-        var targetDistance = Ai.Owner.GetDistanceTo(Ai.AiFollowUnitObj, true);
-
+        var targetDistance = owner.GetDistanceTo(target, true);
+        // Drop or disconnect can release control during the earlier combat checks.
+        if (!_enter || !ReferenceEquals(Ai.Owner, owner) || !ReferenceEquals(owner.Ai, Ai) ||
+            !ReferenceEquals(Ai.AiFollowUnitObj, target) || owner.IsInPatrol)
+            return;
         var followSpeedMultiplier = (float)Math.Min(5.0, targetDistance / 1.5);
 
-        var moveSpeed = Ai.GetRealMovementSpeed(Ai.Owner.BaseMoveSpeed) * followSpeedMultiplier;
+        var moveSpeed = Ai.GetRealMovementSpeed(owner.BaseMoveSpeed) * followSpeedMultiplier;
         var moveFlags = Ai.GetRealMovementFlags(moveSpeed);
-        moveSpeed *= delta.Milliseconds / 1000.0;
-        Ai.Owner.MoveTowards(Ai.AiFollowUnitObj.Transform.World.Position, (float)moveSpeed, moveFlags);
-        Ai.IdlePosition = Ai.Owner.Transform.World.Position;
+        moveSpeed *= delta.TotalSeconds;
+        owner.MoveTowards(target.Transform.World.Position, (float)moveSpeed, moveFlags);
+        Ai.IdlePosition = owner.Transform.World.Position;
     }
 
     public override void Exit()

@@ -26,6 +26,14 @@ public class QuestActObjSphere(QuestComponentTemplate parentComponent) : QuestAc
     public override bool RunAct(Quest quest, QuestAct questAct, int currentObjectiveCount)
     {
         Logger.Debug($"{QuestActTemplateName}({DetailId}).RunAct: Quest: {quest.TemplateId}, Owner {quest.Owner.Name} ({quest.Owner.Id}), SphereId {SphereId}, NpcId {NpcId}");
+        if (quest.HasFollowNpcTemplate(NpcId))
+        {
+            // Recheck the live claim and destination before a stale sphere counter can advance the quest.
+            var triggers = ((GameObject)quest.Owner).ParentWorld?.SphereQuestManager?.GetSphereQuestTriggers();
+            return currentObjectiveCount > 0 && triggers?.Any(trigger => ReferenceEquals(trigger.Quest, quest) &&
+                trigger.Sphere.ComponentId == ParentComponent.Id && trigger.NpcTemplate == NpcId &&
+                quest.IsFollowNpcInsideSphere(NpcId, trigger.Sphere)) == true;
+        }
         return currentObjectiveCount > 0;
     }
 
