@@ -1,9 +1,10 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Chat;
+using AAEmu.Game.Services.Security;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -21,13 +22,17 @@ public class CSNotifyInGamePacket() : GamePacket(CSOffsets.CSNotifyInGamePacket,
         if (!Connection.IsClosed && Connection.IsAuthenticated && Connection.State == GameState.World &&
             Connection.ActiveChar?.AccountId == Connection.AccountId)
         {
-            if (Connection.StateRejectionEvents.TryConsume())
-                Logger.Warn("Rejected repeated NotifyInGame spawn on connection {ConnectionId}", Connection.Id);
+            GameSecurityTelemetry.PacketRejected(SecurityNetwork.Game, SecurityPacketRejection.InvalidState,
+                Connection.StateRejectionEvents.TryConsume(), Connection.Id, Connection.Ip,
+                CSOffsets.CSNotifyInGamePacket, 1, metrics: Connection.SecurityMetrics);
             return;
         }
         if (!Connection.TryAdvanceWorldEntry(GameState.EnteringWorld, GameState.World))
         {
-            Connection.Shutdown();
+            GameSecurityTelemetry.PacketRejected(SecurityNetwork.Game, SecurityPacketRejection.InvalidState,
+                Connection.StateRejectionEvents.TryConsume(), Connection.Id, Connection.Ip,
+                CSOffsets.CSNotifyInGamePacket, 1, metrics: Connection.SecurityMetrics);
+            Connection.Shutdown(SecurityDisconnectReason.InvalidState);
             return;
         }
 

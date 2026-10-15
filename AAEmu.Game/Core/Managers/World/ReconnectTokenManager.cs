@@ -1,7 +1,9 @@
 ﻿using System.Security.Cryptography;
+
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Services.Security;
 
 namespace AAEmu.Game.Core.Managers.World;
 
@@ -49,24 +51,34 @@ public sealed class ReconnectTokenManager : Singleton<ReconnectTokenManager>
         }
     }
 
-    public bool Acknowledge(uint token)
+    public bool Acknowledge(uint token, LoginConnection connection = null)
     {
         PendingToken pending;
         lock (_tokensLock)
         {
             if (token == 0 || !_tokens.TryGetValue(token, out pending))
+            {
+                RecordTokenFailure(connection, SecurityTokenFailure.NotFound);
                 return false;
+            }
         }
 
         lock (pending.Connection.SessionSyncRoot)
         lock (_tokensLock)
         {
             if (!_tokens.TryGetValue(token, out var current) || !ReferenceEquals(current, pending))
+            {
+                RecordTokenFailure(connection, SecurityTokenFailure.NotFound);
                 return false;
+            }
 
             _tokens.Remove(token);
             if (pending.ExpiresAt <= _timeProvider.GetUtcNow() || !IsCurrent(pending.Connection))
+            {
+                RecordTokenFailure(connection, pending.ExpiresAt <= _timeProvider.GetUtcNow()
+                    ? SecurityTokenFailure.Expired : SecurityTokenFailure.InvalidState);
                 return false;
+            }
 
             pending.Connection.SendPacket(new SCReconnectAuthPacket(token));
             return true;
@@ -80,6 +92,12 @@ public sealed class ReconnectTokenManager : Singleton<ReconnectTokenManager>
             foreach (var entry in _tokens.Where(entry => ReferenceEquals(entry.Value.Connection, connection)).ToArray())
                 _tokens.Remove(entry.Key);
         }
+    }
+
+    private static void RecordTokenFailure(LoginConnection connection, SecurityTokenFailure reason)
+    {
+        GameSecurityTelemetry.TokenFailure(SecurityTokenKind.Reconnect, reason,
+            connection?.TokenFailureEvents.TryConsume() ?? false, connection?.Id ?? 0, connection?.Ip, connection?.SecurityMetrics);
     }
 
     private bool IsCurrent(GameConnection connection) => connection.IsAuthenticated && !connection.IsClosed &&

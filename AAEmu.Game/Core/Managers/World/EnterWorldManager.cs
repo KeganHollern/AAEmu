@@ -1,19 +1,20 @@
-﻿using System.Net;
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
+using System.Net;
+
 using AAEmu.Commons.Utils;
-using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Login;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Core.Packets.G2L;
 using AAEmu.Game.Core.Packets.Proxy;
-using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Team;
 using AAEmu.Game.Models.StaticValues;
-
+using AAEmu.Game.Models;
+using AAEmu.Game.Services.Security;
 using NLog;
 
 namespace AAEmu.Game.Core.Managers.World;
@@ -120,7 +121,9 @@ public class EnterWorldManager(
         if (accountId == 0 || connection.AccountId != 0 || connection.IsAuthenticated || connection.IsClosed ||
             connection.State != GameState.Connected || connection.ActiveChar != null)
         {
-            connection.Shutdown();
+            GameSecurityTelemetry.TokenFailure(SecurityTokenKind.WorldCookie, SecurityTokenFailure.InvalidState,
+                connection.TokenFailureEvents.TryConsume(), connection.Id, connection.Ip, connection.SecurityMetrics);
+            connection.Shutdown(SecurityDisconnectReason.InvalidState);
             return;
         }
         lock (_admissionLocks[accountId % (uint)_admissionLocks.Length])
@@ -129,8 +132,17 @@ public class EnterWorldManager(
                 AppConfiguration.Instance.Network.ValidateWorldCookieAddress, out var payment);
             if (result != PendingWorldAccountResult.Consumed)
             {
-                Logger.Warn("Rejected world cookie ({Result}) from {RemoteIp}", result, connection.Ip);
-                connection.Shutdown();
+                var reason = result switch
+                {
+                    PendingWorldAccountResult.AccountMismatch => SecurityTokenFailure.AccountMismatch,
+                    PendingWorldAccountResult.Expired => SecurityTokenFailure.Expired,
+                    PendingWorldAccountResult.AddressMismatch => SecurityTokenFailure.AddressMismatch,
+                    PendingWorldAccountResult.AddressBlocked => SecurityTokenFailure.AddressBlocked,
+                    _ => SecurityTokenFailure.NotFound
+                };
+                GameSecurityTelemetry.TokenFailure(SecurityTokenKind.WorldCookie, reason,
+                    connection.TokenFailureEvents.TryConsume(), connection.Id, connection.Ip, connection.SecurityMetrics);
+                connection.Shutdown(SecurityDisconnectReason.AuthenticationRejected);
                 return;
             }
 
@@ -147,7 +159,9 @@ public class EnterWorldManager(
             });
             if (!admitted || !connection.IsAuthenticated || connection.IsClosed || streamToken == 0)
             {
-                connection.Shutdown();
+                GameSecurityTelemetry.TokenFailure(SecurityTokenKind.WorldCookie, SecurityTokenFailure.AdmissionDenied,
+                    connection.TokenFailureEvents.TryConsume(), connection.Id, connection.Ip, connection.SecurityMetrics);
+                connection.Shutdown(SecurityDisconnectReason.AuthenticationRejected);
                 return;
             }
 

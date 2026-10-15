@@ -1,14 +1,20 @@
 ﻿using System.Net;
-using AAEmu.Commons.Network;
+
 using AAEmu.Commons.Network.Core;
+using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Login;
 using AAEmu.Game.Core.Packets.G2L;
 using AAEmu.Game.Models;
+using AAEmu.Game.Services.Security;
 
 namespace AAEmu.Game.Core.Network.Connections;
 
-public class LoginConnection(ISession session, Action onRegistered = null)
+public class LoginConnection(ISession session, Action onRegistered = null, GameSecurityMetrics securityMetrics = null)
 {
+    private int _disconnectRecorded;
+
+    internal GameSecurityMetrics SecurityMetrics { get; } = securityMetrics ?? GameSecurityMetrics.Default;
+
     public uint Id => session.SessionId;
     public IPAddress Ip => session.Ip;
 
@@ -16,6 +22,7 @@ public class LoginConnection(ISession session, Action onRegistered = null)
     public bool IsRegistered { get; set; }
     public PacketStream LastPacket { get; set; }
     internal ConnectionEventLimiter UnknownPacketEvents { get; } = new();
+    internal ConnectionEventLimiter TokenFailureEvents { get; } = new();
 
     internal void Register()
     {
@@ -42,8 +49,17 @@ public class LoginConnection(ISession session, Action onRegistered = null)
         session.SendPacket(buf);
     }
 
-    public void Close()
+    internal void RecordDisconnect(SecurityDisconnectReason reason)
     {
+        if (Interlocked.Exchange(ref _disconnectRecorded, 1) == 0)
+            GameSecurityTelemetry.Disconnected(SecurityNetwork.Login, reason, Id, Ip, SecurityMetrics);
+    }
+
+    public void Close() => Close(SecurityDisconnectReason.ServerClose);
+
+    public void Close(SecurityDisconnectReason reason)
+    {
+        RecordDisconnect(reason);
         session.Close();
     }
 }

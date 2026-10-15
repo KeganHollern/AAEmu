@@ -1,8 +1,10 @@
 ﻿using System.Collections.Concurrent;
 using System.Net;
+
 using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Models;
+using AAEmu.Game.Services.Security;
 
 namespace AAEmu.Game.Core.Network.Connections;
 
@@ -37,7 +39,7 @@ public class GameConnectionTable : Singleton<GameConnectionTable>
             }
         }
 
-        con.Shutdown();
+        con.Shutdown(SecurityDisconnectReason.AdmissionLimit);
         return false;
     }
 
@@ -48,7 +50,7 @@ public class GameConnectionTable : Singleton<GameConnectionTable>
             _stopping = true;
             var connections = GetConnections();
             foreach (var connection in connections)
-                connection.MarkClosed();
+                connection.MarkClosed(SecurityDisconnectReason.ServerShutdown);
             return connections;
         }
     }

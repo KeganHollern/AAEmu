@@ -2,9 +2,10 @@
 
 using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2S;
 using AAEmu.Game.Models;
-
+using AAEmu.Game.Services.Security;
 using NLog;
 
 namespace AAEmu.Game.Core.Network.Stream;
@@ -49,6 +50,8 @@ public class StreamNetwork : Singleton<StreamNetwork>
 
     public void Stop()
     {
+        foreach (var connection in StreamConnectionTable.Instance.GetConnections())
+            connection.RecordDisconnect(SecurityDisconnectReason.ServerShutdown);
         if (_server?.IsStarted ?? false)
             _server.Stop();
         Logger.Info("StreamNetwork stoped");

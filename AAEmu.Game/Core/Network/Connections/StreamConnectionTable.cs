@@ -1,6 +1,8 @@
 ﻿using System.Collections.Concurrent;
+
 using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
+using AAEmu.Game.Services.Security;
 
 namespace AAEmu.Game.Core.Network.Connections;
 
@@ -18,7 +20,7 @@ public class StreamConnectionTable : Singleton<StreamConnectionTable>
         if (_connections.TryAdd(con.Id, con))
             return true;
 
-        con.Shutdown();
+        con.Shutdown(SecurityDisconnectReason.AdmissionLimit);
         return false;
     }
 

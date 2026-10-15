@@ -1,15 +1,20 @@
 ﻿using System.Net;
-using AAEmu.Commons.Network;
+
 using AAEmu.Commons.Network.Core;
+using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Stream;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Services.Security;
 
 namespace AAEmu.Game.Core.Network.Connections;
 
-public class StreamConnection(ISession session)
+public class StreamConnection(ISession session, GameSecurityMetrics securityMetrics = null)
 {
     private int _requestId = -1;
+    private int _disconnectRecorded;
     private readonly Dictionary<int, Doodad[]> _requests = [];
+
+    internal GameSecurityMetrics SecurityMetrics { get; } = securityMetrics ?? GameSecurityMetrics.Default;
 
     public uint Id => session.SessionId;
     internal bool MatchesSession(ISession candidate) => ReferenceEquals(session, candidate);
@@ -17,6 +22,7 @@ public class StreamConnection(ISession session)
     public GameConnection GameConnection { get; set; }
     public PacketStream LastPacket { get; set; }
     internal ConnectionEventLimiter UnknownPacketEvents { get; } = new();
+    internal ConnectionEventLimiter TokenFailureEvents { get; } = new();
 
     public int GetNextRequestId(Doodad[] doodads)
     {
@@ -51,8 +57,17 @@ public class StreamConnection(ISession session)
     {
     }
 
-    public void Shutdown()
+    internal void RecordDisconnect(SecurityDisconnectReason reason)
     {
+        if (Interlocked.Exchange(ref _disconnectRecorded, 1) == 0)
+            GameSecurityTelemetry.Disconnected(SecurityNetwork.Stream, reason, Id, Ip, SecurityMetrics);
+    }
+
+    public void Shutdown() => Shutdown(SecurityDisconnectReason.ServerClose);
+
+    public void Shutdown(SecurityDisconnectReason reason)
+    {
+        RecordDisconnect(reason);
         session?.Close();
     }
 }

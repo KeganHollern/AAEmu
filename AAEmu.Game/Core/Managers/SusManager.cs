@@ -1,14 +1,17 @@
 ﻿using System.Numerics;
-using AAEmu.Commons.Utils;
+
+using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils.DB;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Services.Security;
 using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public sealed class SusManager(IWorldManager worldManager) : Singleton<SusManager>, ISusManager, IInitializable, IDisposable
+public sealed class SusManager(IWorldManager worldManager, GameSecurityMetrics securityMetrics = null) : Singleton<SusManager>, ISusManager, IInitializable, IDisposable
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     public static string CategoryBot => "Bot";
@@ -29,6 +32,8 @@ public sealed class SusManager(IWorldManager worldManager) : Singleton<SusManage
     private Timer _flushTimer;
     private bool _stopped;
     private long _dropped;
+    // Keep event detail bounded until this backlog drains; counters include every report.
+    private ConnectionEventLimiter _activityEvents = new();
     internal Action<IReadOnlyList<Activity>> WriteBatch { get; set; } = InsertBatch;
     internal int PendingCount { get { lock (_queueLock) return _pending.Count; } }
 
@@ -47,18 +52,21 @@ public sealed class SusManager(IWorldManager worldManager) : Singleton<SusManage
     // Success means that the bounded queue accepted the record. It does not imply a database commit.
     public bool LogActivity(string category, uint accountId, uint playerId, uint zoneGroup, Vector3 position, string description)
     {
+        string outcome;
+        bool emitEvent;
         lock (_queueLock)
         {
-            if (_stopped || _pending.Count >= QueueCapacity ||
-                !float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z))
-            {
+            outcome = _stopped ? "stopped" : _pending.Count >= QueueCapacity ? "queue_full" :
+                !float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z) ? "invalid" : "queued";
+            if (outcome == "queued")
+                _pending.Enqueue(new Activity(DateTime.UtcNow, LimitText(category, 64), accountId, playerId,
+                    zoneGroup, position, LimitText(description, MaximumDescriptionLength)));
+            else
                 ++_dropped;
-                return false;
-            }
-            _pending.Enqueue(new Activity(DateTime.UtcNow, LimitText(category, 64), accountId, playerId,
-                zoneGroup, position, LimitText(description, MaximumDescriptionLength)));
-            return true;
+            emitEvent = _activityEvents.TryConsume();
         }
+        GameSecurityTelemetry.SuspiciousActivity(category, outcome, emitEvent, securityMetrics);
+        return outcome == "queued";
     }
 
     private static string LimitText(string value, int maximum)
@@ -97,6 +105,8 @@ public sealed class SusManager(IWorldManager worldManager) : Singleton<SusManage
                 {
                     for (var index = 0; index < batch.Length; ++index)
                         _pending.Dequeue();
+                    if (_pending.Count == 0)
+                        _activityEvents = new ConnectionEventLimiter();
                 }
                 Logger.Warn("Stored {Count} suspicious activity records", batch.Length);
                 return true;
