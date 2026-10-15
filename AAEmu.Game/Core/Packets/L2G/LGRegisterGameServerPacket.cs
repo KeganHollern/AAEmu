@@ -1,6 +1,7 @@
 ﻿using AAEmu.Commons.Network;
-using AAEmu.Game.Core.Network.Login;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Network.Login;
+using AAEmu.Game.Services.Security;
 
 namespace AAEmu.Game.Core.Packets.L2G;
 
@@ -12,7 +13,7 @@ public class LGRegisterGameServerPacket() : LoginPacket(LGOffsets.LGRegisterGame
         if (result != 0)
         {
             Logger.Error("Error registering on LoginServer");
-            Connection.Close(); // TODO or shutdown?
+            Connection.Close(SecurityDisconnectReason.AuthenticationRejected);
         }
         else
         {

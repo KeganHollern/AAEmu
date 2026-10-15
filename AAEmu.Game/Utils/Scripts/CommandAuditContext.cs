@@ -1,16 +1,15 @@
-using System.Text.Json;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Account;
-using NLog;
+using AAEmu.Game.Services.Security;
 
 namespace AAEmu.Game.Utils.Scripts;
 
 public sealed class CommandAuditContext : IDisposable
 {
     private static readonly AsyncLocal<CommandAuditContext> s_current = new();
-    private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private readonly CommandAuditContext _previous;
     private readonly ICommandAuditStore _store;
+    private readonly GameSecurityMetrics _securityMetrics;
     private readonly object _sync = new();
     private int _completed;
     private string _failure;
@@ -19,10 +18,11 @@ public sealed class CommandAuditContext : IDisposable
     public bool IsDeferred { get; private set; }
     internal static AccountRole? CurrentRole => s_current.Value?.Entry.ActorRole;
 
-    internal CommandAuditContext(CommandAuditEntry entry, ICommandAuditStore store)
+    internal CommandAuditContext(CommandAuditEntry entry, ICommandAuditStore store, GameSecurityMetrics securityMetrics = null)
     {
         Entry = entry;
         _store = store;
+        _securityMetrics = securityMetrics ?? GameSecurityMetrics.Default;
         _previous = s_current.Value;
         s_current.Value = this;
     }
@@ -90,20 +90,13 @@ public sealed class CommandAuditContext : IDisposable
                 Entry.Result = "audit-finish-failed";
             }
 
-            WriteEvent(Entry);
+            WriteEvent(Entry, _securityMetrics);
         }
     }
 
-    internal static void WriteEvent(CommandAuditEntry entry)
+    internal static void WriteEvent(CommandAuditEntry entry, GameSecurityMetrics securityMetrics = null)
     {
-        Logger.Info(
-            "{EventName}: Request={RequestId} ActorAccount={ActorAccountId} ActorCharacter={ActorCharacterId} " +
-            "Role={ActorRole} Source={CommandSource} Address={RemoteAddress} Command={CommandName} " +
-            "Arguments={CommandArguments} Targets={CommandTargets} Result={CommandResult} Detail={CommandDetail}",
-            "staff.command", entry.RequestId, entry.ActorAccountId, entry.ActorCharacterId,
-            entry.ActorRole, entry.Source, entry.RemoteAddress, entry.Command,
-            JsonSerializer.Serialize(entry.Arguments), JsonSerializer.Serialize(entry.Targets),
-            entry.Result, JsonSerializer.Serialize(entry.Detail));
+        GameSecurityTelemetry.CommandOutcome(entry, securityMetrics);
     }
 
     internal static string Bound(string text, int length)

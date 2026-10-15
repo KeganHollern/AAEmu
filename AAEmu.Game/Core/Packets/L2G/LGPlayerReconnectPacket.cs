@@ -9,6 +9,6 @@ public class LGPlayerReconnectPacket() : LoginPacket(LGOffsets.LGPlayerReconnect
     public override void Read(PacketStream stream)
     {
         var token = stream.ReadUInt32();
-        ReconnectTokenManager.Instance.Acknowledge(token);
+        ReconnectTokenManager.Instance.Acknowledge(token, Connection);
     }
 }

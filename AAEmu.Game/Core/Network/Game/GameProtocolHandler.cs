@@ -1,11 +1,12 @@
 ﻿using System.Collections.Concurrent;
+
 using AAEmu.Commons.Exceptions;
-using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
+using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
-
+using AAEmu.Game.Services.Security;
 using NLog;
 
 namespace AAEmu.Game.Core.Network.Game;
@@ -168,8 +169,9 @@ public class GameProtocolHandler : BaseProtocolHandler
                 {
                     if (!connection.PacketRate.TryConsume())
                     {
-                        Logger.Warn("Game packet rate exceeded on connection {ConnectionId}", connection.Id);
-                        connection.Shutdown();
+                        GameSecurityTelemetry.PacketRejected(SecurityNetwork.Game, SecurityPacketRejection.RateLimit,
+                            true, connection.Id, connection.Ip, metrics: connection.SecurityMetrics);
+                        connection.Shutdown(SecurityDisconnectReason.RateLimit);
                         return;
                     }
                     stream.Rollback();
@@ -198,8 +200,9 @@ public class GameProtocolHandler : BaseProtocolHandler
                     var type = stream2.ReadUInt16();
                     if (!CanDispatch(connection, type, level))
                     {
-                        Logger.Warn("Rejected game packet {PacketOpcode} at level {PacketLevel} in state {GameState} on connection {ConnectionId}", type, level, connection.State, connection.Id);
-                        connection.Shutdown();
+                        GameSecurityTelemetry.PacketRejected(SecurityNetwork.Game, SecurityPacketRejection.InvalidState,
+                            true, connection.Id, connection.Ip, type, level, metrics: connection.SecurityMetrics);
+                        connection.Shutdown(SecurityDisconnectReason.InvalidState);
                         return;
                     }
                     _packets[level].TryGetValue(type, out var classType);
@@ -225,7 +228,13 @@ public class GameProtocolHandler : BaseProtocolHandler
         }
         catch (Exception e)
         {
-            connection?.Shutdown();
+            if (connection != null)
+            {
+                GameSecurityTelemetry.PacketRejected(SecurityNetwork.Game,
+                    e is MarshalException ? SecurityPacketRejection.Malformed : SecurityPacketRejection.HandlerError,
+                    connection.StateRejectionEvents.TryConsume(), connection.Id, connection.Ip, metrics: connection.SecurityMetrics);
+                connection.Shutdown(SecurityDisconnectReason.ProtocolError);
+            }
             Logger.Error(e, "Game protocol failed on connection {0} from {1}", connection?.Id, connection?.Ip);
         }
     }
@@ -293,12 +302,8 @@ public class GameProtocolHandler : BaseProtocolHandler
     /// <param name="stream"></param>
     private static void HandleUnknownPacket(GameConnection connection, uint type, byte level, PacketStream stream)
     {
-        if (!connection.UnknownPacketEvents.TryConsume())
-            return;
-
-        Logger.Warn(
-            "{EventName}: Rejected unknown {Network} packet 0x{PacketOpcode:X4} at level {PacketLevel} with " +
-            "{PacketLength} unread bytes on connection {ConnectionId} from {RemoteIp}",
-            "game.packet.rejected", "game", type, level, stream.Count - stream.Pos, connection.Id, connection.Ip);
+        GameSecurityTelemetry.PacketRejected(SecurityNetwork.Game, SecurityPacketRejection.UnknownOpcode,
+            connection.UnknownPacketEvents.TryConsume(), connection.Id, connection.Ip, type, level,
+            stream.Count - stream.Pos, connection.SecurityMetrics);
     }
 }

@@ -1,16 +1,17 @@
 ﻿using System.Net;
-using AAEmu.Commons.Network;
+
 using AAEmu.Commons.Network.Core;
+using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils.DB;
-using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
-using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Housing;
-
+using AAEmu.Game.Models;
+using AAEmu.Game.Services.Security;
 using NLog;
 
 namespace AAEmu.Game.Core.Network.Connections;
@@ -22,10 +23,12 @@ public class GameConnection
     private readonly ISession _session;
     private readonly GameNetworkLimitsConfig _limits;
     internal GamePacketRateLimiter PacketRate { get; }
+    internal GameSecurityMetrics SecurityMetrics { get; }
     private readonly Lock _authenticationLock = new();
     private Timer _authenticationTimer;
     private int _closed;
     private int _socketClosed;
+    private int _disconnectRecorded;
     internal bool DisconnectSaveSucceeded { get; private set; } = true;
     private int _disconnected;
     internal object SessionSyncRoot { get; } = new();
@@ -37,7 +40,17 @@ public class GameConnection
     public uint AccountId { get; set; }
     public bool IsAuthenticated { get; private set; }
     public bool IsClosed => Volatile.Read(ref _closed) != 0;
-    internal void MarkClosed() => Interlocked.Exchange(ref _closed, 1);
+    internal void MarkClosed(SecurityDisconnectReason reason = SecurityDisconnectReason.RemoteClose)
+    {
+        RecordDisconnect(reason);
+        Interlocked.Exchange(ref _closed, 1);
+    }
+
+    internal void RecordDisconnect(SecurityDisconnectReason reason)
+    {
+        if (Interlocked.Exchange(ref _disconnectRecorded, 1) == 0)
+            GameSecurityTelemetry.Disconnected(SecurityNetwork.Game, reason, _session?.SessionId ?? 0, _session?.Ip, SecurityMetrics);
+    }
     public IPAddress Ip => _session.Ip;
     public PacketStream LastPacket { get; set; }
     public AccountPayment Payment { get; set; }
@@ -52,10 +65,13 @@ public class GameConnection
     public DateTime LastPing { get; set; }
     internal ConnectionEventLimiter UnknownPacketEvents { get; } = new();
     internal ConnectionEventLimiter StateRejectionEvents { get; } = new();
+    internal ConnectionEventLimiter TokenFailureEvents { get; } = new();
 
-    public GameConnection(ISession session, GameNetworkLimitsConfig limits = null, TimeProvider timeProvider = null)
+    public GameConnection(ISession session, GameNetworkLimitsConfig limits = null, TimeProvider timeProvider = null,
+        GameSecurityMetrics securityMetrics = null)
     {
         _session = session;
+        SecurityMetrics = securityMetrics ?? GameSecurityMetrics.Default;
         _limits = limits ?? AppConfiguration.Instance.GameNetworkLimits;
         _limits.Validate();
         PacketRate = new GamePacketRateLimiter(_limits.PacketsPerSecond, timeProvider);
@@ -121,7 +137,7 @@ public class GameConnection
         }
         // Socket callbacks can wait for an active packet. Release the authentication
         // lock first so that packet can finish its authentication check.
-        Shutdown();
+        Shutdown(SecurityDisconnectReason.AuthenticationTimeout);
     }
 
     internal bool TryAuthenticate(uint accountId)
@@ -219,6 +235,7 @@ public class GameConnection
 
     internal bool CompleteDisconnect(Action cleanup, Action save, Action remove)
     {
+        RecordDisconnect(SecurityDisconnectReason.RemoteClose);
         lock (SessionSyncRoot)
         {
             _authenticationTimer?.Dispose();
@@ -252,6 +269,7 @@ public class GameConnection
 
     internal bool KickDuplicate()
     {
+        RecordDisconnect(SecurityDisconnectReason.DuplicateAccount);
         lock (SessionSyncRoot)
         {
             Interlocked.Exchange(ref _closed, 1);
@@ -268,8 +286,11 @@ public class GameConnection
     /// <summary>
     /// Closes the active connection session
     /// </summary>
-    public void Shutdown()
+    public void Shutdown() => Shutdown(SecurityDisconnectReason.ServerClose);
+
+    public void Shutdown(SecurityDisconnectReason reason)
     {
+        RecordDisconnect(reason);
         _authenticationTimer?.Dispose();
         Interlocked.Exchange(ref _closed, 1);
         if (Interlocked.Exchange(ref _socketClosed, 1) == 0)
@@ -278,6 +299,7 @@ public class GameConnection
 
     public void Kick(string reason)
     {
+        RecordDisconnect(SecurityDisconnectReason.Moderation);
         Interlocked.Exchange(ref _closed, 1);
         // A command can target another session while its packet owns that session's
         // lock. Queue a busy target to avoid two moderation commands waiting on each other.
@@ -352,7 +374,7 @@ public class GameConnection
     {
         if (!IsAuthenticated || AccountId == 0 || IsClosed || State != GameState.Lobby || ActiveChar != null)
         {
-            Shutdown();
+            Shutdown(SecurityDisconnectReason.InvalidState);
             return;
         }
         // TODO: Load payment and account tier information

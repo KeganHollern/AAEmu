@@ -11,6 +11,7 @@ using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.Models;
 using AAEmu.Game.Services;
 using AAEmu.Game.Services.Health;
+using AAEmu.Game.Services.Security;
 using AAEmu.Game.Services.WebApi;
 using AAEmu.Game.Utils.DB;
 using AAEmu.Game.Utils.Scripts;
@@ -111,6 +112,7 @@ public static class Program
                 services.Configure<AppConfiguration>(configurationRoot);
                 services.AddSingleton(TimeProvider.System);
                 services.AddSingleton<GameHealthState>();
+                services.AddSingleton(GameSecurityMetrics.Default);
 
                 // -- Hosted services --
                 services.AddSingleton<IHostedService, GameHealthService>();

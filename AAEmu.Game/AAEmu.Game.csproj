@@ -102,6 +102,7 @@
     <PackageReference Include="NLog" />
     <PackageReference Include="NLua" />
     <PackageReference Include="OSVersionExt.NetStd" />
+    <PackageReference Include="prometheus-net" />
   </ItemGroup>
  
 </Project>

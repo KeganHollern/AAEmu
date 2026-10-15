@@ -1,8 +1,10 @@
 ﻿using System.Security.Cryptography;
+
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.S2C;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Services.Security;
 
 namespace AAEmu.Game.Core.Managers.World;
 
@@ -71,7 +73,10 @@ public class StreamManager : Singleton<StreamManager>, IStreamManager
         lock (_tokensLock)
         {
             if (accountId == 0 || token == 0 || !_tokens.TryGetValue(token, out gameConnection))
+            {
+                RecordTokenFailure(connection, SecurityTokenFailure.NotFound);
                 return false;
+            }
         }
 
         lock (gameConnection.SessionSyncRoot)
@@ -80,11 +85,21 @@ public class StreamManager : Singleton<StreamManager>, IStreamManager
             if (!_tokens.TryGetValue(token, out var current) || !ReferenceEquals(current, gameConnection) ||
                 !IsCurrent(gameConnection) || gameConnection.AccountId != accountId ||
                 connection.GameConnection != null && !ReferenceEquals(connection.GameConnection, gameConnection))
+            {
+                RecordTokenFailure(connection, gameConnection.AccountId != accountId
+                    ? SecurityTokenFailure.AccountMismatch : SecurityTokenFailure.InvalidState);
                 return false;
+            }
 
             connection.GameConnection = gameConnection;
             return true;
         }
+    }
+
+    private static void RecordTokenFailure(StreamConnection connection, SecurityTokenFailure reason)
+    {
+        GameSecurityTelemetry.TokenFailure(SecurityTokenKind.Stream, reason, connection.TokenFailureEvents.TryConsume(),
+            connection.Id, connection.Ip, connection.SecurityMetrics);
     }
 
     private bool IsCurrent(GameConnection connection) => connection.IsAuthenticated && !connection.IsClosed &&

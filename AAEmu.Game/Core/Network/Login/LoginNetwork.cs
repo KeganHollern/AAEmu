@@ -1,10 +1,12 @@
 ﻿using System.Net;
+
 using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Connections;
-using AAEmu.Game.Models;
 using AAEmu.Game.Models.Tasks.ServerLoad;
+using AAEmu.Game.Models;
+using AAEmu.Game.Services.Security;
 using NLog;
 
 namespace AAEmu.Game.Core.Network.Login;
@@ -66,6 +68,7 @@ public class LoginNetwork : Singleton<LoginNetwork>
         lock (_gate)
         {
             // The owner loop closes its own socket and cancels its own load task.
+            _connection?.RecordDisconnect(SecurityDisconnectReason.ServerShutdown);
             _lifetime?.Cancel();
             _lifetime = null;
             _connection = null;

@@ -1,11 +1,13 @@
 ﻿using System.Collections.Concurrent;
 using System.Globalization;
+
 using AAEmu.Commons.Exceptions;
-using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
-using AAEmu.Game.Core.Packets.L2G;
+using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.L2G;
 using AAEmu.Game.Models.Tasks.ServerLoad;
+using AAEmu.Game.Services.Security;
 using NLog;
 
 namespace AAEmu.Game.Core.Network.Login;
@@ -102,6 +104,7 @@ public class LoginProtocolHandler : BaseProtocolHandler
         {
             if (_session != null && !ReferenceEquals(_session, session))
                 return;
+            _connection?.RecordDisconnect(SecurityDisconnectReason.RemoteClose);
             Logger.Info("Connection to LoginServer has been lost");
             Stop();
         }
@@ -117,6 +120,7 @@ public class LoginProtocolHandler : BaseProtocolHandler
             _earlyFrames.Clear();
             if (_connection != null)
             {
+                _connection.RecordDisconnect(SecurityDisconnectReason.ServerClose);
                 _connection.Block = true;
                 _connection.LastPacket = null;
                 _clear(_connection);
@@ -210,7 +214,9 @@ public class LoginProtocolHandler : BaseProtocolHandler
         }
         catch (MarshalException e)
         {
-            connection.Close();
+            GameSecurityTelemetry.PacketRejected(SecurityNetwork.Login, SecurityPacketRejection.Malformed,
+                connection.UnknownPacketEvents.TryConsume(), connection.Id, connection.Ip, metrics: connection.SecurityMetrics);
+            connection.Close(SecurityDisconnectReason.ProtocolError);
             Logger.Error(e, "Login protocol failed on connection {0} from {1}", connection.Id, connection.Ip);
         }
     }
@@ -225,12 +231,8 @@ public class LoginProtocolHandler : BaseProtocolHandler
 
     private static void HandleUnknownPacket(LoginConnection connection, uint type, PacketStream stream)
     {
-        if (!connection.UnknownPacketEvents.TryConsume())
-            return;
-
-        Logger.Warn(
-            "{EventName}: Rejected unknown {Network} packet 0x{PacketOpcode:X4} with {PacketLength} unread bytes " +
-            "on connection {ConnectionId} from {RemoteIp}",
-            "game.packet.rejected", "login", type, stream.Count - stream.Pos, connection.Id, connection.Ip);
+        GameSecurityTelemetry.PacketRejected(SecurityNetwork.Login, SecurityPacketRejection.UnknownOpcode,
+            connection.UnknownPacketEvents.TryConsume(), connection.Id, connection.Ip, type,
+            length: stream.Count - stream.Pos, metrics: connection.SecurityMetrics);
     }
 }

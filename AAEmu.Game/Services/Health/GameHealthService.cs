@@ -1,6 +1,7 @@
 using System.Net;
 
 using AAEmu.Game.Models;
+using AAEmu.Game.Services.Security;
 
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -9,7 +10,7 @@ using NLog;
 
 namespace AAEmu.Game.Services.Health;
 
-public sealed class GameHealthService(IOptions<AppConfiguration> options, GameHealthState healthState) : IHostedService
+public sealed class GameHealthService(IOptions<AppConfiguration> options, GameHealthState healthState, GameSecurityMetrics metrics) : IHostedService
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -27,7 +28,7 @@ public sealed class GameHealthService(IOptions<AppConfiguration> options, GameHe
         }
 
         var address = config.Host == "*" ? IPAddress.Any : IPAddress.Parse(config.Host);
-        _server = new GameHealthServer(address, config.Port, healthState);
+        _server = new GameHealthServer(address, config.Port, healthState, metrics);
         if (!_server.Start())
         {
             throw new InvalidOperationException($"Failed to start Game health server on {config.Host}:{config.Port}");

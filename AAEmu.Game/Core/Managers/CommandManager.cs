@@ -1,17 +1,20 @@
 using System.Drawing;
 using System.Text;
+
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Models.Account;
-using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Chat;
-using AAEmu.Game.Utils.Scripts;
+using AAEmu.Game.Models.Game;
+using AAEmu.Game.Services.Security;
 using AAEmu.Game.Utils.Scripts.SubCommands;
+using AAEmu.Game.Utils.Scripts;
 using NLog;
 
 namespace AAEmu.Game.Core.Managers;
 
-public class CommandManager(IPermissionManager permissions, ICommandAuditStore auditStore)
+public class CommandManager(IPermissionManager permissions, ICommandAuditStore auditStore,
+    GameSecurityMetrics securityMetrics = null)
     : Singleton<CommandManager>, ICommandManager
 {
     public const string CommandPrefix = "/";
@@ -202,7 +205,7 @@ public class CommandManager(IPermissionManager permissions, ICommandAuditStore a
         if (!TryStartAudit(entry, messageOutput))
             return true;
 
-        using var audit = new CommandAuditContext(entry, auditStore);
+        using var audit = new CommandAuditContext(entry, auditStore, securityMetrics);
         if (!validLength || !parsed || words.Length == 0)
         {
             messageOutput.SendMessage("Invalid command text or length.");
@@ -268,7 +271,7 @@ public class CommandManager(IPermissionManager permissions, ICommandAuditStore a
             entry.CompletedAt = DateTime.UtcNow;
             entry.Result = "audit-unavailable";
             entry.Detail = $"No command ran: {exception.GetType().Name}";
-            CommandAuditContext.WriteEvent(entry);
+            CommandAuditContext.WriteEvent(entry, securityMetrics);
             output?.SendMessage("Command audit is unavailable. No command ran.");
             return false;
         }
@@ -285,7 +288,7 @@ public class CommandManager(IPermissionManager permissions, ICommandAuditStore a
         };
         if (!TryStartAudit(entry))
             return;
-        using var audit = new CommandAuditContext(entry, auditStore);
+        using var audit = new CommandAuditContext(entry, auditStore, securityMetrics);
         audit.Complete("denied", "The Web API cannot authenticate a staff actor. Use the authenticated game command path.");
     }
 

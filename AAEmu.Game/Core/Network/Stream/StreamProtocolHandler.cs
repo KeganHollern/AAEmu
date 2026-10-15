@@ -1,8 +1,10 @@
 ﻿using System.Collections.Concurrent;
+
 using AAEmu.Commons.Exceptions;
-using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
+using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Services.Security;
 using NLog;
 
 namespace AAEmu.Game.Core.Network.Stream;
@@ -37,6 +39,7 @@ public class StreamProtocolHandler : BaseProtocolHandler
             var con = StreamConnectionTable.Instance.RemoveConnection(session);
             if (con != null)
             {
+                con.RecordDisconnect(SecurityDisconnectReason.RemoteClose);
                 AAEmu.Game.Core.Managers.Stream.UccManager.Instance.RemoveConnection(con);
             }
         }
@@ -132,7 +135,13 @@ public class StreamProtocolHandler : BaseProtocolHandler
         }
         catch (Exception e)
         {
-            connection?.Shutdown();
+            if (connection != null)
+            {
+                GameSecurityTelemetry.PacketRejected(SecurityNetwork.Stream,
+                    e is MarshalException ? SecurityPacketRejection.Malformed : SecurityPacketRejection.HandlerError,
+                    connection.UnknownPacketEvents.TryConsume(), connection.Id, connection.Ip, metrics: connection.SecurityMetrics);
+                connection.Shutdown(SecurityDisconnectReason.ProtocolError);
+            }
             Logger.Error(e, "Stream protocol failed on connection {0} from {1}", connection?.Id, connection?.Ip);
         }
     }
@@ -146,12 +155,8 @@ public class StreamProtocolHandler : BaseProtocolHandler
 
     private static void HandleUnknownPacket(StreamConnection connection, uint type, PacketStream stream)
     {
-        if (!connection.UnknownPacketEvents.TryConsume())
-            return;
-
-        Logger.Warn(
-            "{EventName}: Rejected unknown {Network} packet 0x{PacketOpcode:X4} with {PacketLength} unread bytes " +
-            "on connection {ConnectionId} from {RemoteIp}",
-            "game.packet.rejected", "stream", type, stream.Count - stream.Pos, connection.Id, connection.Ip);
+        GameSecurityTelemetry.PacketRejected(SecurityNetwork.Stream, SecurityPacketRejection.UnknownOpcode,
+            connection.UnknownPacketEvents.TryConsume(), connection.Id, connection.Ip, type,
+            length: stream.Count - stream.Pos, metrics: connection.SecurityMetrics);
     }
 }
