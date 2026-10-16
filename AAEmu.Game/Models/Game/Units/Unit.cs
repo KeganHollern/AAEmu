@@ -845,7 +845,7 @@ public partial class Unit : BaseUnit, IUnit
     {
         // Apply static and dynamic flat values, then one combined Percent multiplier.
         // Dynamic bonuses are evaluated on the fly from their source buff so that time-varying
-        // modifiers (LinearFunc dynamic_unit_modifiers) reflect the current elapsed time rather
+        // modifiers (LinearFunc and ManualFunc) reflect the current elapsed time rather
         // than a value snapshotted at buff Start.
         var bonuses = GetBonuses(attr);
         var dynamicBonuses = GetDynamicBonuses(attr);

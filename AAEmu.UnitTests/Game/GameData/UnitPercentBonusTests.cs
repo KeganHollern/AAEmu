@@ -70,7 +70,7 @@ public sealed class UnitPercentBonusTests
         unit.AddBonus(1, Modifier(UnitAttribute.Str, 50, UnitModifierType.Percent));
         unit.AddDynamicBonus(2, new DynamicBonus
         {
-            Template = new DynamicBonusTemplate { Attribute = UnitAttribute.Str, ModifierType = UnitModifierType.Percent, FuncType = "ManualFunc" },
+            Template = new DynamicBonusTemplate { Attribute = UnitAttribute.Str, ModifierType = UnitModifierType.Percent, FuncType = "UnknownFunc" },
             SourceBuff = new Buff(unit, unit, new SkillCasterUnit(1), new BuffTemplate { Id = 10 }, null, DateTime.UtcNow)
         });
         await Assert.That(unit.CalculateWithBonuses(100, UnitAttribute.Str)).IsEqualTo(150d);

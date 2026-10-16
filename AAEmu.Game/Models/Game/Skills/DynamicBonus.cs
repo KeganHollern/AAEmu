@@ -7,7 +7,7 @@ namespace AAEmu.Game.Models.Game.Skills;
 /// Unlike a static <see cref="Bonus"/>, it is NOT snapshotted at apply time: its value is
 /// recomputed every time the owning attribute is read (see Unit.CalculateWithBonuses).
 ///
-/// The backing <see cref="LinearFuncTemplate"/> is pre-resolved once (at buff Start) so the hot
+/// The backing function template is pre-resolved once (at buff Start) so the hot
 /// evaluation path performs no SkillManager lookup and no string allocation.
 /// </summary>
 public class DynamicBonus
@@ -15,6 +15,7 @@ public class DynamicBonus
     public DynamicBonusTemplate Template { get; init; }
     public Buff SourceBuff { get; init; }
     public LinearFuncTemplate LinearFunc { get; init; }
+    public ManualFuncTemplate ManualFunc { get; init; }
 
     /// <summary>
     /// Computes the current value of this dynamic bonus.
@@ -22,6 +23,11 @@ public class DynamicBonus
     /// in which case it must NOT be applied.
     /// </summary>
     public bool Evaluate(out double value)
+    {
+        return Evaluate(DateTime.UtcNow, out value);
+    }
+
+    internal bool Evaluate(DateTime now, out double value)
     {
         value = 0d;
 
@@ -43,7 +49,7 @@ public class DynamicBonus
                 var ratio = 1d;
                 if (duration > 0)
                 {
-                    var elapsed = (DateTime.UtcNow - SourceBuff.StartTime).TotalMilliseconds;
+                    var elapsed = (now - SourceBuff.StartTime).TotalMilliseconds;
                     ratio = Math.Clamp(elapsed / duration, 0d, 1d);
                 }
 
@@ -52,8 +58,18 @@ public class DynamicBonus
             }
 
             case "ManualFunc":
-                // Not implemented: the expected client behavior is unknown. Do not apply a value.
-                return false;
+            {
+                // The native dynamic-modifier path requires both runtime duration and tick.
+                // Each completed tick selects the next list entry, holding the last entry
+                // when the buff outlasts the list. Charge is unrelated to this index.
+                if (ManualFunc == null || SourceBuff.Duration <= 0 || SourceBuff.Tick <= 0)
+                    return false;
+
+                var elapsed = Math.Max(0d, (now - SourceBuff.StartTime).TotalMilliseconds);
+                var index = (int)Math.Min(elapsed / SourceBuff.Tick, ManualFunc.Values.Count - 1);
+                value = ManualFunc.GetValue(index);
+                return true;
+            }
 
             default:
                 return false;

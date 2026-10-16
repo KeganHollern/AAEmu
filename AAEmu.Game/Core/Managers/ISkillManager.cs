@@ -12,6 +12,7 @@ public interface ISkillManager : ILoadable
     List<uint> GetBuffTags(uint buffId);
     BuffTemplate GetBuffTemplate(uint id);
     LinearFuncTemplate GetLinearFunc(uint funcId);
+    ManualFuncTemplate GetManualFunc(uint funcId);
     List<BuffTriggerTemplate> GetBuffTriggerTemplates(uint buffId);
     List<CombatBuffTemplate> GetCombatBuffs(uint reqBuffId);
     List<DefaultSkill> GetDefaultSkills();
