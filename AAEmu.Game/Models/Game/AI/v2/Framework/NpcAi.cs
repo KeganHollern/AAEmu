@@ -25,6 +25,7 @@ public abstract partial class NpcAi
     public bool AlreadyTargeted { get; set; }
 
     public Npc Owner { get; set; }
+    internal NpcWeaponCadence WeaponCadence { get; } = new();
     public Vector3 IdlePosition { get; set; }
     public Vector3 HomePosition { get; set; }
     public AiParams Param { get; set; }
@@ -134,6 +135,9 @@ public abstract partial class NpcAi
 
         Logger.Trace($"Npc {Owner.TemplateId}:{Owner.ObjId} leaving behavior {_currentBehavior?.GetType().Name ?? "none"}, Entering behavior {behavior?.GetType().Name ?? "none"}");
         _currentBehavior?.Exit();
+        if (behavior is SpawningBehavior or ReturnStateBehavior or DeadBehavior or DespawningBehavior or
+            IdleBehavior or HoldPositionBehavior or RoamingBehavior or DoNothingBehavior or DummyBehavior)
+            WeaponCadence.Reset();
         _currentBehavior = behavior;
         _currentBehavior?.Enter();
     }

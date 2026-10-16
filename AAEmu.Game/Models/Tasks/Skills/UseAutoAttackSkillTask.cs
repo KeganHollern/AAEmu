@@ -1,4 +1,4 @@
-using AAEmu.Game.Core.Managers;
+﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
@@ -12,25 +12,50 @@ public class UseAutoAttackSkillTask : SkillTask
 {
     private readonly Character _caster;
     private readonly Skill _mainhandSkill;
+    private readonly Func<DateTime> _utcNow;
+    private readonly AutoAttackCycle _mainhandCycle = new();
+    private readonly AutoAttackCycle _offhandCycle = new();
+    private int _executing;
     private int _mainhandAttackIndex;
     private int _offhandAttackIndex;
-
-    /// <summary>
-    /// Cached offhand attack options. Each shot gets a separate Skill instance.
-    /// Current equipment decides whether the offhand fires on this tick.
-    /// </summary>
     private Skill _offhandSkill;
-    private SkillTemplate _offhandSkillTemplate;
 
-    public UseAutoAttackSkillTask(Skill skill, Character caster) : base(skill)
+    public UseAutoAttackSkillTask(Skill skill, Character caster) : this(skill, caster, () => DateTime.UtcNow)
+    {
+    }
+
+    internal UseAutoAttackSkillTask(Skill skill, Character caster, Func<DateTime> utcNow) : base(skill)
     {
         _mainhandSkill = skill;
         _mainhandAttackIndex = skill.AutoAttackIndex;
         _caster = caster;
-        Cancelled = false;
+        _utcNow = utcNow;
+        RefreshCycles(_utcNow());
+    }
+
+    public bool Schedule()
+    {
+        var now = _utcNow();
+        RefreshCycles(now);
+        return TaskManager.Instance.Schedule(this, NextTrigger - now, FallbackInterval);
     }
 
     public override void Execute()
+    {
+        // A slow callback must not overlap a second callback for this same task.
+        if (Interlocked.CompareExchange(ref _executing, 1, 0) != 0)
+            return;
+        try
+        {
+            ExecuteAttack();
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _executing, 0);
+        }
+    }
+
+    private void ExecuteAttack()
     {
         if (!ReferenceEquals(_caster.AutoAttackTask, this))
         {
@@ -39,58 +64,55 @@ public class UseAutoAttackSkillTask : SkillTask
         }
 
         var target = _caster.CurrentTarget as Unit;
-
-        // Stop conditions: dead, no target, target dead, self-target, cancelled
         if (_caster.Hp <= 0 || target == null || target.Hp <= 0 || target.ObjId == _caster.ObjId || Cancelled)
         {
             StopAutoAttack();
             return;
         }
 
-        RefreshAttackInterval();
+        var now = _utcNow();
+        RefreshCycles(now);
+        var mainhandDue = _mainhandCycle.TryConsume(now);
 
-        // Skill-pause: while another skill is casting or during GCD, skip this tick.
-        // We don't cancel — auto-attack will resume on the next tick after skill ends.
-        if (_caster.SkillTask != null || _caster.ActivePlotState?.HasCastWaits == true)
-            return;
-        if (_caster.GlobalCooldown >= DateTime.UtcNow)
-            return;
-
-        if (!_caster.CanAttack(target))
-            return;
-
-        // Range check — pause (don't cancel) if target moved out of range
-        var maxRange = GetEffectiveMaxRange();
-        var distance = _caster.GetDistanceTo(target);
-        if (distance > maxRange)
-            return;
-
-        var casterCaster = new SkillCasterUnit(_caster.ObjId);
-        var targetCaster = new SkillCastUnitTarget(target.ObjId);
-        var skillObject = SkillObject.GetByType(SkillObjectType.None);
-
-        // Delayed impacts retain their own timeline, target, and cancellation state.
-        var mainhand = CreateAttack(_mainhandSkill, _mainhandAttackIndex);
-        mainhand.Use(_caster, casterCaster, targetCaster, skillObject, true, out _);
-        _mainhandAttackIndex = mainhand.AutoAttackIndex;
-
-        // Dual-wield: check the current equipment on every tick (not just at task
-        // construction). If the player swaps weapons mid-fight, the offhand swing
-        // appears / disappears immediately on the next tick.
-        var offhandSkill = ResolveOffhandSkill();
-        if (offhandSkill != null)
+        // Pauses consume each due attempt, as the former recurring task did.
+        // Each hand keeps its own cycle and resumes without accumulated swings.
+        if (mainhandDue && CanAttack(target, _mainhandSkill, now))
         {
-            var offCaster = new SkillCasterUnit(_caster.ObjId);
-            var offTarget = new SkillCastUnitTarget(target.ObjId);
-            var offSkillObject = SkillObject.GetByType(SkillObjectType.None);
-            var offhand = CreateAttack(offhandSkill, _offhandAttackIndex);
-            offhand.Use(_caster, offCaster, offTarget, offSkillObject, true, out _);
+            var mainhand = CreateAttack(_mainhandSkill, _mainhandAttackIndex);
+            UseAttack(mainhand, target);
+            _mainhandAttackIndex = mainhand.AutoAttackIndex;
+        }
+
+        // The mainhand hit can change equipment, speed, or the target's life.
+        // Read those values again before a separately due offhand attempt.
+        RefreshCycles(now);
+        if (_offhandCycle.TryConsume(now) && CanAttack(target, _offhandSkill, now))
+        {
+            var offhand = CreateAttack(_offhandSkill, _offhandAttackIndex);
+            UseAttack(offhand, target);
             _offhandAttackIndex = offhand.AutoAttackIndex;
         }
 
-        // A hit can add or remove a speed buff. Update the pending interval too.
-        RefreshAttackInterval();
+        if (Cancelled || !ReferenceEquals(_caster.AutoAttackTask, this) || _caster.Hp <= 0 || target.Hp <= 0)
+        {
+            StopAutoAttack();
+            return;
+        }
+
+        RefreshCycles(now);
+        TaskManager.Instance.SetNextTrigger(this, NextTrigger, FallbackInterval);
     }
+
+    private bool CanAttack(Unit target, Skill skill, DateTime now) =>
+        skill != null && !Cancelled && ReferenceEquals(_caster.AutoAttackTask, this) &&
+        _caster.Hp > 0 && target.Hp > 0 &&
+        _caster.SkillTask == null && _caster.ActivePlotState?.HasCastWaits != true &&
+        _caster.GlobalCooldown < now && _caster.CanAttack(target) &&
+        _caster.GetDistanceTo(target) <= GetEffectiveMaxRange(skill.Template);
+
+    private void UseAttack(Skill attack, Unit target) =>
+        attack.Use(_caster, new SkillCasterUnit(_caster.ObjId), new SkillCastUnitTarget(target.ObjId),
+            SkillObject.GetByType(SkillObjectType.None), true, out _);
 
     private static Skill CreateAttack(Skill options, int animationIndex) => new(options.Template)
     {
@@ -102,36 +124,22 @@ public class UseAutoAttackSkillTask : SkillTask
         AutoAttackIndex = animationIndex
     };
 
-    /// <summary>
-    /// Decide per tick whether an offhand auto-attack should fire alongside the
-    /// mainhand. Returns the offhand Skill if and only if:
-    ///   • mainhand task is the melee skill (id 2)
-    ///   • offhand currently holds a weapon (anything that's not a shield / empty)
-    /// The Skill instance itself is cached lazily on first hit.
-    /// </summary>
     private Skill ResolveOffhandSkill()
     {
         if (_mainhandSkill.Template.Id != 2)
             return null;
 
         var offhandItem = _caster.Equipment?.GetItemBySlot((int)EquipmentItemSlot.Offhand);
-        if (offhandItem?.Template is not WeaponTemplate offhandWeapon)
-            return null;
-
-        // A shield is also a WeaponTemplate, but it must NOT produce an offhand
-        // auto-attack swing. Without this guard a sword+shield loadout swung the
-        // shield as if it were a dual-wield weapon (#1454).
-        if (offhandWeapon.HoldableTemplate?.SlotTypeId == (uint)EquipmentItemSlotType.Shield)
+        if (offhandItem?.Template is not WeaponTemplate { HoldableTemplate: { } holdable } ||
+            holdable.SlotTypeId == (uint)EquipmentItemSlotType.Shield)
             return null;
 
         if (_offhandSkill != null)
             return _offhandSkill;
 
-        _offhandSkillTemplate ??= SkillManager.Instance.GetSkillTemplate(3);
-        if (_offhandSkillTemplate == null)
-            return null;
-
-        _offhandSkill = new Skill(_offhandSkillTemplate);
+        var template = SkillManager.Instance.GetSkillTemplate(3);
+        if (template != null)
+            _offhandSkill = new Skill(template);
         return _offhandSkill;
     }
 
@@ -146,23 +154,31 @@ public class UseAutoAttackSkillTask : SkillTask
         Cancel();
     }
 
-    private void RefreshAttackInterval()
+    private void RefreshCycles(DateTime now)
     {
-        var interval = TimeSpan.FromMilliseconds(SkillManager.GetAttackDelay(_mainhandSkill.Template, _caster));
-        TaskManager.Instance.UpdateRepeatInterval(this, interval);
+        _mainhandCycle.Refresh(now, SkillManager.GetAttackDelay(_mainhandSkill.Template, _caster));
+        var offhand = ResolveOffhandSkill();
+        _offhandCycle.Refresh(now, offhand == null ? 1 : SkillManager.GetAttackDelay(offhand.Template, _caster),
+            offhand != null);
     }
 
-    /// <summary>Get max attack range from equipped weapon or fall back to skill template.</summary>
-    private float GetEffectiveMaxRange()
-    {
-        var slot = _mainhandSkill.Template.Id == 4
-            ? EquipmentItemSlot.Ranged
-            : EquipmentItemSlot.Mainhand;
+    private DateTime NextTrigger => _offhandCycle.Enabled && _offhandCycle.DueTime < _mainhandCycle.DueTime
+        ? _offhandCycle.DueTime : _mainhandCycle.DueTime;
 
+    private TimeSpan FallbackInterval => _offhandCycle.Enabled && _offhandCycle.Interval < _mainhandCycle.Interval
+        ? _offhandCycle.Interval : _mainhandCycle.Interval;
+
+    private float GetEffectiveMaxRange(SkillTemplate template)
+    {
+        var slot = template.Id switch
+        {
+            3 => EquipmentItemSlot.Offhand,
+            4 => EquipmentItemSlot.Ranged,
+            _ => EquipmentItemSlot.Mainhand
+        };
         var weapon = _caster.Equipment?.GetItemBySlot((int)slot);
         if (weapon?.Template is WeaponTemplate wt && wt.HoldableTemplate != null && wt.HoldableTemplate.MaxRange > 0)
             return wt.HoldableTemplate.MaxRange;
-
-        return _mainhandSkill.Template.MaxRange > 0 ? _mainhandSkill.Template.MaxRange : 3f;
+        return template.MaxRange > 0 ? template.MaxRange : 3f;
     }
 }

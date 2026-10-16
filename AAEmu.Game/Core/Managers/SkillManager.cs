@@ -1866,6 +1866,8 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
         if (skillTemplate.Id is 2 or 3 or 4 && caster is Character character)
         {
             var (weaponSpeed, twoHanded) = GetWeaponSpeed(character, skillTemplate.Id);
+            if (skillTemplate.Id == 3)
+                weaponSpeed *= 2;
             return AttackTiming.GetWeaponInterval(caster, weaponSpeed, skillTemplate.Id == 4, twoHanded);
         }
 

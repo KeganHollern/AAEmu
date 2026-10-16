@@ -952,14 +952,9 @@ public partial class Skill
     {
         if (caster is not Unit unit) { return; }
 
-        if (unit.AutoAttackTask != null)
-            unit.AutoAttackTask.Cancelled = true;
-
-        // await unit.AutoAttackTask.Cancel();
+        unit.StopAutoSkill(unit);
         caster.BroadcastPacket(new SCSkillEndedPacket(TlId), true);
         caster.BroadcastPacket(new SCSkillStoppedPacket(unit.ObjId, Id), true);
-        //unit.AutoAttackTask = null;
-        //unit.IsAutoAttack = false; // turned off auto attack
         SkillTlIdManager.ReleaseId(TlId);
         TlId = 0;
     }

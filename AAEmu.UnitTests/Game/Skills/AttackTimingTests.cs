@@ -240,12 +240,13 @@ public sealed class AttackTimingTests
     [Test]
     public async Task PausedAutoAttack_RefreshesThePendingIntervalAndRestoresItAfterBuffRemoval()
     {
+        var now = DateTime.UtcNow;
         var caster = new CharacterMock { ObjId = 1, Hp = 100, CurrentTarget = new Unit { ObjId = 2, Hp = 100 },
             IsAutoAttack = true, GlobalCooldown = DateTime.UtcNow.AddHours(1) };
-        var task = new UseAutoAttackSkillTask(new Skill(new SkillTemplate { Id = 2 }), caster);
+        var task = new UseAutoAttackSkillTask(new Skill(new SkillTemplate { Id = 2 }), caster, () => now);
         caster.AutoAttackTask = task;
         _tasks.Schedule(task, TimeSpan.FromMilliseconds(1500), TimeSpan.FromMilliseconds(1500));
-        var originalTrigger = task.TriggerTime;
+        var originalTrigger = now.AddMilliseconds(1500);
         caster.AddBonus(1, Modifier(UnitAttribute.MeleeSpeedMul, 500));
         task.Execute();
         await Assert.That(task.RepeatInterval).IsEqualTo(TimeSpan.FromMilliseconds(1000));
@@ -369,16 +370,19 @@ public sealed class AttackTimingTests
         var callbacks = 0;
         var options = new Skill(template) { Level = 7, CastTimeMultiplier = 0.5f, BaseCastingTime = 0,
             AutoAttackIndex = 3, Callback = () => callbacks++ };
-        var task = new UseAutoAttackSkillTask(options, caster);
+        var now = DateTime.UtcNow;
+        var task = new UseAutoAttackSkillTask(options, caster, () => now);
         caster.AutoAttackTask = task;
         _tasks.Schedule(task, TimeSpan.FromHours(1), TimeSpan.FromMilliseconds(200));
         caster.CurrentTarget = firstTarget;
+        now = now.AddMilliseconds(360);
         task.Execute();
         var firstPacket = caster.Packets.OfType<SCSkillFiredPacket>().Single();
         var field = typeof(SCSkillFiredPacket).GetField("_skill", BindingFlags.Instance | BindingFlags.NonPublic)!;
         var first = (Skill)field.GetValue(firstPacket)!;
         var firstTimeline = first.TlId;
         caster.CurrentTarget = secondTarget;
+        now = now.AddMilliseconds(360);
         task.Execute();
         var secondPacket = caster.Packets.OfType<SCSkillFiredPacket>().Last();
         var second = (Skill)field.GetValue(secondPacket)!;
