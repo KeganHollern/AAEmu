@@ -251,6 +251,25 @@ public class TaskManager(ITickManager tickManager) : Singleton<TaskManager>, ITa
         }
     }
 
+    internal bool SetNextTrigger(Task task, DateTime triggerTime, TimeSpan repeatInterval)
+    {
+        if (repeatInterval <= TimeSpan.Zero)
+            return false;
+
+        lock (_executionLock)
+        {
+            if (_stopping || task.Cancelled || !_queue.TryGetValue(task.Id, out var queued) ||
+                !ReferenceEquals(queued, task) || task.RepeatInterval <= TimeSpan.Zero)
+                return false;
+
+            // A recurring callback can have several independent due times. Replace
+            // the fallback already selected by Tick with the next due time.
+            task.TriggerTime = triggerTime;
+            task.RepeatInterval = repeatInterval;
+            return true;
+        }
+    }
+
     public void RemoveTasks(Func<Task, bool> predicate)
     {
         // Take a snapshot of the current tasks to avoid modifying the collection while iterating.

@@ -87,6 +87,63 @@ public sealed class TaskManagerIntervalTests
         await Assert.That(task.RepeatInterval).IsEqualTo(TimeSpan.FromSeconds(2));
     }
 
+    [Test]
+    public async Task CallbackNextTrigger_ReplacesTheFallbackChosenByTick()
+    {
+        var manager = CreateManager();
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var next = DateTime.UtcNow.AddSeconds(12);
+        var accepted = false;
+        var task = new CallbackTask(current =>
+        {
+            accepted = manager.SetNextTrigger(current, next, TimeSpan.FromSeconds(3));
+            finished.SetResult();
+        });
+        manager.Schedule(task, TimeSpan.FromSeconds(-1), TimeSpan.FromSeconds(2));
+        try
+        {
+            typeof(TaskManager).GetMethod("Tick", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(manager, [TimeSpan.FromMilliseconds(50)]);
+            await finished.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            manager.Stop();
+        }
+        await Assert.That(accepted).IsTrue();
+        await Assert.That(task.TriggerTime).IsEqualTo(next);
+        await Assert.That(task.RepeatInterval).IsEqualTo(TimeSpan.FromSeconds(3));
+        await Assert.That(task.ExecuteCount).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task NextTrigger_RejectsStaleCancelledStoppedAndNonrecurringTasks()
+    {
+        var manager = CreateManager();
+        var next = DateTime.UtcNow.AddSeconds(12);
+        var oldTask = new CallbackTask(_ => { });
+        manager.Schedule(oldTask, TimeSpan.FromHours(1), TimeSpan.FromSeconds(2));
+        manager.Cancel(oldTask);
+        var current = new CallbackTask(_ => { });
+        manager.Schedule(current, TimeSpan.FromHours(1), TimeSpan.FromSeconds(2));
+        var original = current.TriggerTime;
+        oldTask.Id = current.Id;
+        oldTask.Cancelled = false;
+        await Assert.That(manager.SetNextTrigger(oldTask, next, TimeSpan.FromSeconds(1))).IsFalse();
+        await Assert.That(manager.SetNextTrigger(current, next, TimeSpan.Zero)).IsFalse();
+        await Assert.That(manager.SetNextTrigger(current, next, TimeSpan.FromSeconds(-1))).IsFalse();
+        current.Cancelled = true;
+        await Assert.That(manager.SetNextTrigger(current, next, TimeSpan.FromSeconds(1))).IsFalse();
+        current.Cancelled = false;
+        var oneShot = new CallbackTask(_ => { });
+        manager.Schedule(oneShot, TimeSpan.FromHours(1));
+        await Assert.That(manager.SetNextTrigger(oneShot, next, TimeSpan.FromSeconds(1))).IsFalse();
+        manager.Stop();
+        await Assert.That(manager.SetNextTrigger(current, next, TimeSpan.FromSeconds(1))).IsFalse();
+        await Assert.That(current.TriggerTime).IsEqualTo(original);
+        await Assert.That(current.RepeatInterval).IsEqualTo(TimeSpan.FromSeconds(2));
+    }
+
     private static TaskManager CreateManager()
     {
         var tick = Mock.Of<ITickManager>();

@@ -626,43 +626,47 @@ public partial class Unit : BaseUnit, IUnit
 
     public void StopAutoSkill(Unit unit)
     {
-        if (unit.AutoAttackTask is null || unit is not Character character)
+        if (unit is not Character character || character.AutoAttackTask is not { } task)
         {
             return;
         }
 
-        character.AutoAttackTask.Cancelled = true;
-        // await character.AutoAttackTask.Cancel();
-        /*
-        character.AutoAttackTask = null;
-        character.IsAutoAttack = false; // turned off auto attack
-        character.BroadcastPacket(new SCSkillEndedPacket(character.TlId), true);
-        character.BroadcastPacket(new SCSkillStoppedPacket(character.ObjId, character.SkillId), true);
-        TlIdManager.Instance.ReleaseId(character.TlId);
-        */
+        task.Cancelled = true;
+        task.Cancel();
+        if (ReferenceEquals(character.AutoAttackTask, task))
+        {
+            character.AutoAttackTask = null;
+            character.IsAutoAttack = false;
+        }
     }
 
     public void StartAutoSkill(Skill skill)
     {
-        if (this is not Character character || AutoAttackTask is not null)
+        if (this is not Character character)
         {
             return;
         }
 
+        if (AutoAttackTask is { } previous)
+        {
+            if (!previous.Cancelled && previous.Skill.Template.Id == skill.Template.Id)
+                return;
+            previous.Cancelled = true;
+            previous.Cancel();
+        }
+
         var newTask = new UseAutoAttackSkillTask(skill, character);
         character.AutoAttackTask = newTask;
-        var attackDelayTimes = SkillManager.GetAttackDelay(skill.Template, character);
-
-        TaskManager.Instance.Schedule(character.AutoAttackTask, TimeSpan.FromMilliseconds(attackDelayTimes),
-            TimeSpan.FromMilliseconds(attackDelayTimes), -1);
-        /*
-        await character.AutoAttackTask.Cancel();
-        character.AutoAttackTask = null;
-        character.IsAutoAttack = false; // turned off auto attack
-        character.BroadcastPacket(new SCSkillEndedPacket(character.TlId), true);
-        character.BroadcastPacket(new SCSkillStoppedPacket(character.ObjId, character.SkillId), true);
-        TlIdManager.Instance.ReleaseId(character.TlId);
-        */
+        character.IsAutoAttack = true;
+        if (!newTask.Schedule())
+        {
+            newTask.Cancelled = true;
+            if (ReferenceEquals(character.AutoAttackTask, newTask))
+            {
+                character.AutoAttackTask = null;
+                character.IsAutoAttack = false;
+            }
+        }
     }
 
     public void SetInvisible(bool value)

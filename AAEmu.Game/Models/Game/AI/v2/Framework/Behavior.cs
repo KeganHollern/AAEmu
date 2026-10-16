@@ -107,14 +107,14 @@ public abstract class Behavior
         SetWeaponRange(skill, target); // set the maximum distance for the skill attack
 
         var delay2 = (int)(Ai.Owner.Template.BaseSkillDelay * 1000);
-        if (Ai.Owner.Template.BaseSkillDelay == 0)
+        if (Ai.Owner.Template.BaseSkillDelay == 0 && !NpcWeaponCadence.IsBasicAttack(pickedSkillId))
         {
             const int Delay1 = 1500;
             const int Delay2 = 1550;
             delay2 = Random.Shared.Next(Delay1, Delay2);
         }
 
-        if (this.CheckInterval(delay2))
+        if (delay2 == 0 || this.CheckInterval(delay2))
         {
             Logger.Debug("PickSkillAndUseIt:UseSkill Owner.ObjId {0}, Owner.TemplateId {1}, SkillId {2} on Target {3}", Ai.Owner.ObjId, Ai.Owner.TemplateId, skillTemplate.Id, target.ObjId);
             res = UseSkill(skill, target);
@@ -158,6 +158,10 @@ public abstract class Behavior
             return SkillResult.TooFarRange;
         }
 
+        var started = DateTime.UtcNow;
+        if (!Ai.WeaponCadence.CanUse(Ai.Owner, skill.Id, started))
+            return SkillResult.CooldownTime;
+
         _nextTimeToDelay = delay;
         var skillCaster = SkillCaster.GetByType(SkillCasterType.Unit);
         skillCaster.ObjId = Ai.Owner.ObjId;
@@ -186,6 +190,7 @@ public abstract class Behavior
 
         skill.Callback = OnSkillEnded;
         var result = skill.Use(Ai.Owner, skillCaster, skillCastTarget, skillObject, false, out _);
+        Ai.WeaponCadence.RecordResult(skill.Id, started, result);
         // fix the eastward turn when using SelfSkill
         if (skill.Template.TargetType != SkillTargetType.Self && result == SkillResult.Success)
             Ai.Owner.LookTowards(target.Transform.World.Position);
