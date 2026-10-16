@@ -96,10 +96,10 @@ public class Buff
                 _count = (int)(time / Tick + 0.5f + 1);
             else
                 _count = -1;
-            EffectTaskManager.Instance.AddDispelTask(this, Tick);
+            EffectTaskManager.Instance.AddDispelTask(this, GetNextEffectDelay());
         }
         else
-            EffectTaskManager.Instance.AddDispelTask(this, GetTimeLeft());
+            EffectTaskManager.Instance.AddDispelTask(this, GetNextEffectDelay());
     }
 
     public void ScheduleEffect(bool replace)
@@ -129,10 +129,10 @@ public class Buff
                             _count = (int)(time / Tick + 0.5f + 1);
                         else
                             _count = -1;
-                        EffectTaskManager.Instance.AddDispelTask(this, Tick);
+                        EffectTaskManager.Instance.AddDispelTask(this, GetNextEffectDelay());
                     }
                     else
-                        EffectTaskManager.Instance.AddDispelTask(this, GetTimeLeft());
+                        EffectTaskManager.Instance.AddDispelTask(this, GetNextEffectDelay());
 
                     if (Template.FactionId > 0 && Owner is Unit owner)
                     {
@@ -143,21 +143,26 @@ public class Buff
                 }
             case EffectState.Acting:
                 {
+                    // A shortened final delay only expires the buff. It must not add
+                    // a periodic effect unless the duration ends on a full tick.
+                    var tickDue = Duration == 0 || GetTimeLeft() > 0 || (Tick > 0 && Duration % Tick == 0);
                     if (_count == -1)
                     {
-                        if (Template.OnActionTime)
+                        if (Template.OnActionTime && tickDue)
                         {
                             Template.TimeToTimeApply(Caster, Owner, this);
-                            return;
+                            if (Duration == 0 || GetTimeLeft() > 0)
+                                return;
                         }
                     }
                     else if (_count > 0)
                     {
                         _count--;
-                        if (Template.OnActionTime && _count > 0)
+                        if (Template.OnActionTime && _count > 0 && tickDue)
                         {
                             Template.TimeToTimeApply(Caster, Owner, this);
-                            return;
+                            if (Duration == 0 || GetTimeLeft() > 0)
+                                return;
                         }
                     }
 
@@ -270,6 +275,19 @@ public class Buff
             return -1;
         var time = (long)(StartTime.AddMilliseconds(Duration) - DateTime.UtcNow).TotalMilliseconds;
         return time > 0 ? time : 0;
+    }
+
+    internal double GetNextEffectDelay() => GetNextEffectDelay(DateTime.UtcNow);
+
+    internal double GetNextEffectDelay(DateTime now)
+    {
+        if (Duration == 0)
+            return Tick > 0 ? Tick : -1;
+
+        // For example, a 30-second buff with a 25-second tick needs its last
+        // callback after 5 seconds, not after another complete 25-second tick.
+        var remaining = Math.Max(0, (long)(StartTime.AddMilliseconds(Duration) - now).TotalMilliseconds);
+        return Tick > 0 ? Math.Min(Tick, remaining) : remaining;
     }
 
     public uint GetTimeElapsed()

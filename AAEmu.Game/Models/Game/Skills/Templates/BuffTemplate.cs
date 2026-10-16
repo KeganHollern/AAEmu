@@ -269,9 +269,23 @@ public class BuffTemplate
                 }
 
                 case "ManualFunc":
-                    // Not implemented: don't silently apply a wrong value.
-                    Logger.Warn($"ManualFunc dynamic_unit_modifier not implemented (func_id={template.FuncId}, buff {Id}).");
+                {
+                    var manualFunc = SkillManager.Instance.GetManualFunc(template.FuncId);
+                    if (manualFunc == null)
+                    {
+                        Logger.Warn($"Missing manual_func {template.FuncId} for dynamic_unit_modifier on buff {Id}.");
+                        continue;
+                    }
+
+                    var dynamicBonus = new DynamicBonus
+                    {
+                        Template = template,
+                        SourceBuff = buff,
+                        ManualFunc = manualFunc
+                    };
+                    owner.AddDynamicBonus(buff.Index, dynamicBonus);
                     break;
+                }
 
                 default:
                     Logger.Warn($"Unsupported dynamic_unit_modifier FuncType={template.FuncType}, FuncId={template.FuncId}, buff {Id}.");

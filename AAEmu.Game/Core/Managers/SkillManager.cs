@@ -39,6 +39,7 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
     private Dictionary<uint, List<BuffTriggerTemplate>> _buffTriggers;
     private Dictionary<uint, List<CombatBuffTemplate>> _combatBuffs;
     private Dictionary<uint, LinearFuncTemplate> _linearFuncs;
+    private Dictionary<uint, ManualFuncTemplate> _manualFuncs;
     private Dictionary<uint, SkillReagent> _skillReagents;
     private Dictionary<uint, SkillProduct> _skillProducts;
     private HashSet<uint> _comboFollowupSkills;
@@ -112,6 +113,11 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
     public LinearFuncTemplate GetLinearFunc(uint funcId)
     {
         return _linearFuncs.GetValueOrDefault(funcId);
+    }
+
+    public ManualFuncTemplate GetManualFunc(uint funcId)
+    {
+        return _manualFuncs.GetValueOrDefault(funcId);
     }
 
     public List<BuffTriggerTemplate> GetBuffTriggerTemplates(uint buffId)
@@ -308,6 +314,7 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
         _taggedSkills = [];
         _combatBuffs = [];
         _linearFuncs = [];
+        _manualFuncs = [];
         _skillReagents = [];
         _skillProducts = [];
 
@@ -757,6 +764,20 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
                             EndValue = reader.GetInt32("end_value")
                         };
                         _linearFuncs[template.Id] = template;
+                    }
+                }
+            }
+
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT * FROM manual_funcs";
+                command.Prepare();
+                using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+                {
+                    while (reader.Read())
+                    {
+                        var template = ManualFuncTemplate.Parse(reader.GetUInt32("id"), reader.GetString("value_list"));
+                        _manualFuncs[template.Id] = template;
                     }
                 }
             }
