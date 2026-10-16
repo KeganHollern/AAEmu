@@ -62,6 +62,7 @@ Only standard basic skills 2, 3, and 4 use the new gate. `NpcAi` records each
 accepted start and reads the current native interval before the next attempt.
 Rejected attacks do not consume an interval. Combat lifecycle transitions clear
 the old deadlines. Target changes do not clear them.
+The cadence lock protects reset, and results from before a reset cannot restore an old deadline.
 
 The generic attack path replaces its 1500-1550 ms random fallback for these
 skills. Positive `BaseSkillDelay`, per-AI post-skill delays, existing GCD,
