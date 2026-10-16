@@ -1,7 +1,9 @@
 ﻿using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
@@ -243,7 +245,9 @@ public abstract class Behavior
             if (MathUtil.IsFront(Ai.Owner, unit, Ai.Owner.Template.SightFovScale) &&
                 Math.Abs(Ai.Owner.Transform.World.Position.Z - unit.Transform.World.Position.Z) < maxHeightGap)
             {
-                if (Ai.Owner.CanAttack(unit) && (rangeOfUnit < 1f || Ai.Owner.CanSeeTarget(unit)))
+                if ((unit is not Character player || rangeOfUnit <= CombatFormulas.GetNpcPerceptionRange(
+                        Ai.Owner.Level, player.Level, Ai.Owner.Template.AttackStartRangeScale * 10f)) &&
+                    Ai.Owner.CanAttack(unit) && Ai.Owner.CanSeeTarget(unit))
                 {
                     OnEnemySeen(unit);
                     res = true;
@@ -253,9 +257,9 @@ public abstract class Behavior
             else
             {
                 // If you're breathing down their neck, they will also start attacking you if they can
-                if (rangeOfUnit < 1.5f * Ai.Owner.Template.SightRangeScale)
+                if (rangeOfUnit < GetPerceptionRange(unit, 1.5f * Ai.Owner.Template.SightRangeScale))
                 {
-                    if (Ai.Owner.CanAttack(unit) && (rangeOfUnit < 0.5f || Ai.Owner.CanSeeTarget(unit)))
+                    if (Ai.Owner.CanAttack(unit) && Ai.Owner.CanSeeTarget(unit))
                     {
                         OnEnemySeen(unit);
                         res = true;
@@ -318,7 +322,9 @@ public abstract class Behavior
             if (MathUtil.IsFront(Ai.Owner, unit, Ai.Owner.Template.SightFovScale) &&
                 Math.Abs(Ai.Owner.Transform.World.Position.Z - unit.Transform.World.Position.Z) < maxHeightGap)
             {
-                if (Ai.Owner.CanAttack(unit) && (rangeOfUnit < 1f || Ai.Owner.CanSeeTarget(unit)))
+                if ((unit is not Character player || rangeOfUnit <= CombatFormulas.GetNpcPerceptionRange(
+                        Ai.Owner.Level, player.Level, Ai.Owner.Template.SightRangeScale * 15f)) &&
+                    Ai.Owner.CanAttack(unit) && Ai.Owner.CanSeeTarget(unit))
                 {
                     OnEnemyAlert(unit);
                     res = true;
@@ -329,9 +335,9 @@ public abstract class Behavior
             {
                 // If you're breathing down their neck, they will also notice you.
                 // Not sure if this is retail behavior
-                if (rangeOfUnit < 2f * Ai.Owner.Template.SightRangeScale)
+                if (rangeOfUnit < GetPerceptionRange(unit, 2f * Ai.Owner.Template.SightRangeScale))
                 {
-                    if (Ai.Owner.CanAttack(unit) && (rangeOfUnit < 0.5f || Ai.Owner.CanSeeTarget(unit)))
+                    if (Ai.Owner.CanAttack(unit) && Ai.Owner.CanSeeTarget(unit))
                     {
                         OnEnemyAlert(unit);
                         res = true;
@@ -342,6 +348,13 @@ public abstract class Behavior
         }
 
         return res;
+    }
+
+    private float GetPerceptionRange(Unit target, float range)
+    {
+        return target is Character player
+            ? CombatFormulas.GetNpcPerceptionRange(Ai.Owner.Level, player.Level, range)
+            : range;
     }
 
     public void UpdateAggroHelp(Unit abuser)

@@ -14,6 +14,7 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
@@ -1786,7 +1787,10 @@ public partial class Skill
         var damageType = (DamageType)Template.DamageTypeId;
         if (Attacker != null)
         {
-            var bullsEyeMod = Attacker.BullsEye / 1000f * 3f / 100f;
+            var bullsEye = Attacker.BullsEye;
+            var bullsEyeMod = bullsEye > 0
+                ? CombatFormulas.GetBullsEyeReduction(bullsEye, Attacker.Facets)
+                : 0f;
 
             //TODO Check immunity a better way!!!
             //if (target.Buffs.CheckBuffs(SkillManager.Instance.GetBuffsByTagId(361)))
@@ -1796,21 +1800,21 @@ public partial class Skill
             if (!MathUtil.IsFront(attacker, target))
                 goto AlwaysHit;
 
-            if (Target != null && Random.Shared.Next(0f, 100f) < Target.DodgeRate - bullsEyeMod)
+            if (Target != null && Random.Shared.Next(0f, 100f) < Math.Clamp(Target.DodgeRate - bullsEyeMod, 0f, 100f))
             {
                 if (damageType == DamageType.Melee)
                     return SkillHitType.MeleeDodge;
                 if (damageType == DamageType.Ranged)
                     return SkillHitType.RangedDodge;
             }
-            if (Target != null && Random.Shared.Next(0f, 100f) < Target.BlockRate - bullsEyeMod)
+            if (Target != null && Random.Shared.Next(0f, 100f) < Math.Clamp(Target.BlockRate - bullsEyeMod, 0f, 100f))
             {
                 if (damageType == DamageType.Melee)
                     return SkillHitType.MeleeBlock;
                 if (damageType == DamageType.Ranged)
                     return SkillHitType.RangedBlock;
             }
-            if (Target != null && Random.Shared.Next(0f, 100f) < Target.MeleeParryRate - bullsEyeMod)
+            if (Target != null && Random.Shared.Next(0f, 100f) < Math.Clamp(Target.MeleeParryRate - bullsEyeMod, 0f, 100f))
             {
                 if (damageType == DamageType.Melee)
                     return SkillHitType.MeleeParry;
@@ -1821,7 +1825,7 @@ public partial class Skill
                     return SkillHitType.MeleeParry;
                 }
             }
-            if (Target != null && Random.Shared.Next(0f, 100f) < Target.RangedParryRate - bullsEyeMod)
+            if (Target != null && Random.Shared.Next(0f, 100f) < Math.Clamp(Target.RangedParryRate - bullsEyeMod, 0f, 100f))
             {
                 if (damageType == DamageType.Ranged)
                     return SkillHitType.RangedParry;

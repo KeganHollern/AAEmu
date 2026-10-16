@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Static;
@@ -129,23 +130,26 @@ public class DamageEffect : EffectTemplate
             return;
         }
 
-        float flexibilityRateMod = trg.Flexibility / 1000 * 3;
+        var flexibility = trg.Flexibility;
+        var flexibilityRateMod = flexibility > 0
+            ? CombatFormulas.GetCriticalChanceReduction(flexibility, trg.Facets)
+            : 0f;
         switch (DamageType)
         {
             case DamageType.Melee:
-                if (Random.Shared.Next(0f, 100f) < ((Unit)caster).MeleeCritical - flexibilityRateMod)
+                if (Random.Shared.Next(0f, 100f) < Math.Clamp(((Unit)caster).MeleeCritical - flexibilityRateMod, 0f, 100f))
                     hitType = SkillHitType.MeleeCritical;
                 else
                     hitType = SkillHitType.MeleeHit;
                 break;
             case DamageType.Magic:
-                if (Random.Shared.Next(0f, 100f) < ((Unit)caster).SpellCritical - flexibilityRateMod)
+                if (Random.Shared.Next(0f, 100f) < Math.Clamp(((Unit)caster).SpellCritical - flexibilityRateMod, 0f, 100f))
                     hitType = SkillHitType.SpellCritical;
                 else
                     hitType = SkillHitType.SpellHit;
                 break;
             case DamageType.Ranged:
-                if (Random.Shared.Next(0f, 100f) < ((Unit)caster).RangedCritical - flexibilityRateMod)
+                if (Random.Shared.Next(0f, 100f) < Math.Clamp(((Unit)caster).RangedCritical - flexibilityRateMod, 0f, 100f))
                     hitType = SkillHitType.RangedCritical;
                 else
                     hitType = SkillHitType.RangedHit;
@@ -305,20 +309,23 @@ public class DamageEffect : EffectTemplate
             finalDamage *= 1 - trg.BattleResist / (8000f + trg.BattleResist);
 
         // Do Critical Dmgs
+        var criticalBonusReduction = CombatFormulas.GetCriticalBonusReduction(flexibility);
         switch (hitType)
         {
             case SkillHitType.MeleeCritical:
-                finalDamage *= 1 + (((Unit)caster).MeleeCriticalBonus - trg.Flexibility / 100) / 100;
+                finalDamage *= 1 + Math.Max(0f, ((Unit)caster).MeleeCriticalBonus - criticalBonusReduction) / 100f;
                 break;
             case SkillHitType.RangedCritical:
-                finalDamage *= 1 + (((Unit)caster).RangedCriticalBonus - trg.Flexibility / 100) / 100;
+                finalDamage *= 1 + Math.Max(0f, ((Unit)caster).RangedCriticalBonus - criticalBonusReduction) / 100f;
                 break;
             case SkillHitType.SpellCritical:
-                finalDamage *= 1 + (((Unit)caster).SpellCriticalBonus - trg.Flexibility / 100) / 100;
+                finalDamage *= 1 + Math.Max(0f, ((Unit)caster).SpellCriticalBonus - criticalBonusReduction) / 100f;
                 break;
             default:
                 break;
         }
+
+        finalDamage *= CombatFormulas.GetDamageMultiplier((Unit)caster, trg, DamageType, AdjustDamageByHeight);
 
         // Reduction
         var reductionMul = 1.0f;
