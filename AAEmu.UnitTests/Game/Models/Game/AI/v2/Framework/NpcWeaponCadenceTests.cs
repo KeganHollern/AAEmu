@@ -77,11 +77,11 @@ public sealed class NpcWeaponCadenceTests
     [Arguments(4u)]
     public async Task AcceptedAttack_UsesFistIntervalAndItsOwnDeadline(uint skillId)
     {
-        await Assert.That(_cadence.CanUse(_npc, skillId, Start)).IsTrue();
-        _cadence.RecordResult(skillId, Start, SkillResult.Success);
-        await Assert.That(_cadence.CanUse(_npc, skillId, Start.AddMilliseconds(1499))).IsFalse();
-        await Assert.That(_cadence.CanUse(_npc, skillId, Start.AddMilliseconds(1500))).IsTrue();
-        await Assert.That(_cadence.CanUse(_npc, skillId == 4 ? 2u : 4u, Start)).IsTrue();
+        await Assert.That(CanUse(_npc, skillId, Start)).IsTrue();
+        RecordResult(skillId, Start, SkillResult.Success);
+        await Assert.That(CanUse(_npc, skillId, Start.AddMilliseconds(1499))).IsFalse();
+        await Assert.That(CanUse(_npc, skillId, Start.AddMilliseconds(1500))).IsTrue();
+        await Assert.That(CanUse(_npc, skillId == 4 ? 2u : 4u, Start)).IsTrue();
     }
 
     [Test]
@@ -93,17 +93,17 @@ public sealed class NpcWeaponCadenceTests
     [Arguments(4u, UnitAttribute.RangedSpeedMul, 9000, 300)]
     public async Task RawSpeed_UsesAuthoredBoundsAndCurrentAttribute(uint skillId, UnitAttribute attribute, int raw, int interval)
     {
-        _cadence.RecordResult(skillId, Start, SkillResult.Success);
+        RecordResult(skillId, Start, SkillResult.Success);
         _npc.AddBonus(1, Modifier(attribute, raw));
         _npc.AddBonus(2, Modifier(UnitAttribute.GlobalCooldownMul, 4000));
         _npc.AddBonus(3, Modifier(UnitAttribute.AttackAnimSpeedMul, -800));
         _npc.AddBonus(4, Modifier(UnitAttribute.TwohandSpeedMul, 4000));
         _npc.AddBonus(5, Modifier(attribute == UnitAttribute.MeleeSpeedMul ? UnitAttribute.RangedSpeedMul : UnitAttribute.MeleeSpeedMul, 4000));
-        await Assert.That(_cadence.CanUse(_npc, skillId, Start.AddMilliseconds(interval - 1))).IsFalse();
-        await Assert.That(_cadence.CanUse(_npc, skillId, Start.AddMilliseconds(interval))).IsTrue();
+        await Assert.That(CanUse(_npc, skillId, Start.AddMilliseconds(interval - 1))).IsFalse();
+        await Assert.That(CanUse(_npc, skillId, Start.AddMilliseconds(interval))).IsTrue();
         _npc.RemoveBonus(1, attribute);
-        await Assert.That(_cadence.CanUse(_npc, skillId, Start.AddMilliseconds(1499))).IsFalse();
-        await Assert.That(_cadence.CanUse(_npc, skillId, Start.AddMilliseconds(1500))).IsTrue();
+        await Assert.That(CanUse(_npc, skillId, Start.AddMilliseconds(1499))).IsFalse();
+        await Assert.That(CanUse(_npc, skillId, Start.AddMilliseconds(1500))).IsTrue();
     }
 
     [Test]
@@ -114,8 +114,8 @@ public sealed class NpcWeaponCadenceTests
             Slot = (int)EquipmentItemSlot.Mainhand,
             Template = new WeaponTemplate { HoldableTemplate = new Holdable { Speed = 5000 } }
         });
-        _cadence.RecordResult(2, Start, SkillResult.Success);
-        await Assert.That(_cadence.CanUse(_npc, 2, Start.AddMilliseconds(1500))).IsTrue();
+        RecordResult(2, Start, SkillResult.Success);
+        await Assert.That(CanUse(_npc, 2, Start.AddMilliseconds(1500))).IsTrue();
     }
 
     [Test]
@@ -128,12 +128,12 @@ public sealed class NpcWeaponCadenceTests
             Template = new DynamicBonusTemplate { Attribute = UnitAttribute.MeleeSpeedMul, ModifierType = UnitModifierType.Value, FuncType = "LinearFunc" },
             SourceBuff = buff, LinearFunc = new LinearFuncTemplate { StartValue = 0, EndValue = 500 }
         });
-        _cadence.RecordResult(2, Start, SkillResult.Success);
-        await Assert.That(_cadence.CanUse(_npc, 2, Start.AddMilliseconds(1000))).IsFalse();
+        RecordResult(2, Start, SkillResult.Success);
+        await Assert.That(CanUse(_npc, 2, Start.AddMilliseconds(1000))).IsFalse();
         buff.StartTime = DateTime.UtcNow.AddSeconds(-10);
-        await Assert.That(_cadence.CanUse(_npc, 2, Start.AddMilliseconds(1000))).IsTrue();
+        await Assert.That(CanUse(_npc, 2, Start.AddMilliseconds(1000))).IsTrue();
         _npc.RemoveDynamicBonus(1, UnitAttribute.MeleeSpeedMul);
-        await Assert.That(_cadence.CanUse(_npc, 2, Start.AddMilliseconds(1000))).IsFalse();
+        await Assert.That(CanUse(_npc, 2, Start.AddMilliseconds(1000))).IsFalse();
     }
 
     [Test]
@@ -144,11 +144,11 @@ public sealed class NpcWeaponCadenceTests
     [Arguments(SkillResult.LackMana)]
     public async Task RejectedAttack_DoesNotStartOrPostponeTheInterval(SkillResult result)
     {
-        _cadence.RecordResult(2, Start, result);
-        await Assert.That(_cadence.CanUse(_npc, 2, Start)).IsTrue();
-        _cadence.RecordResult(2, Start, SkillResult.Success);
-        _cadence.RecordResult(2, Start.AddMilliseconds(1000), result);
-        await Assert.That(_cadence.CanUse(_npc, 2, Start.AddMilliseconds(1500))).IsTrue();
+        RecordResult(2, Start, result);
+        await Assert.That(CanUse(_npc, 2, Start)).IsTrue();
+        RecordResult(2, Start, SkillResult.Success);
+        RecordResult(2, Start.AddMilliseconds(1000), result);
+        await Assert.That(CanUse(_npc, 2, Start.AddMilliseconds(1500))).IsTrue();
     }
 
     [Test]
@@ -160,25 +160,25 @@ public sealed class NpcWeaponCadenceTests
     public async Task OtherSkills_KeepTheirAuthoredTimingEvenWhenTheyAreTheBaseSkill(uint skillId)
     {
         _npc.Template.BaseSkillId = (int)skillId;
-        _cadence.RecordResult(skillId, Start, SkillResult.Success);
+        RecordResult(skillId, Start, SkillResult.Success);
         await Assert.That(NpcWeaponCadence.IsBasicAttack(skillId)).IsFalse();
-        await Assert.That(_cadence.CanUse(_npc, skillId, Start)).IsTrue();
+        await Assert.That(CanUse(_npc, skillId, Start)).IsTrue();
     }
 
     [Test]
     public async Task Reset_DiscardsThePreviousCombatDeadline()
     {
-        _cadence.RecordResult(2, Start, SkillResult.Success);
-        _cadence.RecordResult(4, Start, SkillResult.Success);
+        RecordResult(2, Start, SkillResult.Success);
+        RecordResult(4, Start, SkillResult.Success);
         _cadence.Reset();
-        await Assert.That(_cadence.CanUse(_npc, 2, Start)).IsTrue();
-        await Assert.That(_cadence.CanUse(_npc, 4, Start)).IsTrue();
+        await Assert.That(CanUse(_npc, 2, Start)).IsTrue();
+        await Assert.That(CanUse(_npc, 4, Start)).IsTrue();
     }
 
     [Test]
     public async Task SharedBehavior_RejectsAnEarlyBasicAttackBeforeTheSkillStarts()
     {
-        _cadence.RecordResult(2, DateTime.UtcNow, SkillResult.Success);
+        RecordResult(2, DateTime.UtcNow, SkillResult.Success);
         var skill = new Skill(new SkillTemplate { Id = 2, MaxRange = 10 });
         await Assert.That(_behavior.UseSkill(skill, _npc)).IsEqualTo(SkillResult.CooldownTime);
         await Assert.That(skill.TlId).IsEqualTo((ushort)0);
@@ -190,7 +190,7 @@ public sealed class NpcWeaponCadenceTests
         // The living NPC rejects SourceAlive=false before any skill side effects.
         var skill = new Skill(new SkillTemplate { Id = 2, MaxRange = 10, SourceAlive = false });
         await Assert.That(_behavior.UseSkill(skill, _npc)).IsEqualTo(SkillResult.SourceAlive);
-        await Assert.That(_cadence.CanUse(_npc, 2, DateTime.UtcNow)).IsTrue();
+        await Assert.That(CanUse(_npc, 2, DateTime.UtcNow)).IsTrue();
     }
 
     [Test]
@@ -245,9 +245,9 @@ public sealed class NpcWeaponCadenceTests
         var ai = (ProbeAi)_npc.Ai;
         ai.Start();
         ai.Change(BehaviorKind.Attack);
-        _cadence.RecordResult(2, Start, SkillResult.Success);
+        RecordResult(2, Start, SkillResult.Success);
         ai.Change(kind);
-        await Assert.That(_cadence.CanUse(_npc, 2, Start)).IsTrue();
+        await Assert.That(CanUse(_npc, 2, Start)).IsTrue();
     }
 
     [Test]
@@ -267,6 +267,56 @@ public sealed class NpcWeaponCadenceTests
         await Assert.That(Convert.ToInt32(command.ExecuteScalar())).IsEqualTo(2000);
         command.CommandText = "SELECT cooldown_time FROM skills WHERE id=11051 AND weapon_slot_for_autoattack_id=15";
         await Assert.That(Convert.ToInt32(command.ExecuteScalar())).IsEqualTo(15000);
+    }
+
+    [Test]
+    public async Task ResetDuringAnAcceptedAttack_DoesNotRestoreThePreviousEncounterDeadline()
+    {
+        await Assert.That(_cadence.CanUse(_npc, 2, Start, out var oldGeneration)).IsTrue();
+        _cadence.Reset();
+        _cadence.RecordResult(2, Start, SkillResult.Success, oldGeneration);
+        await Assert.That(_cadence.CanUse(_npc, 2, Start, out var newGeneration)).IsTrue();
+        await Assert.That(newGeneration).IsNotEqualTo(oldGeneration);
+        _cadence.RecordResult(2, Start, SkillResult.Success, newGeneration);
+        await Assert.That(CanUse(_npc, 2, Start)).IsFalse();
+    }
+
+    [Test]
+    public async Task ConcurrentResetAndAcceptedAttacks_KeepTheCadenceUsable()
+    {
+        using var start = new Barrier(2);
+        var writer = Task.Run(() =>
+        {
+            start.SignalAndWait();
+            for (var i = 0; i < 100000; i++)
+            {
+                RecordResult(2, Start, SkillResult.Success);
+                RecordResult(3, Start, SkillResult.Success);
+                RecordResult(4, Start, SkillResult.Success);
+            }
+        });
+        var resets = Task.Run(() =>
+        {
+            start.SignalAndWait();
+            for (var i = 0; i < 100000; i++)
+                _cadence.Reset();
+        });
+        await Task.WhenAll(writer, resets);
+        _cadence.Reset();
+        await Assert.That(CanUse(_npc, 2, Start)).IsTrue();
+        await Assert.That(CanUse(_npc, 3, Start)).IsTrue();
+        await Assert.That(CanUse(_npc, 4, Start)).IsTrue();
+        RecordResult(2, Start, SkillResult.Success);
+        await Assert.That(CanUse(_npc, 2, Start)).IsFalse();
+    }
+
+    private bool CanUse(Unit owner, uint skillId, DateTime now) =>
+        _cadence.CanUse(owner, skillId, now, out _);
+
+    private void RecordResult(uint skillId, DateTime started, SkillResult result)
+    {
+        _cadence.CanUse(_npc, skillId, started, out var generation);
+        _cadence.RecordResult(skillId, started, result, generation);
     }
 
     private void Replace<T>(T instance) where T : class
