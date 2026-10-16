@@ -1,7 +1,10 @@
-﻿using AAEmu.Game.Core.Managers;
+﻿using System.Numerics;
+
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Skills;
@@ -148,10 +151,38 @@ public class BaseUnit : GameObject, IBaseUnit
     /// <returns></returns>
     public bool CanSeeTarget(BaseUnit target)
     {
-        if (!target.IsVisible)
+        if (target == null || !target.IsVisible)
             return false;
 
-        return !target.Buffs.CheckBuffTag((uint)TagsEnum.Stealth);
+        if (ReferenceEquals(this, target))
+            return true;
+
+        var stealthed = false;
+        uint stealthLevel = 0;
+        foreach (var buff in target.Buffs.GetEffectsByType(typeof(BuffTemplate)))
+        {
+            if (!buff.InUse || buff.IsEnded())
+                continue;
+            if (buff.Template.AntiStealth)
+                return true;
+            if (!buff.Template.Stealth)
+                continue;
+            stealthed = true;
+            stealthLevel = Math.Max(stealthLevel, buff.AbLevel);
+        }
+
+        if (!stealthed)
+            return true;
+        if (this is not Unit observer || target is not Unit targetUnit)
+            return false;
+
+        var observerPosition = Transform.World;
+        var targetOffset = target.Transform.World.Position - observerPosition.Position;
+        var forward = Vector3.Transform(Vector3.UnitY, observerPosition.ToQuaternion());
+        var range = CombatFormulas.GetStealthDetectionRange(observer.Level, targetUnit.Level, stealthLevel,
+            Vector3.Dot(forward, targetOffset) >= 0,
+            observer.CalculateWithBonuses(0, UnitAttribute.DetectStealthRangeMul));
+        return targetOffset.Length() < range;
     }
 
     public RelationState GetRelationStateTo(BaseUnit unit) =>
