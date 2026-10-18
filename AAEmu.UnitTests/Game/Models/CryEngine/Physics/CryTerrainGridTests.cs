@@ -1,11 +1,49 @@
 using System.Numerics;
 using System.Text;
+using AAEmu.Commons.Utils.AAPak;
 using AAEmu.Game.Models.CryEngine.Physics;
 
 namespace AAEmu.UnitTests.Game.Models.CryEngine.Physics;
 
 public sealed class CryTerrainGridTests
 {
+    [Test]
+    public async Task Read_ArchiveSubStreamReadsRootAndChildNodesWithoutSeeking()
+    {
+        using var heightmap = Map(4, Node(0, []),
+            (Vector2.Zero, 2, Node(2, Enumerable.Repeat(Pack(3), 4).ToArray(), surfaces: [2])),
+            (new Vector2(2, 0), 2, Node(2, Enumerable.Repeat(Pack(7), 4).ToArray(), surfaces: [4])));
+        var bytes = heightmap.ToArray();
+        const int offset = 17;
+        using var archive = new MemoryStream([.. new byte[offset], .. bytes, 0xA5]);
+        using var stream = new SubStream(archive, offset, bytes.Length);
+
+        var grid = CryTerrainGrid.Read(stream, new Vector2(100, 200));
+
+        await Assert.That(stream.CanSeek).IsFalse();
+        await Assert.That(grid.SampleRawHeight(100, 200)).IsEqualTo(3f);
+        await Assert.That(grid.SampleRawHeight(102, 200)).IsEqualTo(7f);
+        await Assert.That(stream.Position).IsEqualTo(stream.Length);
+        await Assert.That(archive.Position).IsEqualTo(offset + stream.Length);
+        await Assert.That(archive.ReadByte()).IsEqualTo(0xA5);
+        await Assert.That(stream.CanRead).IsTrue();
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Read_ArchiveSubStreamRejectsTruncatedReservedBytes(bool truncateHeader)
+    {
+        using var heightmap = Map(2, Node(2, Enumerable.Repeat(Pack(3), 4).ToArray()));
+        var bytes = heightmap.ToArray();
+        var available = truncateHeader ? 100 : bytes.Length - 1;
+        const int offset = 17;
+        using var archive = new MemoryStream([.. new byte[offset], .. bytes[..available]]);
+        using var stream = new SubStream(archive, offset, bytes.Length);
+
+        await Assert.That(() => CryTerrainGrid.Read(stream, Vector2.Zero)).Throws<EndOfStreamException>();
+    }
+
     [Test]
     public async Task PlacementBox_DetectsShallowAndBuriedTerrainButAllowsDeepWater()
     {
