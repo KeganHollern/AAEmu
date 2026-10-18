@@ -341,7 +341,14 @@ public sealed class CryTerrainGrid
     {
         if (count > end - reader.BaseStream.Position)
             throw new EndOfStreamException("Truncated terrain node data.");
-        reader.BaseStream.Seek(count, SeekOrigin.Current);
+        // Archive SubStream supports forward reads, but deliberately does not support Seek.
+        Span<byte> buffer = stackalloc byte[128];
+        while (count > 0)
+        {
+            var size = Math.Min(buffer.Length, count);
+            reader.BaseStream.ReadExactly(buffer[..size]);
+            count -= size;
+        }
     }
 
     private static bool Clip(Vector3 origin, Vector3 direction, Vector3 min, Vector3 max,
