@@ -45,7 +45,7 @@ public class SlaveGameData : Singleton<SlaveGameData>, IGameDataLoader
                             LocalizationManager.Instance.Get("slaves", "name", reader.GetUInt32("id"),
                                 reader.GetString("name")),
                         ModelId = reader.GetUInt32("model_id"),
-                        Mountable = reader.GetBoolean("mountable"),
+                        Mountable = reader.GetBoolean("mountable", true),
                         SpawnXOffset = reader.GetFloat("spawn_x_offset"),
                         SpawnYOffset = reader.GetFloat("spawn_y_offset"),
                         FactionId = (FactionsEnum)reader.GetUInt32("faction_id", 0),
