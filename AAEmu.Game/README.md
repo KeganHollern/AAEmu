@@ -8,7 +8,6 @@ The configuration structure is as follows:
 
 ```
 "Id": 1,
-"AdditionalesId": [],
 "SecretKey": "test",
 "Network": {
     "Host": "*",
