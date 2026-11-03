@@ -1,6 +1,5 @@
 ﻿{
     "Id": 1,
-    "AdditionalesId": [],
     "SecretKey": "test",
     "Network": {
         "Host": "*",

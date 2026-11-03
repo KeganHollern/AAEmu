@@ -59,6 +59,11 @@ Field meanings:
 - `hidden`: hide this entry from the listing. Hidden servers can still
   register.
 
+Each entry represents one game server instance. Set that instance's `Id` to
+the entry's `id`, and set the entry's `host` and `port` to its client listener.
+Separate entries need separate game instances with distinct IDs. One instance
+cannot register additional IDs or appear under multiple entries.
+
 Shell example:
 
 ```bash
