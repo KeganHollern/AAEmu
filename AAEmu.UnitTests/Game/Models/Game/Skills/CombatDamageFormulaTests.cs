@@ -395,13 +395,43 @@ public sealed class CombatDamageFormulaTests
         await Assert.That(attackedBreak.State).IsEqualTo(EffectState.Finished);
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DamageEffect_DotWithoutMatchingThresholdKeepsModifierRemovalBeforeDamage(bool unrelatedThreshold)
+    {
+        var source = NewUnit(1);
+        var target = NewUnit(2);
+        target.MagicResistance = 5300;
+        if (unrelatedThreshold)
+            AddImmunity(target, new BuffTemplate { Id = 275, MeleeImmune = true, ImmuneDamage = 50 });
+        // r208022 buff 4159 removes on spell DOT damage and reduces magic resistance by 100%.
+        var modifier = new BonusTemplate
+        {
+            Attribute = UnitAttribute.MagicResist, ModifierType = UnitModifierType.Percent, Value = -100
+        };
+        var template = new BuffTemplate { Id = 4159, RemoveOnDamagedSpellDot = true };
+        template.Bonuses.Add(modifier);
+        var buff = AddImmunity(target, template);
+        target.AddBonus(buff.Index, new Bonus { Template = modifier, Value = -100 });
+        var dot = new BuffTemplate { Id = 20005 };
+        dot.TickEffects.Add(new TickEffect { EffectId = 1 });
+        await Assert.That(target.MagicResistance).IsEqualTo(0);
+
+        Apply(source, target, DamageType.Magic, damage: 100, buff: dot);
+
+        await Assert.That(buff.State).IsEqualTo(EffectState.Finished);
+        await Assert.That(target.MagicResistance).IsEqualTo(5300);
+        await Assert.That(target.DamageReceived).IsEqualTo(50);
+    }
+
     private static Buff AddImmunity(DamageUnit target, BuffTemplate template)
     {
         var buffs = (List<Buff>)typeof(Buffs).GetField("_effects", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(target.Buffs)!;
         var buff = new Buff(target, target, new SkillCasterUnit(target.ObjId), template, null, DateTime.UtcNow)
         {
-            State = EffectState.Acting
+            State = EffectState.Acting, Index = template.Id
         };
         buffs.Add(buff);
         return buff;
@@ -423,6 +453,11 @@ public sealed class CombatDamageFormulaTests
     {
         public List<GamePacket> Packets { get; } = [];
         public int DamageReceived { get; private set; }
+        public override int MagicResistance
+        {
+            get => (int)CalculateWithBonuses(base.MagicResistance, UnitAttribute.MagicResist);
+            set => base.MagicResistance = value;
+        }
         public override void ReduceCurrentHp(BaseUnit attacker, int value, KillReason killReason = KillReason.Damage)
         {
             DamageReceived += value;

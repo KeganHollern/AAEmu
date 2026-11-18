@@ -111,6 +111,10 @@ public class DamageEffect : EffectTemplate
             return;
         }
 
+        var periodicDamage = source.Buff?.TickEffects.Count > 0;
+        // Full immunity already returned. A zero amount now finds only matching thresholds.
+        var deferPeriodicRemovals = periodicDamage && target.Buffs.CheckDamageImmune(DamageType, 0);
+
         var weapon = ((Unit)caster).Equipment.GetItemBySlot(WeaponSlotId);
         var holdable = (WeaponTemplate)weapon?.Template;
 
@@ -251,13 +255,15 @@ public class DamageEffect : EffectTemplate
             max = (float)caster.SkillModifiersCache.ApplyModifiers(source.Skill, SkillAttribute.Damage, max);
         }
 
-        if (source.Buff?.TickEffects.Count > 0)
+        if (periodicDamage)
         {
             if (source.Buff.Duration != 0)
             {
                 min = (float)(min * (source.Buff.Tick / source.Buff.Duration));
                 max = (float)(max * (source.Buff.Tick / source.Buff.Duration));
             }
+            if (!deferPeriodicRemovals)
+                RemovePeriodicDamageBuffs(caster, trg);
         }
 
         if (UseChargedBuff && source.Skill != null)
@@ -373,18 +379,9 @@ public class DamageEffect : EffectTemplate
             return;
         }
 
-        // A periodic hit must pass immunity before it can break damage-sensitive buffs.
-        // Attack-based removals still occur when the attack starts, even if it is immune.
-        if (source.Buff?.TickEffects.Count > 0)
-        {
-            caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamageEtcDot);
-            trg.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamagedEtcDot);
-            if (DamageType == DamageType.Magic)
-            {
-                caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamageSpellDot);
-                trg.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamagedSpellDot);
-            }
-        }
+        // Only conditional immunity delays these removals; ordinary DOT keeps its old calculation order.
+        if (deferPeriodicRemovals)
+            RemovePeriodicDamageBuffs(caster, trg);
 
         // TODO: Set proper kill reason
         var hpBeforeDamage = trg.Hp;
@@ -550,6 +547,17 @@ public class DamageEffect : EffectTemplate
                 // Take durability damage
                 player.ApplyDurabilityLossToEquipment(1, durabilityLossTarget, durabilityRate);
             }
+        }
+    }
+
+    private void RemovePeriodicDamageBuffs(BaseUnit caster, Unit target)
+    {
+        caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamageEtcDot);
+        target.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamagedEtcDot);
+        if (DamageType == DamageType.Magic)
+        {
+            caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamageSpellDot);
+            target.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamagedSpellDot);
         }
     }
 }
