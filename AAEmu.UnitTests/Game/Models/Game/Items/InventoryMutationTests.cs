@@ -1062,7 +1062,9 @@ public sealed class InventoryMutationTests
             var buffs = Mock.Of<IBuffs>();
             _owner.Buffs = buffs.Object;
             var refreshes = 0;
-            buffs.RemoveBuff(701).Callback(() => refreshes++);
+            buffs.RemoveEffect(700u).Callback(() => refreshes++);
+            buffs.GetEffectsByType(typeof(BuffTemplate)).Returns([new Buff(_owner, _owner, new SkillCasterUnit(),
+                new BuffTemplate { Id = 701 }, null, DateTime.UtcNow) { Index = 700, AbLevel = 0 }]);
             _owner.InitializeLaborCache(20, DateTime.UtcNow);
             var scroll = AddItem(1, 100, 2);
             _templates[200] = new WeaponTemplate

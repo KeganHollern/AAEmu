@@ -6,6 +6,7 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Buffs;
 using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -17,23 +18,34 @@ namespace AAEmu.UnitTests.Game.Models.Game.Items;
 public sealed class EquipmentGradeRefreshTests
 {
     private readonly Dictionary<FieldInfo, object> _previous = [];
-    private readonly HashSet<uint> _active = [];
+    private HashSet<uint> ActiveIds => _owner.Buffs.GetEffectsByType(typeof(BuffTemplate))
+        .Select(buff => buff.Template.Id).ToHashSet();
     private readonly Dictionary<byte, uint> _grades = new() { [2] = 201, [3] = 202 };
     private CharacterMock _owner;
-    private Mock<IBuffs> _buffs;
+    private Dictionary<uint, BuffTemplate> _templates;
     private Dictionary<uint, List<BonusTemplate>> _modifiers;
 
     [Before(Test)]
     public void SetUp()
     {
         var skills = new SkillManager(null, null);
-        SetField(skills, "_buffs", new Dictionary<uint, BuffTemplate>
+        _templates = new uint[] { 201, 202, 209, 301, 302 }.ToDictionary(id => id, id => new BuffTemplate
         {
-            [201] = new() { Id = 201 }, [202] = new() { Id = 202 }, [209] = new() { Id = 209 },
-            [301] = new() { Id = 301 }, [302] = new() { Id = 302 }
+            Id = id, Kind = BuffKind.Good, StackRule = BuffStackRule.Independent, MaxStack = 2
         });
+        SetField(skills, "_buffs", _templates);
         SetField(skills, "_buffTags", new Dictionary<uint, List<uint>>());
+        SetField(skills, "_taggedBuffs", new Dictionary<uint, List<uint>>
+        {
+            [(uint)BuffConstants.ArmorBuffTag] = [301, 302]
+        });
+        SetField(skills, "_buffTriggers", new Dictionary<uint, List<BuffTriggerTemplate>>());
+        SetField(skills, "_skillModifiers", new Dictionary<uint, List<SkillModifier>>());
+        SetField(skills, "_combatBuffs", new Dictionary<uint, List<CombatBuffTemplate>>());
         SetInstance(skills);
+        var buffData = new BuffGameData();
+        SetField(buffData, "_buffModifiers", new Dictionary<uint, List<BuffModifier>>());
+        SetInstance(buffData);
         var items = new ItemManager(skills, null, null, null, null, null);
         SetField(items, "_config", new ItemConfig { DurabilityConst = 1 });
         SetField(items, "_grades", new Dictionary<int, GradeTemplate>
@@ -58,14 +70,8 @@ public sealed class EquipmentGradeRefreshTests
         var itemData = new ItemGameData();
         SetField(itemData, "_itemGradeBuffs", new Dictionary<uint, Dictionary<byte, uint>> { [100] = _grades });
         SetInstance(itemData);
-        _buffs = Mock.Of<IBuffs>();
-        foreach (var id in new uint[] { 201, 202, 209, 301, 302 })
-        {
-            _buffs.AddBuff(Is<Buff>(buff => buff.Template.Id == id), 0, 0).Callback(() => _active.Add(id));
-            _buffs.RemoveBuff(id).Callback(() => _active.Remove(id));
-        }
-        _buffs.RemoveBuffs((uint)BuffConstants.ArmorBuffTag, 10).Callback(() => _active.ExceptWith([301, 302]));
-        _owner = new CharacterMock { Id = 1, ObjId = 1, Buffs = _buffs.Object };
+        _owner = new CharacterMock { Id = 1, ObjId = 1 };
+
     }
 
     [After(Test)]
@@ -74,7 +80,6 @@ public sealed class EquipmentGradeRefreshTests
         foreach (var (field, value) in _previous)
             field.SetValue(null, value);
         _previous.Clear();
-        _active.Clear();
     }
 
     [Test]
@@ -84,7 +89,7 @@ public sealed class EquipmentGradeRefreshTests
         uint oldBuff, uint newBuff)
     {
         var item = Equip(new EquipItemTemplate { Id = 100, BuffId = 209 }, oldGrade);
-        _active.Add(oldBuff);
+        AddBuff(oldBuff);
         var oldBonus = new Bonus { Template = new BonusTemplate { Value = 999 }, Value = 999 };
         _owner.Bonuses[Buffs.GearBonusesIndex] = [oldBonus];
         var bonus = new BonusTemplate { Value = 5 };
@@ -93,10 +98,10 @@ public sealed class EquipmentGradeRefreshTests
 
         GradeEnchant.RefreshWornPiece(_owner, item, oldGrade);
 
-        await Assert.That(_active.Contains(oldBuff)).IsFalse();
-        await Assert.That(_active.Contains(newBuff)).IsTrue();
+        await Assert.That(ActiveIds.Contains(oldBuff)).IsFalse();
+        await Assert.That(ActiveIds.Contains(newBuff)).IsTrue();
         await Assert.That(_owner.Bonuses[Buffs.GearBonusesIndex].Single().Template).IsSameReferenceAs(bonus);
-        _buffs.AddBuff(Is<Buff>(buff => buff.Template.Id == 209), 0, 0).WasCalled(Times.Never);
+        await Assert.That(ActiveIds.Contains(209)).IsFalse();
     }
 
     [Test]
@@ -104,12 +109,12 @@ public sealed class EquipmentGradeRefreshTests
     {
         _grades.Remove(2);
         var item = Equip(new EquipItemTemplate { Id = 100, BuffId = 209 }, 3);
-        _active.Add(209);
+        AddBuff(209);
 
         GradeEnchant.RefreshWornPiece(_owner, item, 2);
 
-        await Assert.That(_active.Contains(209)).IsFalse();
-        await Assert.That(_active.Contains(202)).IsTrue();
+        await Assert.That(ActiveIds.Contains(209)).IsFalse();
+        await Assert.That(ActiveIds.Contains(202)).IsTrue();
     }
 
     [Test]
@@ -117,12 +122,12 @@ public sealed class EquipmentGradeRefreshTests
     {
         _grades.Remove(3);
         var item = Equip(new EquipItemTemplate { Id = 100, BuffId = 209 }, 3);
-        _active.Add(201);
+        AddBuff(201);
 
         GradeEnchant.RefreshWornPiece(_owner, item, 2);
 
-        await Assert.That(_active.Contains(201)).IsFalse();
-        await Assert.That(_active.Contains(209)).IsTrue();
+        await Assert.That(ActiveIds.Contains(201)).IsFalse();
+        await Assert.That(ActiveIds.Contains(209)).IsTrue();
     }
 
     [Test]
@@ -133,12 +138,12 @@ public sealed class EquipmentGradeRefreshTests
         var item = Equip(new EquipItemTemplate { Id = 100 }, bagItem ? (byte)3 : (byte)2);
         if (bagItem)
             item.SlotType = SlotType.Inventory;
-        _active.Add(201);
+        AddBuff(201);
 
         GradeEnchant.RefreshWornPiece(_owner, item, 2);
 
-        await Assert.That(_active.SetEquals([201])).IsTrue();
-        _buffs.RemoveBuff(201).WasCalled(Times.Never);
+        await Assert.That(ActiveIds.SetEquals([201])).IsTrue();
+        await Assert.That(_owner.Buffs.GetBuffCountById(201)).IsEqualTo(1);
     }
 
     [Test]
@@ -146,13 +151,96 @@ public sealed class EquipmentGradeRefreshTests
     {
         var changed = Equip(new EquipItemTemplate { Id = 100 }, 3);
         Equip(new EquipItemTemplate { Id = 101, BuffId = 209 }, 2);
-        _active.UnionWith([201, 209]);
+        AddBuff(201);
+        var unrelated = AddBuff(209);
 
         GradeEnchant.RefreshWornPiece(_owner, changed, 2);
 
-        await Assert.That(_active.SetEquals([202, 209])).IsTrue();
-        _buffs.AddBuff(Is<Buff>(buff => buff.Template.Id == 209), 0, 0).WasCalled(Times.Never);
-        _buffs.RemoveBuff(209).WasCalled(Times.Never);
+        await Assert.That(ActiveIds.SetEquals([202, 209])).IsTrue();
+        await Assert.That(_owner.Buffs.GetEffectFromBuffId(209)).IsSameReferenceAs(unrelated);
+    }
+
+    [Test]
+    [Arguments(20)]
+    [Arguments(40)]
+    public async Task Regrade_SharedIndependentBuff_RetainsTheOtherPiecesLevel(int changedLevel)
+    {
+        _templates[201].Bonuses.Add(new BonusTemplate
+        {
+            Attribute = UnitAttribute.Str, ModifierType = UnitModifierType.Value, LinearLevelBonus = 100
+        });
+        _templates[202].Bonuses.Add(new BonusTemplate
+        {
+            Attribute = UnitAttribute.Str, ModifierType = UnitModifierType.Value, LinearLevelBonus = 200
+        });
+        var unchangedLevel = changedLevel == 20 ? 40 : 20;
+        Equip(new EquipItemTemplate { Id = 100, Level = unchangedLevel }, 2);
+        var unchanged = AddBuff(201, (uint)unchangedLevel);
+        var changed = Equip(new EquipItemTemplate { Id = 100, Level = changedLevel }, 2);
+        AddBuff(201, (uint)changedLevel);
+        changed.Grade = 3;
+
+        GradeEnchant.RefreshWornPiece(_owner, changed, 2);
+
+        await Assert.That(_owner.Buffs.GetBuffCountById(201)).IsEqualTo(1);
+        await Assert.That(_owner.Buffs.GetEffectFromBuffId(201)).IsSameReferenceAs(unchanged);
+        await Assert.That(_owner.Bonuses[unchanged.Index].Single().Value).IsEqualTo(unchangedLevel);
+        var current = _owner.Buffs.GetEffectFromBuffId(202);
+        await Assert.That(current.AbLevel).IsEqualTo((uint)changedLevel);
+        await Assert.That(_owner.Bonuses[current.Index].Single().Value).IsEqualTo(changedLevel * 2);
+    }
+
+    [Test]
+    public async Task Regrade_TwoEqualLevelPiecesWithSharedBuff_KeepsOneOldAndOneNewEffect()
+    {
+        Equip(new EquipItemTemplate { Id = 100, Level = 20 }, 2);
+        AddBuff(201, 20);
+        var changed = Equip(new EquipItemTemplate { Id = 100, Level = 20 }, 3);
+        AddBuff(201, 20);
+
+        GradeEnchant.RefreshWornPiece(_owner, changed, 2);
+
+        await Assert.That(_owner.Buffs.GetBuffCountById(201)).IsEqualTo(1);
+        await Assert.That(_owner.Buffs.GetBuffCountById(202)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Regrade_BothGradesUseTheSameBuff_DoesNotRestartOrDuplicateIt()
+    {
+        _grades[3] = 201;
+        var changed = Equip(new EquipItemTemplate { Id = 100, Level = 20 }, 3);
+        var original = AddBuff(201, 20);
+
+        GradeEnchant.RefreshWornPiece(_owner, changed, 2);
+
+        await Assert.That(_owner.Buffs.GetBuffCountById(201)).IsEqualTo(1);
+        await Assert.That(_owner.Buffs.GetEffectFromBuffId(201)).IsSameReferenceAs(original);
+    }
+
+    [Test]
+    public async Task Regrade_ChargedPiece_PreservesItsActiveChargeEffectAndTimes()
+    {
+        var changed = Equip(new EquipItemTemplate
+        {
+            Id = 100, RechargeBuffId = 209, ChargeLifetime = 60, ChargeCount = 5
+        }, 3);
+        changed.ChargeStartTime = DateTime.UtcNow.AddMinutes(-1);
+        changed.ChargeCount = 3;
+        AddBuff(201);
+        var charged = AddBuff(209);
+        charged.StartTime = DateTime.UtcNow.AddSeconds(-20);
+        charged.EndTime = DateTime.UtcNow.AddSeconds(40);
+        charged.Charge = 3;
+        var start = charged.StartTime;
+        var end = charged.EndTime;
+
+        GradeEnchant.RefreshWornPiece(_owner, changed, 2);
+
+        await Assert.That(_owner.Buffs.GetBuffCountById(209)).IsEqualTo(1);
+        await Assert.That(_owner.Buffs.GetEffectFromBuffId(209)).IsSameReferenceAs(charged);
+        await Assert.That(charged.StartTime).IsEqualTo(start);
+        await Assert.That(charged.EndTime).IsEqualTo(end);
+        await Assert.That(charged.Charge).IsEqualTo(3);
     }
 
     [Test]
@@ -169,13 +257,23 @@ public sealed class EquipmentGradeRefreshTests
         for (var i = 0; i < 3; i++)
             Equip(template, 5, armor: true);
         _owner.UpdateGearBonuses(changed, null);
-        await Assert.That(_active.Contains(301)).IsTrue();
+        await Assert.That(ActiveIds.Contains(301)).IsTrue();
         changed.Grade = 5;
 
         GradeEnchant.RefreshWornPiece(_owner, changed, 4);
 
-        await Assert.That(_active.Contains(301)).IsFalse();
-        await Assert.That(_active.Contains(302)).IsTrue();
+        await Assert.That(ActiveIds.Contains(301)).IsFalse();
+        await Assert.That(ActiveIds.Contains(302)).IsTrue();
+    }
+
+    private Buff AddBuff(uint id, uint level = 0)
+    {
+        var buff = new Buff(_owner, _owner, new SkillCasterUnit(), _templates[id], null, DateTime.UtcNow)
+        {
+            AbLevel = level
+        };
+        _owner.Buffs.AddBuff(buff);
+        return buff;
     }
 
     private EquipItem Equip(EquipItemTemplate template, byte grade, bool armor = false)
