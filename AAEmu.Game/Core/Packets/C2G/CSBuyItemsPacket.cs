@@ -61,9 +61,9 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
             if (npcObjId != 0)
             {
                 if (doodadObjId != 0 || npc == null || !npc.Template.Merchant ||
-                    npc.Template.MerchantPackId == 0 || !IsNear(character, npc))
+                    npc.Template.MerchantPackIds.Count == 0 || !IsNear(character, npc))
                     return;
-                pack = NpcManager.Instance.GetGoods(npc.Template.MerchantPackId);
+                pack = NpcManager.Instance.GetNpcGoods(npc.Template);
             }
             else if (doodadObjId != 0)
             {

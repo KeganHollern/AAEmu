@@ -16,6 +16,7 @@ using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Utils.DB;
 
+using Microsoft.Data.Sqlite;
 using NLog;
 
 namespace AAEmu.Game.Core.Managers.UnitManagers;
@@ -107,6 +108,30 @@ public class NpcManager(IObjectIdManager objectIdManager, IModelManager modelMan
     public MerchantGoods GetGoods(uint id)
     {
         return Goods.GetValueOrDefault(id);
+    }
+
+    public MerchantGoods GetNpcGoods(NpcTemplate template)
+    {
+        // Missing pack data must not hide another authored pack.
+        var packs = template.MerchantPackIds.Select(GetGoods).Where(pack => pack != null).ToList();
+        if (packs.Count == 0)
+            return null;
+
+        var first = packs[0];
+        // Every multi-pack NPC in r208022 uses one currency. Never price a
+        // differently authored pack using the first pack's currency.
+        if (packs.Any(pack => pack.Kind != first.Kind))
+            return null;
+        if (packs.Count == 1)
+            return first;
+
+        var goods = new MerchantGoods(first.Id, first.Kind);
+        foreach (var pack in packs)
+        {
+            foreach (var item in pack.Items)
+                goods.AddItemToStock(item.ItemTemplateId, item.Grade);
+        }
+        return goods;
     }
 
     /// <summary>
@@ -843,58 +868,55 @@ public class NpcManager(IObjectIdManager objectIdManager, IModelManager modelMan
                 }
             }
 
-            // Load merchant list
-            using (var command = connection.CreateCommand())
-            {
-                command.CommandText = "SELECT * FROM merchants";
-                command.Prepare();
-                using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
-                {
-                    while (reader.Read())
-                    {
-                        var id = reader.GetUInt32("npc_id");
-                        if (!Templates.TryGetValue(id, out var template))
-                            continue;
-                        template.MerchantPackId = reader.GetUInt32("merchant_pack_id");
-                    }
-                }
-            }
+            LoadMerchantData(connection);
 
-            // Done loading main Npc data
             Logger.Info($"Loaded {Templates.Count} npc templates");
-
-            // Loading merchant stuff
-            Logger.Info("Loading merchant packs...");
-            using (var command = connection.CreateCommand())
-            {
-                command.CommandText = """
-                                      SELECT merchant_goods.*, merchant_packs.kind_id
-                                      FROM merchant_goods
-                                      JOIN merchant_packs ON merchant_packs.id = merchant_goods.merchant_pack_id
-                                      """;
-                command.Prepare();
-                using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
-                {
-                    while (reader.Read())
-                    {
-                        var id = reader.GetUInt32("merchant_pack_id");
-                        if (!Goods.ContainsKey(id))
-                            Goods.Add(id, new MerchantGoods(id, reader.GetByte("kind_id")));
-
-                        var itemId = reader.GetUInt32("item_id");
-                        var grade = reader.GetByte("grade_id");
-
-                        Goods[id].AddItemToStock(itemId, grade);
-                    }
-                }
-            }
-
             Logger.Info($"Loaded {Goods.Count} merchant packs");
         }
 
         // NpcGameData.Instance.LoadMemberAndSpawnerTemplateIds();
 
         Loaded = true;
+    }
+
+    internal void LoadMerchantData(SqliteConnection connection)
+    {
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT npc_id, merchant_pack_id FROM merchants ORDER BY id";
+            using var reader = new SQLiteWrapperReader(command.ExecuteReader());
+            while (reader.Read())
+            {
+                if (Templates.TryGetValue(reader.GetUInt32("npc_id"), out var template))
+                    template.MerchantPackIds.Add(reader.GetUInt32("merchant_pack_id"));
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            // Empty packs are valid. NPC 626 has an empty personal pack and a
+            // separate shared pack containing all of its goods.
+            command.CommandText = """
+                                  SELECT merchant_packs.id AS merchant_pack_id, merchant_packs.kind_id,
+                                         merchant_goods.item_id, merchant_goods.grade_id
+                                  FROM merchant_packs
+                                  LEFT JOIN merchant_goods ON merchant_goods.merchant_pack_id = merchant_packs.id
+                                  ORDER BY merchant_packs.id, merchant_goods.id
+                                  """;
+            using var reader = new SQLiteWrapperReader(command.ExecuteReader());
+            while (reader.Read())
+            {
+                var id = reader.GetUInt32("merchant_pack_id");
+                if (!Goods.TryGetValue(id, out var goods))
+                {
+                    goods = new MerchantGoods(id, reader.GetByte("kind_id"));
+                    Goods.Add(id, goods);
+                }
+
+                if (!reader.IsDBNull("item_id"))
+                    goods.AddItemToStock(reader.GetUInt32("item_id"), reader.GetByte("grade_id"));
+            }
+        }
     }
 
     /// <summary>

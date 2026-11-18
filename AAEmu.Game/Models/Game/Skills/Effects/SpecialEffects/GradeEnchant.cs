@@ -1,11 +1,13 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
@@ -122,6 +124,7 @@ public class GradeEnchant : SpecialEffectAction
         // the roll only after labor, gold, charm, scroll and item state commit.
         batch.AfterCommit(() =>
         {
+            RefreshWornPiece(character, item, initialGrade);
             if (result is GradeEnchantResult.Success or GradeEnchantResult.GreatSuccess)
                 character.Achievements?.Increment(CharRecordKind.EnchantItem, grade, 0);
             else
@@ -132,6 +135,38 @@ public class GradeEnchant : SpecialEffectAction
                 WorldManager.Instance.BroadcastPacketToServer(
                     new SCGradeEnchantBroadcastPacket(character.Name, (byte)result, item, initialGrade, grade));
         });
+    }
+
+    internal static void RefreshWornPiece(Character character, Item item, byte previousGrade)
+    {
+        if (item.Grade == previousGrade || item.SlotType != SlotType.Equipment ||
+            !ReferenceEquals(item._holdingContainer, character.Equipment))
+            return;
+
+        var oldBuff = ItemGameData.Instance.GetItemBuff(item.TemplateId, previousGrade) ??
+                      SkillManager.Instance.GetBuffTemplate(item.Template.BuffId);
+        var newBuff = ItemGameData.Instance.GetItemBuff(item.TemplateId, item.Grade) ??
+                      SkillManager.Instance.GetBuffTemplate(item.Template.BuffId);
+        if (oldBuff?.Id != newBuff?.Id)
+        {
+            // Shared item buffs are independent effects. Match this item's level
+            // and the normal equipment source instead of removing an arbitrary copy.
+            var oldEffect = character.Buffs.GetEffectsByType(typeof(BuffTemplate)).FirstOrDefault(buff =>
+                buff.Template.Id == oldBuff?.Id && buff.AbLevel == (uint)item.Template.Level &&
+                ReferenceEquals(buff.Caster, character) && buff.Skill == null &&
+                buff.SkillCaster is SkillCasterUnit { ObjId: 0 });
+            if (oldEffect != null)
+                character.Buffs.RemoveEffect(oldEffect.Index);
+
+            if (newBuff != null && item is not EquipItem { MaxDurability: > 0, Durability: <= 0 })
+                character.Buffs.AddBuff(new Buff(character, character, new SkillCasterUnit(), newBuff, null, DateTime.UtcNow)
+                {
+                    AbLevel = (uint)item.Template.Level
+                });
+        }
+
+        // Grade changes do not restart or duplicate the item's charged effects.
+        character.UpdateGearBonuses(item, null, false);
     }
 
     private static (GradeEnchantResult Result, byte Grade) RollRegrade(GradeTemplate gradeTemplate, byte initialGrade, bool isLucky, bool useCharm,

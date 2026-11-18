@@ -57,7 +57,7 @@ public class BuffTemplate
     public bool SpellImmune { get; init; }
     public bool RangedImmune { get; init; }
     public bool SiegeImmune { get; init; }
-    public int ImmuneDamage { get; init; }
+    public long ImmuneDamage { get; init; }
     public uint SkillControllerId { get; init; }
     public int ResurrectionHealth { get; init; }
     public int ResurrectionMana { get; init; }

@@ -223,13 +223,58 @@ public sealed class CSBuyItemsPacketTests
         {
             ObjId = 77,
             ParentWorld = _character.ParentWorld,
-            Template = new NpcTemplate { Merchant = true, MerchantPackId = 145 }
+            Template = new NpcTemplate { Merchant = true, MerchantPackIds = [145] }
         };
         _character.ParentWorld.SetNpc(npc.ObjId, npc);
         SendPurchase(clientShopId: 999, npcId: 77, doodadId: 0);
 
         await Assert.That(_character.Inventory.Bag.Items.Single().TemplateId).IsEqualTo(1000U);
         await Assert.That(_character.Money).IsEqualTo(980L);
+    }
+
+    [Test]
+    public async Task NpcPurchase_BuysItemsFromBothAuthoredPacksInOneTransaction()
+    {
+        AddNpc([145, 999]);
+        var stream = SendPurchase(npcId: 77, doodadId: 0,
+            requests: [new(1000, 2, ShopCurrencyType.Money), new(1001, 2, ShopCurrencyType.Money)]);
+
+        await Assert.That(stream.LeftBytes).IsEqualTo(0);
+        await Assert.That(_character.Money).IsEqualTo(978L);
+        await Assert.That(_character.Inventory.Bag.Items.Select(item => item.TemplateId))
+            .IsEquivalentTo(new uint[] { 1000, 1001 });
+        await Assert.That(_character.Inventory.Bag.Items.All(item => item.Count == 2 && item.Grade == 2)).IsTrue();
+    }
+
+    [Test]
+    public async Task NpcPurchase_EmptyLastPackDoesNotHideEarlierGoods()
+    {
+        _packs[998] = new MerchantGoods(998);
+        AddNpc([145, 998]);
+        SendPurchase(npcId: 77, doodadId: 0);
+
+        await Assert.That(_character.Money).IsEqualTo(980L);
+        await Assert.That(_character.Inventory.Bag.Items.Single().TemplateId).IsEqualTo(1000U);
+    }
+
+    [Test]
+    public async Task NpcPurchase_CannotBuyFromAnUnrelatedPack()
+    {
+        _packs[998] = new MerchantGoods(998);
+        AddNpc([145, 998]);
+        SendPurchase(npcId: 77, doodadId: 0, itemId: 1001, clientShopId: 999);
+
+        await AssertUnchanged(ErrorMessageType.StoreInvalidItem);
+    }
+
+    [Test]
+    public async Task NpcPurchase_DistantMultiPackMerchantDoesNotGrantItems()
+    {
+        var npc = AddNpc([145, 999]);
+        npc.Transform.Local.SetPosition(3.01f, 0, 0);
+        SendPurchase(npcId: 77, doodadId: 0);
+
+        await AssertUnchanged(ErrorMessageType.TooFarAway);
     }
 
     [Test]
@@ -300,12 +345,28 @@ public sealed class CSBuyItemsPacketTests
         await Assert.That(_session.Packets).IsEmpty();
     }
 
-    private PacketStream SendPurchase(uint clientShopId = 0, uint itemId = 1000,
-        ShopCurrencyType currency = ShopCurrencyType.Money, uint npcId = 0, uint doodadId = 99)
+    private Npc AddNpc(List<uint> packs)
     {
+        var npc = new Npc
+        {
+            ObjId = 77,
+            ParentWorld = _character.ParentWorld,
+            Template = new NpcTemplate { Merchant = true, MerchantPackIds = packs }
+        };
+        _character.ParentWorld.SetNpc(npc.ObjId, npc);
+        return npc;
+    }
+
+    private PacketStream SendPurchase(uint clientShopId = 0, uint itemId = 1000,
+        ShopCurrencyType currency = ShopCurrencyType.Money, uint npcId = 0, uint doodadId = 99,
+        IReadOnlyList<StorePurchaseRequest> requests = null)
+    {
+        requests ??= [new(itemId, 2, currency)];
         var body = new PacketStream().WriteBc(npcId).WriteBc(doodadId).Write(clientShopId)
-            .Write((byte)1).Write((byte)0)
-            .Write(itemId).Write((byte)12).Write(2).Write((byte)currency).Write(false);
+            .Write((byte)requests.Count).Write((byte)0);
+        foreach (var request in requests)
+            body.Write(request.ItemId).Write((byte)12).Write(request.Count).Write((byte)request.Currency);
+        body.Write(false);
         var stream = new PacketStream(body.GetBytes());
         new CSBuyItemsPacket { Connection = _character.Connection }.Read(stream);
         return stream;

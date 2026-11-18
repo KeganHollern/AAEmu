@@ -5,6 +5,7 @@ using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
@@ -21,13 +22,25 @@ public sealed class CombatDamageFormulaTests
 {
     private static readonly FieldInfo FormulaInstance = typeof(Singleton<FormulaManager>)
         .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+    private static readonly FieldInfo SkillInstance = typeof(Singleton<SkillManager>)
+        .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+    private static readonly FieldInfo BuffInstance = typeof(Singleton<BuffGameData>)
+        .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
     private object _previous;
+    private object _previousSkills;
+    private object _previousBuffs;
     private Dictionary<uint, Formula> _formulas;
 
     [Before(Test)]
     public void SetUp()
     {
         _previous = FormulaInstance.GetValue(null);
+        _previousSkills = SkillInstance.GetValue(null);
+        _previousBuffs = BuffInstance.GetValue(null);
+        BuffInstance.SetValue(null, BuffBreakerTestData.Load());
+        var skills = new SkillManager(null, null);
+        BuffBreakerTestData.Configure(skills);
+        SkillInstance.SetValue(null, skills);
         var manager = new FormulaManager();
         FormulaInstance.SetValue(null, manager);
         var engine = new Jace.CalculationEngine();
@@ -49,7 +62,12 @@ public sealed class CombatDamageFormulaTests
     }
 
     [After(Test)]
-    public void TearDown() => FormulaInstance.SetValue(null, _previous);
+    public void TearDown()
+    {
+        FormulaInstance.SetValue(null, _previous);
+        SkillInstance.SetValue(null, _previousSkills);
+        BuffInstance.SetValue(null, _previousBuffs);
+    }
 
     [Test]
     [Arguments(DamageType.Ranged, 7.999f, 8000)]
@@ -244,21 +262,202 @@ public sealed class CombatDamageFormulaTests
         ObjId = id, Hp = 100000, MaxHp = 100000, MaxMp = 100000
     };
 
+    [Test]
+    [Arguments(49, true)]
+    [Arguments(50, true)]
+    [Arguments(51, false)]
+    public async Task DamageEffect_ThresholdImmunityIncludesBoundaryWithoutReducingLargerHits(int damage, bool immune)
+    {
+        var source = NewUnit(1);
+        var target = NewUnit(2);
+        AddImmunity(target, new BuffTemplate { Id = 275, MeleeImmune = true, ImmuneDamage = 50 });
+        var damageEvents = 0;
+        target.Events.OnDamaged += (_, _) => damageEvents++;
+
+        Apply(source, target, damage: damage, healthSteal: 50, manaSteal: 25);
+
+        await Assert.That(target.DamageReceived).IsEqualTo(immune ? 0 : damage);
+        await Assert.That(source.SummarizeDamage).IsEqualTo(immune ? 0 : damage);
+        await Assert.That(damageEvents).IsEqualTo(immune ? 0 : 1);
+        await Assert.That(target.Packets.OfType<SCUnitDamagedPacket>().Single().HitType)
+            .IsEqualTo(immune ? SkillHitType.Immune : SkillHitType.MeleeHit);
+    }
+
+    [Test]
+    [Arguments(DamageType.Melee, true)]
+    [Arguments(DamageType.Magic, true)]
+    [Arguments(DamageType.Ranged, true)]
+    [Arguments(DamageType.Siege, true)]
+    [Arguments(DamageType.Heal, false)]
+    public async Task CheckDamageImmune_RequiresTheMatchingTypeFlag(DamageType type, bool immune)
+    {
+        var target = NewUnit(2);
+        AddImmunity(target, new BuffTemplate
+        {
+            Id = 2071, MeleeImmune = true, SpellImmune = true, RangedImmune = true, SiegeImmune = true,
+            ImmuneDamage = 2000
+        });
+
+        await Assert.That(target.Buffs.CheckDamageImmune(type, 2000)).IsEqualTo(immune);
+        await Assert.That(target.Buffs.CheckDamageImmune(type, 2001)).IsFalse();
+        await Assert.That(target.Buffs.CheckDamageImmune(type)).IsFalse();
+    }
+
+    [Test]
+    public async Task DamageEffect_MeleeThresholdDoesNotProtectAgainstMagic()
+    {
+        var source = NewUnit(1);
+        var target = NewUnit(2);
+        AddImmunity(target, new BuffTemplate { Id = 275, MeleeImmune = true, ImmuneDamage = 50 });
+
+        Apply(source, target, DamageType.Magic, damage: 25);
+
+        await Assert.That(target.DamageReceived).IsEqualTo(25);
+    }
+
+    [Test]
+    public async Task DamageEffect_ZeroThresholdKeepsFullImmunity()
+    {
+        var source = NewUnit(1);
+        var target = NewUnit(2);
+        AddImmunity(target, new BuffTemplate { Id = 131, MeleeImmune = true });
+
+        Apply(source, target, damage: 1000000);
+
+        await Assert.That(target.DamageReceived).IsEqualTo(0);
+        await Assert.That(target.Packets.OfType<SCUnitDamagedPacket>().Single().HitType).IsEqualTo(SkillHitType.Immune);
+    }
+
+    [Test]
+    public async Task DamageEffect_ThresholdUsesTheFinalMitigatedHitAndDoesNotSteal()
+    {
+        var source = NewUnit(1);
+        source.Hp = 100;
+        source.Mp = 100;
+        var target = NewUnit(2);
+        target.Armor = 5300;
+        AddImmunity(target, new BuffTemplate { Id = 275, MeleeImmune = true, ImmuneDamage = 50 });
+
+        Apply(source, target, damage: 100, healthSteal: 50, manaSteal: 25);
+
+        await Assert.That(target.DamageReceived).IsEqualTo(0);
+        await Assert.That(source.Hp).IsEqualTo(100);
+        await Assert.That(source.Mp).IsEqualTo(100);
+    }
+
+    [Test]
+    public async Task CheckDamageImmune_CombinesThresholdsAndPreservesLargeAuthoredValues()
+    {
+        var target = NewUnit(2);
+        AddImmunity(target, new BuffTemplate { Id = 1, MeleeImmune = true, ImmuneDamage = 50 });
+        AddImmunity(target, new BuffTemplate { Id = 2, MeleeImmune = true, ImmuneDamage = 100 });
+        AddImmunity(target, new BuffTemplate { Id = 3, SpellImmune = true, ImmuneDamage = 99999999999999L });
+        AddImmunity(target, new BuffTemplate { Id = 3642, ImmuneDamage = 99999999999999L });
+
+        await Assert.That(target.Buffs.CheckDamageImmune(DamageType.Melee, 100)).IsTrue();
+        await Assert.That(target.Buffs.CheckDamageImmune(DamageType.Melee, 101)).IsFalse();
+        await Assert.That(target.Buffs.CheckDamageImmune(DamageType.Magic, int.MaxValue)).IsTrue();
+        await Assert.That(target.Buffs.CheckDamageImmune(DamageType.Ranged, 1)).IsFalse();
+    }
+
+    [Test]
+    [Arguments(DamageType.Melee, 49, true)]
+    [Arguments(DamageType.Melee, 51, false)]
+    [Arguments(DamageType.Magic, 49, true)]
+    [Arguments(DamageType.Magic, 51, false)]
+    public async Task DamageEffect_ImmuneDotKeepsDamageBreakBuffsButStillTriggersAttackRemovals(
+        DamageType type, int damage, bool immune)
+    {
+        var source = NewUnit(1);
+        var target = NewUnit(2);
+        AddImmunity(target, new BuffTemplate { Id = 2071, MeleeImmune = true, SpellImmune = true, ImmuneDamage = 50 });
+        var sleep = AddImmunity(target, new BuffTemplate { Id = 1085, RemoveOnDamagedEtcDot = true });
+        var spellSleep = AddImmunity(target, new BuffTemplate { Id = 1123, RemoveOnDamagedSpellDot = true });
+        var damageBreak = AddImmunity(source, new BuffTemplate { Id = 20001, RemoveOnDamageEtcDot = true });
+        var spellDamageBreak = AddImmunity(source, new BuffTemplate { Id = 20002, RemoveOnDamageSpellDot = true });
+        var attackBreak = AddImmunity(source, new BuffTemplate { Id = 20003, RemoveOnAttackEtc = true });
+        var attackedBreak = AddImmunity(target, new BuffTemplate { Id = 20004, RemoveOnAttackedEtc = true });
+        var dot = new BuffTemplate { Id = 20005 };
+        dot.TickEffects.Add(new TickEffect { EffectId = 1 });
+        var damageEvents = 0;
+        target.Events.OnDamaged += (_, _) => damageEvents++;
+
+        Apply(source, target, type, damage: damage, buff: dot);
+
+        await Assert.That(target.DamageReceived).IsEqualTo(immune ? 0 : damage);
+        await Assert.That(damageEvents).IsEqualTo(immune ? 0 : 1);
+        await Assert.That(sleep.State).IsEqualTo(immune ? EffectState.Acting : EffectState.Finished);
+        await Assert.That(damageBreak.State).IsEqualTo(immune ? EffectState.Acting : EffectState.Finished);
+        var spellBreaks = !immune && type == DamageType.Magic;
+        await Assert.That(spellSleep.State).IsEqualTo(spellBreaks ? EffectState.Finished : EffectState.Acting);
+        await Assert.That(spellDamageBreak.State).IsEqualTo(spellBreaks ? EffectState.Finished : EffectState.Acting);
+        await Assert.That(attackBreak.State).IsEqualTo(EffectState.Finished);
+        await Assert.That(attackedBreak.State).IsEqualTo(EffectState.Finished);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DamageEffect_DotWithoutMatchingThresholdKeepsModifierRemovalBeforeDamage(bool unrelatedThreshold)
+    {
+        var source = NewUnit(1);
+        var target = NewUnit(2);
+        target.MagicResistance = 5300;
+        if (unrelatedThreshold)
+            AddImmunity(target, new BuffTemplate { Id = 275, MeleeImmune = true, ImmuneDamage = 50 });
+        // r208022 buff 4159 removes on spell DOT damage and reduces magic resistance by 100%.
+        var modifier = new BonusTemplate
+        {
+            Attribute = UnitAttribute.MagicResist, ModifierType = UnitModifierType.Percent, Value = -100
+        };
+        var template = new BuffTemplate { Id = 4159, RemoveOnDamagedSpellDot = true };
+        template.Bonuses.Add(modifier);
+        var buff = AddImmunity(target, template);
+        target.AddBonus(buff.Index, new Bonus { Template = modifier, Value = -100 });
+        var dot = new BuffTemplate { Id = 20005 };
+        dot.TickEffects.Add(new TickEffect { EffectId = 1 });
+        await Assert.That(target.MagicResistance).IsEqualTo(0);
+
+        Apply(source, target, DamageType.Magic, damage: 100, buff: dot);
+
+        await Assert.That(buff.State).IsEqualTo(EffectState.Finished);
+        await Assert.That(target.MagicResistance).IsEqualTo(5300);
+        await Assert.That(target.DamageReceived).IsEqualTo(50);
+    }
+
+    private static Buff AddImmunity(DamageUnit target, BuffTemplate template)
+    {
+        var buffs = (List<Buff>)typeof(Buffs).GetField("_effects", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(target.Buffs)!;
+        var buff = new Buff(target, target, new SkillCasterUnit(target.ObjId), template, null, DateTime.UtcNow)
+        {
+            State = EffectState.Acting, Index = template.Id
+        };
+        buffs.Add(buff);
+        return buff;
+    }
+
     private static void Apply(DamageUnit source, DamageUnit target, DamageType type = DamageType.Melee,
-        bool adjustByHeight = false, int damage = 10000, float aoeMultiplier = 1, int healthSteal = 0, int manaSteal = 0)
+        bool adjustByHeight = false, int damage = 10000, float aoeMultiplier = 1, int healthSteal = 0, int manaSteal = 0,
+        BuffTemplate buff = null)
     {
         new DamageEffect
         {
             DamageType = type, UseFixedDamage = true, FixedMin = damage, FixedMax = damage,
             AdjustDamageByHeight = adjustByHeight, HealthStealRatio = healthSteal, ManaStealRatio = manaSteal
         }.Apply(source, new SkillCasterUnit(source.ObjId), target, new SkillCastUnitTarget(target.ObjId), new CastSkill(1, 1),
-            new EffectSource { AoeDamageMultiplier = aoeMultiplier }, null, DateTime.UtcNow);
+            new EffectSource { AoeDamageMultiplier = aoeMultiplier, Buff = buff }, null, DateTime.UtcNow);
     }
 
     private sealed class DamageUnit : Unit
     {
         public List<GamePacket> Packets { get; } = [];
         public int DamageReceived { get; private set; }
+        public override int MagicResistance
+        {
+            get => (int)CalculateWithBonuses(base.MagicResistance, UnitAttribute.MagicResist);
+            set => base.MagicResistance = value;
+        }
         public override void ReduceCurrentHp(BaseUnit attacker, int value, KillReason killReason = KillReason.Damage)
         {
             DamageReceived += value;

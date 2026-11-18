@@ -1,4 +1,4 @@
-using AAEmu.Game.Models.Game.Merchant;
+﻿using AAEmu.Game.Models.Game.Merchant;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.World;
 
@@ -10,6 +10,7 @@ public interface INpcManager : ILoadable
     NpcTemplate GetTemplate(uint templateId);
     Dictionary<uint, NpcTemplate> GetAllTemplates();
     MerchantGoods GetGoods(uint id);
+    MerchantGoods GetNpcGoods(NpcTemplate template);
     Npc Create(WorldInstance parentWorld, uint objectId, uint templateId);
     void LoadAiParams();
     void BindSkillsToTemplate(uint templateId, List<NpcSkill> skills);

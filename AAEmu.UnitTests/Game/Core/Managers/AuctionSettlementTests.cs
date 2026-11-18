@@ -197,6 +197,142 @@ public sealed class AuctionSettlementTests
     }
 
     [Test]
+    public async Task ExpiredItem_CannotBePostedOrChargeAListingFee()
+    {
+        var item = Item();
+        item.ExpirationTime = DateTime.UtcNow.AddSeconds(-1);
+
+        Post(item);
+
+        await Assert.That(_auctions.AuctionLots).IsEmpty();
+        await Assert.That(_commits).IsEqualTo(0);
+        await Assert.That(_seller.Money).IsEqualTo(10000L);
+        await Assert.That(_seller.Inventory.Bag.Items.Single()).IsSameReferenceAs(item);
+        _auctionIds.GetNextId().WasCalled(Times.Never);
+        var error = _sessions[_seller.Id].Packets.Single(packet => Opcode(packet) == SCOffsets.SCErrorMsgPacket);
+        await Assert.That(BitConverter.ToInt16(error, 8)).IsEqualTo((short)ErrorMessageType.CanNotPutupItem);
+    }
+
+    [Test]
+    [Arguments("none")]
+    [Arguments("future")]
+    [Arguments("online")]
+    public async Task UnexpiredItem_CanBePostedWithoutChangingItsLifetime(string lifetime)
+    {
+        var item = Item();
+        item.ExpirationTime = lifetime == "future" ? DateTime.UtcNow.AddHours(1) : DateTime.MinValue;
+        item.ExpirationOnlineMinutesLeft = lifetime == "online" ? 12.5 : 0;
+        var expiry = item.ExpirationTime;
+
+        Post(item);
+
+        await Assert.That(_auctions.AuctionLots.Values.Single().Item).IsSameReferenceAs(item);
+        await Assert.That(item.ExpirationTime).IsEqualTo(expiry);
+        await Assert.That(item.ExpirationOnlineMinutesLeft).IsEqualTo(lifetime == "online" ? 12.5 : 0);
+    }
+
+    [Test]
+    [Arguments(800)]
+    [Arguments(2000)]
+    public async Task ExpiredEscrow_RejectsBidAndBuyoutBeforeDebitingOrRefunding(int amount)
+    {
+        var lot = Listed();
+        Bid(_other, lot, 600);
+        lot.Item.ExpirationTime = DateTime.UtcNow.AddSeconds(-1);
+        var commits = _commits;
+
+        Bid(_buyer, lot, amount);
+
+        await Assert.That(_commits).IsEqualTo(commits);
+        await Assert.That(_buyer.Money).IsEqualTo(10000L);
+        await Assert.That(_other.Money).IsEqualTo(9400L);
+        await Assert.That(lot.BidderId).IsEqualTo(_other.Id);
+        await Assert.That(lot.BidMoney).IsEqualTo(600);
+        await Assert.That(_mails._allPlayerMails).IsEmpty();
+        await Assert.That(lot.Item._holdingContainer).IsSameReferenceAs(_seller.Inventory.AuctionAttachments);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task ExpiredEscrow_RefundsHeldBidAndDeletesItemOnce(bool withBid, bool auctionEnded)
+    {
+        var lot = Listed();
+        if (withBid) Bid(_buyer, lot, 500);
+        lot.Item.ExpirationTime = DateTime.UtcNow.AddSeconds(-1);
+        if (auctionEnded) lot.EndTime = DateTime.UtcNow.AddSeconds(-1);
+        var commits = _commits;
+
+        _auctions.UpdateAuctionHouse();
+        _auctions.UpdateAuctionHouse();
+
+        await Assert.That(_commits).IsEqualTo(commits + 1);
+        await Assert.That(_auctions.AuctionLots).IsEmpty();
+        await Assert.That(_items.GetItemByItemId(lot.Item.Id)).IsNull();
+        await Assert.That(lot.Item._holdingContainer).IsNull();
+        await Assert.That(lot.Item.Count).IsEqualTo(0);
+        await Assert.That(_seller.Inventory.AuctionAttachments.Items).IsEmpty();
+        await Assert.That(_mails._allPlayerMails.Count).IsEqualTo(withBid ? 1 : 0);
+        if (withBid)
+        {
+            var refund = Mail(MailType.AucBidFail);
+            await Assert.That(refund.Header.ReceiverId).IsEqualTo(_buyer.Id);
+            await Assert.That(refund.Body.CopperCoins).IsEqualTo(500);
+            await Assert.That(refund.Body.Attachments).IsEmpty();
+            await Assert.That(_buyer.Money).IsEqualTo(9500L);
+        }
+        await Assert.That(_seller.Money).IsEqualTo(9980L);
+    }
+
+    [Test]
+    public async Task CancelExpiredEscrow_RemovesItemWithoutReturningAnExpiredAttachment()
+    {
+        var lot = Listed();
+        lot.Item.ExpirationTime = DateTime.UtcNow.AddSeconds(-1);
+
+        _auctions.CancelAuctionLot(_seller, lot.Id);
+
+        await Assert.That(_auctions.AuctionLots).IsEmpty();
+        await Assert.That(_items.GetItemByItemId(lot.Item.Id)).IsNull();
+        await Assert.That(_mails._allPlayerMails).IsEmpty();
+        await Assert.That(Packets(_seller, SCOffsets.SCAuctionCanceledPacket)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task FailedExpiredEscrowCheckpoint_RestoresItemAndBidThenRefundsOnceOnRetry()
+    {
+        var lot = Listed();
+        Bid(_buyer, lot, 500);
+        lot.Item.ExpirationTime = DateTime.UtcNow.AddSeconds(-1);
+        lot.Item.IsDirty = false;
+        lot.IsDirty = false;
+        _checkpoint = () => false;
+
+        _auctions.UpdateAuctionHouse();
+
+        await Assert.That(_auctions.AuctionLots[lot.Id]).IsSameReferenceAs(lot);
+        await Assert.That(_items.GetItemByItemId(lot.Item.Id)).IsSameReferenceAs(lot.Item);
+        await Assert.That(lot.Item._holdingContainer).IsSameReferenceAs(_seller.Inventory.AuctionAttachments);
+        await Assert.That(lot.Item.Count).IsEqualTo(3);
+        await Assert.That(lot.Item.IsDirty).IsFalse();
+        await Assert.That(lot.BidderId).IsEqualTo(_buyer.Id);
+        await Assert.That(lot.BidMoney).IsEqualTo(500);
+        await Assert.That(_mails._allPlayerMails).IsEmpty();
+        await Assert.That(DeletedLots()).IsEmpty();
+
+        _checkpoint = () => true;
+        _auctions.UpdateAuctionHouse();
+        _auctions.UpdateAuctionHouse();
+
+        await Assert.That(_auctions.AuctionLots).IsEmpty();
+        await Assert.That(_items.GetItemByItemId(lot.Item.Id)).IsNull();
+        await Assert.That(_mails._allPlayerMails.Count).IsEqualTo(1);
+        await Assert.That(Mail(MailType.AucBidFail).Body.CopperCoins).IsEqualTo(500);
+    }
+
+    [Test]
     public async Task MaximumPrice_UsesWideFeeArithmeticAndClampsToOneMillion()
     {
         var item = Item();

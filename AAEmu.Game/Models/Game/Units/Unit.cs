@@ -1214,6 +1214,11 @@ public partial class Unit : BaseUnit, IUnit
 
     public void UpdateGearBonuses(Item itemAdded, Item itemRemoved)
     {
+        UpdateGearBonuses(itemAdded, itemRemoved, true);
+    }
+
+    internal void UpdateGearBonuses(Item itemAdded, Item itemRemoved, bool applyItemEffects)
+    {
         Bonuses[GearBonusesIndex] = [];
 
         foreach (var item in Equipment.Items)
@@ -1235,7 +1240,8 @@ public partial class Unit : BaseUnit, IUnit
         }
 
         // Apply Equipment Effects
-        ApplyEquipEffects(itemAdded, itemRemoved);
+        if (applyItemEffects)
+            ApplyEquipEffects(itemAdded, itemRemoved);
 
         // Compute gear buff
         ApplyWeaponWieldBuff();
