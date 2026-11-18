@@ -21,7 +21,9 @@ public class CSStartInteractionPacket() : GamePacket(CSOffsets.CSStartInteractio
             npcObjId, objId, extraInfo, pickId, mouseButton, modifierKeys);
 
         var npc = Connection.ActiveChar?.ParentWorld?.GetNpc(npcObjId);
-        // TODO: Distance-check
+        // r208022 requests the action list before its approach/range check.
+        // This discovery response grants no interaction: CSInteractNPC,
+        // skill execution, purchases, and mounting validate their own range.
         if (npc != null)
         {
             // The returned skillsList is supposed to be a list of what actions you can take, and the client will
