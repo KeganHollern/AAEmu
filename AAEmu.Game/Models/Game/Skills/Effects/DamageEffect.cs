@@ -371,6 +371,17 @@ public class DamageEffect : EffectTemplate
         else if (!caster.CanAttack(trg))
             return;
 
+        if (target.Buffs.CheckDamageImmune(DamageType, value))
+        {
+            if (Bonuses != null)
+                ((Unit)caster).Bonuses[uint.MaxValue] = [];
+            target.BroadcastPacket(new SCUnitDamagedPacket(castObj, casterObj, caster.ObjId, target.ObjId, 0, 0)
+            {
+                HitType = SkillHitType.Immune
+            }, false);
+            return;
+        }
+
         // TODO: Set proper kill reason
         var hpBeforeDamage = trg.Hp;
         trg.ReduceCurrentHp(caster, value);

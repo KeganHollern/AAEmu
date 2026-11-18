@@ -75,7 +75,7 @@ public partial class Buffs : IBuffs
         return false;
     }
 
-    public bool CheckDamageImmune(DamageType damageType)
+    public bool CheckDamageImmune(DamageType damageType, int? damage = null)
     {
         // Create a copy of the list of effects to avoid changing the list while iterating
         IEnumerable<Buff> effects;
@@ -91,6 +91,11 @@ public partial class Buffs : IBuffs
             var template = effect.Template;
 
             if (template == null)
+                continue;
+
+            // A positive value protects only against hits at or below that amount.
+            // The early damage check has no computed hit and tests full immunity only.
+            if (template.ImmuneDamage > 0 && (!damage.HasValue || damage.Value > template.ImmuneDamage))
                 continue;
 
             switch (damageType)

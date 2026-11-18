@@ -548,7 +548,7 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
                             SpellImmune = reader.GetBoolean("spell_immune", true),
                             RangedImmune = reader.GetBoolean("ranged_immune", true),
                             SiegeImmune = reader.GetBoolean("siege_immune", true),
-                            ImmuneDamage = reader.GetInt32("immune_damage"),
+                            ImmuneDamage = reader.GetInt64("immune_damage"),
                             SkillControllerId =
                                 skillControllerIdValue.Contains("null") ? 0 : uint.Parse(skillControllerIdValue),
                             ResurrectionHealth = reader.GetInt32("resurrection_health"),
