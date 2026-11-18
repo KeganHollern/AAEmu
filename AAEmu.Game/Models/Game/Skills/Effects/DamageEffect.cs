@@ -258,15 +258,6 @@ public class DamageEffect : EffectTemplate
                 min = (float)(min * (source.Buff.Tick / source.Buff.Duration));
                 max = (float)(max * (source.Buff.Tick / source.Buff.Duration));
             }
-
-            caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamageEtcDot);
-            trg.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamagedEtcDot);
-
-            if (DamageType == DamageType.Magic)
-            {
-                caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamageSpellDot);
-                trg.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamagedSpellDot);
-            }
         }
 
         if (UseChargedBuff && source.Skill != null)
@@ -380,6 +371,19 @@ public class DamageEffect : EffectTemplate
                 HitType = SkillHitType.Immune
             }, false);
             return;
+        }
+
+        // A periodic hit must pass immunity before it can break damage-sensitive buffs.
+        // Attack-based removals still occur when the attack starts, even if it is immune.
+        if (source.Buff?.TickEffects.Count > 0)
+        {
+            caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamageEtcDot);
+            trg.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamagedEtcDot);
+            if (DamageType == DamageType.Magic)
+            {
+                caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamageSpellDot);
+                trg.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.DamagedSpellDot);
+            }
         }
 
         // TODO: Set proper kill reason

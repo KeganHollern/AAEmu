@@ -5,6 +5,7 @@ using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
@@ -21,13 +22,25 @@ public sealed class CombatDamageFormulaTests
 {
     private static readonly FieldInfo FormulaInstance = typeof(Singleton<FormulaManager>)
         .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+    private static readonly FieldInfo SkillInstance = typeof(Singleton<SkillManager>)
+        .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+    private static readonly FieldInfo BuffInstance = typeof(Singleton<BuffGameData>)
+        .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
     private object _previous;
+    private object _previousSkills;
+    private object _previousBuffs;
     private Dictionary<uint, Formula> _formulas;
 
     [Before(Test)]
     public void SetUp()
     {
         _previous = FormulaInstance.GetValue(null);
+        _previousSkills = SkillInstance.GetValue(null);
+        _previousBuffs = BuffInstance.GetValue(null);
+        BuffInstance.SetValue(null, BuffBreakerTestData.Load());
+        var skills = new SkillManager(null, null);
+        BuffBreakerTestData.Configure(skills);
+        SkillInstance.SetValue(null, skills);
         var manager = new FormulaManager();
         FormulaInstance.SetValue(null, manager);
         var engine = new Jace.CalculationEngine();
@@ -49,7 +62,12 @@ public sealed class CombatDamageFormulaTests
     }
 
     [After(Test)]
-    public void TearDown() => FormulaInstance.SetValue(null, _previous);
+    public void TearDown()
+    {
+        FormulaInstance.SetValue(null, _previous);
+        SkillInstance.SetValue(null, _previousSkills);
+        BuffInstance.SetValue(null, _previousBuffs);
+    }
 
     [Test]
     [Arguments(DamageType.Ranged, 7.999f, 8000)]
@@ -342,25 +360,63 @@ public sealed class CombatDamageFormulaTests
         await Assert.That(target.Buffs.CheckDamageImmune(DamageType.Ranged, 1)).IsFalse();
     }
 
-    private static void AddImmunity(DamageUnit target, BuffTemplate template)
+    [Test]
+    [Arguments(DamageType.Melee, 49, true)]
+    [Arguments(DamageType.Melee, 51, false)]
+    [Arguments(DamageType.Magic, 49, true)]
+    [Arguments(DamageType.Magic, 51, false)]
+    public async Task DamageEffect_ImmuneDotKeepsDamageBreakBuffsButStillTriggersAttackRemovals(
+        DamageType type, int damage, bool immune)
+    {
+        var source = NewUnit(1);
+        var target = NewUnit(2);
+        AddImmunity(target, new BuffTemplate { Id = 2071, MeleeImmune = true, SpellImmune = true, ImmuneDamage = 50 });
+        var sleep = AddImmunity(target, new BuffTemplate { Id = 1085, RemoveOnDamagedEtcDot = true });
+        var spellSleep = AddImmunity(target, new BuffTemplate { Id = 1123, RemoveOnDamagedSpellDot = true });
+        var damageBreak = AddImmunity(source, new BuffTemplate { Id = 20001, RemoveOnDamageEtcDot = true });
+        var spellDamageBreak = AddImmunity(source, new BuffTemplate { Id = 20002, RemoveOnDamageSpellDot = true });
+        var attackBreak = AddImmunity(source, new BuffTemplate { Id = 20003, RemoveOnAttackEtc = true });
+        var attackedBreak = AddImmunity(target, new BuffTemplate { Id = 20004, RemoveOnAttackedEtc = true });
+        var dot = new BuffTemplate { Id = 20005 };
+        dot.TickEffects.Add(new TickEffect { EffectId = 1 });
+        var damageEvents = 0;
+        target.Events.OnDamaged += (_, _) => damageEvents++;
+
+        Apply(source, target, type, damage: damage, buff: dot);
+
+        await Assert.That(target.DamageReceived).IsEqualTo(immune ? 0 : damage);
+        await Assert.That(damageEvents).IsEqualTo(immune ? 0 : 1);
+        await Assert.That(sleep.State).IsEqualTo(immune ? EffectState.Acting : EffectState.Finished);
+        await Assert.That(damageBreak.State).IsEqualTo(immune ? EffectState.Acting : EffectState.Finished);
+        var spellBreaks = !immune && type == DamageType.Magic;
+        await Assert.That(spellSleep.State).IsEqualTo(spellBreaks ? EffectState.Finished : EffectState.Acting);
+        await Assert.That(spellDamageBreak.State).IsEqualTo(spellBreaks ? EffectState.Finished : EffectState.Acting);
+        await Assert.That(attackBreak.State).IsEqualTo(EffectState.Finished);
+        await Assert.That(attackedBreak.State).IsEqualTo(EffectState.Finished);
+    }
+
+    private static Buff AddImmunity(DamageUnit target, BuffTemplate template)
     {
         var buffs = (List<Buff>)typeof(Buffs).GetField("_effects", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(target.Buffs)!;
-        buffs.Add(new Buff(target, target, new SkillCasterUnit(target.ObjId), template, null, DateTime.UtcNow)
+        var buff = new Buff(target, target, new SkillCasterUnit(target.ObjId), template, null, DateTime.UtcNow)
         {
             State = EffectState.Acting
-        });
+        };
+        buffs.Add(buff);
+        return buff;
     }
 
     private static void Apply(DamageUnit source, DamageUnit target, DamageType type = DamageType.Melee,
-        bool adjustByHeight = false, int damage = 10000, float aoeMultiplier = 1, int healthSteal = 0, int manaSteal = 0)
+        bool adjustByHeight = false, int damage = 10000, float aoeMultiplier = 1, int healthSteal = 0, int manaSteal = 0,
+        BuffTemplate buff = null)
     {
         new DamageEffect
         {
             DamageType = type, UseFixedDamage = true, FixedMin = damage, FixedMax = damage,
             AdjustDamageByHeight = adjustByHeight, HealthStealRatio = healthSteal, ManaStealRatio = manaSteal
         }.Apply(source, new SkillCasterUnit(source.ObjId), target, new SkillCastUnitTarget(target.ObjId), new CastSkill(1, 1),
-            new EffectSource { AoeDamageMultiplier = aoeMultiplier }, null, DateTime.UtcNow);
+            new EffectSource { AoeDamageMultiplier = aoeMultiplier, Buff = buff }, null, DateTime.UtcNow);
     }
 
     private sealed class DamageUnit : Unit
