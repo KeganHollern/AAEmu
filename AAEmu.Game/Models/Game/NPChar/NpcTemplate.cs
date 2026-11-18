@@ -80,7 +80,7 @@ public class NpcTemplate
     public bool CrowdEffect { get; set; }
     public byte Race { get; set; }
     public byte Gender { get; set; }
-    public uint MerchantPackId { get; set; }
+    public List<uint> MerchantPackIds { get; set; } = [];
     public uint EquipBodiesId { get; set; }
     public uint EquipClothsId { get; set; }
     public uint EquipWeaponsId { get; set; }
