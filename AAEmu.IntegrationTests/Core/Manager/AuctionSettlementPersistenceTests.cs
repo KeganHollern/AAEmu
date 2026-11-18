@@ -145,6 +145,92 @@ public sealed partial class AuctionSettlementPersistenceTests
         Assert.Equal(mails.Length, restored.OwnMails().Length);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ExpiredEscrow_ReloadsWithoutItemOrSellerProceedsAndRefundsBidOnce(bool withBid)
+    {
+        using var graph = new AuctionGraph();
+        var item = graph.AddItem();
+        graph.Post(item);
+        var lot = graph.Auction.AuctionLots.Values.Single();
+        if (withBid) graph.Bid(graph.Buyer, lot.Id, 500);
+        item.ExpirationTime = DateTime.UtcNow.AddSeconds(-1);
+
+        graph.Auction.UpdateAuctionHouse();
+
+        using var restored = new AuctionGraph(graph.Id);
+        Assert.DoesNotContain(lot.Id, restored.Auction.AuctionLots.Keys);
+        Assert.Null(restored.Items.GetItemByItemId(item.Id));
+        Assert.False(Exists("items", item.Id));
+        Assert.Empty(restored.Seller.Inventory.AuctionAttachments.Items);
+        var mails = restored.OwnMails();
+        Assert.Equal(withBid ? 1 : 0, mails.Length);
+        if (withBid)
+        {
+            var refund = Assert.Single(mails);
+            Assert.Equal(MailType.AucBidFail, refund.MailType);
+            Assert.Equal(restored.Buyer.Id, refund.Header.ReceiverId);
+            Assert.Equal(500, refund.Body.CopperCoins);
+            Assert.Empty(refund.Body.Attachments);
+        }
+        Assert.Equal(withBid ? 9500 : 10000, restored.Buyer.Money);
+        Assert.Equal(9980, restored.Seller.Money);
+        restored.Auction.UpdateAuctionHouse();
+        Assert.Equal(mails.Length, restored.OwnMails().Length);
+    }
+
+    [Fact]
+    public void ExpiredEscrowRefundFailure_RestoresBidAndItemThenRetriesAfterReload()
+    {
+        using var graph = new AuctionGraph();
+        var item = graph.AddItem();
+        graph.Post(item);
+        var lot = graph.Auction.AuctionLots.Values.Single();
+        graph.Bid(graph.Buyer, lot.Id, 500);
+        item.ExpirationTime = DateTime.UtcNow.AddSeconds(-1);
+        Assert.True(graph.Save.TryCommitEconomy([graph.Seller]));
+        var trigger = $"auction_expired_refund_failure_{graph.Id}";
+        Execute($"CREATE TRIGGER {trigger} BEFORE INSERT ON mails FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Injected expired escrow refund failure'");
+        try
+        {
+            graph.Auction.UpdateAuctionHouse();
+            Assert.Same(lot, graph.Auction.AuctionLots[lot.Id]);
+            Assert.Same(graph.Seller.Inventory.AuctionAttachments, item._holdingContainer);
+            Assert.Equal(3, item.Count);
+            Assert.Equal(500, Read("auction_house", "bid_money", lot.Id));
+            Assert.True(Exists("items", item.Id));
+            Assert.Empty(graph.OwnMails());
+        }
+        finally
+        {
+            Execute($"DROP TRIGGER {trigger}");
+        }
+
+        using var restored = new AuctionGraph(graph.Id);
+        restored.Auction.UpdateAuctionHouse();
+        restored.Auction.UpdateAuctionHouse();
+
+        using var settled = new AuctionGraph(graph.Id);
+        Assert.DoesNotContain(lot.Id, settled.Auction.AuctionLots.Keys);
+        Assert.False(Exists("items", item.Id));
+        var refund = Assert.Single(settled.OwnMails());
+        Assert.Equal(MailType.AucBidFail, refund.MailType);
+        Assert.Equal(500, refund.Body.CopperCoins);
+        Assert.Empty(refund.Body.Attachments);
+        Assert.Equal(9500, settled.Buyer.Money);
+        Assert.Equal(9980, settled.Seller.Money);
+    }
+
+    private static bool Exists(string table, ulong id)
+    {
+        using var connection = MySQL.CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT EXISTS(SELECT 1 FROM {table} WHERE id = @id)";
+        command.Parameters.AddWithValue("@id", id);
+        return Convert.ToInt32(command.ExecuteScalar()) == 1;
+    }
+
     private static long Read(string table, string field, ulong id)
     {
         using var connection = MySQL.CreateConnection();

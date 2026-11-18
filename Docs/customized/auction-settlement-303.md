@@ -20,7 +20,15 @@ above buyout is capped at the server's buyout price. Completed sales deliver the
 same item instance to the buyer and 90% of the sale price to the seller through
 separate mail records. Cancellation requires the seller and an unbid, unexpired
 listing. Cancellation and unsold expiry return the original item, preserving its
-ID, count, grade, details, UCC, and expiration state.
+ID, count, grade, details, UCC, and expiration state while the item remains valid.
+
+Issue [#772](https://github.com/KeganHollern/aaemu-cluster/issues/772) adds checks
+for the item's own absolute expiry. An expired item cannot be posted, bid on,
+or bought out. The auction timer also checks item expiry before the listing
+deadline. It deletes expired escrow and refunds the held bid once in the same
+transaction. The seller receives no sale proceeds. Cancellation also deletes
+an already expired item instead of returning an unusable attachment.
+Unexpired timed items remain tradable, and their lifetimes do not pause or reset.
 
 Known checkpoint rollback restores every prepared participant, including dirty
 flags and deletion queues, before an error response. A commit exception has an
@@ -39,9 +47,17 @@ and bids can spend the remaining unreserved balance.
 GameMySql fixture and the production save/load paths to check listing failure,
 bid escrow across restart, failed-buyout retry, terminal settlement reload,
 wallets, item identity, and mail proceeds/refunds.
+The expiry tests also cover refused bids and buyouts, refund rollback, and
+restart before retry. They check that the deleted item cannot reappear and the
+refund cannot repeat.
 
 Focused gameplay validation: list a distinctive graded/UCC/expiring item, bid
 from two characters, raise the leading bid, buy out, and inspect seller/buyer/
 refund mail. Also cancel an unbid listing and let both bid and unbid listings
 expire. Check the auction search and bid list around each transition. Mail
 attachment claim crash atomicity remains the separate #246 workstream.
+For #772, let an eligible timed item expire in an active listing with a bid.
+Check that the listing disappears, the bidder receives 1 full refund, and the
+seller receives no proceeds. Reconnect and check that neither the item nor a
+second refund appears. Also check an expired listing without a bid and reject
+a bid or buyout after item expiry. These checks need 2 disposable characters.

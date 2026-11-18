@@ -14,6 +14,7 @@ public partial class AuctionManager
 {
     private ErrorMessageType TryPostLotOnAuction(Character player, ulong itemId, int startPrice, int buyoutPrice, AuctionDuration duration)
     {
+        var now = DateTime.UtcNow;
         if (!ValidPrices(startPrice, buyoutPrice, duration))
             return ErrorMessageType.AuctionInvalidStartPrice;
 
@@ -28,6 +29,8 @@ public partial class AuctionManager
         if (item.HasFlag(ItemFlag.SoulBound) ||
             item.Template.BindType is ItemBindType.BindOnPickup or ItemBindType.BindOnPickupPack)
             return ErrorMessageType.AucSoulBoundItem;
+        if (ItemHasExpired(item, now))
+            return ErrorMessageType.CanNotPutupItem;
 
         var fee = ListingFee(buyoutPrice, duration);
         if (player.Money < fee)
@@ -54,14 +57,18 @@ public partial class AuctionManager
 
     private ErrorMessageType TryCancelAuctionLot(Character player, ulong auctionId)
     {
+        var now = DateTime.UtcNow;
         if (!AuctionLots.TryGetValue(auctionId, out var lot) || lot.ClientId != player.Id ||
-            lot.BidderId != 0 || lot.BidMoney != 0 || lot.EndTime <= DateTime.UtcNow || !IsEscrowed(lot))
+            lot.BidderId != 0 || lot.BidMoney != 0 || lot.EndTime <= now || !IsEscrowed(lot))
             return ErrorMessageType.AuctionInvalidArticleForCancel;
 
         using var transition = new AuctionTransition(this, lot);
         using var inventory = new InventoryMutation(ItemTaskType.Auction);
         using var mails = mailManager.BeginMutation();
-        if (!StageReturn(lot, true, inventory, mails) || !transition.Remove())
+        var prepared = ItemHasExpired(lot.Item, now)
+            ? StageExpiredItem(lot, inventory, mails)
+            : StageReturn(lot, true, inventory, mails);
+        if (!prepared || !transition.Remove())
             return ErrorMessageType.AuctionInvalidArticleForCancel;
         if (!CommitSettlement(inventory, mails, transition, [player]))
             return ErrorMessageType.AuctionInitFailed;
@@ -72,9 +79,10 @@ public partial class AuctionManager
 
     private ErrorMessageType TryBidOnAuctionLot(Character player, AuctionLot offeredLot, AuctionBid offeredBid)
     {
+        var now = DateTime.UtcNow;
         if (player.Id == 0 || offeredLot == null || offeredBid == null || offeredLot.Id == 0 || offeredBid.LotId != offeredLot.Id ||
             !AuctionLots.TryGetValue(offeredLot.Id, out var lot) || lot.ClientId == player.Id ||
-            lot.EndTime <= DateTime.UtcNow || !IsEscrowed(lot) || !ValidEscrowBid(lot))
+            lot.EndTime <= now || !IsEscrowed(lot) || !ValidEscrowBid(lot) || ItemHasExpired(lot.Item, now))
             return ErrorMessageType.InvalidArticleForBidding;
         if (offeredBid.Money <= 0 || offeredBid.Money < lot.StartMoney || offeredBid.Money <= lot.BidMoney)
             return ErrorMessageType.InvalidPriceForBidding;
@@ -121,11 +129,11 @@ public partial class AuctionManager
         return ErrorMessageType.NoErrorMessage;
     }
 
-    private bool TryExpireAuctionLot(AuctionLot lot)
+    private bool TryExpireAuctionLot(AuctionLot lot, DateTime now)
     {
         // Revalidate a timer snapshot after any preceding settlement and its callbacks.
         if (!AuctionLots.TryGetValue(lot.Id, out var current) || !ReferenceEquals(lot, current) ||
-            lot.EndTime > DateTime.UtcNow)
+            (lot.EndTime > now && !ItemHasExpired(lot.Item, now)))
             return true;
         if (!IsEscrowed(lot) || !ValidEscrowBid(lot))
             return false;
@@ -133,11 +141,24 @@ public partial class AuctionManager
         using var transition = new AuctionTransition(this, lot);
         using var inventory = new InventoryMutation(ItemTaskType.Auction);
         using var mails = mailManager.BeginMutation();
-        var prepared = lot.BidderId == 0
-            ? StageReturn(lot, false, inventory, mails)
-            : StageSale(lot, lot.BidderId, lot.BidMoney, inventory, mails);
+        var prepared = ItemHasExpired(lot.Item, now)
+            ? StageExpiredItem(lot, inventory, mails)
+            : lot.BidderId == 0
+                ? StageReturn(lot, false, inventory, mails)
+                : StageSale(lot, lot.BidderId, lot.BidMoney, inventory, mails);
         return prepared && transition.Remove() && CommitSettlement(inventory, mails, transition, []);
     }
+
+    private bool StageExpiredItem(AuctionLot lot, InventoryMutation inventory, MailMutation mails)
+    {
+        // Auction containers do not receive item timer ticks. Refund the held bid and
+        // remove the expired item in the same transaction, without paying the seller.
+        return (lot.BidderId == 0 || StageBidRefund(lot, mails)) &&
+            inventory.TryConsume(lot.Item._holdingContainer, lot.Item, lot.Item.Count);
+    }
+
+    private static bool ItemHasExpired(Item item, DateTime now) =>
+        item != null && item.ExpirationTime > DateTime.MinValue && item.ExpirationTime <= now;
 
     private bool StageBidRefund(AuctionLot lot, MailMutation mails)
     {

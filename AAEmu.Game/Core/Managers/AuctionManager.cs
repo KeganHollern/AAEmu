@@ -118,10 +118,11 @@ public partial class AuctionManager(IItemManager itemManager, INameManager nameM
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
-            var expired = AuctionLots.Values.Where(lot => lot.EndTime <= DateTime.UtcNow).ToArray();
+            var now = DateTime.UtcNow;
+            var expired = AuctionLots.Values.Where(lot => lot.EndTime <= now || ItemHasExpired(lot.Item, now)).ToArray();
             foreach (var lot in expired)
             {
-                if (!TryExpireAuctionLot(lot))
+                if (!TryExpireAuctionLot(lot, now))
                     Logger.Warn($"Auction lot {lot.Id} could not be settled; its escrow remains pending.");
             }
         }
