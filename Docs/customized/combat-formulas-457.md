@@ -66,3 +66,18 @@ The armor constant remains unchanged because the reviewed formula data provides 
 
 The focused tests cover loaded equations, partial ratings, range boundaries, actor types, buff changes, and NPC acquisition.
 The issue records release checks. HUMAN VALIDATION #573 records client checks after deployment.
+
+## Damage immunity thresholds (#776)
+
+The pinned compact gives buffs 176, 275, 276, 2071, 3615, and 4609 positive `immune_damage` values.
+Their limits are 137, 50, 100, 2,000, 1,000,000, and 9,999,999 respectively.
+A matching melee, magic, ranged, or siege flag selects the damage kind.
+The original Korean descriptions for the first 4 buffs include the limit itself.
+Flagged buffs with a zero threshold keep full immunity.
+The loader retains 64-bit values because the unflagged buff 3642 stores 99,999,999,999,999.
+That value alone does not select a damage kind.
+
+The server compares the final integer damage after mitigation with the limit.
+This placement is a server inference from the effect wording, not a confirmed native server call order.
+A blocked hit reports immunity and causes no HP loss, steal, threat, or damage event.
+The tests cover the inclusive boundary, damage kinds, full immunity, mitigation, and overlapping buffs.
