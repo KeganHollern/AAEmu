@@ -20,6 +20,7 @@ using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Taxations;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.Game.Items;
@@ -1019,16 +1020,24 @@ public sealed class InventoryMutationTests
     }
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(true, false)]
-    [Arguments(false, true)]
-    [Arguments(true, true)]
-    public async Task Regrade_Checkpoint_SettlesLaborGoldCharmScrollAndGradeTogether(bool commit, bool broken)
+    [Arguments(false, false, false)]
+    [Arguments(true, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(true, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, true, true)]
+    public async Task Regrade_Checkpoint_SettlesLaborGoldCharmScrollAndGradeTogether(bool commit, bool broken, bool worn)
     {
         var accountsField = typeof(Singleton<AccountManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
         var formulasField = typeof(Singleton<FormulaManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
         var previousAccounts = accountsField.GetValue(null);
         var previousFormulas = formulasField.GetValue(null);
+        var skillsField = typeof(Singleton<SkillManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var itemDataField = typeof(Singleton<ItemGameData>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousSkills = skillsField.GetValue(null);
+        var previousItemData = itemDataField.GetValue(null);
         try
         {
             accountsField.SetValue(null, new AccountManager(null, null, TimeProvider.System));
@@ -1038,6 +1047,22 @@ public sealed class InventoryMutationTests
                 .SetValue(cost, (Func<Dictionary<string, double>, double>)(_ => 25));
             SetField(formulas, "_formulas", new Dictionary<uint, Formula> { [(uint)FormulaKind.GradeEnchantCost] = cost });
             formulasField.SetValue(null, formulas);
+            var skills = new SkillManager(null, null);
+            SetField(skills, "_buffs", new Dictionary<uint, BuffTemplate>
+                { [701] = new() { Id = 701 }, [702] = new() { Id = 702 } });
+            SetField(skills, "_buffTags", new Dictionary<uint, List<uint>>());
+            skillsField.SetValue(null, skills);
+            var itemData = new ItemGameData();
+            SetField(itemData, "_itemGradeBuffs", new Dictionary<uint, Dictionary<byte, uint>>
+                { [200] = new() { [3] = 701, [4] = 702 } });
+            itemDataField.SetValue(null, itemData);
+            SetField(ItemManager.Instance, "_itemUnitModifiers", new Dictionary<uint, List<BonusTemplate>>());
+            SetField(ItemManager.Instance, "_itemProcBindings", new Dictionary<uint, List<uint>>());
+            SetField(ItemManager.Instance, "_equipItemSets", new Dictionary<uint, EquipItemSet>());
+            var buffs = Mock.Of<IBuffs>();
+            _owner.Buffs = buffs.Object;
+            var refreshes = 0;
+            buffs.RemoveBuff(701).Callback(() => refreshes++);
             _owner.InitializeLaborCache(20, DateTime.UtcNow);
             var scroll = AddItem(1, 100, 2);
             _templates[200] = new WeaponTemplate
@@ -1047,6 +1072,15 @@ public sealed class InventoryMutationTests
             };
             var equipment = AddItem(2, 200, 1);
             equipment.Grade = 3;
+            equipment.IsDirty = false;
+            if (worn)
+            {
+                _bag.Items.Remove(equipment);
+                _owner.Equipment.Items.Add(equipment);
+                equipment.Slot = (int)EquipmentItemSlot.Mainhand;
+                equipment.SlotType = SlotType.Equipment;
+                equipment._holdingContainer = _owner.Equipment;
+            }
             equipment.IsDirty = false;
             var charm = AddItem(3, 300, 1);
             var grade3 = new GradeTemplate
@@ -1064,7 +1098,7 @@ public sealed class InventoryMutationTests
             var checkpointSawPreparedState = false;
             skill.CommitLaborBatch = (_, _) =>
             {
-                checkpointSawPreparedState = _owner.Money == 75 && _owner.LaborPower == 10 &&
+                checkpointSawPreparedState = refreshes == 0 && _owner.Money == 75 && _owner.LaborPower == 10 &&
                     scroll.Count == 1 && charm.Count == 0 && (broken ? equipment.Count == 0 : equipment.Grade == 4);
                 return commit;
             };
@@ -1084,6 +1118,9 @@ public sealed class InventoryMutationTests
             await Assert.That(charm.Count).IsEqualTo(commit ? 0 : 1);
             await Assert.That(equipment.Count).IsEqualTo(commit && broken ? 0 : 1);
             await Assert.That(equipment.Grade).IsEqualTo((byte)(commit && !broken ? 4 : 3));
+            await Assert.That(refreshes).IsEqualTo(commit && !broken && worn ? 1 : 0);
+            buffs.AddBuff(Is<Buff>(buff => buff.Template.Id == 702), 0, 0)
+                .WasCalled(commit && !broken && worn ? Times.Once : Times.Never);
             if (!commit)
                 await Assert.That(equipment.IsDirty).IsFalse();
         }
@@ -1091,6 +1128,8 @@ public sealed class InventoryMutationTests
         {
             accountsField.SetValue(null, previousAccounts);
             formulasField.SetValue(null, previousFormulas);
+            skillsField.SetValue(null, previousSkills);
+            itemDataField.SetValue(null, previousItemData);
         }
     }
 

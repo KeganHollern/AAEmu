@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Formulas;
@@ -122,6 +123,7 @@ public class GradeEnchant : SpecialEffectAction
         // the roll only after labor, gold, charm, scroll and item state commit.
         batch.AfterCommit(() =>
         {
+            RefreshWornPiece(character, item, initialGrade);
             if (result is GradeEnchantResult.Success or GradeEnchantResult.GreatSuccess)
                 character.Achievements?.Increment(CharRecordKind.EnchantItem, grade, 0);
             else
@@ -132,6 +134,21 @@ public class GradeEnchant : SpecialEffectAction
                 WorldManager.Instance.BroadcastPacketToServer(
                     new SCGradeEnchantBroadcastPacket(character.Name, (byte)result, item, initialGrade, grade));
         });
+    }
+
+    internal static void RefreshWornPiece(Character character, Item item, byte previousGrade)
+    {
+        if (item.Grade == previousGrade || item.SlotType != SlotType.Equipment ||
+            !ReferenceEquals(item._holdingContainer, character.Equipment))
+            return;
+
+        var oldBuff = ItemGameData.Instance.GetItemBuff(item.TemplateId, previousGrade) ??
+                      SkillManager.Instance.GetBuffTemplate(item.Template.BuffId);
+        if (oldBuff != null)
+            character.Buffs.RemoveBuff(oldBuff.Id);
+
+        // Refresh this item's effects without reapplying unrelated equipped-item buffs.
+        character.UpdateGearBonuses(item, null);
     }
 
     private static (GradeEnchantResult Result, byte Grade) RollRegrade(GradeTemplate gradeTemplate, byte initialGrade, bool isLucky, bool useCharm,
