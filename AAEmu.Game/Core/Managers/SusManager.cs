@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using System.Runtime.CompilerServices;
 
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils.DB;
@@ -6,6 +7,7 @@ using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Services.Security;
 using NLog;
 
@@ -19,10 +21,18 @@ public sealed class SusManager(IWorldManager worldManager, GameSecurityMetrics s
     public static string CategoryCheating => "Cheat";
     public static string CategoryChatSpam => "ChatSpam";
     public static string CategoryRmt => "RMT";
-    
-    private Dictionary<uint, (Vector3 pos, float skipTime)> LastPlayerPositions { get; } = [];
-    private Dictionary<uint, (Vector3 pos, float skipTime)> LastPetPositions { get; } = [];
-    
+
+    // A late callback from an old login or summon only has access to its own sample.
+    private static readonly Lock s_movementLock = new();
+    private static readonly ConditionalWeakTable<Unit, MovementSample> s_movementSamples = new();
+
+    private sealed class MovementSample(WorldInstance world, Vector3 position)
+    {
+        public WorldInstance World { get; } = world;
+        public Vector3 Position { get; set; } = position;
+        public float SkipTime { get; set; }
+    }
+
     internal const int QueueCapacity = 1024;
     internal const int BatchSize = 128;
     internal const int MaximumDescriptionLength = 4096;
@@ -170,109 +180,62 @@ public sealed class SusManager(IWorldManager worldManager, GameSecurityMetrics s
         return LogActivity(category, 0, 0, 0, Vector3.Zero, description);
     }
 
-    #region movement_checks
-    /// <summary>
-    /// Do some analysis on player movement
-    /// </summary>
-    /// <param name="player"></param>
-    /// <param name="deltaTime"></param>
     public void AnalyzePlayerDeltaMovement(Character player, float deltaTime)
     {
-        if (!LastPlayerPositions.TryGetValue(player.Id, out var last))
-        {
-            LastPlayerPositions.Add(player.Id, (player.Transform.World.ClonePosition(), 0f));
-            return;
-        }
-        
-        var deltaPos = player.Transform.World.ClonePosition() - last.pos;
-        var deltaFlatPos = deltaPos with { Z = 0 };
-
-        if (player.IsRiding == false &&
-            player.DisabledSetPosition == false &&
-            deltaFlatPos != Vector3.Zero &&
-            last.skipTime <= 0f)
-        {
-            var observedSpeed = deltaFlatPos.Length() / deltaTime;
-            // var playerCheckSpeed = 5.0 * character.BaseMoveSpeed * character.MoveSpeedMul * 3.0;
-            var playerCheckSpeed = 25.0;
-            if (observedSpeed > playerCheckSpeed)
-            {
-                last.skipTime = 15f;
-                // Looks like this player is moving a bit fast, better make a note of it
-                LogActivity(CategoryCheating,
-                    player,
-                    $"Player {player.Name} seems to be moving a bit fast {observedSpeed:F1} m/s (max {playerCheckSpeed:F1})");
-                // player.SendMessage($"Speed {observedSpeed:F1} m/s (max {playerCheckSpeed:F1}) !!!");
-            }
-            else
-            {
-                // player.SendMessage($"Speed {observedSpeed:F1} m/s (max {playerCheckSpeed:F1})");    
-            }
-        }
-
-        last.skipTime -= deltaTime;
-        LastPlayerPositions[player.Id] = (player.Transform.World.ClonePosition(), last.skipTime);
+        const float checkSpeed = 25f;
+        if (ObserveMovement(player, deltaTime, checkSpeed) is { } speed)
+            LogActivity(CategoryCheating, player,
+                $"Player {player.Name} seems to be moving a bit fast {speed:F1} m/s (max {checkSpeed:F1})");
     }
 
-    /// <summary>
-    /// Resets current analysis of movement, call after things like teleport to prevent false positives
-    /// </summary>
-    /// <param name="playerId"></param>
-    public void ResetAnalyzePlayerDeltaMovement(uint playerId)
-    {
-        _ = LastPlayerPositions.Remove(playerId);
-    }
-
-    /// <summary>
-    /// Do some analysis on mount movement
-    /// </summary>
-    /// <param name="pet"></param>
-    /// <param name="deltaTime"></param>
     public void AnalyzeMountDeltaMovement(Mate pet, float deltaTime)
     {
-        if (!LastPetPositions.TryGetValue(pet.Id, out var last))
-        {
-            LastPetPositions.Add(pet.Id, (pet.Transform.World.ClonePosition(), 0f));
+        const float checkSpeed = 27.5f;
+        if (ObserveMovement(pet, deltaTime, checkSpeed) is not { } speed)
             return;
-        }
-        
-        var deltaPos = pet.Transform.World.ClonePosition() - last.pos;
-        var deltaFlatPos = deltaPos with { Z = 0 };
 
-        if (pet.DisabledSetPosition == false &&
-            deltaFlatPos != Vector3.Zero &&
-            last.skipTime <= 0f)
-        {
-            var observedSpeed = deltaFlatPos.Length() / deltaTime;
-            // var playerCheckSpeed = 5.0 * character.BaseMoveSpeed * character.MoveSpeedMul * 3.0;
-            var playerCheckSpeed = 27.5;
-            var petOwner = worldManager.GetCharacterByObjId(pet.OwnerObjId);
-            if (observedSpeed > playerCheckSpeed)
-            {
-                last.skipTime = 15f;
-                // Looks like this player is moving a bit fast, better make a note of it
-                LogActivity(CategoryCheating,
-                    petOwner,
-                    $"Pet {pet.Name} from {petOwner?.Name} seems to be moving a bit fast {observedSpeed:F1} m/s (max {playerCheckSpeed:F1})");
-                // petOwner?.SendMessage($"Pet Speed {observedSpeed:F1} m/s (max {playerCheckSpeed:F1}) !!!");
-            }
-            else
-            {
-                // petOwner?.SendMessage($"Pet Speed {observedSpeed:F1} m/s (max {playerCheckSpeed:F1})");    
-            }
-        }
-
-        last.skipTime -= deltaTime;
-        LastPetPositions[pet.Id] = (pet.Transform.World.ClonePosition(), last.skipTime);
+        var owner = worldManager.GetCharacterByObjId(pet.OwnerObjId);
+        LogActivity(CategoryCheating, owner,
+            $"Pet {pet.Name} from {owner?.Name} seems to be moving a bit fast {speed:F1} m/s (max {checkSpeed:F1})");
     }
-    
-    /// <summary>
-    /// Resets current analysis of movement, call after things like teleport to prevent false positives
-    /// </summary>
-    /// <param name="petId"></param>
-    public void ResetAnalyzeMountDeltaMovement(uint petId)
+
+    private static float? ObserveMovement(Unit unit, float deltaTime, float checkSpeed)
     {
-        _ = LastPetPositions.Remove(petId);
+        lock (s_movementLock)
+        {
+            var world = unit.ParentWorld;
+            if (unit.DisabledSetPosition || !ReferenceEquals(world?.GetUnit(unit.ObjId), unit) ||
+                !float.IsFinite(deltaTime) || deltaTime <= 0f)
+                return null;
+
+            var position = unit.Transform.World.ClonePosition();
+            if (!s_movementSamples.TryGetValue(unit, out var last) || !ReferenceEquals(last.World, world))
+            {
+                s_movementSamples.AddOrUpdate(unit, new MovementSample(world, position));
+                return null;
+            }
+
+            float? reportedSpeed = null;
+            if (unit is not Character { IsRiding: true } && last.SkipTime <= 0f)
+            {
+                var delta = (position - last.Position) with { Z = 0f };
+                var speed = delta.Length() / deltaTime;
+                if (speed > checkSpeed)
+                {
+                    reportedSpeed = speed;
+                    last.SkipTime = 15f;
+                }
+            }
+
+            last.Position = position;
+            last.SkipTime -= deltaTime;
+            return reportedSpeed;
+        }
     }
-    #endregion
+
+    internal static void ResetMovementAnalysis(Unit unit)
+    {
+        lock (s_movementLock)
+            s_movementSamples.Remove(unit);
+    }
 }
