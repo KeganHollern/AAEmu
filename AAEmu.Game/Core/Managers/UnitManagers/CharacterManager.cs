@@ -15,6 +15,7 @@ using AAEmu.Game.Models.Game.Char.Templates;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Names;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units;
@@ -816,46 +817,63 @@ public partial class CharacterManager(
         //inventory.Equip[(int) slot] = item;
     }
 
-    public static void ApplyBeautySalon(Character character, uint hairModel, UnitCustomModelParams modelParams)
+    public static void ApplyBeautySalon(Character character, uint hairItemId, UnitCustomModelParams modelParams)
     {
-        // TODO: Add support for future X-day Salon Certificate items
-
-        if (character.Inventory.GetItemsCount(SlotType.Inventory, Item.SalonCertificate) <= 0)
-            return;
-
-        var oldHair = character.Equipment.GetItemBySlot((byte)EquipmentItemSlot.Hair);
-
-        // Check if hair changed
-        if (oldHair != null && oldHair.TemplateId != hairModel)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            // Remove old hair item
-            oldHair._holdingContainer.RemoveItem(ItemTaskType.Invalid, oldHair, true);
-            // Create new hair item
-            if (!character.Equipment.AcquireDefaultItemEx(ItemTaskType.Invalid, hairModel, 1, -1,
-                    out var newItemsList, out var _, character.Id, (int)EquipmentItemSlot.Hair))
+            if (hairItemId != 0 &&
+                (ItemManager.Instance.GetTemplate(hairItemId) is not BodyPartTemplate { NpcOnly: false } hair ||
+                 hair.SlotTypeId != (uint)EquipmentItemSlotType.Hair || hair.ModelId != character.ModelId))
             {
-                Logger.Error($"Failed to add new hairstyle for player {character.Name} ({character.Id})!");
+                character.SendErrorMessage(ErrorMessageType.FailedToChangeItemLook);
+                return;
             }
 
-            if (newItemsList.Count != 1)
+            using var mutation = new InventoryMutation(ItemTaskType.EditCosmetic);
+            if (!InventoryPayment.TryConsume(mutation, character.Inventory.Bag, Item.SalonCertificate, 1))
             {
-                Logger.Error($"Something failed during hairstyle creation for player {character.Name} ({character.Id})!");
+                character.SendErrorMessage(ErrorMessageType.NotEnoughRequiredItem, Item.SalonCertificate);
+                return;
             }
-        }
-        character.ModelParams = modelParams;
 
-        character.BroadcastPacket(new SCCharacterGenderAndModelModifiedPacket(character), true);
+            // The model modification packet reports the owner's hair. Keep the item task for the certificate only.
+            var certificateTasks = mutation.GetTasks(character).ToList();
+            var equipment = character.Equipment;
+            var oldHair = equipment.GetItemBySlot((int)EquipmentItemSlot.Hair);
+            if ((oldHair?.TemplateId ?? 0) != hairItemId)
+            {
+                if (oldHair != null && !mutation.TryConsume(equipment, oldHair, oldHair.Count))
+                {
+                    character.SendErrorMessage(ErrorMessageType.FailedToChangeItemLook);
+                    return;
+                }
 
-        if (character.Inventory.Bag.ConsumeItem(ItemTaskType.EditCosmetic, Item.SalonCertificate, 1, null) <= 0)
-        {
-            Logger.Error($"Could not consume salon certificate for player {character.Name} ({character.Id})!");
-        }
-        else
-        {
+                // Zero represents an empty Hair slot and never grants an item.
+                if (hairItemId != 0)
+                {
+                    var newHair = ItemManager.Instance.Create(hairItemId, 1, 0);
+                    if (newHair == null)
+                    {
+                        character.SendErrorMessage(ErrorMessageType.FailedToChangeItemLook);
+                        return;
+                    }
+                    newHair.MadeUnitId = character.Id;
+                    newHair.WorldId = (byte)WorldManager.DefaultWorldTemplateId;
+                    if (!mutation.TryAddCreated(newHair, equipment, (int)EquipmentItemSlot.Hair))
+                    {
+                        character.SendErrorMessage(ErrorMessageType.FailedToChangeItemLook);
+                        return;
+                    }
+                }
+            }
+
+            character.ModelParams = modelParams;
+            mutation.Complete(publishItemTasks: false);
+            // The client sends the leave request after it receives this packet.
+            character.BroadcastPacket(new SCCharacterGenderAndModelModifiedPacket(character), true);
+            character.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.EditCosmetic, certificateTasks, []));
             character.Achievements?.Increment(CharRecordKind.ChangeLook, 0, 0);
         }
-
-        // The client will do a salon leave request after it gets the SCCharacterGenderAndModelModifiedPacket
     }
 
     public virtual bool IsCharacterPendingDeletion(string name)
