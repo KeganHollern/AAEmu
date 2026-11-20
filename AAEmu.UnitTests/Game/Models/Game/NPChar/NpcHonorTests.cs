@@ -9,11 +9,23 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
+using AAEmu.Game.Models.Game.Formulas;
+using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Loots;
+using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Quests;
+using AAEmu.Game.Models.Game.Quests.Acts;
+using AAEmu.Game.Models.Game.Quests.Static;
+using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Effects;
+using AAEmu.Game.Models.Game.Skills.Effects.Enums;
 using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Team;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
@@ -88,6 +100,120 @@ public sealed class NpcHonorTests
         await Assert.That(player.HonorPoint).IsEqualTo(100);
         await Assert.That(player.Experience).IsEqualTo(0);
         await Assert.That(npc.Hp).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(100)]
+    [Arguments(175)]
+    public async Task DamageEffect_OneHitKill_TagsBeforeDeathAndGrantsLootAndQuestCredit(int damage)
+    {
+        var npc = CreateKraken();
+        PrepareDamageAndLoot(npc);
+        var player = CreatePlayer(npc.ParentWorld, 1);
+        var quest = CreateHuntObjective(player, npc.TemplateId);
+        Character taggerAtDeath = null;
+        var damageAtDeath = 0;
+        npc.Events.OnDeath += (_, _) =>
+        {
+            taggerAtDeath = npc.CharacterTagging.Tagger;
+            damageAtDeath = RecordedTagDamage(npc, player);
+        };
+
+        DealDamage(player, npc, damage);
+
+        await Assert.That(npc.Hp).IsEqualTo(0);
+        await Assert.That(taggerAtDeath).IsSameReferenceAs(player);
+        await Assert.That(damageAtDeath).IsEqualTo(100);
+        await Assert.That(quest.Objectives[0]).IsEqualTo(1);
+        await Assert.That(LootRecipients(npc).Select(character => character.Id)).IsEquivalentTo([player.Id]);
+        await Assert.That(player.HonorPoint).IsEqualTo(100);
+    }
+
+    [Test]
+    public async Task DamageEffect_OverkillOnlyCreditsRemainingHealthAndZeroDamageDoesNotContribute()
+    {
+        var npc = CreateKraken();
+        PrepareDamageAndLoot(npc);
+        var tagger = CreatePlayer(npc.ParentWorld, 1);
+        var finisher = CreatePlayer(npc.ParentWorld, 2);
+        var zeroDamagePlayer = CreatePlayer(npc.ParentWorld, 3);
+        var taggerQuest = CreateHuntObjective(tagger, npc.TemplateId);
+        var finisherQuest = CreateHuntObjective(finisher, npc.TemplateId);
+        var zeroDamageQuest = CreateHuntObjective(zeroDamagePlayer, npc.TemplateId);
+        var finisherDamageAtDeath = 0;
+        npc.Events.OnDeath += (_, _) => finisherDamageAtDeath = RecordedTagDamage(npc, finisher);
+
+        DealDamage(tagger, npc, 60);
+        await Assert.That(npc.Hp).IsEqualTo(40);
+        DealDamage(zeroDamagePlayer, npc, 0);
+        await Assert.That(npc.Hp).IsEqualTo(40);
+        DealDamage(finisher, npc, 175);
+
+        await Assert.That(npc.Hp).IsEqualTo(0);
+        await Assert.That(finisherDamageAtDeath).IsEqualTo(40);
+        await Assert.That(taggerQuest.Objectives[0]).IsEqualTo(1);
+        await Assert.That(finisherQuest.Objectives[0]).IsEqualTo(1);
+        await Assert.That(zeroDamageQuest.Objectives[0]).IsEqualTo(0);
+        await Assert.That(LootRecipients(npc).Select(character => character.Id)).IsEquivalentTo([tagger.Id]);
+        await Assert.That(tagger.HonorPoint).IsEqualTo(100);
+        await Assert.That(finisher.HonorPoint).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    [Arguments(true, false)]
+    [Arguments(false, false)]
+    public async Task DamageEffect_CannonKill_UsesRecordedOperatorOrOwnerWithoutUsingNewOccupant(
+        bool hasOwner, bool hasRecordedOperator)
+    {
+        const uint ordinaryDrop = 10001;
+        const uint questDrop = 10002;
+        var npc = CreateKraken();
+        PrepareDamageAndLoot(npc);
+        if (hasOwner || hasRecordedOperator)
+            ConfigureCannonDrops(ordinaryDrop, questDrop);
+        var gunner = CreatePlayer(npc.ParentWorld, 1);
+        var owner = CreatePlayer(npc.ParentWorld, 2);
+        var nextGunner = CreatePlayer(npc.ParentWorld, 3);
+        npc.ParentWorld.AddObject(owner);
+        var gunnerQuest = CreateHuntObjective(gunner, npc.TemplateId);
+        var ownerQuest = CreateHuntObjective(owner, npc.TemplateId);
+        var nextGunnerQuest = CreateHuntObjective(nextGunner, npc.TemplateId);
+        var cannon = new QuietCannon
+        {
+            ObjId = 4, Hp = 100, ParentWorld = npc.ParentWorld,
+            TemplateId = 46, Template = new SlaveTemplate { Id = 46, SlaveKind = SlaveKind.Tank, Mountable = true },
+            Summoner = hasOwner ? owner : null,
+            OwnerObjId = hasOwner ? owner.ObjId : 0
+        };
+        // The r208022 Wheeled Mortar casts 15235 from Passenger0. The shot lands after a seat change.
+        cannon.AttachedCharacters.Add(AttachPointKind.Passenger0, gunner);
+        var skill = new Skill(new SkillTemplate { Id = 15235 })
+        {
+            VehicleOperator = hasRecordedOperator ? gunner : null
+        };
+        typeof(Skill).GetProperty(nameof(Skill.OriginalCaster), BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(skill, cannon);
+        cannon.AttachedCharacters[AttachPointKind.Passenger0] = nextGunner;
+        Unit killerAtDeath = null;
+        npc.Events.OnDeath += (_, args) => killerAtDeath = args.Killer;
+
+        DealDamage(cannon, npc, 175, new EffectSource(skill), new SkillCasterMount(cannon.ObjId) { MountSkillTemplateId = 51 });
+
+        var ownerGetsCredit = hasOwner && !hasRecordedOperator;
+        uint[] expectedLootOwners = hasRecordedOperator ? [gunner.Id] : ownerGetsCredit ? [owner.Id] : [];
+        await Assert.That(npc.Hp).IsEqualTo(0);
+        await Assert.That(killerAtDeath).IsSameReferenceAs(cannon);
+        await Assert.That(gunnerQuest.Objectives[0]).IsEqualTo(hasRecordedOperator ? 1 : 0);
+        await Assert.That(ownerQuest.Objectives[0]).IsEqualTo(ownerGetsCredit ? 1 : 0);
+        await Assert.That(nextGunnerQuest.Objectives[0]).IsEqualTo(0);
+        await Assert.That(LootRecipients(npc).Select(character => character.Id)).IsEquivalentTo(expectedLootOwners);
+        if (expectedLootOwners.Length > 0)
+            await Assert.That(npc.LootingContainer.Items.Values.Select(entry => entry.Item.TemplateId)).IsEquivalentTo([ordinaryDrop]);
+        await Assert.That(gunner.HonorPoint).IsEqualTo(hasRecordedOperator ? 100 : 0);
+        await Assert.That(owner.HonorPoint).IsEqualTo(ownerGetsCredit ? 100 : 0);
+        await Assert.That(nextGunner.HonorPoint).IsEqualTo(0);
     }
 
     [Test]
@@ -327,6 +453,91 @@ public sealed class NpcHonorTests
     private static Bonus Bonus(UnitAttribute attribute, int value)
     {
         return new Bonus { Template = new BonusTemplate { Attribute = attribute, Value = value }, Value = value };
+    }
+
+    private void PrepareDamageAndLoot(Npc npc)
+    {
+        ReplaceSingleton(new DuelManager());
+        var skills = new SkillManager(null, null);
+        SetField(skills, "_taggedBuffs", new Dictionary<uint, List<uint>>());
+        ReplaceSingleton(skills);
+        var formulas = new FormulaManager();
+        ReplaceSingleton(formulas);
+        typeof(FormulaManager).GetProperty("CalculationEngine")!.SetValue(formulas, new Jace.CalculationEngine());
+        SetField(formulas, "_formulas", new Dictionary<uint, Formula> { [20] = new("1") });
+
+        SetField(ItemManager.Instance, "_config", new ItemConfig());
+        SetField(ItemManager.Instance, "_lootPackDroppingNpc", new Dictionary<uint, List<LootPackDroppingNpc>>
+        {
+            [npc.TemplateId] = [new() { LootPackId = 1 }]
+        });
+        // Use the generated private loot rights without a random drop roll.
+        var loot = new LootGameData();
+        SetField(loot, "_lootPacks", new Dictionary<uint, LootPack>());
+        ReplaceSingleton(loot);
+    }
+
+    private static void DealDamage(Unit source, Npc target, int damage, EffectSource effectSource = null, SkillCaster caster = null)
+    {
+        var effect = new DamageEffect
+        {
+            DamageType = DamageType.Siege,
+            UseFixedDamage = true,
+            FixedMin = damage,
+            FixedMax = damage
+        };
+        effect.Apply(source, caster ?? new SkillCasterUnit(source.ObjId), target, new SkillCastUnitTarget(target.ObjId),
+            new CastSkill(effectSource?.Skill?.Id ?? 1, 1), effectSource ?? new EffectSource(), null, DateTime.UtcNow);
+    }
+
+    private static void ConfigureCannonDrops(uint ordinaryDrop, uint questDrop)
+    {
+        SetField(ItemManager.Instance, "_templates", new Dictionary<uint, ItemTemplate>
+        {
+            [ordinaryDrop] = new() { Id = ordinaryDrop },
+            [questDrop] = new() { Id = questDrop, LootQuestId = 200 }
+        });
+        List<Loot> drops =
+        [
+            new() { ItemId = ordinaryDrop, MinAmount = 1, MaxAmount = 1, AlwaysDrop = true },
+            new() { ItemId = questDrop, MinAmount = 1, MaxAmount = 1, AlwaysDrop = true }
+        ];
+        SetField(LootGameData.Instance, "_lootPacks", new Dictionary<uint, LootPack>
+        {
+            [1] = new() { Id = 1, Loots = drops, LootsByGroupNo = new() { [0] = drops }, Groups = [], ActabilityGroups = [] }
+        });
+    }
+
+    private static Quest CreateHuntObjective(Character owner, uint npcId)
+    {
+        var template = new QuestTemplate { Id = 1 };
+        var progress = new QuestComponentTemplate(template) { Id = 2, KindId = QuestComponentKind.Progress };
+        progress.ActTemplates.Add(new QuestActObjMonsterHunt(progress)
+        {
+            ActId = 3, ThisComponentObjectiveIndex = 0, NpcId = npcId, Count = 3
+        });
+        template.Components.Add(progress.Id, progress);
+        var quest = new Quest(template, owner, Mock.Of<IQuestManager>().Object, Mock.Of<ITaskManager>().Object,
+            Mock.Of<ISkillManager>().Object, Mock.Of<IExpressTextManager>().Object, Mock.Of<IWorldManager>().Object)
+        {
+            Step = QuestComponentKind.Progress
+        };
+        owner.Quests ??= new CharacterQuests(owner);
+        owner.Quests.ActiveQuests.Add(template.Id, quest);
+        return quest;
+    }
+
+    private static HashSet<Character> LootRecipients(Npc npc) =>
+        (HashSet<Character>)typeof(LootingContainer).GetProperty("EligiblePlayers", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(npc.LootingContainer)!;
+
+    private static int RecordedTagDamage(Npc npc, Character player) =>
+        ((Dictionary<Character, int>)typeof(Tagging).GetField("_taggers", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(npc.CharacterTagging)!).GetValueOrDefault(player);
+
+    private sealed class QuietCannon : Slave
+    {
+        public override void BroadcastPacket(GamePacket packet, bool self) { }
     }
 
     private sealed class QuietNpc : Npc
