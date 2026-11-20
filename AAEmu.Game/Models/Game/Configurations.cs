@@ -9,6 +9,12 @@ public class Configurations : PacketMarshaler
     public string Value { get; set; }
 }
 
+public enum WorldAccessMode
+{
+    Open,
+    AdminsOnly
+}
+
 public class WorldConfig
 {
     public enum WindModelType
@@ -18,6 +24,11 @@ public class WorldConfig
         /// <summary>More realistic: wind direction rotates smoothly over the day.</summary>
         Realistic
     }
+
+    /// <summary>
+    /// World admission policy. Changes take effect when Game restarts.
+    /// </summary>
+    public WorldAccessMode AccessMode { get; set; } = WorldAccessMode.Open;
 
     /// <summary>
     /// Configuration for the shared world clock.

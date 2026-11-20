@@ -9,6 +9,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Managers.TowerDefense;
 using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Services;
 using AAEmu.Game.Services.Health;
 using AAEmu.Game.Services.Security;
@@ -63,9 +64,17 @@ public static class Program
 
         var configurationRoot = BuildConfiguration(args);
 
-        // Apply MySQL Configuration
         var preBootConfig = new AppConfiguration();
         configurationRoot.Bind(preBootConfig);
+        var startupWorld = preBootConfig.World ?? new WorldConfig();
+        if (!Enum.IsDefined(startupWorld.AccessMode))
+        {
+            Logger.Fatal("World:AccessMode must be Open or AdminsOnly.");
+            return 1;
+        }
+        Logger.Info("World access mode is {AccessMode}", startupWorld.AccessMode);
+
+        // Apply MySQL Configuration
         MySQL.SetConfiguration(preBootConfig.Connections.MySQLProvider);
 
         try
@@ -110,6 +119,7 @@ public static class Program
             {
                 services.AddOptions();
                 services.Configure<AppConfiguration>(configurationRoot);
+                services.AddSingleton(startupWorld);
                 services.AddSingleton(TimeProvider.System);
                 services.AddSingleton<GameHealthState>();
                 services.AddSingleton(GameSecurityMetrics.Default);

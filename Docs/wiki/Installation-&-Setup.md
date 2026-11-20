@@ -135,6 +135,9 @@ At minimum, set database and login network values for your machine.
 `LoginNetwork.Host` and `LoginNetwork.Port` must point at the login server
 internal listener (default `127.0.0.1` and `1234`).
 
+`World.AccessMode` defaults to `Open`. Set it to `AdminsOnly` to restrict world entry to Admin accounts.
+Set `World__AccessMode=AdminsOnly` for an environment override. Restart Game to apply a change to this setting.
+
 Set `game_pak` source in either:
 
 - `AAEmu.Game/Configurations/ClientData.json`, or
