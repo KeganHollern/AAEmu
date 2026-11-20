@@ -107,13 +107,14 @@ public class LootingContainer
     /// Generate appropriate loot
     /// </summary>
     /// <param name="killer"></param>
-    public void GenerateLoot(IBaseUnit killer)
+    /// <param name="lootPlayer">The character behind a vehicle kill, when known.</param>
+    public void GenerateLoot(IBaseUnit killer, Character lootPlayer = null)
     {
         lock (ItemsLock)
-            GenerateLootLocked(killer);
+            GenerateLootLocked(killer, lootPlayer ?? killer as Character);
     }
 
-    private void GenerateLootLocked(IBaseUnit killer)
+    private void GenerateLootLocked(IBaseUnit killer, Character lootPlayer)
     {
         // Do not allow multiple generations of loot 
         if (AlreadyGenerated)
@@ -190,7 +191,7 @@ public class LootingContainer
                 {
                     LootMethod = LootingRuleMethod.FreeForAll,
                     MinimumGrade = 0,
-                    LootMaster = (Killer as Character)?.Id ?? 0
+                    LootMaster = lootPlayer?.Id ?? 0
                 };
                 // A player has tag rights
                 EligiblePlayers.Add(npc.CharacterTagging.Tagger);
@@ -235,7 +236,7 @@ public class LootingContainer
                 var lootPack = LootGameData.Instance.GetPack(lootPackDropping.LootPackId);
                 if (lootPack == null)
                     continue;
-                lootPackResults.AddRange(lootPack.GeneratePackNewV2(lootDropRate, lootGoldRate, killer as Character, ActabilityType.None));
+                lootPackResults.AddRange(lootPack.GeneratePackNewV2(lootDropRate, lootGoldRate, lootPlayer, ActabilityType.None));
                 // var items = lootPack.GenerateNpcPackItems(ref baseId, killer, lootDropRate, lootGoldRate);
                 // RegisterItems(items);
             }

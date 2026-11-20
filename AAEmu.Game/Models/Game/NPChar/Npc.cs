@@ -971,7 +971,7 @@ public partial class Npc : Unit
                 QuestManager.Instance.DoOnMonsterHuntEvents(
                     character, this, teamShareAlreadyDistributed, tagShareRecipientIds));
 
-        CompleteDeath(killer, killReason);
+        CompleteDeath(killer, killReason, damage > 0 && killer is Slave ? killerOwner : null);
         ClearAllAggroTargetsAndCheckCombatState();
         // AggroTable.Clear();
         CharacterTagging.ClearAllTaggers();

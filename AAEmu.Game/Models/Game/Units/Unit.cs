@@ -600,7 +600,7 @@ public partial class Unit : BaseUnit, IUnit
         return Interlocked.Exchange(ref _deathHandled, 1) == 0;
     }
 
-    protected void CompleteDeath(BaseUnit killer, KillReason killReason)
+    protected void CompleteDeath(BaseUnit killer, KillReason killReason, Character lootPlayer = null)
     {
         FallMovement.Reset();
         InterruptSkills();
@@ -650,7 +650,7 @@ public partial class Unit : BaseUnit, IUnit
         }
 
         // Generate the loot for this Npc
-        LootingContainer.GenerateLoot(killer);
+        LootingContainer.GenerateLoot(killer, lootPlayer);
 
         // Cleanup targeting and aggro packets
         if (CurrentTarget != null)
