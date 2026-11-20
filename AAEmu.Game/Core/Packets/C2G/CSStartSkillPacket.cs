@@ -67,17 +67,20 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         }
         else if (skillCaster is SkillCasterMount scm)
         {
+            var rider = Connection.ActiveChar;
             var template = SkillManager.Instance.GetSkillTemplate(skillId);
             var caster = world?.GetBaseUnit(skillCaster.ObjId);
             skill = new Skill(template ?? new SkillTemplate { Id = skillId });
-            if (template == null || !MountSkillAuthorization.TryAuthorize(Connection.ActiveChar, caster, scm,
+            if (template == null || !MountSkillAuthorization.TryAuthorize(rider, caster, scm,
                     skillId, out var mountAttachedSkill))
             {
-                Logger.Warn($"StartSkill: Character {Connection.ActiveChar.ObjId} attempted unauthorized mount skill {skillId}");
+                Logger.Warn($"StartSkill: Character {rider.ObjId} attempted unauthorized mount skill {skillId}");
                 SendFailure(skillId, skillCaster, skillCastTarget, skill, skillObject, SkillResult.InvalidSkill, 0, 0);
                 return;
             }
             var slave = caster as Slave;
+            if (slave != null)
+                skill.VehicleOperator = rider;
 
             // Use the main skill on the mate/slave
             var mountPrimaryResult = skill.Use(caster, skillCaster, skillCastTarget, skillObject, false, out skillResultErrorUShort, out skillResultErrorValue);
@@ -89,9 +92,9 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
             if (slave != null)
             {
                 if (skillId == HarpoonMechanicsDebug.ShipLaunchHarpoonSkillId)
-                    ShipHarpoonRopeController.OnLaunchSucceeded(slave, skillCastTarget, Connection.ActiveChar);
+                    ShipHarpoonRopeController.OnLaunchSucceeded(slave, skillCastTarget, rider);
                 else if (skillId == HarpoonMechanicsDebug.ShipCutHarpoonRopeSkillId)
-                    ShipHarpoonRopeController.OnCutRope(slave, Connection.ActiveChar);
+                    ShipHarpoonRopeController.OnCutRope(slave, rider);
             }
 
             // If no rider/operator skill is linked, we can stop here
@@ -99,7 +102,6 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
                 return;
 
             // Use player's currently selected for the rider/operator skill
-            var rider = Connection.ActiveChar;
             var riderTarget = rider.CurrentTarget as Unit ?? rider;
 
             // Keep the actual rider action and authored failure detail for its response.

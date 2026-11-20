@@ -97,6 +97,8 @@ public partial class Skill
     public Dictionary<uint, SkillHitType> HitTypes { get; set; }
     public BaseUnit InitialTarget { get; set; }//Temp Hack Fix. Replace this with UnitsEffected
     internal BaseUnit OriginalCaster { get; private set; }
+    // Keep the authorized operator with the cast until its delayed effects finish.
+    internal Character VehicleOperator { get; set; }
     internal AAEmu.Game.Models.Game.Duels.Duel DuelContext { get; set; }
     internal uint SourceItemTemplateId { get; private set; }
     private bool _bypassGcd;
