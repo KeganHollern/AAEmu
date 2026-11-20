@@ -385,7 +385,14 @@ public class DamageEffect : EffectTemplate
 
         // TODO: Set proper kill reason
         var hpBeforeDamage = trg.Hp;
-        trg.ReduceCurrentHp(caster, value);
+        var vehicleOperator = caster is Slave && ReferenceEquals(source.Skill?.OriginalCaster, caster)
+            ? source.Skill.VehicleOperator
+            : null;
+        var damageToHealth = 0;
+        if (trg is Npc damagedNpc && caster is Unit attackerUnit)
+            damageToHealth = damagedNpc.ApplySkillDamage(attackerUnit, value, vehicleOperator);
+        else
+            trg.ReduceCurrentHp(caster, value);
         ((Unit)caster).SummarizeDamage += value;
 
         if (healthStolen > 0 || manaStolen > 0)
@@ -466,7 +473,7 @@ public class DamageEffect : EffectTemplate
         if (trg is Npc npc)
         {
             trg.SendPacketToPlayers([trg, caster], new SCAiAggroPacket(trg.ObjId, 1, caster.ObjId, ((Unit)caster).SummarizeDamage, 0, 0));
-            npc.OnDamageReceived((Unit)caster, value);
+            npc.OnDamageReceived((Unit)caster, value, damageToHealth, vehicleOperator);
         }
 
         //Invoke even if damage is 0

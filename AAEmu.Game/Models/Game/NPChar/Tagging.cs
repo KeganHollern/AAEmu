@@ -49,62 +49,64 @@ public class Tagging(Unit owner)
         }
     }
 
-    public void AddTagger(Unit checkUnit, int damage)
+    public void AddTagger(Unit checkUnit, int damage, Character creditedPlayer = null, bool killingBlow = false)
     {
+        var player = checkUnit switch
+        {
+            Character character => character,
+            Units.Mate mate => WorldManager.Instance.GetCharacterByObjId(mate.OwnerObjId),
+            Slave slave => creditedPlayer ?? slave.GetOwnerCharacter(),
+            _ => null
+        };
+        if (player == null)
+            return;
+
         lock (_lock)
         {
-            // Check if the character is a pet, if so, propagate its user
-            if (checkUnit is Units.Mate mate)
+            var preserveTag = killingBlow && (_tagger != null || _tagTeam != 0);
+
+            if (_taggers.TryAdd(player, damage))
             {
-                checkUnit = WorldManager.Instance.GetCharacterByObjId(mate.OwnerObjId) ?? checkUnit;
+                if (!preserveTag)
+                    _tagger ??= player;
+            }
+            else
+            {
+                _taggers[player] += damage;
             }
 
-            if (checkUnit is Character player)
+            // The finisher contributes to quest sharing without replacing an existing loot tag.
+            if (preserveTag)
+                return;
+
+            var checkTeam = player.InParty ? TeamManager.Instance.GetTeamByObjId(player.ObjId) : null;
+            if (checkTeam != null)
             {
-                if (_taggers.TryAdd(player, damage))
+                var partyDamage = 0;
+                foreach (var member in checkTeam.Members)
                 {
-                    _tagger ??= player;
-                }
-                else
-                {
-                    _taggers[player] += damage;
-                }
+                    if (member == null || member.Character == null)
+                        continue;
 
-                // _totalDamage += damage;
-
-                // Check if the character is in a party
-                if (player.InParty)
-                {
-                    var checkTeam = TeamManager.Instance.GetTeamByObjId(player.ObjId);
-                    var partyDamage = 0;
-                    foreach (var member in checkTeam.Members)
+                    if (member.Character.GetDistanceTo(Owner, true) <= LootingContainer.MaxLootingRange)
                     {
-                        if (member == null || member.Character == null)
-                            continue;
-
-                        if (member.Character.GetDistanceTo(Owner, true) <= LootingContainer.MaxLootingRange)
+                        // tm is an eligible party member
+                        if (_taggers.TryGetValue(member.Character, out var value))
                         {
-                            // tm is an eligible party member
-                            if (_taggers.TryGetValue(member.Character, out var value))
-                            {
-                                // Tagger is already in the list
-                                partyDamage += value;
-                            }
+                            // Tagger is already in the list
+                            partyDamage += value;
                         }
                     }
-                    // Did the party do more than 50% of the total HP in damage?
-                    if (partyDamage > Owner.MaxHp * 0.5)
-                    {
-                        _tagTeam = checkTeam.Id;
-                    }
                 }
-                else
+                // Did the party do more than 50% of the total HP in damage?
+                if (partyDamage > Owner.MaxHp * 0.5)
                 {
-                    if (_taggers[player] > Owner.MaxHp * 0.5)
-                    {
-                        _tagger = player;
-                    }
+                    _tagTeam = checkTeam.Id;
                 }
+            }
+            else if (_taggers[player] > Owner.MaxHp * 0.5)
+            {
+                _tagger = player;
             }
             // TODO: packet to set red-but-not-aggro HP bar for taggers, "dull red" HP bar for not-taggers
         }

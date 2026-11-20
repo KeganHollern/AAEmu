@@ -47,6 +47,12 @@ public sealed class Portal : Npc
         KillLinkedPortal();
     }
 
+    protected override void DoDieFromDamage(Unit attacker, int damage, Character creditedPlayer)
+    {
+        base.DoDieFromDamage(attacker, damage, creditedPlayer);
+        KillLinkedPortal();
+    }
+
     public override void Delete()
     {
         // Broadcast its kill effect to be sure it's removed 

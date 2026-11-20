@@ -458,11 +458,16 @@ public partial class Unit : BaseUnit, IUnit
     /// <param name="killReason"></param>
     public virtual void ReduceCurrentHp(BaseUnit attacker, int value, KillReason killReason = KillReason.Damage)
     {
+        ReduceCurrentHp(attacker, value, killReason, null);
+    }
+
+    protected int ReduceCurrentHp(BaseUnit attacker, int value, KillReason killReason, Character creditedPlayer)
+    {
         if (killReason != KillReason.Gm && value > 0 && PeaceProtection.PreventsAttack(attacker, this))
-            return;
+            return 0;
 
         if (Hp <= 0)
-            return;
+            return 0;
 
         var oldHp = Hp;
 
@@ -476,12 +481,18 @@ public partial class Unit : BaseUnit, IUnit
             }
         }
 
-        Hp = GetHealthAfterDamage(attacker, value, killReason);
-        SkillCastReactions.OnDamage(this, oldHp - Hp, DateTime.UtcNow);
+        var newHp = GetHealthAfterDamage(attacker, value, killReason);
+        var damageToHealth = oldHp - newHp;
+        Hp = newHp;
+        SkillCastReactions.OnDamage(this, damageToHealth, DateTime.UtcNow);
 
         BroadcastPacket(new SCUnitPointsPacket(ObjId, Hp, Hp > 0 ? Mp : 0), true);
 
-        PostUpdateCurrentHp(attacker, oldHp, Hp, killReason);
+        if (creditedPlayer == null)
+            PostUpdateCurrentHp(attacker, oldHp, newHp, killReason);
+        else
+            PostUpdateCurrentHp(attacker, oldHp, newHp, killReason, creditedPlayer);
+        return damageToHealth;
     }
 
     protected virtual int GetMinimumHealthAfterDamage(BaseUnit attacker, KillReason killReason) => 0;
@@ -499,6 +510,12 @@ public partial class Unit : BaseUnit, IUnit
     /// <param name="newHpValue"></param>
     /// <param name="killReason"></param>
     public virtual void PostUpdateCurrentHp(BaseUnit attackerBase, int oldHpValue, int newHpValue, KillReason killReason = KillReason.Damage)
+    {
+        PostUpdateCurrentHp(attackerBase, oldHpValue, newHpValue, killReason, null);
+    }
+
+    private void PostUpdateCurrentHp(BaseUnit attackerBase, int oldHpValue, int newHpValue, KillReason killReason,
+        Character creditedPlayer)
     {
         // If Hp triggers are set up, do the calculations for them
         if (HpTriggerPointsPercent.Count > 0)
@@ -536,7 +553,15 @@ public partial class Unit : BaseUnit, IUnit
         if (Hp > 0 || oldHpValue <= 0 || newHpValue > 0)
             return;
 
-        DoDie(attackerBase, killReason);
+        if (killReason == KillReason.Damage && attackerBase is Unit attacker && !ReferenceEquals(this, attacker))
+            DoDieFromDamage(attacker, oldHpValue - newHpValue, creditedPlayer);
+        else
+            DoDie(attackerBase, killReason);
+    }
+
+    protected virtual void DoDieFromDamage(Unit attacker, int damage, Character creditedPlayer)
+    {
+        DoDie(attacker, KillReason.Damage);
     }
 
     protected virtual void DoHpChangeTrigger(int triggerValue, bool tookDamage, int oldHpValue, int newHpValue)
@@ -575,7 +600,7 @@ public partial class Unit : BaseUnit, IUnit
         return Interlocked.Exchange(ref _deathHandled, 1) == 0;
     }
 
-    protected void CompleteDeath(BaseUnit killer, KillReason killReason)
+    protected void CompleteDeath(BaseUnit killer, KillReason killReason, Character lootPlayer = null)
     {
         FallMovement.Reset();
         InterruptSkills();
@@ -625,7 +650,7 @@ public partial class Unit : BaseUnit, IUnit
         }
 
         // Generate the loot for this Npc
-        LootingContainer.GenerateLoot(killer);
+        LootingContainer.GenerateLoot(killer, lootPlayer);
 
         // Cleanup targeting and aggro packets
         if (CurrentTarget != null)
@@ -1734,12 +1759,19 @@ public partial class Unit : BaseUnit, IUnit
         return AddUnitAggroCore(kind, unit, amount, false);
     }
 
+    protected void AddDamageAggro(Unit unit, int amount, int? taggingDamage, Character creditedPlayer)
+    {
+        AddUnitAggroCore(AggroKind.Damage, unit, amount, false,
+            taggingDamage: taggingDamage, creditedPlayer: creditedPlayer);
+    }
+
     public bool TryAddAssistanceAggro(Unit unit)
     {
         return AddUnitAggroCore(AggroKind.Damage, unit, 1, true);
     }
 
-    private bool AddUnitAggroCore(AggroKind kind, Unit unit, int amount, bool initialOnly, bool requireCurrentAggro = false)
+    private bool AddUnitAggroCore(AggroKind kind, Unit unit, int amount, bool initialOnly, bool requireCurrentAggro = false,
+        int? taggingDamage = null, Character creditedPlayer = null)
     {
         if (unit == null)
             return false;
@@ -1773,8 +1805,8 @@ public partial class Unit : BaseUnit, IUnit
                 return false;
 
             // Actual damage/taunt input owns tagging. Shared copies below do not.
-            if (kind == AggroKind.Damage)
-                CharacterTagging.AddTagger(unit, amount);
+            if (kind == AggroKind.Damage && taggingDamage is null or > 0)
+                CharacterTagging.AddTagger(unit, taggingDamage ?? amount, creditedPlayer);
 
             amount = (int)(amount * (unit.AggroMul / 100.0f));
             amount = (int)(amount * (IncomingAggroMul / 100.0f));

@@ -814,10 +814,24 @@ public partial class Npc : Unit
 
     public override void DoDie(BaseUnit killer, KillReason killReason)
     {
+        CompleteNpcDeath(killer, killReason, 0, null);
+    }
+
+    protected override void DoDieFromDamage(Unit attacker, int damage, Character creditedPlayer)
+    {
+        CompleteNpcDeath(attacker, KillReason.Damage, damage, creditedPlayer);
+    }
+
+    private void CompleteNpcDeath(BaseUnit killer, KillReason killReason, int damage, Character creditedPlayer)
+    {
         // Rewards and script callbacks precede the base death events. They must share
         // the same once-per-life gate, including repeated or reentrant death calls.
         if (!TryBeginDeath())
             return;
+
+        // The normal aggro update runs after death, so record the accepted lethal hit here.
+        if (damage > 0 && killer is Unit attacker)
+            CharacterTagging.AddTagger(attacker, damage, creditedPlayer, killingBlow: true);
 
         DeadTime = DateTime.UtcNow;
 
@@ -859,7 +873,7 @@ public partial class Npc : Unit
 
         // Logger.Warn($"Eligible killers count is {eligiblePlayers.Count }");
 
-        var killerOwner = killer?.GetOwnerCharacter();
+        var killerOwner = creditedPlayer ?? killer?.GetOwnerCharacter();
         var tagShareRecipients = new HashSet<Character>();
         if (AppConfiguration.Instance.World.TagShareEnabled)
         {
@@ -957,7 +971,7 @@ public partial class Npc : Unit
                 QuestManager.Instance.DoOnMonsterHuntEvents(
                     character, this, teamShareAlreadyDistributed, tagShareRecipientIds));
 
-        CompleteDeath(killer, killReason);
+        CompleteDeath(killer, killReason, damage > 0 && killer is Slave ? killerOwner : null);
         ClearAllAggroTargetsAndCheckCombatState();
         // AggroTable.Clear();
         CharacterTagging.ClearAllTaggers();
@@ -1041,7 +1055,12 @@ public partial class Npc : Unit
             CheckIfEmptyAggroToReturn();
     }
 
-    public void OnDamageReceived(Unit attacker, int amount)
+    internal int ApplySkillDamage(Unit attacker, int amount, Character creditedPlayer)
+    {
+        return ReduceCurrentHp(attacker, amount, KillReason.Damage, creditedPlayer);
+    }
+
+    public void OnDamageReceived(Unit attacker, int amount, int? taggingDamage = null, Character creditedPlayer = null)
     {
         // 25 means "dummy" AI -> should not respond!
         // if (Template.AiFileId != 25 && (Patrol == null || Patrol.PauseAuto(this)))
@@ -1055,7 +1074,7 @@ public partial class Npc : Unit
         //
         //     // TaskManager.Instance.Schedule(new UnitMove(new Track(), this), TimeSpan.FromMilliseconds(100));
         // }
-        AddUnitAggro(AggroKind.Damage, attacker, amount);
+        AddDamageAggro(attacker, amount, taggingDamage, creditedPlayer);
         Ai?.OnAggroTargetChanged();
 
         /*
