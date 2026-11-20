@@ -302,29 +302,75 @@ public partial class Unit : BaseUnit, IUnit
     public UnitCooldowns Cooldowns { get; set; }
     public virtual Expedition Expedition { get; set; }
 
-    private int _isInBattle;
+    private readonly object _combatStateLock = new();
+    private bool _isInBattle;
+    private DateTime _lastOrdinaryCombatActivity;
+
     public bool IsInBattle
     {
-        get => Volatile.Read(ref _isInBattle) != 0;
-        set
+        get => Volatile.Read(ref _isInBattle);
+        set => UpdateCombatState(value);
+    }
+
+    internal void RecordCombatActivity(bool duelCombat = false) =>
+        UpdateCombatState(true, refreshActivity: true, duelCombat: duelCombat);
+
+    private void UpdateCombatState(bool active, bool refreshActivity = false, bool duelCombat = false)
+    {
+        lock (_combatStateLock)
         {
-            var state = value ? 1 : 0;
-            if (Interlocked.Exchange(ref _isInBattle, state) == state)
-                return;
-            if (value)
+            var changed = _isInBattle != active;
+            if (active && (changed || refreshActivity))
+            {
                 LastCombatActivity = DateTime.UtcNow;
-            else
-                BroadcastPacket(new SCCombatClearedPacket(ObjId), true);
-
-            var world = ParentWorld;
-            if (world == null)
+                if (!duelCombat)
+                    _lastOrdinaryCombatActivity = LastCombatActivity;
+            }
+            if (!changed)
                 return;
-
-            if (value)
-                world.Events.OnUnitCombatStart(world, new OnUnitCombatStartArgs { Npc = this });
-            else
-                world.Events.OnUnitCombatEnd(world, new OnUnitCombatEndArgs { Npc = this });
+            WriteCombatState(active);
         }
+        NotifyCombatStateChanged(active);
+    }
+
+    internal void ClearDuelCombat()
+    {
+        bool wasInBattle;
+        lock (_combatStateLock)
+        {
+            if (_isInBattle && _lastOrdinaryCombatActivity.AddSeconds(WorldManager.DefaultCombatTimeout) >= DateTime.UtcNow)
+            {
+                LastCombatActivity = _lastOrdinaryCombatActivity;
+                return;
+            }
+            wasInBattle = _isInBattle;
+            WriteCombatState(false);
+        }
+        // Duel start sends combat engagement even when neither player lands a hit.
+        NotifyCombatStateChanged(false, reportTransition: wasInBattle);
+    }
+
+    // Caller holds the combat state lock.
+    private void WriteCombatState(bool active)
+    {
+        if (!active)
+            _lastOrdinaryCombatActivity = default;
+        Volatile.Write(ref _isInBattle, active);
+    }
+
+    private void NotifyCombatStateChanged(bool active, bool reportTransition = true)
+    {
+        if (!active)
+            BroadcastPacket(new SCCombatClearedPacket(ObjId), true);
+
+        var world = ParentWorld;
+        if (world == null || !reportTransition)
+            return;
+
+        if (active)
+            world.Events.OnUnitCombatStart(world, new OnUnitCombatStartArgs { Npc = this });
+        else
+            world.Events.OnUnitCombatEnd(world, new OnUnitCombatEndArgs { Npc = this });
     }
 
     public bool IsInDuel { get; set; }
@@ -1646,10 +1692,15 @@ public partial class Unit : BaseUnit, IUnit
     protected virtual void CombatTick(TimeSpan delta)
     {
         // TODO: Make it so you can also become out of combat if you are not on any aggro lists
-        if (IsInBattle && LastCombatActivity.AddSeconds(WorldManager.DefaultCombatTimeout) < DateTime.UtcNow)
+        if (!IsInBattle)
+            return;
+        lock (_combatStateLock)
         {
-            IsInBattle = false;
+            if (!_isInBattle || LastCombatActivity.AddSeconds(WorldManager.DefaultCombatTimeout) >= DateTime.UtcNow)
+                return;
+            WriteCombatState(false);
         }
+        NotifyCombatStateChanged(false);
     }
 
     /// <summary>
@@ -1820,11 +1871,8 @@ public partial class Unit : BaseUnit, IUnit
                 !ReferenceEquals(current, aggro))
                 return;
             unit.SendPacketToPlayers([this, unit], new SCCombatFirstHitPacket(ObjId, unit.ObjId, 0));
-            if (unit.Hp > 0 && !unit.IsInBattle)
-            {
-                unit.IsInBattle = true;
-                unit.LastCombatActivity = DateTime.UtcNow;
-            }
+            if (unit.Hp > 0 && (!unit.IsInBattle || unit.IsInDuel))
+                unit.RecordCombatActivity();
         }
 
         if (player == null)

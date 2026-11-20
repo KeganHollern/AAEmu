@@ -107,6 +107,7 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
     {
         private int _disposed;
         public bool Allowed { get; } = allowed;
+        public bool IsDuelEffect => duel != null;
 
         public void Dispose()
         {
@@ -376,6 +377,11 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
                 }
                 RemoveHostileEffects(duel.Challenger, duel.Challenged);
                 RemoveHostileEffects(duel.Challenged, duel.Challenger);
+            }
+            if (wasActive)
+            {
+                duel.Challenger.ClearDuelCombat();
+                duel.Challenged.ClearDuelCombat();
             }
         }
         finally

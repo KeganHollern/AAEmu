@@ -429,8 +429,10 @@ public class DamageEffect : EffectTemplate
         }
 
         // set for all combatants, for RegenTick
-        trg.IsInBattle = trg.Hp > 0;
-        trg.LastCombatActivity = DateTime.UtcNow;
+        if (trg.Hp > 0)
+            trg.RecordCombatActivity(duelEffect.IsDuelEffect);
+        else
+            trg.IsInBattle = false;
 
         if (trgCharacter != null)
         {
@@ -439,11 +441,8 @@ public class DamageEffect : EffectTemplate
             trgCharacter.SetHostileActivity(caster);
         }
 
-        if (attacker != null)
-        {
-            attacker.IsInBattle |= trg.Hp > 0;
-            attacker.LastCombatActivity = DateTime.UtcNow;
-        }
+        if (attacker != null && (trg.Hp > 0 || attacker.IsInBattle))
+            attacker.RecordCombatActivity(duelEffect.IsDuelEffect);
 
         if (value > 0 && attacker != null)
             UnitProcs.OnDamage(attacker, trg, DamageType,

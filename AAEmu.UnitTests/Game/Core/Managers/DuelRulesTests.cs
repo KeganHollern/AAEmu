@@ -5,7 +5,9 @@ using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.C2G;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Duels;
@@ -164,6 +166,7 @@ public sealed class DuelRulesTests
     {
         var first = Player(1);
         var second = Player(2);
+        first.IsInBattle = true;
         _manager.TryCreateDuel(first, second, 30, out var duel);
         duel.Active = true;
         BaseUnit attacker = source switch
@@ -179,6 +182,7 @@ public sealed class DuelRulesTests
         await Assert.That(second.Hp).IsEqualTo(dies ? 0 : 1);
         await Assert.That(second.Died).IsEqualTo(dies);
         await Assert.That(_manager.IsCurrent(duel)).IsFalse();
+        await Assert.That(first.IsInBattle).IsTrue();
     }
 
     [Test]
@@ -187,6 +191,7 @@ public sealed class DuelRulesTests
         var first = Player(1);
         var second = Player(2);
         _manager.TryCreateDuel(first, second, 30, out var duel);
+        _manager.TryAccept(second, first.Id, out _);
         duel.Active = true;
         var effect = new DamageEffect
         {
@@ -196,9 +201,66 @@ public sealed class DuelRulesTests
             new CastSkill(10135, 0), new EffectSource(), null, DateTime.UtcNow);
         await Assert.That(second.Hp).IsEqualTo(1);
         await Assert.That(_manager.IsCurrent(duel)).IsFalse();
+        await Assert.That(first.IsInBattle).IsFalse();
+        await Assert.That(second.IsInBattle).IsFalse();
+        await Assert.That(first.CombatClearCount).IsEqualTo(1);
+        await Assert.That(second.CombatClearCount).IsEqualTo(1);
         await Assert.That(first.AssaultOn).IsEmpty();
         await Assert.That(second.AssaultedBy).IsEmpty();
         await Assert.That(first.GetRelationStateTo(second)).IsEqualTo(RelationState.Friendly);
+    }
+
+    [Test]
+    public async Task EndTimer_DrawWithoutHits_ClearsClientCombatForBothPlayers()
+    {
+        var first = Player(1);
+        var second = Player(2);
+        _manager.TryCreateDuel(first, second, 30, out var duel);
+        _manager.TryAccept(second, first.Id, out _);
+        duel.Active = true;
+
+        _manager.EndTimer(duel);
+
+        await Assert.That(_manager.IsCurrent(duel)).IsFalse();
+        await Assert.That(first.IsInBattle).IsFalse();
+        await Assert.That(second.IsInBattle).IsFalse();
+        await Assert.That(first.CombatClearCount).IsEqualTo(1);
+        await Assert.That(second.CombatClearCount).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)] [Arguments(true)]
+    public async Task Stop_OverlappingOrdinaryDamage_PreservesOrdinaryCombat(bool attackDuringDuel)
+    {
+        var first = Player(1);
+        var second = Player(2);
+        var outsider = Player(3);
+        outsider.Faction = null;
+        var effect = new DamageEffect
+        {
+            DamageType = DamageType.Siege, UseFixedDamage = true, FixedMin = 10, FixedMax = 10
+        };
+
+        _manager.TryCreateDuel(first, second, 30, out var duel);
+        _manager.TryAccept(second, first.Id, out _);
+        duel.Active = attackDuringDuel;
+        ApplyDamage(outsider, first);
+        var ordinaryCombatTime = first.LastCombatActivity;
+        duel.Active = true;
+        ApplyDamage(first, second);
+
+        _manager.Stop(duel, DuelDetType.Draw);
+
+        await Assert.That(first.IsInBattle).IsTrue();
+        await Assert.That(first.LastCombatActivity).IsEqualTo(ordinaryCombatTime);
+        await Assert.That(first.CombatClearCount).IsEqualTo(0);
+        await Assert.That(second.IsInBattle).IsFalse();
+        await Assert.That(second.CombatClearCount).IsEqualTo(1);
+        await Assert.That(outsider.IsInBattle).IsTrue();
+
+        void ApplyDamage(TestCharacter attacker, TestCharacter target) =>
+            effect.Apply(attacker, new SkillCasterUnit(attacker.ObjId), target, new SkillCastUnitTarget(target.ObjId),
+                new CastSkill(10135, 0), new EffectSource(), null, DateTime.UtcNow);
     }
 
     [Test]
@@ -412,7 +474,15 @@ public sealed class DuelRulesTests
         public override int Flexibility => 0;
         public override int BattleResist => 0;
         public override float IncomingDamageMul => 1;
+        public int CombatClearCount { get; private set; }
         public bool Died { get; private set; }
+
+        public override void BroadcastPacket(GamePacket packet, bool self)
+        {
+            if (self && packet is SCCombatClearedPacket)
+                CombatClearCount++;
+        }
+
         public override void DoDie(BaseUnit killer, KillReason killReason)
         {
             Died = true;
