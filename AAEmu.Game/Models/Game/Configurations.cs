@@ -319,13 +319,13 @@ public class SpecialtyConfig
     public double RatioRegenTickMinutes { get; set; } = 60f;
 
     /// <summary>
-    /// Time in minutes to delay trade pack reward mail delivery. Default is 8 hours.
+    /// Time in minutes to delay trade pack reward mail delivery. Default is 22 hours.
     /// </summary>
     /// <remarks>
-    /// The default value is 8 hours. This setting controls how long after delivery 
+    /// The default value is 22 hours. This setting controls how long after delivery
     /// a player must wait before receiving their trade pack reward via mail.
     /// </remarks>
-    public double TradePackMailDelayInMinutes { get; set; } = 480f;
+    public double TradePackMailDelayInMinutes { get; set; } = 1320;
 }
 
 public class ScriptsConfig

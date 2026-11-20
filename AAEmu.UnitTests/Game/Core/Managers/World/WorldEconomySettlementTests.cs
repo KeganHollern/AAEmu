@@ -157,7 +157,9 @@ public sealed class WorldEconomySettlementTests
         await Assert.That(_specialty.SellSpecialty(_seller, 20)).IsEqualTo(0);
         await Assert.That(_seller.LaborPower).IsEqualTo((short)40);
         await Assert.That(_seller.ConsumedLaborPower).IsEqualTo(60);
-        await Assert.That(_mail._allPlayerMails.Values.Single().Body.CopperCoins).IsEqualTo(1502);
+        var mail = _mail._allPlayerMails.Values.Single();
+        await Assert.That(mail.Body.CopperCoins).IsEqualTo(1502);
+        await Assert.That(mail.Body.RecvDate - mail.Body.SendDate).IsEqualTo(TimeSpan.FromHours(22));
         await Assert.That(Demand[(42, 2)].PendingSales).IsEqualTo(1);
         await Assert.That(Demand.ContainsKey((42, 3))).IsFalse();
     }

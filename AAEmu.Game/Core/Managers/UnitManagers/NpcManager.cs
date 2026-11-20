@@ -551,6 +551,7 @@ public class NpcManager(IObjectIdManager objectIdManager, IModelManager modelMan
                             ShowNameTag = reader.GetBoolean("show_name_tag", true),
                             VisibleToCreatorOnly = reader.GetBoolean("visible_to_creator_only", true),
                             NoExp = reader.GetBoolean("no_exp", true),
+                            NoPenalty = reader.GetBoolean("no_penalty", true),
                             PetItemId = reader.GetUInt32("pet_item_id", 0),
                             BaseSkillId = reader.GetInt32("base_skill_id"),
                             TrackFriendship = reader.GetBoolean("track_friendship", true),

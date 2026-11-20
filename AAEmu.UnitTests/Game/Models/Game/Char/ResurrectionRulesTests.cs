@@ -1,9 +1,23 @@
-﻿using AAEmu.Commons.Network;
+﻿using System.Collections.Concurrent;
+using System.Reflection;
+
+using AAEmu.Commons.Network;
+using AAEmu.Commons.Utils;
+using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Containers;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units.Static;
+using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.UnitTests.Utils.Mocks;
 using Microsoft.Data.Sqlite;
 
@@ -102,6 +116,93 @@ public sealed class ResurrectionRulesTests
     }
 
     [Test]
+    [Arguments(true, (byte)2, 0, (byte)0, false)]
+    [Arguments(false, (byte)2, 25, (byte)7, false)]
+    [Arguments(true, (byte)1, 0, (byte)0, true)]
+    public async Task DoDie_NpcDeathPenaltyFlagControlsLossesAndPreservesResurrectionRules(
+        bool noPenalty, byte level, int expectedExpLoss, byte expectedDurabilityLoss, bool expectedFreeOffer)
+    {
+        var previousSingletons = new List<(FieldInfo Field, object Value)>();
+        var configuration = AppConfiguration.Instance;
+        var previousWorldConfig = configuration.World;
+        var previousDebugInfo = configuration.DebugInfo;
+        var world = new WorldInstance(new WorldTemplate { Name = "death-test" }, 0, true, WorldManager.DefaultInstanceId);
+        GC.SuppressFinalize(world);
+        try
+        {
+            configuration.World = new WorldConfig { MinimumExpLossLevel = 2, ExpLossRateAtDeath = 0.25f };
+            configuration.DebugInfo = false;
+            world.MateManager = new MateManager(world);
+            var worlds = new WorldManager(null, null, null, null, null);
+            SetField(worlds, "_worlds", new ConcurrentDictionary<uint, WorldInstance> { [world.Id] = world });
+            Install(worlds);
+            var character = new CharacterMock
+            {
+                Id = 1, ObjId = 1, Hp = 0, Level = level, ParentWorld = world,
+                DeadCount = 1, DeadTime = DateTime.UtcNow.AddSeconds(-1), RezPenaltyDuration = 600000
+            };
+            var startingExperience = level == 2 ? 150 : 50;
+            SetField<Character>(character, "<Experience>k__BackingField", startingExperience);
+            var gear = new DeathTestGear { Durability = 100, Slot = (int)EquipmentItemSlot.Chest };
+
+            var loader = Mock.Of<IExperienceLevelTemplateLoader>();
+            loader.Load().Returns([
+                new ExperienceLevelTemplate { Level = 1, TotalExp = 0 },
+                new ExperienceLevelTemplate { Level = 2, TotalExp = 100 },
+                new ExperienceLevelTemplate { Level = 3, TotalExp = 200 }
+            ]);
+            var experience = new ExperienceManager();
+            experience.Load(loader.Object, 3, 3);
+            Install(experience);
+            Install(LoadData());
+            Install(new PriestBuffGameData());
+            Install(new DuelManager());
+            var zones = new ZoneManager(null, null);
+            SetField(zones, "_zones", new Dictionary<uint, Zone>());
+            Install(zones);
+            var skills = new SkillManager(null, null);
+            SetField(skills, "_taggedBuffs", new Dictionary<uint, List<uint>>());
+            Install(skills);
+            var items = new ItemManager(null, null, null, null, null, null);
+            SetField(items, "_config", new ItemConfig { DeathDurabilityLossRatio = 7 });
+            var containers = Enum.GetValues<SlotType>().Where(type => type != SlotType.EquipmentMate)
+                .Select((type, index) => new ItemContainer(character.Id, type, false, character) { ContainerId = (ulong)index + 1 })
+                .ToDictionary(container => container.ContainerId);
+            SetField(items, "_allPersistentContainers", containers);
+            Install(items);
+            character.Inventory = new Inventory(character);
+            character.Equipment.Items.Add(gear);
+            var npc = new DeathTestNpc
+            {
+                ObjId = 2, ParentWorld = world, Template = new NpcTemplate { NoPenalty = noPenalty, NoExp = true }
+            };
+
+            character.DoDie(npc, KillReason.Damage);
+
+            await Assert.That(character.Experience).IsEqualTo(startingExperience - expectedExpLoss);
+            await Assert.That(character.LastExpLoss).IsEqualTo(expectedExpLoss);
+            await Assert.That(character.RecoverableExp).IsEqualTo(expectedExpLoss * 4 / 5);
+            await Assert.That(gear.Durability).IsEqualTo((byte)(100 - expectedDurabilityLoss));
+            await Assert.That(character.RezWaitDuration).IsEqualTo(5000);
+            await Assert.That(character.TryTakeResurrectionOffer(out _)).IsEqualTo(expectedFreeOffer);
+        }
+        finally
+        {
+            configuration.World = previousWorldConfig;
+            configuration.DebugInfo = previousDebugInfo;
+            foreach (var (field, previous) in previousSingletons)
+                field.SetValue(null, previous);
+        }
+
+        void Install<T>(T singleton) where T : class
+        {
+            var field = typeof(Singleton<T>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            previousSingletons.Add((field, field.GetValue(null)));
+            field.SetValue(null, singleton);
+        }
+    }
+
+    [Test]
     [Arguments(0)] [Arguments(2)] [Arguments(3)]
     public async Task Packet_RejectsTruncatedOrTrailingBytes(int count)
     {
@@ -119,6 +220,19 @@ public sealed class ResurrectionRulesTests
             await Assert.That(inPlace).IsEqualTo(value == 1);
             await Assert.That(stream.Pos).IsEqualTo(stream.Count);
         }
+    }
+
+    private static void SetField<T>(T target, string field, object value) =>
+        typeof(T).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(target, value);
+
+    private sealed class DeathTestGear : EquipItem
+    {
+        public override byte MaxDurability => 100;
+    }
+
+    private sealed class DeathTestNpc : Npc
+    {
+        public override void BroadcastPacket(GamePacket packet, bool self) { }
     }
 
     private static ResurrectionGameData LoadData()

@@ -26,6 +26,7 @@ public class NpcTemplate
     public bool ShowNameTag { get; set; }
     public bool VisibleToCreatorOnly { get; set; }
     public bool NoExp { get; set; }
+    public bool NoPenalty { get; set; }
     public uint PetItemId { get; set; }
     public int BaseSkillId { get; set; }
     public bool TrackFriendship { get; set; }
