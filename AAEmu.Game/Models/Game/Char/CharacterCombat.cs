@@ -12,6 +12,7 @@ using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Team;
@@ -59,18 +60,25 @@ public partial class Character
         ComputeDeathWaitTime(DateTime.UtcNow, killReason, ResurrectionGameData.Instance);
         ClearResurrectionOffer();
         var priestResurrection = FindPriestResurrectionBuff(DateTime.UtcNow);
+        var hasDeathPenalty = killer is not Npc { Template.NoPenalty: true };
 
         lock (StorePurchaseSyncRoot)
         {
+            var minimumExpLossLevel = AppConfiguration.Instance.World.MinimumExpLossLevel;
             LastExpLoss = 0;
             RecoverableExp = 0;
-            LastDurabilityLoss = Level >= AppConfiguration.Instance.World.MinimumExpLossLevel
+            LastDurabilityLoss = hasDeathPenalty && Level >= minimumExpLossLevel
                 ? ItemManager.Instance.GetDeathDurabilityLossRatio()
                 : (byte)0;
 
             if (Level < ExperienceManager.Instance.MaxPlayerLevel && ParentWorld.Id == WorldManager.DefaultInstanceId)
             {
-                if (Level >= AppConfiguration.Instance.World.MinimumExpLossLevel)
+                if (Level < minimumExpLossLevel)
+                {
+                    OfferResurrection(new SkillCasterUnit(ObjId), 1, 1);
+                    SendDebugMessage($"Free resurrect below level {minimumExpLossLevel}");
+                }
+                else if (hasDeathPenalty)
                 {
                     LastExpLoss = ExperienceManager.Instance.GetExpLoss(Level, AppConfiguration.Instance.World.ExpLossRateAtDeath);
                     var thisLevelStartExp = ExperienceManager.Instance.GetExpForLevel(Level);
@@ -78,12 +86,6 @@ public partial class Character
                     LastExpLoss = Math.Min(LastExpLoss, inThisLevelExp);
                     RecoverableExp = (int)Math.Round(LastExpLoss * 0.80f);
                     SendDebugMessage($"Lost {LastExpLoss} exp, {LastDurabilityLoss} Durability. Can recover {RecoverableExp} exp");
-                }
-                else
-                {
-                    // Free resurrect below level 10
-                    OfferResurrection(new SkillCasterUnit(ObjId), 1, 1);
-                    SendDebugMessage($"Free resurrect below level {AppConfiguration.Instance.World.MinimumExpLossLevel}");
                 }
             }
             else
