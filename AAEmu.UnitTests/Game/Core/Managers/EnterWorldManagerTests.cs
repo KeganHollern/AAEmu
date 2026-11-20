@@ -1,19 +1,28 @@
+using System.Net;
+using AAEmu.Commons.Network.Core;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Models;
+using AAEmu.Game.Models.Account;
+using AAEmu.Game.Models.Game;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
 public class EnterWorldManagerTests
 {
-    private static EnterWorldManager CreateManager()
+    private static EnterWorldManager CreateManager(IAccountManager accounts = null, IStreamManager streams = null,
+        IModerationManager moderation = null, WorldConfig startupWorld = null)
     {
         return new EnterWorldManager(
-            Mock.Of<IAccountManager>().Object,
-            Mock.Of<IStreamManager>().Object,
+            accounts ?? Mock.Of<IAccountManager>().Object,
+            streams ?? Mock.Of<IStreamManager>().Object,
             Mock.Of<IQuestManager>().Object,
             Mock.Of<IChatManager>().Object,
             Mock.Of<IFamilyManager>().Object,
-            Mock.Of<IWorldManager>().Object);
+            Mock.Of<IWorldManager>().Object,
+            moderation,
+            startupWorld);
     }
 
     [Test]
@@ -41,6 +50,73 @@ public class EnterWorldManagerTests
         Mock.VerifyNoOtherCalls(mockChat);
         Mock.VerifyNoOtherCalls(mockFamily);
         Mock.VerifyNoOtherCalls(mockWorld);
+    }
+
+    [Test]
+    [Arguments(WorldAccessMode.Open, AccountRole.NormalPlayer, false, true)]
+    [Arguments(WorldAccessMode.AdminsOnly, AccountRole.NormalPlayer, true, false)]
+    [Arguments(WorldAccessMode.AdminsOnly, AccountRole.Moderator, true, false)]
+    [Arguments(WorldAccessMode.AdminsOnly, AccountRole.Admin, true, true)]
+    [Arguments(WorldAccessMode.AdminsOnly, AccountRole.Admin, false, false)]
+    public async Task PreparePendingAccount_AccessMode_OnlyPermitsEligibleAccount(
+        WorldAccessMode mode, AccountRole role, bool roleAvailable, bool expected)
+    {
+        const uint accountId = 42;
+        const uint token = 7;
+        var accounts = Mock.Of<IAccountManager>();
+        accounts.TryGetAccountRole(accountId).SetsOutRole(role).Returns(roleAvailable);
+        var moderation = new ModerationManager(new PermissionManager(accounts.Object));
+        moderation.ApplyState(new ModerationState(accountId, 1, false, 0, false, 0));
+        var manager = CreateManager(accounts.Object, moderation: moderation, startupWorld: new WorldConfig { AccessMode = mode });
+
+        var prepared = manager.PreparePendingAccount(accountId, token, new AccountPayment(), IPAddress.Loopback, moderation);
+
+        await Assert.That(prepared).IsEqualTo(expected);
+        await Assert.That(manager.ConsumePendingAccount(token, accountId))
+            .IsEqualTo(expected ? PendingWorldAccountResult.Consumed : PendingWorldAccountResult.NotFound);
+    }
+
+    [Test, NotInParallel]
+    [Arguments(AccountRole.Admin, true, true)]
+    [Arguments(AccountRole.Moderator, true, false)]
+    [Arguments(AccountRole.Admin, false, false)]
+    public async Task Login_ValidWorldCookie_RechecksAccountRole(AccountRole role, bool roleAvailable, bool expected)
+    {
+        const uint accountId = 42;
+        const uint token = 7;
+        var accounts = Mock.Of<IAccountManager>();
+        accounts.TryGetAccountRole(accountId).SetsOutRole(AccountRole.Admin).Returns(true);
+        var moderation = new ModerationManager(new PermissionManager(accounts.Object));
+        moderation.ApplyState(new ModerationState(accountId, 1, false, 0, false, 0));
+        var streams = Mock.Of<IStreamManager>();
+        var session = Mock.Of<ISession>();
+        session.Ip.Returns(IPAddress.Loopback);
+        var connection = new GameConnection(session.Object);
+        accounts.IsCurrent(connection).Returns(true);
+        streams.AddToken(connection).Returns(1u);
+        var manager = CreateManager(accounts.Object, streams.Object, moderation,
+            new WorldConfig { AccessMode = WorldAccessMode.AdminsOnly });
+        await Assert.That(manager.PreparePendingAccount(accountId, token, new AccountPayment(), IPAddress.Loopback, moderation)).IsTrue();
+        accounts.TryGetAccountRole(accountId).SetsOutRole(role).Returns(roleAvailable);
+
+        var config = AppConfiguration.Instance;
+        var network = config.Network;
+        var streamNetwork = config.StreamNetwork;
+        try
+        {
+            config.Network = new AppConfiguration.NetworkConfig();
+            config.StreamNetwork = new AppConfiguration.NetworkConfig { Port = 1250 };
+            manager.Login(connection, accountId, token);
+
+            await Assert.That(connection.IsAuthenticated).IsEqualTo(expected);
+            await Assert.That(connection.IsClosed).IsEqualTo(!expected);
+            await Assert.That(manager.ConsumePendingAccount(token, accountId)).IsEqualTo(PendingWorldAccountResult.NotFound);
+        }
+        finally
+        {
+            config.Network = network;
+            config.StreamNetwork = streamNetwork;
+        }
     }
 
     [Test]

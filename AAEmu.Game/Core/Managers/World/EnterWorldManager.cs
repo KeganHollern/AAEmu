@@ -9,6 +9,8 @@ using AAEmu.Game.Core.Network.Login;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Core.Packets.G2L;
 using AAEmu.Game.Core.Packets.Proxy;
+using AAEmu.Game.Models.Account;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Team;
@@ -26,10 +28,12 @@ public class EnterWorldManager(
     IChatManager chatManager,
     IFamilyManager familyManager,
     IWorldManager worldManager,
-    IModerationManager moderationManager = null) : Singleton<EnterWorldManager>, IEnterWorldManager
+    IModerationManager moderationManager = null,
+    WorldConfig startupWorld = null) : Singleton<EnterWorldManager>, IEnterWorldManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
+    private readonly WorldAccessMode _accessMode = startupWorld?.AccessMode ?? WorldAccessMode.Open;
     private readonly PendingWorldAdmissions _pending = new();
     private readonly ConcurrentDictionary<uint, long> _admissionRequests = new();
     private long _nextAdmission;
@@ -86,6 +90,9 @@ public class EnterWorldManager(
     {
         lock (_admissionLocks[accountId % (uint)_admissionLocks.Length])
         {
+            if (!CanEnterWorld(accountId))
+                return false;
+
             var stored = false;
             if (!moderation.TryAdmit(accountId, () => stored = _pending.TryAdd(token, accountId, payment, address)) || !stored)
                 return false;
@@ -115,6 +122,13 @@ public class EnterWorldManager(
 
     internal PendingWorldAccountResult ConsumePendingAccount(uint token, uint accountId, out AccountPayment payment) =>
         _pending.Consume(token, accountId, IPAddress.Loopback, true, out payment);
+
+    private bool CanEnterWorld(uint accountId) => _accessMode switch
+    {
+        WorldAccessMode.Open => true,
+        WorldAccessMode.AdminsOnly => accountManager.TryGetAccountRole(accountId, out var role) && role == AccountRole.Admin,
+        _ => false
+    };
 
     public void Login(GameConnection connection, uint accountId, uint token)
     {
@@ -148,7 +162,7 @@ public class EnterWorldManager(
 
             var streamToken = 0u;
             var moderation = moderationManager ?? ModerationManager.Instance;
-            var admitted = moderation.TryAdmit(accountId, () =>
+            var admitted = CanEnterWorld(accountId) && moderation.TryAdmit(accountId, () =>
             {
                 if (accountManager.Contains(accountId) || !connection.TryAuthenticate(accountId))
                     return;
