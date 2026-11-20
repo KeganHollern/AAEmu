@@ -179,7 +179,55 @@ public sealed class AuctionSettlementTests
         _auctions.PostLotOnAuction(_seller, 0, 0, item.Id, 100, 0, AuctionDuration.AuctionDuration6Hours);
         await Assert.That(_auctions.AuctionLots.Values.Single().Item).IsSameReferenceAs(item);
         await Assert.That(_commits).IsEqualTo(1);
-        await Assert.That(_seller.Money).IsEqualTo(10000L);
+        await Assert.That(_seller.Money).IsEqualTo(9999L);
+    }
+
+    [Test]
+    [Arguments(1, 0, AuctionDuration.AuctionDuration6Hours, 1)]
+    [Arguments(150, 0, AuctionDuration.AuctionDuration6Hours, 2)]
+    [Arguments(100, 250, AuctionDuration.AuctionDuration6Hours, 3)]
+    [Arguments(333, 0, AuctionDuration.AuctionDuration24Hours, 10)]
+    public async Task Post_ChargesRoundedDepositFromBuyoutOrStartPrice(int start, int buyout, AuctionDuration duration, int fee)
+    {
+        var item = Item();
+
+        _auctions.PostLotOnAuction(_seller, 0, 0, item.Id, start, buyout, duration);
+
+        await Assert.That(_seller.Money).IsEqualTo(10000L - fee);
+        await Assert.That(_auctions.AuctionLots.Values.Single().Item).IsSameReferenceAs(item);
+    }
+
+    [Test]
+    public async Task PostWithoutBuyout_RejectsInsufficientDepositBeforeMovingTheItem()
+    {
+        var item = Item();
+        _seller.Money = 1;
+
+        _auctions.PostLotOnAuction(_seller, 0, 0, item.Id, 150, 0, AuctionDuration.AuctionDuration6Hours);
+
+        await Assert.That(_seller.Money).IsEqualTo(1L);
+        await Assert.That(_seller.Inventory.Bag.Items.Single()).IsSameReferenceAs(item);
+        await Assert.That(_auctions.AuctionLots).IsEmpty();
+        _auctionIds.GetNextId().WasCalled(Times.Never);
+        var error = _sessions[_seller.Id].Packets.Single(packet => Opcode(packet) == SCOffsets.SCErrorMsgPacket);
+        await Assert.That(BitConverter.ToInt16(error, 8)).IsEqualTo((short)ErrorMessageType.CanNotPutupMoney);
+    }
+
+    [Test]
+    public async Task SaleWithoutBuyout_ReportsTheDepositChargedAtPosting()
+    {
+        var item = Item();
+        _auctions.PostLotOnAuction(_seller, 0, 0, item.Id, 150, 0, AuctionDuration.AuctionDuration6Hours);
+        var lot = _auctions.AuctionLots.Values.Single();
+        Bid(_buyer, lot, 400);
+        lot.EndTime = DateTime.UtcNow.AddSeconds(-1);
+
+        _auctions.UpdateAuctionHouse();
+
+        await Assert.That(_seller.Money).IsEqualTo(9998L);
+        var proceeds = Mail(MailType.AucOffSuccess);
+        await Assert.That(proceeds.Body.CopperCoins).IsEqualTo(360);
+        await Assert.That(proceeds.Body.Text).IsEqualTo("body('Auction item', 3, 360, 400, 40, 2)");
     }
 
     [Test]

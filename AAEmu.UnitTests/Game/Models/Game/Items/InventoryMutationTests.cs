@@ -97,6 +97,105 @@ public sealed class InventoryMutationTests
     }
 
     [Test]
+    [Arguments("missing-template")]
+    [Arguments("regular-item")]
+    [Arguments("other-model")]
+    [Arguments("other-slot")]
+    [Arguments("npc-only")]
+    [Arguments("no-certificate")]
+    [Arguments("item-creation-fails")]
+    public async Task ApplyBeautySalon_RejectedChoiceOrFailedSwap_PreservesHairCertificateAndModel(string scenario)
+    {
+        const uint selectedHair = 24128;
+        _owner.ModelId = 10;
+        var oldHair = SetSalonHair(24127);
+        var certificate = scenario == "no-certificate" ? null : AddItem(1, Item.SalonCertificate, 2);
+        var priorModel = _owner.ModelParams;
+        if (scenario == "regular-item")
+            _templates.Add(selectedHair, new ItemTemplate { Id = selectedHair, MaxCount = 1 });
+        else if (scenario != "missing-template")
+            _templates.Add(selectedHair, new BodyPartTemplate
+            {
+                Id = selectedHair,
+                MaxCount = 1,
+                ModelId = scenario == "other-model" ? 11u : _owner.ModelId,
+                SlotTypeId = (uint)(scenario == "other-slot" ? EquipmentItemSlotType.Face : EquipmentItemSlotType.Hair),
+                NpcOnly = scenario == "npc-only"
+            });
+        if (scenario == "item-creation-fails")
+            AddItem(1_000, 100, 1);
+
+        CharacterManager.ApplyBeautySalon(_owner, selectedHair, new UnitCustomModelParams());
+
+        await Assert.That(_owner.ModelParams).IsSameReferenceAs(priorModel);
+        await Assert.That(_owner.Equipment.GetItemBySlot((int)EquipmentItemSlot.Hair)).IsSameReferenceAs(oldHair);
+        await Assert.That(oldHair.Count).IsEqualTo(1);
+        await Assert.That(_allItems[oldHair.Id]).IsSameReferenceAs(oldHair);
+        await Assert.That(_deleted).IsEmpty();
+        if (certificate != null)
+            await Assert.That(certificate.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(24127, 24128)]
+    [Arguments(24127, 28412)]
+    [Arguments(24127, 24127)]
+    [Arguments(24127, 0)]
+    [Arguments(0, 0)]
+    [Arguments(0, 24128)]
+    public async Task ApplyBeautySalon_AllowedChoice_ChangesAppearanceAndUsesOneCertificate(int priorHair, int selectedHair)
+    {
+        _owner.ModelId = 10;
+        var oldHair = priorHair == 0 ? null : SetSalonHair((uint)priorHair);
+        if (selectedHair is 24128 or 28412)
+            _templates.Add((uint)selectedHair, new BodyPartTemplate
+            {
+                Id = (uint)selectedHair,
+                MaxCount = 1,
+                ModelId = _owner.ModelId,
+                SlotTypeId = (uint)EquipmentItemSlotType.Hair,
+                BeautyShopOnly = selectedHair == 28412
+            });
+        var certificate = AddItem(1, Item.SalonCertificate, 2);
+        var model = new UnitCustomModelParams().SetHairColorId(10222);
+
+        CharacterManager.ApplyBeautySalon(_owner, (uint)selectedHair, model);
+
+        var hair = _owner.Equipment.GetItemBySlot((int)EquipmentItemSlot.Hair);
+        await Assert.That(hair?.TemplateId ?? 0).IsEqualTo((uint)selectedHair);
+        await Assert.That(certificate.Count).IsEqualTo(1);
+        await Assert.That(_owner.ModelParams).IsSameReferenceAs(model);
+        if (priorHair == selectedHair)
+            await Assert.That(hair).IsSameReferenceAs(oldHair);
+        else if (oldHair != null)
+            await Assert.That(_deleted).Contains(oldHair.Id);
+    }
+
+    private Item SetSalonHair(uint templateId)
+    {
+        var template = new BodyPartTemplate
+        {
+            Id = templateId,
+            MaxCount = 1,
+            ModelId = _owner.ModelId,
+            SlotTypeId = (uint)EquipmentItemSlotType.Hair
+        };
+        _templates.Add(templateId, template);
+        var equipment = _owner.Equipment;
+        var hair = new BodyPart(2, template, 1)
+        {
+            OwnerId = _owner.Id,
+            SlotType = SlotType.Equipment,
+            Slot = (int)EquipmentItemSlot.Hair,
+            _holdingContainer = equipment
+        };
+        equipment.Items.Add(hair);
+        equipment.UpdateFreeSlotCount();
+        _allItems.Add(hair.Id, hair);
+        return hair;
+    }
+
+    [Test]
     public async Task LaterWalletFailure_RestoresExactRemovedItemAndDirtyStateWithoutEvents()
     {
         var item = AddItem(1, 100, 3);
