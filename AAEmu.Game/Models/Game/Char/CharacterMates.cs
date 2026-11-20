@@ -151,7 +151,6 @@ public class CharacterMates(Character owner)
 
         mount.Transform = Owner.Transform.CloneDetached(mount);
         mount.Transform.Local.SetPosition(spawnPosition.Position, spawnPosition.Rotation);
-        SusManager.Instance.ResetAnalyzeMountDeltaMovement(mount.Id);
 
         foreach (var skill in MateGameData.Instance.GetMateSkills(npcId))
             mount.Skills.Add(skill);

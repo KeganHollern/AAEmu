@@ -634,8 +634,12 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
         res |= _objects.TryRemove(obj.ObjId, out _);
         if (obj is BaseUnit)
             res |= _baseUnits.TryRemove(obj.ObjId, out _);
-        if (obj is Unit)
-            res |= _units.TryRemove(obj.ObjId, out _);
+        if (obj is Unit && _units.TryRemove(obj.ObjId, out var unit))
+        {
+            if (unit is Character or Units.Mate)
+                SusManager.ResetMovementAnalysis(unit);
+            res = true;
+        }
         if (obj is Doodad)
             res |= _doodads.TryRemove(obj.ObjId, out _);
         if (obj is Npc)

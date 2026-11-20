@@ -25,21 +25,17 @@ public class GameObject : IGameObject
             if (_disabledSetPosition == value)
                 return;
             _disabledSetPosition = value;
+            if (this is Unit mover && mover is Character or Units.Mate)
+                SusManager.ResetMovementAnalysis(mover);
             if (value)
             {
                 if (this is Unit unit)
                     unit.FallMovement.Reset();
                 if (this is Character character)
-                {
-                    SusManager.Instance.ResetAnalyzePlayerDeltaMovement(character.Id);
                     MovementValidation.Reset(character.ObjId);
-                }
 
                 if (this is Units.Mate pet)
-                {
-                    SusManager.Instance.ResetAnalyzeMountDeltaMovement(pet.Id);
                     MovementValidation.Reset(pet.ObjId);
-                }
 
                 if (this is Slave slave)
                     MovementValidation.Reset(slave.ObjId);
