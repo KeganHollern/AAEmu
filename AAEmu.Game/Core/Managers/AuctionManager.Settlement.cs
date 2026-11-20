@@ -32,7 +32,7 @@ public partial class AuctionManager
         if (ItemHasExpired(item, now))
             return ErrorMessageType.CanNotPutupItem;
 
-        var fee = ListingFee(buyoutPrice, duration);
+        var fee = ListingFee(startPrice, buyoutPrice, duration);
         if (player.Money < fee)
             return ErrorMessageType.CanNotPutupMoney;
 
@@ -172,7 +172,7 @@ public partial class AuctionManager
         var share = (int)((long)soldAmount * 9 / 10);
         var tax = soldAmount - share;
         var sellerMail = CreateAuctionMail(lot.ClientId, MailType.AucOffSuccess, ".auctionOffSuccess", "Successful Auction Notice",
-            $"body('{MailItemName(lot)}', {lot.Item.Count}, {share}, {soldAmount}, {tax}, {ListingFee(lot.DirectMoney, lot.Duration)})", share);
+            $"body('{MailItemName(lot)}', {lot.Item.Count}, {share}, {soldAmount}, {tax}, {ListingFee(lot.StartMoney, lot.DirectMoney, lot.Duration)})", share);
         var buyerMail = CreateAuctionMail(buyerId, MailType.AucBidWin, ".auctionBidWin", "Successful Purchase",
             $"body('{MailItemName(lot)}', {lot.Item.Count}, {soldAmount})");
         return sellerMail != null && buyerMail != null &&
@@ -281,9 +281,13 @@ public partial class AuctionManager
             (lot.DirectMoney == 0 || lot.BidMoney < lot.DirectMoney);
     }
 
-    private static int ListingFee(int buyoutPrice, AuctionDuration duration)
+    private static int ListingFee(int startPrice, int buyoutPrice, AuctionDuration duration)
     {
-        return (int)Math.Min(MaxListingFee, (long)buyoutPrice * ((int)duration + 1) / 100);
+        var listingPrice = buyoutPrice > 0 ? buyoutPrice : startPrice;
+        var percent = (int)duration + 1;
+        // Round to the nearest copper, with halves rounded up.
+        var roundedFee = ((long)listingPrice * percent + 50) / 100;
+        return (int)Math.Clamp(roundedFee, 1, MaxListingFee);
     }
 
     private string MailItemName(AuctionLot lot)
