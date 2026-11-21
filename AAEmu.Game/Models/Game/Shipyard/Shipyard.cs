@@ -324,6 +324,13 @@ public sealed partial class Shipyard : Unit
         });
     }
 
+    internal bool CanUseConstructionSkill(uint skillId)
+    {
+        var stepIndex = CurrentStep;
+        return !Retiring && !Retired && stepIndex >= 0 &&
+            Template.ShipyardSteps.TryGetValue(stepIndex, out var step) && step.SkillId == skillId;
+    }
+
     public void AddBuildAction()
     {
         if (CurrentStep == -1)

@@ -252,7 +252,7 @@ public partial class Skill
             return SkillResult.NoTarget;
         }
 
-        if (character != null && target is House && Template.TargetType == SkillTargetType.Building &&
+        if (character != null && target is House or Shipyard.Shipyard && Template.TargetType == SkillTargetType.Building &&
             Template.Effects.Find(effect => effect.Template is CraftEffect &&
                 effect.ConsumeItemId != 0 && effect.ConsumeItemCount > 0) is { } packEffect &&
             GetEquippedConstructionPack(character, packEffect) == null)
@@ -1463,7 +1463,7 @@ public partial class Skill
 
             if (player != null && lastAppliedEffect.ConsumeItemId != 0 && lastAppliedEffect.ConsumeItemCount > 0)
             {
-                if (targetSelf is House && Template.TargetType == SkillTargetType.Building &&
+                if (targetSelf is House or Shipyard.Shipyard && Template.TargetType == SkillTargetType.Building &&
                     lastAppliedEffect.Template is CraftEffect)
                 {
                     var pack = GetEquippedConstructionPack(player, lastAppliedEffect);

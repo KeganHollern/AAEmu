@@ -14,6 +14,7 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Shipyard;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
@@ -213,6 +214,58 @@ public sealed class PlayerSkillAuthorizationTests
     }
 
     [Test]
+    [Arguments(0, 14737u)]
+    [Arguments(1, 14740u)]
+    [Arguments(2, 14738u)]
+    [Arguments(3, 11823u)]
+    [Arguments(4, 11823u)]
+    [Arguments(5, 11823u)]
+    public async Task ShipyardConstruction_GrantsTheCurrentStageSkill(int step, uint skillId)
+    {
+        var shipyard = AddHarpoonClipperDrydock(step);
+        var skill = new SkillTemplate { Id = skillId, TargetType = SkillTargetType.Building };
+        var doodadTarget = SkillCastTarget.GetByType(SkillCastTargetType.Doodad);
+        doodadTarget.ObjId = shipyard.ObjId;
+
+        await Assert.That(CanUse(skill, new SkillCastUnitTarget(shipyard.ObjId))).IsTrue();
+        await Assert.That(CanUse(skill, doodadTarget)).IsTrue();
+    }
+
+    [Test]
+    public async Task ShipyardConstruction_RejectsWrongSkillTargetOrState()
+    {
+        var shipyard = AddHarpoonClipperDrydock(0);
+        var skill = new SkillTemplate { Id = 14737, TargetType = SkillTargetType.Building };
+        var target = new SkillCastUnitTarget(shipyard.ObjId);
+
+        await Assert.That(CanUse(new SkillTemplate { Id = 14740, TargetType = SkillTargetType.Building }, target)).IsFalse();
+        await Assert.That(CanUse(new SkillTemplate { Id = 14737, TargetType = SkillTargetType.AnyUnit }, target)).IsFalse();
+        await Assert.That(CanUse(skill, new SkillCastUnitTarget(_character.ObjId))).IsFalse();
+
+        shipyard.RestoreConstruction(-1, 0, false);
+        await Assert.That(CanUse(skill, target)).IsFalse();
+
+        shipyard.RestoreConstruction(0, 0, false);
+        shipyard.Retiring = true;
+        await Assert.That(CanUse(skill, target)).IsFalse();
+
+        shipyard.Retiring = false;
+        shipyard.Retired = true;
+        await Assert.That(CanUse(skill, target)).IsFalse();
+    }
+
+    [Test]
+    public async Task ShipyardConstruction_RejectsDifferentInstance()
+    {
+        var shipyard = AddHarpoonClipperDrydock(0);
+        shipyard.Transform.InstanceId = 1;
+        AddToWorld(shipyard);
+
+        var skill = new SkillTemplate { Id = 14737, TargetType = SkillTargetType.Building };
+        await Assert.That(CanUse(skill, new SkillCastUnitTarget(shipyard.ObjId))).IsFalse();
+    }
+
+    [Test]
     [Arguments(173u, 3590u, AbilityType.General)]
     [Arguments(188u, 4433u, AbilityType.General)]
     [Arguments(300u, 500u, AbilityType.Death)]
@@ -303,6 +356,23 @@ public sealed class PlayerSkillAuthorizationTests
     {
         return SkillCastAuthorization.CanUseCharacterSkill(_character, skill, new SkillCasterUnit(70),
             target ?? new SkillCastUnitTarget(70));
+    }
+
+    private Shipyard AddHarpoonClipperDrydock(int step)
+    {
+        var template = new ShipyardsTemplate { Id = 7 };
+        uint[] skills = [14737, 14740, 14738, 11823, 11823, 11823];
+        for (var index = 0; index < skills.Length; index++)
+            template.ShipyardSteps.Add(index, new ShipyardSteps { SkillId = skills[index], NumActions = 1 });
+
+        var shipyard = new Shipyard
+        {
+            ObjId = 83, OwnerId = 71, Template = template,
+            ShipyardData = new ShipyardData { Type2 = 71, TemplateId = template.Id }
+        };
+        shipyard.RestoreConstruction(step, 0, false);
+        AddToWorld(shipyard);
+        return shipyard;
     }
 
     private void AddToWorld(GameObject unit)
