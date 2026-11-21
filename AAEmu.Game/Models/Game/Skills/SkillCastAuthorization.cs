@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Skills.Templates;
 
 namespace AAEmu.Game.Models.Game.Skills;
@@ -25,6 +26,17 @@ internal static class SkillCastAuthorization
         var world = character.ParentWorld;
         if (world == null || target == null)
             return false;
+
+        if (skill.TargetType == SkillTargetType.Building &&
+            target.Type is SkillCastTargetType.Unit or SkillCastTargetType.Doodad &&
+            world.GetBaseUnit(target.ObjId) is House house)
+        {
+            return ReferenceEquals(house.ParentWorld, world) &&
+                house.Transform.InstanceId == character.Transform.InstanceId &&
+                house.CurrentStep >= 0 &&
+                house.Template.BuildSteps.TryGetValue(house.CurrentStep, out var step) &&
+                step.SkillId == skill.Id && house.AllowedToInteract(character);
+        }
 
         if (target is SkillCastDoodadTarget)
         {

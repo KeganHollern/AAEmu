@@ -12,6 +12,7 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Static;
@@ -177,6 +178,38 @@ public sealed class PlayerSkillAuthorizationTests
         await Assert.That(CanUse(new SkillTemplate { Id = 16927 }, target)).IsFalse();
         npc.Template.NpcInteractionSetId = 6;
         await Assert.That(CanUse(new SkillTemplate { Id = 21521 }, target)).IsFalse();
+    }
+
+    [Test]
+    [Arguments(0, 14575u, 14574u)]
+    [Arguments(1, 14575u, 14574u)]
+    [Arguments(2, 14574u, 14575u)]
+    public async Task HouseConstruction_GrantsOnlyTheCurrentStageSkill(int step, uint skillId, uint otherSkillId)
+    {
+        var template = new HousingTemplate { Id = 172 };
+        template.BuildSteps.Add(0, new HousingBuildStep { SkillId = 14575, NumActions = 1 });
+        template.BuildSteps.Add(1, new HousingBuildStep { SkillId = 14575, NumActions = 1 });
+        template.BuildSteps.Add(2, new HousingBuildStep { SkillId = 14574, NumActions = 1 });
+        var house = new House
+        {
+            ObjId = 82, OwnerId = _character.Id, Template = template,
+            IsBeingLoadedFromDb = true, CurrentStep = step
+        };
+        AddToWorld(house);
+        var skill = new SkillTemplate { Id = skillId, TargetType = SkillTargetType.Building };
+        var otherSkill = new SkillTemplate { Id = otherSkillId, TargetType = SkillTargetType.Building };
+        var unitTarget = new SkillCastUnitTarget(house.ObjId);
+        var doodadTarget = SkillCastTarget.GetByType(SkillCastTargetType.Doodad);
+        doodadTarget.ObjId = house.ObjId;
+
+        await Assert.That(CanUse(skill, unitTarget)).IsTrue();
+        await Assert.That(CanUse(skill, doodadTarget)).IsTrue();
+        await Assert.That(CanUse(otherSkill, unitTarget)).IsFalse();
+        await Assert.That(CanUse(skill, new SkillCastUnitTarget(_character.ObjId))).IsFalse();
+
+        house.CurrentStep = -1;
+        await Assert.That(CanUse(skill, unitTarget)).IsFalse();
+        await Assert.That(CanUse(skill, doodadTarget)).IsFalse();
     }
 
     [Test]

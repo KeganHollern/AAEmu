@@ -15,6 +15,7 @@ using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Formulas;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
@@ -249,6 +250,15 @@ public partial class Skill
             if (caster is Npc npc)
                 npc.Ai?.OnNoAggroTarget();
             return SkillResult.NoTarget;
+        }
+
+        if (character != null && target is House && Template.TargetType == SkillTargetType.Building &&
+            Template.Effects.Find(effect => effect.Template is CraftEffect &&
+                effect.ConsumeItemId != 0 && effect.ConsumeItemCount > 0) is { } packEffect &&
+            GetEquippedConstructionPack(character, packEffect) == null)
+        {
+            Cancelled = true;
+            return SkillResult.NeedReagent;
         }
 
         var mateRecoveryResult = MateRecovery.Check(caster, casterCaster, targetCaster, this);
@@ -1453,7 +1463,19 @@ public partial class Skill
 
             if (player != null && lastAppliedEffect.ConsumeItemId != 0 && lastAppliedEffect.ConsumeItemCount > 0)
             {
-                if (lastAppliedEffect.ConsumeSourceItem)
+                if (targetSelf is House && Template.TargetType == SkillTargetType.Building &&
+                    lastAppliedEffect.Template is CraftEffect)
+                {
+                    var pack = GetEquippedConstructionPack(player, lastAppliedEffect);
+                    if (pack == null)
+                    {
+                        Cancelled = true;
+                        return;
+                    }
+
+                    consumedItems.Add((pack, lastAppliedEffect.ConsumeItemCount));
+                }
+                else if (lastAppliedEffect.ConsumeSourceItem)
                 {
                     consumedItemTemplates.Add((lastAppliedEffect.ConsumeItemId, lastAppliedEffect.ConsumeItemCount));
                 }
@@ -1679,6 +1701,12 @@ public partial class Skill
                         amount, null);
             }
         }
+    }
+
+    private static Item GetEquippedConstructionPack(Character character, SkillEffect effect)
+    {
+        var pack = character.Inventory?.GetEquippedBySlot(EquipmentItemSlot.Backpack);
+        return pack?.TemplateId == effect.ConsumeItemId && pack.Count >= effect.ConsumeItemCount ? pack : null;
     }
 
     /// <summary>
