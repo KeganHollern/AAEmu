@@ -416,6 +416,12 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         return true;
     }
 
+    internal static void LoadGradeFlags(SQLiteWrapperReader reader, ItemTemplate template)
+    {
+        template.Gradable = reader.GetBoolean("gradable", fromString: true);
+        template.GradeEnchantable = reader.GetBoolean("grade_enchantable", fromString: true);
+    }
+
     public void Load() => Load(SQLite.CreateConnection());
 
     public void Load(SqliteConnection connection)
@@ -1026,8 +1032,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                         template.UseSkillAsReagent = reader.GetBoolean("use_skill_as_reagent", true);
                         template.ImplId = (ItemImplEnum)reader.GetInt32("impl_id");
                         template.BuffId = reader.GetUInt32("buff_id");
-                        template.Gradable = reader.GetBoolean("gradable", true);
-                        template.GradeEnchantable = reader.GetBoolean("grade_enchantable", false);
+                        LoadGradeFlags(reader, template);
                         template.LootMulti = reader.GetBoolean("loot_multi", true);
                         template.LootQuestId = reader.GetUInt32("loot_quest_id");
                         template.HonorPrice = reader.GetInt32("honor_price");

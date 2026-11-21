@@ -24,6 +24,7 @@ using AAEmu.Game.Models.Tasks.Characters;
 using AAEmu.Game.Utils;
 using AAEmu.Game.Utils.DB;
 
+using Microsoft.Data.Sqlite;
 using MySql.Data.MySqlClient;
 
 using NLog;
@@ -98,6 +99,33 @@ public partial class CharacterManager(
         if (_expandExpertLimits.TryGetValue(step, out var limit))
             return limit;
         return null;
+    }
+
+    internal void LoadExpertLimits(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT * FROM expert_limits ORDER BY up_limit ASC";
+        command.Prepare();
+        using var reader = new SQLiteWrapperReader(command.ExecuteReader());
+        var step = 0;
+        while (reader.Read())
+        {
+            var template = new ExpertLimit
+            {
+                Id = reader.GetUInt32("id"),
+                UpLimit = reader.GetInt32("up_limit"),
+                ExpertLimitCount = reader.GetByte("expert_limit"),
+                Advantage = reader.GetInt32("advantage"),
+                CastAdvantage = reader.GetInt32("cast_adv"),
+                ExpMultiplier = reader.GetInt32("exp_mul"),
+                Show = reader.GetBoolean("show", fromString: true),
+                UpCurrencyId = reader.GetUInt32("up_currency_id", 0),
+                UpPrice = reader.GetInt32("up_price"),
+                DownCurrencyId = reader.GetUInt32("down_currency_id", 0),
+                DownPrice = reader.GetInt32("down_price")
+            };
+            _expertLimits.Add(step++, template);
+        }
     }
 
     public void Load()
@@ -345,33 +373,7 @@ public partial class CharacterManager(
                 }
             }
 
-            using (var command = connection.CreateCommand())
-            {
-                command.CommandText = "SELECT * FROM expert_limits ORDER BY up_limit ASC";
-                command.Prepare();
-                using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
-                {
-                    var step = 0;
-                    while (reader.Read())
-                    {
-                        var template = new ExpertLimit
-                        {
-                            Id = reader.GetUInt32("id"),
-                            UpLimit = reader.GetInt32("up_limit"),
-                            ExpertLimitCount = reader.GetByte("expert_limit"),
-                            Advantage = reader.GetInt32("advantage"),
-                            CastAdvantage = reader.GetInt32("cast_adv"),
-                            ExpMultiplier = reader.GetInt32("exp_mul"),
-                            Show = reader.GetBoolean("show"),
-                            UpCurrencyId = reader.GetUInt32("up_currency_id", 0),
-                            UpPrice = reader.GetInt32("up_price"),
-                            DownCurrencyId = reader.GetUInt32("down_currency_id", 0),
-                            DownPrice = reader.GetInt32("down_price")
-                        };
-                        _expertLimits.Add(step++, template);
-                    }
-                }
-            }
+            LoadExpertLimits(connection);
 
             using (var command = connection.CreateCommand())
             {

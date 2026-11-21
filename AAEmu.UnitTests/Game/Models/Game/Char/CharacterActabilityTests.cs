@@ -12,6 +12,7 @@ using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.UnitTests.Utils.Mocks;
+using Microsoft.Data.Sqlite;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
 
@@ -132,6 +133,37 @@ public sealed class CharacterActabilityTests
         _owner.Actability.Regrade(uint.MaxValue, true);
         await Assert.That(novice.Step).IsEqualTo((byte)0);
         await Assert.That(maximum.Step).IsEqualTo((byte)6);
+    }
+
+    [Test]
+    public async Task Regrade_LoadedTextVisibilityAllowsVisibleRankAndBlocksHiddenRank()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+                              CREATE TABLE expert_limits (
+                                  id INTEGER, up_limit INTEGER, expert_limit INTEGER, advantage INTEGER,
+                                  cast_adv INTEGER, exp_mul INTEGER, show TEXT, up_currency_id INTEGER,
+                                  up_price INTEGER, down_currency_id INTEGER, down_price INTEGER);
+                              INSERT INTO expert_limits VALUES
+                                  (1,10000,0,0,0,0,'t',0,0,0,0),
+                                  (2,20000,7,5,5,20,'t',0,0,0,0),
+                                  (3,30000,6,10,10,40,'f',0,0,0,0);
+                              """;
+        command.ExecuteNonQuery();
+        _ranks.Clear();
+        CharacterManager.Instance.LoadExpertLimits(connection);
+        var ability = AddAbility(1, 0, 10000);
+
+        _owner.Actability.Regrade(1, true);
+        await Assert.That(ability.Step).IsEqualTo((byte)1);
+        await Assert.That(ability.Point).IsEqualTo(10000);
+
+        ability.Point = 20000;
+        _owner.Actability.Regrade(1, true);
+        await Assert.That(ability.Step).IsEqualTo((byte)1);
+        await Assert.That(ability.Point).IsEqualTo(20000);
     }
 
     [Test]
