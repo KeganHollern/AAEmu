@@ -67,14 +67,15 @@ public class CharacterMails
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            var now = DateTime.UtcNow;
             if (MailManager.Instance._allPlayerMails.TryGetValue(id, out var mail) &&
-                !MailManager.IsExpired(mail, DateTime.UtcNow) &&
-                (isSent ? mail.Header.SenderId == Self.Id : mail.Header.ReceiverId == Self.Id))
+                !MailManager.IsExpired(mail, now) &&
+                (isSent ? mail.Header.SenderId == Self.Id : mail.Header.ReceiverId == Self.Id && mail.Body.RecvDate <= now))
             {
                 if (mail.Header.Status == MailStatus.Unread && !isSent)
                 {
                     UnreadMailCount.UpdateReceived(mail.MailType, -1);
-                    mail.OpenDate = DateTime.UtcNow;
+                    mail.OpenDate = now;
                     mail.Header.Status = MailStatus.Read;
                     mail.IsDelivered = true;
                     MailManager.Instance.NotifyMailReceiverOpenedIfSenderOnline(mail);
@@ -128,12 +129,18 @@ public class CharacterMails
         lock (SaveManager.PersistenceSyncRoot)
         {
             var source = MailManager.Instance.GetMailById(mailId);
-            if (source != null && (source.HasUnresolvedAttachments || MailManager.IsExpired(source, DateTime.UtcNow)))
+            var now = DateTime.UtcNow;
+            if (source != null && (source.HasUnresolvedAttachments || MailManager.IsExpired(source, now)))
                 return false;
+            // MySQL can round an immediate auction delivery forward. The
+            // durable receipt path must handle replays before the due check.
             var claim = _auctionMailClaimManager.TryClaim(Self, this, mailId, takeMoney,
                 takeItems, takeAllSelected, specifiedItemId);
             if (claim != AuctionMailClaimResult.NotHandled)
                 return claim == AuctionMailClaimResult.Success;
+
+            if (source != null && source.Body.RecvDate > now)
+                return false;
 
             var res = false;
             if (MailManager.Instance._allPlayerMails.TryGetValue(mailId, out var thisMail) &&

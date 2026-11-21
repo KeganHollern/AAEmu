@@ -13,7 +13,7 @@ public class CSTakeAllAttachmentItemPacket() : GamePacket(CSOffsets.CSTakeAllAtt
     {
         var mailId = stream.ReadInt64();
         Logger.Debug($"CSTakeAllAttachmentItemPacket {mailId} -> {Connection.ActiveChar.Name}");
-        if (!ServiceInteraction.CanUseMailbox(Connection.ActiveChar))
+        if (!ServiceInteraction.CanClaimMail(Connection.ActiveChar))
         {
             Connection.ActiveChar.SendErrorMessage(ErrorMessageType.MailFailMailboxNotFound);
             return;

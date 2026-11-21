@@ -1,4 +1,6 @@
+using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Utils;
@@ -42,5 +44,20 @@ internal static class ServiceInteraction
         CanUseDoodad(character, nameof(DoodadObj.Funcs.DoodadFuncAuctionUi));
 
     internal static bool CanUseMailbox(Character character, uint objectId = 0) =>
-        CanUseDoodad(character, nameof(DoodadObj.Funcs.DoodadFuncNaviOpenMailbox), objectId);
+        CanUseDoodad(character, nameof(DoodadFuncNaviOpenMailbox), objectId);
+
+    internal static bool CanClaimMail(Character character)
+    {
+        if (CanUseMailbox(character))
+            return true;
+
+        // r208022 keeps the mailbox target and cached inbox on the client. A
+        // claim can be the first packet after it reopens a fixed mailbox.
+        return WorldManager.GetAround<Doodad>(character).Any(mailbox =>
+            mailbox.Despawn == DateTime.MinValue &&
+            mailbox.ParentWorld?.SpawnManager?.IsAuthoredDoodadSpawner(mailbox.Spawner) == true &&
+            CanReach(character, mailbox) &&
+            mailbox.CurrentFuncs?.Any(func => func.FuncType == nameof(DoodadFuncNaviOpenMailbox) &&
+                DoodadPermissionRules.Allows(character, mailbox, func.PermId)) == true);
+    }
 }

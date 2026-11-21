@@ -12,6 +12,8 @@ using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Funcs;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Features;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
@@ -26,6 +28,8 @@ namespace AAEmu.UnitTests.Game.Core.Managers;
 [NotInParallel]
 public sealed class MailTests
 {
+    private static readonly FieldInfo s_worldInstance = typeof(Singleton<WorldManager>)
+        .GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
     private CharacterMock _character;
     private CharacterMock _otherRecipient;
     private CharacterMock _sender;
@@ -40,11 +44,13 @@ public sealed class MailTests
     private Mock<ISession> _otherRecipientSession;
     private Mock<ISession> _senderSession;
     private ItemManager _previousItems;
+    private object _previousWorldManager;
     private WorldConfig _previousWorld;
 
     [Before(Test)]
     public void Setup()
     {
+        _previousWorldManager = s_worldInstance.GetValue(null);
         _previousWorld = AppConfiguration.Instance.World;
         AppConfiguration.Instance.World = new WorldConfig();
         _recipientSession = Mock.Of<ISession>();
@@ -158,6 +164,7 @@ public sealed class MailTests
     [After(Test)]
     public void Teardown()
     {
+        s_worldInstance.SetValue(null, _previousWorldManager);
         AppConfiguration.Instance.World = _previousWorld;
         typeof(Singleton<ItemManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!
             .SetValue(null, _previousItems);
@@ -267,6 +274,136 @@ public sealed class MailTests
         {
             worldField.SetValue(null, previousWorlds);
         }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ClaimMailMoney_FixedMailboxWithoutOpenContext_ClaimsOnceAtFiveMeters(bool sequential)
+    {
+        AddFixedMailbox();
+        var mail = AddReceivedMail(copperCoins: 25);
+        var balance = _character.Money;
+        await Assert.That(ServiceInteraction.CanUseMailbox(_character)).IsFalse();
+        await Assert.That(ServiceInteraction.CanClaimMail(_character)).IsTrue();
+
+        ClaimMailMoney(_character, mail.Id, sequential);
+        ClaimMailMoney(_character, mail.Id, sequential);
+
+        await Assert.That(_character.Money).IsEqualTo(balance + 25);
+        await Assert.That(mail.Body.CopperCoins).IsEqualTo(0);
+        await Assert.That(mail.Header.Attachments).IsEqualTo((byte)0);
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Read);
+        _senderSession.SendPacket(Is<byte[]>(packet => IsPacket(packet, SCOffsets.SCMailReceiverOpenedPacket, mail.Id)))
+            .WasCalled(Times.Once);
+    }
+
+    [Test]
+    [Arguments("vertical-range")]
+    [Arguments("other-world")]
+    [Arguments("other-instance")]
+    [Arguments("unregistered-spawner")]
+    [Arguments("stale-doodad")]
+    [Arguments("missing-mailbox-function")]
+    [Arguments("denied-permission")]
+    [Arguments("despawning")]
+    public async Task TakeAttachmentMoney_InvalidFixedMailbox_LeavesMailUntouched(string condition)
+    {
+        var mailbox = AddFixedMailbox();
+        switch (condition)
+        {
+            case "vertical-range":
+                mailbox.Transform.Local.SetPosition(16, 16, 7.01f);
+                break;
+            case "other-world":
+                var otherWorld = new WorldInstance(new WorldTemplate { Id = 2 }, 0, true, 2);
+                RegisterMailboxWorld(otherWorld);
+                mailbox.ParentWorld.RemoveObject(mailbox);
+                mailbox.ParentWorld = otherWorld;
+                otherWorld.AddObject(mailbox);
+                RegisterMailboxSpawner(mailbox);
+                break;
+            case "other-instance":
+                mailbox.Transform.GetType().GetField("_instanceId", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(mailbox.Transform, 2U);
+                break;
+            case "unregistered-spawner":
+                mailbox.Spawner = new DoodadSpawner
+                {
+                    Id = mailbox.Spawner.Id, UnitId = mailbox.TemplateId, ParentWorld = mailbox.ParentWorld
+                };
+                break;
+            case "stale-doodad":
+                var world = mailbox.ParentWorld;
+                world.RemoveObject(mailbox);
+                world.AddObject(new Doodad { ObjId = mailbox.ObjId, ParentWorld = world });
+                break;
+            case "missing-mailbox-function":
+                mailbox.CurrentFuncs.Clear();
+                break;
+            case "denied-permission":
+                mailbox.CurrentFuncs[0].PermId = (uint)DoodadFuncPermission.OwnerOnly;
+                break;
+            case "despawning":
+                mailbox.Despawn = DateTime.UtcNow.AddMinutes(1);
+                break;
+        }
+        var mail = AddReceivedMail(copperCoins: 25);
+        var balance = _character.Money;
+
+        ClaimMailMoney(_character, mail.Id);
+
+        await Assert.That(_character.Money).IsEqualTo(balance);
+        await Assert.That(mail.Body.CopperCoins).IsEqualTo(25);
+        await Assert.That(mail.Header.Attachments).IsEqualTo((byte)1);
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCErrorMsgPacket) &&
+            BitConverter.ToInt16(packet, 8) == (short)ErrorMessageType.MailFailMailboxNotFound)).WasCalled(Times.Once);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TradePackMoney_FixedMailbox_MustBeDueAndBelongToTheRecipient(bool sequential)
+    {
+        AddFixedMailbox();
+        var mail = AddReceivedMail(copperCoins: 25);
+        mail.MailType = MailType.SysSellBackpack;
+        mail.Body.RecvDate = mail.Body.SendDate.AddHours(22);
+        mail.IsDirty = false;
+        var balance = _character.Money;
+        var otherBalance = _otherRecipient.Money;
+
+        _mails.ReadMail(false, mail.Id);
+        ClaimMailMoney(_character, mail.Id, sequential);
+
+        await Assert.That(_character.Money).IsEqualTo(balance);
+        await Assert.That(mail.Body.CopperCoins).IsEqualTo(25);
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+        await Assert.That(mail.IsDelivered).IsFalse();
+        await Assert.That(mail.IsDirty).IsFalse();
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailBodyPacket)))
+            .WasCalled(Times.Never);
+
+        mail.Body.SendDate = DateTime.UtcNow.AddHours(-22).AddSeconds(-1);
+        mail.Body.RecvDate = mail.Body.SendDate.AddHours(22);
+        await Assert.That(ServiceInteraction.CanClaimMail(_otherRecipient)).IsTrue();
+        ClaimMailMoney(_otherRecipient, mail.Id, sequential);
+
+        await Assert.That(_otherRecipient.Money).IsEqualTo(otherBalance);
+        await Assert.That(mail.Body.CopperCoins).IsEqualTo(25);
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Unread);
+
+        _mails.ReadMail(false, mail.Id);
+        ClaimMailMoney(_character, mail.Id, sequential);
+        ClaimMailMoney(_character, mail.Id, sequential);
+
+        await Assert.That(_character.Money).IsEqualTo(balance + 25);
+        await Assert.That(mail.Body.CopperCoins).IsEqualTo(0);
+        await Assert.That(mail.Header.Status).IsEqualTo(MailStatus.Read);
+        await Assert.That(mail.IsDelivered).IsTrue();
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCMailBodyPacket)))
+            .WasCalled(Times.Once);
     }
 
     [Test]
@@ -728,6 +865,68 @@ public sealed class MailTests
         await Assert.That(fullyRestored).IsTrue();
         await Assert.That(restoredBoundCerts).IsEqualTo(1);
         await Assert.That(restoredTaxCerts).IsEqualTo(2);
+    }
+
+    private Doodad AddFixedMailbox()
+    {
+        var manager = new WorldManager(null, null, null, null, null);
+        s_worldInstance.SetValue(null, manager);
+        var world = new WorldInstance(new WorldTemplate
+        {
+            Id = 1, CellX = 1, CellY = 1, ZoneKeyByRegions = new uint[16, 16]
+        }, 0, true, 1)
+        {
+            Regions = new Region[16, 16]
+        };
+        RegisterMailboxWorld(world);
+        var region = world.GetRegion(0, 0);
+        foreach (var character in new[] { _character, _otherRecipient })
+        {
+            character.ObjId = character.Id;
+            character.ParentWorld = world;
+            character.Region = region;
+            character.Transform.Local.SetPosition(16, 16, 2);
+            world.AddObject(character);
+            region.AddObject(character);
+        }
+        var mailbox = new Doodad
+        {
+            ObjId = 99, TemplateId = 320, OwnerType = DoodadOwnerType.System, ParentWorld = world, Region = region
+        };
+        RegisterMailboxSpawner(mailbox);
+        mailbox.CurrentFuncs.Add(new DoodadFunc { FuncType = nameof(DoodadFuncNaviOpenMailbox) });
+        mailbox.Transform.Local.SetPosition(21, 16, 2);
+        world.AddObject(mailbox);
+        region.AddObject(mailbox);
+        return mailbox;
+    }
+
+    private static void RegisterMailboxWorld(WorldInstance world)
+    {
+        var worlds = (IDictionary<uint, WorldInstance>)typeof(WorldManager)
+            .GetField("_worlds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(WorldManager.Instance)!;
+        worlds.Add(world.Id, world);
+    }
+
+    private static void RegisterMailboxSpawner(Doodad mailbox)
+    {
+        var world = mailbox.ParentWorld;
+        world.SpawnManager ??= new SpawnManager(world);
+        var spawner = new DoodadSpawner { Id = 7, UnitId = mailbox.TemplateId, ParentWorld = world, Last = mailbox };
+        var registry = (Dictionary<uint, DoodadSpawner>)typeof(SpawnManager)
+            .GetProperty("DoodadSpawners", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(world.SpawnManager)!;
+        registry.Add(spawner.Id, spawner);
+        mailbox.Spawner = spawner;
+    }
+
+    private static void ClaimMailMoney(Character character, long mailId, bool sequential = false)
+    {
+        var stream = new PacketStream().Write(mailId);
+        stream.Rollback();
+        if (sequential)
+            new CSTakeAttachmentSequentially { Connection = character.Connection }.Read(stream);
+        else
+            new CSTakeAttachmentMoneyPacket { Connection = character.Connection }.Read(stream);
     }
 
     private BaseMail AddReceivedMail(
