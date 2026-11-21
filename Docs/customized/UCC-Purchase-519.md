@@ -17,6 +17,8 @@ The x2game source and dump share timestamp `543cb835`, image base `38ff0000`, en
 
 `GetMakeUccConsumeInfo` at `0x394b5e80` and `UploadEmblem` at `0x393dcec0` read the printer's StampMaker rule. Simple crests use its copper cost. Custom images use its material and count, with 0 copper. The current compact gives printer 3038 an output of item 17663, a simple cost of 50,000 copper, and a custom cost of item 11127 x1. Both current StampMaker rows for 3038 have these values. Doodad 2633 uses the separate legacy `DoodadFuncUccImprint` path. It does not supply a StampMaker rule, so it cannot authorize this purchase. Its X2UI `OPEN_EMBLEM_IMPRINT_UI` handler at source lines 458-460 only writes a chat log entry.
 
+The dispatcher at `0x393bc260` calls `0x393b82a0` for StampMaker type `0x3d`. The handler sets local interaction type `7` and sends UI event `0x1a4`. The dispatcher then returns before the ordinary skill send.
+
 The X2UI script at source lines 358-392 shows separate copper and custom material dialogs. Lines 415-424 pass background and foreground pattern IDs, or 0 for an absent layer. The foreground must exist for a simple crest. `emblem_patterns.kind_id` identifies background kinds 1-3 and foreground kind 4.
 
 Renderer conversion at `0x3815c0e0` accepts positive power-of-two dimensions through 256. It keeps supported compressed input or converts an image to DXT5. DDS writer `0x381b94c0` and size function `0x381a5370` define the 128-byte header and compressed mip sizes. Supported output FourCC values are DXT1, DXT3, DXT5, and ATI2. The maximum valid 256x256 mip chain is 87,536 bytes. These rules permit smaller valid images. The header and payload must agree on format, dimensions, and mip count.
@@ -34,10 +36,12 @@ Producer `0x393da640`, constructor `0x393d97f0`, and serializers `0x397bcfc0`, `
 
 ## Server behavior and tests
 
-The server checks the active character, current printer interaction, world instance, 5 m range, current StampMaker rule, patterns, and colors. It rejects a second active upload. It checks the byte declaration before storage, every part before append, and the complete DDS before purchase. Disconnect removes the exact connection's pending upload.
+The server checks the active character and game connection. It resolves the printer ID from the start packet in the active character's world instance. The printer must be live and within 5 m, and its current StampMaker function must permit the character. The server stores that printer and function for the upload and checks both again for each part and completion.
+
+The server checks the patterns and colors at upload start. It rejects a second active upload. It checks the byte declaration before storage, every part before append, and the complete DDS before purchase. Disconnect removes the exact connection's pending upload.
 
 The completion packet starts one inventory mutation. A simple crest debits copper. A custom crest consumes the authored material. The mutation creates the output with its UCC ID. The current economy checkpoint saves the wallet, material removal, output item, and crest row in one transaction. A known failure restores the assets. A repeated completion cannot charge again. The FILETIME conversion now matches the client.
 
-The 62 focused unit cases cover valid bodies, exact status bodies, malformed lengths, pattern and color rejection, DDS bounds, part order, cancellation, duplicate start, movement, character replacement, funds, capacity, and commit failure. The 4 disposable MySQL cases cover simple and custom success, rollback after the crest insert, exact persisted costs, output reload, and repeated completion. No schema or compact change is needed.
+The unit tests cover the native start without a separate interaction, printer range, permissions, live printer identity, and the current StampMaker function. They also cover packet data, DDS limits, part order, duplicate start, character replacement, costs, capacity, and commit failure. The 4 MySQL cases cover simple and custom success, rollback after the crest insert, exact costs, output reload, and repeated completion.
 
 The packet layout, cost rule, and DDS limits have native and script evidence. A live r208022 purchase still needs human validation. Create 1 simple crest and 1 custom crest at printer 3038. Check the shown cost, output image, reconnect result, and unchanged assets after each rejected purchase.
