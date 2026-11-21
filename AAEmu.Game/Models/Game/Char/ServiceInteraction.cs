@@ -46,6 +46,11 @@ internal static class ServiceInteraction
     internal static bool CanUseMailbox(Character character, uint objectId = 0) =>
         CanUseDoodad(character, nameof(DoodadFuncNaviOpenMailbox), objectId);
 
+    internal static bool CanSendMail(Character character, uint mailboxId) =>
+        mailboxId != 0 && character?.ParentWorld?.GetDoodad(mailboxId) is { } mailbox &&
+        (ReferenceEquals(character.CurrentInteractionObject, mailbox) || IsAuthoredFixedMailbox(mailbox)) &&
+        IsUsableMailbox(character, mailbox);
+
     internal static bool CanClaimMail(Character character)
     {
         if (CanUseMailbox(character))
@@ -53,11 +58,15 @@ internal static class ServiceInteraction
 
         // r208022 keeps the mailbox target and cached inbox on the client. A
         // claim can be the first packet after it reopens a fixed mailbox.
-        return WorldManager.GetAround<Doodad>(character).Any(mailbox =>
-            mailbox.Despawn == DateTime.MinValue &&
-            mailbox.ParentWorld?.SpawnManager?.IsAuthoredDoodadSpawner(mailbox.Spawner) == true &&
-            CanReach(character, mailbox) &&
-            mailbox.CurrentFuncs?.Any(func => func.FuncType == nameof(DoodadFuncNaviOpenMailbox) &&
-                DoodadPermissionRules.Allows(character, mailbox, func.PermId)) == true);
+        return WorldManager.GetAround<Doodad>(character)
+            .Any(mailbox => IsAuthoredFixedMailbox(mailbox) && IsUsableMailbox(character, mailbox));
     }
+
+    private static bool IsAuthoredFixedMailbox(Doodad mailbox) =>
+        mailbox.ParentWorld?.SpawnManager?.IsAuthoredDoodadSpawner(mailbox.Spawner) == true;
+
+    private static bool IsUsableMailbox(Character character, Doodad mailbox) =>
+        mailbox.Despawn == DateTime.MinValue && CanReach(character, mailbox) &&
+        mailbox.CurrentFuncs?.Any(func => func.FuncType == nameof(DoodadFuncNaviOpenMailbox) &&
+            DoodadPermissionRules.Allows(character, mailbox, func.PermId)) == true;
 }
