@@ -27,6 +27,15 @@ internal static class SkillCastAuthorization
         if (world == null || target == null)
             return false;
 
+        // The r208022 completion action uses an AnyUnit skill with a Unit target.
+        if (skill.Id == Shipyard.Shipyard.LaunchSkillId && skill.TargetType == SkillTargetType.AnyUnit &&
+            target is SkillCastUnitTarget && world.GetBaseUnit(target.ObjId) is Shipyard.Shipyard launchYard)
+        {
+            return ReferenceEquals(launchYard.ParentWorld, world) &&
+                launchYard.Transform.InstanceId == character.Transform.InstanceId &&
+                launchYard.CanStartLaunch(character.Id);
+        }
+
         if (skill.TargetType == SkillTargetType.Building &&
             target.Type is SkillCastTargetType.Unit or SkillCastTargetType.Doodad &&
             world.GetBaseUnit(target.ObjId) is { } building &&

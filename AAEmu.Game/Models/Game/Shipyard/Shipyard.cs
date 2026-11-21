@@ -10,6 +10,8 @@ namespace AAEmu.Game.Models.Game.Shipyard;
 
 public sealed partial class Shipyard : Unit
 {
+    internal const uint LaunchSkillId = 11002;
+
     public override float Scale => 1.0f;
     private readonly object _lock = new();
     private bool _isDirty;
@@ -323,6 +325,10 @@ public sealed partial class Shipyard : Unit
             BroadcastPacket(new SCUnitPointsPacket(ObjId, Hp, Mp), true);
         });
     }
+
+    internal bool CanStartLaunch(uint characterId) =>
+        !IsDead && !Retiring && !Retired && ShipyardData.Type2 == characterId &&
+        CurrentStep == -1 && ShipyardData.Step != 1000;
 
     internal bool CanUseConstructionSkill(uint skillId)
     {

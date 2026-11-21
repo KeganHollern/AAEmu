@@ -37,6 +37,18 @@ Protection uses the original placement time and the authored `tax_duration` valu
 Restart does not renew protection.
 The saved `state_hp` value preserves the last field of `SCShipyardStateData` without a new interpretation of that field.
 
+### Owner launch request
+
+The r208022 client appends skill `11002` after the material stages in `394d8600`.
+The action at `393c0320` checks the owner and uses a Unit target for the completed drydock.
+`CSStartSkill` (`0x052`) has a 13-byte body for this action.
+It sends the 32-bit skill ID, the Unit caster and target with 3-byte object IDs, and a zero object flag.
+The compact defines this skill as `AnyUnit` with the `CraftGetItem` effect.
+
+Game grants the action to the owner of a completed drydock in the same world and instance.
+The result uses the current reward transaction and checks the launch state again before the grant.
+An active ceremony, dead drydock, or drydock in removal rejects the action.
+
 ## Destruction and salvage
 
 Destruction creates the debris from the compact `shipyard_rewards` rows.
