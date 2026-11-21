@@ -1,16 +1,29 @@
 ﻿using System.Reflection;
 
+using AAEmu.Commons.Network;
+using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.C2G;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Effects;
+using AAEmu.Game.Models.Game.Skills.Effects.Enums;
 using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 using AAEmu.Game.Models.Game.Skills.Plots;
 using AAEmu.Game.Models.Game.Skills.Static;
+using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Utils;
 
 using Microsoft.Data.Sqlite;
@@ -26,6 +39,92 @@ public sealed partial class SkillLaborTests
     {
         if (_portalNamePreviousLocale != null)
             AppConfiguration.Instance.DefaultLanguage = _portalNamePreviousLocale;
+    }
+
+    [Test]
+    [Arguments(11215u, 0, "Oak", 0u)]
+    [Arguments(11215u, 0, "Oak", 71u)]
+    [Arguments(16841u, 17, "abcdefghijklmnopqrstuvwxyzabcdef", 0u)]
+    [Arguments(16841u, 17, "abcdefghijklmnopqrstuvwxyzabcdef", 71u)]
+    public async Task PortalNames_RecordAndRenameResolveToCaster(uint skillId, int portalId, string name, uint selectedObjectId)
+    {
+        ConfigurePortalNames();
+        SetInstance(new TaskManager(null));
+        SetInstance(new PermissionManager(Mock.Of<IAccountManager>().Object));
+        SetInstance(new SkillRequirementsGameData());
+        SetInstance(new ZoneManager(null, null));
+        var world = new WorldInstance(new WorldTemplate { Id = 10 }, 0, true, 0);
+        typeof(GameObject).GetField("_parentWorld", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(_owner, world);
+        _owner.Level = 23;
+        _owner.Transform.Local.SetPosition(12, 23, 34);
+
+        var bookTemplate = new ItemTemplate { Id = 4045, MaxCount = 1, UseSkillId = 11216 };
+        var inkTemplate = new ItemTemplate { Id = 4053, MaxCount = 100 };
+        SetField(ItemManager.Instance, "_templates", new Dictionary<uint, ItemTemplate>
+            { [bookTemplate.Id] = bookTemplate, [inkTemplate.Id] = inkTemplate });
+        var bag = _owner.Inventory.Bag;
+        var book = new Item
+        {
+            Id = 2, TemplateId = bookTemplate.Id, Template = bookTemplate, Count = 1,
+            OwnerId = _owner.Id, SlotType = SlotType.Inventory, Slot = 1, _holdingContainer = bag
+        };
+        _items.Add(book.Id, book);
+        bag.Items.Add(book);
+        _material.TemplateId = inkTemplate.Id;
+        _material.Template = inkTemplate;
+        _material.Count = 1;
+        bag.UpdateFreeSlotCount();
+
+        if (portalId == 0)
+            _owner.Portals.PrivatePortals.Clear();
+        var template = new SkillTemplate
+        {
+            Id = skillId, TargetType = SkillTargetType.Self, TargetSelection = SkillTargetSelection.Source,
+            TargetAlive = true, MaxRange = 4, CastingTime = 5000, CooldownTime = 60000, DefaultGcd = true,
+            Effects =
+            [
+                new SkillEffect
+                {
+                    ApplicationMethod = SkillEffectApplicationMethod.Target,
+                    StartLevel = 1, EndLevel = 99, Friendly = true, NonFriendly = true, Chance = 100,
+                    Front = true, Back = true,
+                    Template = new SpecialEffect { SpecialEffectTypeId = SpecialType.SavePortal }
+                }
+            ]
+        };
+        SetField(SkillManager.Instance, "_skills", new Dictionary<uint, SkillTemplate> { [skillId] = template });
+        SetField(SkillManager.Instance, "_comboFollowupSkills", new HashSet<uint>());
+        _reagents.Add(809, new SkillReagent { Id = 809, SkillId = 11215, ItemId = inkTemplate.Id, Amount = 1 });
+        var connection = new GameConnection(Mock.Of<ISession>().Object) { ActiveChar = _owner };
+        _owner.Connection = connection;
+        var body = new PacketStream().Write(skillId)
+            .Write(new SkillItem(_owner.ObjId, book.Id, book.TemplateId))
+            .Write(new SkillCastUnitTarget(selectedObjectId))
+            .Write(new SkillObjectSavePortalInfo { Flag = SkillObjectType.SavePortalInfo, Id = portalId, Name = name });
+
+        new CSStartSkillPacket { Connection = connection }.Read(body);
+
+        var started = _owner.Packets.OfType<SCSkillStartedPacket>().SingleOrDefault();
+        await Assert.That(started).IsNotNull();
+        await Assert.That(started!.RealCastTimeDiv10).IsEqualTo((ushort)500);
+        await Assert.That(started.BaseCastTimeDiv10).IsEqualTo((ushort)500);
+        var task = _owner.SkillTask;
+        await Assert.That(task.Skill.InitialTarget).IsSameReferenceAs(_owner);
+        await Assert.That(_owner.Portals.PrivatePortals.Count).IsEqualTo(portalId == 0 ? 0 : 1);
+        await Assert.That(_material.Count).IsEqualTo(1);
+
+        // Complete the scheduled cast without a wall-clock delay.
+        task.CastWindow = new CastWindow(DateTime.UnixEpoch, true, false, true);
+        task.Execute();
+
+        var portal = _owner.Portals.PrivatePortals.Values.Single();
+        await Assert.That(portal.Id).IsEqualTo(portalId == 0 ? 0x1000u : (uint)portalId);
+        await Assert.That(portal.Name).IsEqualTo(name);
+        await Assert.That(portal.Owner).IsEqualTo(_owner.Id);
+        await Assert.That(_material.Count).IsEqualTo(portalId == 0 ? 0 : 1);
+        await Assert.That(bag.GetItemBySlot(book.Slot)).IsSameReferenceAs(book);
+        await Assert.That(book.Count).IsEqualTo(1);
+        await Assert.That(_owner.SkillTask).IsNull();
     }
 
     [Test]
