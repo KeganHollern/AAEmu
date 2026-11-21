@@ -436,9 +436,97 @@ public sealed class PlayerMailSendTests
         await Assert.That(_sender.Money).IsEqualTo(950L);
     }
 
+    [Test]
+    [Arguments("Text")]
+    [Arguments("")]
+    public async Task FourthIdenticalBody_RejectsWithoutDebitingOrMovingAttachment(string body)
+    {
+        await SendThreeTimes(body);
+        var item = AddItem(1, 0);
+
+        var result = Send(copper: 200, slots: [(SlotType.Inventory, 0)], title: "Another title", body: body);
+
+        await Assert.That(result).IsEqualTo(MailResult.SentSameMailTooManyTimes);
+        await Assert.That(_sender.Money).IsEqualTo(700L);
+        await Assert.That(_sender.Inventory.Bag.Items.Single()).IsSameReferenceAs(item);
+        await Assert.That(_receiver.Inventory.MailAttachments.Items).IsEmpty();
+        await Assert.That(_mails._allPlayerMails.Count).IsEqualTo(3);
+        await Assert.That(_commitCalls).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task RepetitionLimit_DifferentCommittedBodyAndDifferentSenderHaveSeparateStreaks()
+    {
+        await SendThreeTimes();
+
+        await Assert.That(Send(sender: _receiver, receiver: _sender.Name)).IsEqualTo(MailResult.Success);
+        await Assert.That(Send()).IsEqualTo(MailResult.SentSameMailTooManyTimes);
+        await Assert.That(Send(body: "text")).IsEqualTo(MailResult.Success);
+        await Assert.That(Send()).IsEqualTo(MailResult.Success);
+    }
+
+    [Test]
+    public async Task FailedCommit_DoesNotIncrementOrResetStreak()
+    {
+        await Assert.That(Send()).IsEqualTo(MailResult.Success);
+        await Assert.That(Send()).IsEqualTo(MailResult.Success);
+        _commit = () => false;
+        await Assert.That(Send()).IsEqualTo(MailResult.MailErrorOccurred);
+        _commit = () => true;
+        await Assert.That(Send()).IsEqualTo(MailResult.Success);
+
+        _commit = () => false;
+        await Assert.That(Send(body: "New body")).IsEqualTo(MailResult.MailErrorOccurred);
+        _commit = () => true;
+        await Assert.That(Send()).IsEqualTo(MailResult.SentSameMailTooManyTimes);
+        await Assert.That(_mails._allPlayerMails.Count).IsEqualTo(3);
+        await Assert.That(_sender.Money).IsEqualTo(700L);
+    }
+
+    [Test]
+    public async Task FailedNotification_CountsMailThatAlreadyCommitted()
+    {
+        await Assert.That(Send()).IsEqualTo(MailResult.Success);
+        await Assert.That(Send()).IsEqualTo(MailResult.Success);
+        _sender.Connection = new GameConnection(new ThrowingSession());
+        await Assert.That(() => Send()).Throws<IOException>();
+        _sender.Connection = new GameConnection(_senderSession.Object);
+
+        await Assert.That(Send()).IsEqualTo(MailResult.SentSameMailTooManyTimes);
+        await Assert.That(_mails._allPlayerMails.Count).IsEqualTo(3);
+        await Assert.That(_sender.Money).IsEqualTo(700L);
+    }
+
+    [Test]
+    public async Task ConcurrentIdenticalSends_CommitOnlyThree()
+    {
+        var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(() => Send())));
+
+        await Assert.That(results.Count(result => result == MailResult.Success)).IsEqualTo(3);
+        await Assert.That(results.Count(result => result == MailResult.SentSameMailTooManyTimes)).IsEqualTo(1);
+        await Assert.That(_commitCalls).IsEqualTo(3);
+        await Assert.That(_mails._allPlayerMails.Count).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task ResetPlayerSendHistory_AllowsSameBodyAgain()
+    {
+        await SendThreeTimes();
+        await Assert.That(Send()).IsEqualTo(MailResult.SentSameMailTooManyTimes);
+        _sender.Mails.ResetPlayerSendHistory();
+        await Assert.That(Send()).IsEqualTo(MailResult.Success);
+    }
+
+    private async Task SendThreeTimes(string body = "Text")
+    {
+        for (var index = 0; index < 3; index++)
+            await Assert.That(Send(title: $"Title {index + 1}", body: body)).IsEqualTo(MailResult.Success);
+    }
+
     private MailResult Send(MailType type = MailType.Express, int copper = 0, int billing = 0,
-        int other = 0, IReadOnlyList<(SlotType Type, byte Slot)> slots = null, string receiver = "Receiver") =>
-        PlayerMailSendExecutor.Execute(_sender, type, receiver, "Title", "Text", copper,
+        int other = 0, IReadOnlyList<(SlotType Type, byte Slot)> slots = null, string receiver = "Receiver",
+        string title = "Title", string body = "Text", Character sender = null) =>
+        PlayerMailSendExecutor.Execute(sender ?? _sender, type, receiver, title, body, copper,
             billing, other, slots ?? [], _mails, _items, _names, () => { _commitCalls++; return _commit(); });
 
     private Item AddItem(ulong id, int slot)

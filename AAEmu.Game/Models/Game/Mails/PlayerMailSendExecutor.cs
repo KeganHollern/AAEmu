@@ -55,6 +55,9 @@ internal static class PlayerMailSendExecutor
                 return MailResult.InvalidLetterFormat;
             if (sender.Money < totalCost)
                 return MailResult.InsufficientCoins;
+            var senderMails = sender.Mails;
+            if (senderMails.WouldExceedPlayerSendRepetitionLimit(text))
+                return MailResult.SentSameMailTooManyTimes;
 
             var now = DateTime.UtcNow;
             var mail = new BaseMail
@@ -87,6 +90,7 @@ internal static class PlayerMailSendExecutor
             {
                 if (!commit())
                     return MailResult.MailErrorOccurred;
+                senderMails.RecordCommittedPlayerSend(text);
                 inventory.Complete();
                 mailMutation.Complete();
                 sender.SendPacket(new SCMailSentPacket(mail.Header,
