@@ -146,28 +146,38 @@ public partial class UccManager
                     return FailUpload(connection, ErrorMessageType.NotEnoughItem);
             }
 
-            var created = ItemManager.Instance.Create(maker.ItemId, 1, 0, true);
-            if (!inventory.TryAddCreated(created, character.Inventory.Bag))
-                return FailUpload(connection, ErrorMessageType.BagFull);
             var id = uccIdManager.GetNextId();
             if (id == 0)
                 return FailUpload(connection, ErrorMessageType.UccUploadFailed);
+            var prepared = false;
+            try
+            {
+                var created = ItemManager.Instance.Create(maker.ItemId, 1, 0, true);
+                // The inventory mutation captures the item packet when it adopts the item.
+                if (created != null)
+                    created.UccId = id;
+                prepared = inventory.TryAddCreated(created, character.Inventory.Bag);
+            }
+            finally
+            {
+                if (!prepared)
+                    uccIdManager.ReleaseId(id);
+            }
+            if (!prepared)
+                return FailUpload(connection, ErrorMessageType.BagFull);
+
             var ucc = pending.Ucc;
             ucc.Id = id;
             ucc.Modified = DateTime.UtcNow;
-            created.UccId = id;
             _uccs.TryAdd(id, ucc);
             try
             {
-                if (!CommitPurchase(character, ucc))
+                if (CommitPurchase(character, ucc))
                 {
-                    _uccs.TryRemove(id, out _);
-                    uccIdManager.ReleaseId(id);
-                    return FailUpload(connection, ErrorMessageType.UccUploadFailed);
+                    inventory.Complete();
+                    connection.SendPacket(new TCEmblemStreamRecvStatusPacket(EmblemStreamStatus.End));
+                    return true;
                 }
-                inventory.Complete();
-                connection.SendPacket(new TCEmblemStreamRecvStatusPacket(EmblemStreamStatus.End));
-                return true;
             }
             catch
             {
@@ -175,6 +185,9 @@ public partial class UccManager
                 inventory.PreservePreparedState();
                 throw;
             }
+            _uccs.TryRemove(id, out _);
+            uccIdManager.ReleaseId(id);
+            return FailUpload(connection, ErrorMessageType.UccUploadFailed);
         }
     }
 
