@@ -427,6 +427,7 @@ public class GameConnection
         if (activeChar == null)
             return;
 
+        activeChar.Mails?.ResetPlayerSendHistory();
         RunDisconnectStep(() => activeChar.ParentWorld?.SphereQuestManager?.RemoveSphereQuestTriggers(activeChar));
         RunDisconnectStep(() => TradeManager.Instance.CancelTrade(activeChar, 0));
         RunDisconnectStep(() => DuelManager.Instance.CancelForCharacter(activeChar));

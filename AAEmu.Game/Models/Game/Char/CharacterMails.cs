@@ -11,7 +11,11 @@ namespace AAEmu.Game.Models.Game.Char;
 
 public class CharacterMails
 {
+    private const int PlayerSendRepetitionLimit = 3;
     private readonly IAuctionMailClaimManager _auctionMailClaimManager;
+    // Read and write the streak under SaveManager.PersistenceSyncRoot.
+    private string _lastCommittedPlayerMailBody;
+    private int _consecutivePlayerMailSends;
     private Character Self { get; set; }
     public CountUnreadMail UnreadMailCount { get; set; }
 
@@ -96,6 +100,27 @@ public class CharacterMails
         return PlayerMailSendExecutor.Execute(Self, mailType, receiverName, title, text,
             money0, money1, money2, itemSlots, MailManager.Instance, ItemManager.Instance,
             NameManager.Instance, () => SaveManager.Instance.TryCommitEconomy([Self]));
+    }
+
+    internal bool WouldExceedPlayerSendRepetitionLimit(string text) =>
+        _consecutivePlayerMailSends >= PlayerSendRepetitionLimit &&
+        string.Equals(_lastCommittedPlayerMailBody, text, StringComparison.Ordinal);
+
+    internal void RecordCommittedPlayerSend(string text)
+    {
+        _consecutivePlayerMailSends = string.Equals(_lastCommittedPlayerMailBody, text, StringComparison.Ordinal)
+            ? _consecutivePlayerMailSends + 1
+            : 1;
+        _lastCommittedPlayerMailBody = text;
+    }
+
+    internal void ResetPlayerSendHistory()
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            _lastCommittedPlayerMailBody = null;
+            _consecutivePlayerMailSends = 0;
+        }
     }
 
     public bool GetAttached(long mailId, bool takeMoney, bool takeItems, bool takeAllSelected, ulong specifiedItemId = 0)
