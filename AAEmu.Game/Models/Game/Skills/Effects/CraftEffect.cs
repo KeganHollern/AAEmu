@@ -127,8 +127,7 @@ public class CraftEffect : EffectTemplate
     internal static void AdvanceShipyardConstruction(Character character, Shipyard.Shipyard shipyard,
         uint usedSkill, Skill skill)
     {
-        if (shipyard.Retiring || shipyard.Retired || shipyard.CurrentStep < 0 ||
-            !shipyard.Template.ShipyardSteps.TryGetValue(shipyard.CurrentStep, out var step) || step.SkillId != usedSkill)
+        if (!shipyard.CanUseConstructionSkill(usedSkill))
         {
             skill.Cancelled = true;
             SkillLaborBatch.Current?.Fail();

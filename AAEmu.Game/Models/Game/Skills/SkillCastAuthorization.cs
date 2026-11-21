@@ -29,13 +29,19 @@ internal static class SkillCastAuthorization
 
         if (skill.TargetType == SkillTargetType.Building &&
             target.Type is SkillCastTargetType.Unit or SkillCastTargetType.Doodad &&
-            world.GetBaseUnit(target.ObjId) is House house)
+            world.GetBaseUnit(target.ObjId) is { } building &&
+            building is House or Shipyard.Shipyard)
         {
-            return ReferenceEquals(house.ParentWorld, world) &&
-                house.Transform.InstanceId == character.Transform.InstanceId &&
-                house.CurrentStep >= 0 &&
-                house.Template.BuildSteps.TryGetValue(house.CurrentStep, out var step) &&
-                step.SkillId == skill.Id && house.AllowedToInteract(character);
+            return ReferenceEquals(building.ParentWorld, world) &&
+                building.Transform.InstanceId == character.Transform.InstanceId &&
+                (building switch
+                {
+                    House house => house.CurrentStep >= 0 &&
+                        house.Template.BuildSteps.TryGetValue(house.CurrentStep, out var step) &&
+                        step.SkillId == skill.Id,
+                    Shipyard.Shipyard shipyard => shipyard.CanUseConstructionSkill(skill.Id),
+                    _ => false
+                }) && building.AllowedToInteract(character);
         }
 
         if (target is SkillCastDoodadTarget)

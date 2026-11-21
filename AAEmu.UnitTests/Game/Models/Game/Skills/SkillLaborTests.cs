@@ -6,6 +6,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Crafts;
@@ -14,6 +15,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Shipyard;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Effects.Enums;
@@ -256,6 +258,94 @@ public sealed partial class SkillLaborTests
             .IsSameReferenceAs(success ? null : equipped);
         if (equipped != null)
             await Assert.That(equipped.Count).IsEqualTo(success ? 0 : 1);
+    }
+
+    [Test]
+    [Arguments(0, 17683u, true)]
+    [Arguments(1, 17685u, true)]
+    [Arguments(2, 17686u, true)]
+    [Arguments(3, 17683u, true)]
+    [Arguments(4, 0u, true)]
+    [Arguments(5, 17683u, true)]
+    [Arguments(0, 17685u, true)]
+    [Arguments(0, 0u, true)]
+    [Arguments(0, 17683u, false)]
+    public async Task ShipyardConstruction_SettlesProgressWithLaborAndRequiredPack(int stage, uint equippedTemplateId, bool commitSucceeds)
+    {
+        var world = new WorldManager(null, null, null, null, null);
+        SetField(world, "_worldInteractionGroups", new Dictionary<uint, WorldInteractionGroup>
+        {
+            [(uint)WorldInteractionType.MachineryAssemble] = WorldInteractionGroup.Craft
+        });
+        SetInstance(world);
+        _owner.InitializeLaborCache(50, DateTime.UtcNow);
+
+        (uint SkillId, uint PackId)[] stages =
+        [
+            (14737, 17683), (14740, 17685), (14738, 17686),
+            (11823, 0), (11823, 0), (11823, 0)
+        ];
+        var template = new ShipyardsTemplate { Id = 7, MainModelId = 966 };
+        for (var i = 0; i < stages.Length; i++)
+            template.ShipyardSteps.Add(i, new ShipyardSteps { ModelId = 960u + (uint)i, NumActions = 1, SkillId = stages[i].SkillId });
+        var shipyard = new Shipyard
+        {
+            ObjId = 80, TemplateId = 7, Template = template, ModelId = 960,
+            ShipyardData = new ShipyardData { Type2 = _owner.Id, Step = stage, Actions = stage }
+        };
+        for (var i = 0; i < stage; i++)
+            shipyard.AddBuildAction();
+
+        var (skillId, packId) = stages[stage];
+        var spare = AddConstructionPack(2, packId == 0 ? 17683u : packId, _owner.Inventory.Bag, 1);
+        var equipped = equippedTemplateId == 0 ? null : AddConstructionPack(3, equippedTemplateId,
+            _owner.Inventory.Equipment, (int)EquipmentItemSlot.Backpack);
+        var skill = new Skill(new SkillTemplate
+        {
+            Id = skillId, TargetType = SkillTargetType.Building, ConsumeLaborPower = 25,
+            Effects =
+            [
+                new SkillEffect
+                {
+                    ApplicationMethod = SkillEffectApplicationMethod.Target, Chance = 100, EndLevel = 99,
+                    ConsumeItemId = packId, ConsumeItemCount = 1,
+                    Template = new CraftEffect { WorldInteraction = WorldInteractionType.MachineryAssemble }
+                }
+            ]
+        });
+        var commits = 0;
+        var observedPaymentAndProgress = false;
+        skill.CommitLaborBatch = (_, _) =>
+        {
+            commits++;
+            observedPaymentAndProgress = shipyard.ShipyardData.Step == stage + 1 &&
+                shipyard.ShipyardData.Actions == stage + 1 && _owner.LaborPower == 25 &&
+                ReferenceEquals(_owner.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack), packId == 0 ? equipped : null) &&
+                !_owner.Packets.OfType<SCShipyardStatePacket>().Any();
+            return commitSucceeds;
+        };
+
+        skill.ApplyEffects(_owner, new SkillCasterUnit(_owner.ObjId), shipyard, new SkillCastUnitTarget(shipyard.ObjId), null);
+
+        var canPay = packId == 0 || equippedTemplateId == packId;
+        var success = canPay && commitSucceeds;
+        var expectedActions = success ? stage + 1 : stage;
+        var consumedPack = success && packId != 0;
+        await Assert.That(skill.Cancelled).IsEqualTo(!success);
+        await Assert.That(commits).IsEqualTo(canPay ? 1 : 0);
+        await Assert.That(observedPaymentAndProgress).IsEqualTo(canPay);
+        await Assert.That(shipyard.CurrentStep).IsEqualTo(expectedActions == stages.Length ? -1 : expectedActions);
+        await Assert.That(shipyard.ShipyardData.Step).IsEqualTo(expectedActions);
+        await Assert.That(shipyard.ShipyardData.Actions).IsEqualTo(expectedActions);
+        await Assert.That(shipyard.ModelId).IsEqualTo(960u + (uint)expectedActions);
+        await Assert.That(_owner.Packets.OfType<SCShipyardStatePacket>().Count()).IsEqualTo(success ? 1 : 0);
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)(success ? 25 : 50));
+        await Assert.That(spare.Count).IsEqualTo(1);
+        await Assert.That(_owner.Inventory.Bag.GetItemBySlot(spare.Slot)).IsSameReferenceAs(spare);
+        await Assert.That(_owner.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack))
+            .IsSameReferenceAs(consumedPack ? null : equipped);
+        if (equipped != null)
+            await Assert.That(equipped.Count).IsEqualTo(consumedPack ? 0 : 1);
     }
 
     [Test]
