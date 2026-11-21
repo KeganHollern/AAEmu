@@ -266,6 +266,50 @@ public sealed class PlayerSkillAuthorizationTests
     }
 
     [Test]
+    public async Task ShipyardLaunch_GrantsTheOwnerOfACompletedDrydock()
+    {
+        var shipyard = AddHarpoonClipperDrydock(-1);
+        shipyard.ShipyardData.Type2 = _character.Id;
+        var skill = new SkillTemplate { Id = 11002, TargetType = SkillTargetType.AnyUnit };
+        var target = new SkillCastUnitTarget(shipyard.ObjId);
+
+        await Assert.That(CanUse(skill, target)).IsTrue();
+        await Assert.That(CanUse(new SkillTemplate { Id = 11003, TargetType = SkillTargetType.AnyUnit }, target)).IsFalse();
+        await Assert.That(CanUse(skill, new SkillCastUnitTarget(_character.ObjId))).IsFalse();
+        var doodadTarget = SkillCastTarget.GetByType(SkillCastTargetType.Doodad);
+        doodadTarget.ObjId = shipyard.ObjId;
+        await Assert.That(CanUse(skill, doodadTarget)).IsFalse();
+    }
+
+    [Test]
+    [Arguments("incomplete")]
+    [Arguments("different-owner")]
+    [Arguments("different-instance")]
+    [Arguments("ceremony")]
+    [Arguments("retiring")]
+    [Arguments("retired")]
+    [Arguments("dead")]
+    public async Task ShipyardLaunch_RejectsAnUnavailableDrydock(string state)
+    {
+        var shipyard = AddHarpoonClipperDrydock(state == "incomplete" ? 5 : -1);
+        shipyard.ShipyardData.Type2 = state == "different-owner" ? _character.Id + 1 : _character.Id;
+        shipyard.Retiring = state == "retiring";
+        shipyard.Retired = state == "retired";
+        if (state == "ceremony")
+            shipyard.RestoreConstruction(-1, 0, true);
+        if (state == "dead")
+            shipyard.Hp = 0;
+        if (state == "different-instance")
+        {
+            shipyard.Transform.InstanceId = 1;
+            AddToWorld(shipyard);
+        }
+        var skill = new SkillTemplate { Id = 11002, TargetType = SkillTargetType.AnyUnit };
+
+        await Assert.That(CanUse(skill, new SkillCastUnitTarget(shipyard.ObjId))).IsFalse();
+    }
+
+    [Test]
     [Arguments(173u, 3590u, AbilityType.General)]
     [Arguments(188u, 4433u, AbilityType.General)]
     [Arguments(300u, 500u, AbilityType.Death)]
@@ -367,7 +411,7 @@ public sealed class PlayerSkillAuthorizationTests
 
         var shipyard = new Shipyard
         {
-            ObjId = 83, OwnerId = 71, Template = template,
+            ObjId = 83, OwnerId = 71, Template = template, Hp = 100,
             ShipyardData = new ShipyardData { Type2 = 71, TemplateId = template.Id }
         };
         shipyard.RestoreConstruction(step, 0, false);

@@ -233,7 +233,7 @@ public sealed class ConstructionLaborTests
         template.ShipyardSteps.Add(0, new ShipyardSteps { NumActions = 2, SkillId = 50, ModelId = 10 });
         if (!final)
             template.ShipyardSteps.Add(1, new ShipyardSteps { NumActions = 3, SkillId = 51, ModelId = 20 });
-        var shipyard = new Shipyard { Template = template, ModelId = 10,
+        var shipyard = new Shipyard { Template = template, ModelId = 10, Hp = 100,
             ShipyardData = new ShipyardData { Type2 = _owner.Id, Step = 0, Actions = 1 } };
         shipyard.AddBuildAction();
         shipyard.IsDirty = false;

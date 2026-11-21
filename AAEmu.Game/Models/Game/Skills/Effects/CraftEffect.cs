@@ -159,8 +159,7 @@ public class CraftEffect : EffectTemplate
     internal static void CompleteShipyardConstruction(Character character, Shipyard.Shipyard shipyard, Skill skill)
     {
         var batch = SkillLaborBatch.Current;
-        if (shipyard.Retiring || shipyard.Retired || shipyard.ShipyardData.Type2 != character.Id || shipyard.CurrentStep != -1 ||
-            shipyard.ShipyardData.Step == 1000)
+        if (!shipyard.CanStartLaunch(character.Id))
         {
             skill.Cancelled = true;
             batch?.Fail();
