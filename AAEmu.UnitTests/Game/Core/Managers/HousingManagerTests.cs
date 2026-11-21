@@ -2,12 +2,15 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using System.Reflection;
 
+using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.Stream;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game;
@@ -156,6 +159,44 @@ public class HousingManagerTests
             var house = new House { ProtectionEndDate = protectionEndDate };
 
             await Assert.That(house.TaxDueDate).IsEqualTo(protectionEndDate.AddDays(-3));
+        }
+        finally
+        {
+            AppConfiguration.Instance.World = originalWorldConfig;
+        }
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public void HouseTaxInfo_Plaque_ShowsDueDateDuringPaidPeriodAndProtectionEndWhenOverdue(bool paid)
+    {
+        var originalWorldConfig = AppConfiguration.Instance.World;
+        try
+        {
+            AppConfiguration.Instance.World = new WorldConfig { DaysForTaxPayment = 7 };
+            var manager = CreateManager();
+            var house = new House
+            {
+                Id = 42, TlId = 13, AccountId = 7,
+                ProtectionEndDate = DateTime.UtcNow.Date.AddDays(paid ? 13 : 3),
+                Template = new HousingTemplate { Taxation = new Taxation { Tax = 100_000 } }
+            };
+            var houses = (Dictionary<uint, House>)typeof(HousingManager)
+                .GetField("_houses", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
+            houses.Add(house.Id, house);
+            var houseLinks = (Dictionary<ushort, House>)typeof(HousingManager)
+                .GetField("_housesTl", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
+            houseLinks.Add(house.TlId, house);
+            var session = Mock.Of<ISession>();
+            var expectedDate = paid ? house.TaxDueDate : house.ProtectionEndDate;
+
+            manager.HouseTaxInfo(new GameConnection(session.Object), house.TlId);
+
+            session.SendPacket(Is<byte[]>(packet => packet.Length == 36 &&
+                    BitConverter.ToUInt16(packet, 6) == SCOffsets.SCHouseTaxInfoPacket &&
+                    BitConverter.ToInt64(packet, 22) == new DateTimeOffset(expectedDate).ToUnixTimeSeconds()))
+                .WasCalled(Times.Once);
         }
         finally
         {
