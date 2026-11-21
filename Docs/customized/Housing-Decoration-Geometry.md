@@ -32,6 +32,21 @@ The support object identifier has a separate purpose. The world adapter must
 check that identifier against the support hit. It must not use a support doodad
 as the parent coordinate system for the decoration.
 
+For AutoZ houses, native prefab loaders `390d5f20` and `390d6090` call
+`39104500`. This call subtracts the authored `auto_z_offset_x/y/z` values
+from each prefab child's local translation. The house origin still anchors
+decoration packets, saved decoration positions, and the garden grid.
+
+The server applies this offset to preview and placed model geometry before
+world rotation and translation. The offset cache uses both the model ID and
+the offset. Two house templates can reference the same model with different
+offsets.
+
+The Tudor Slate Cottage uses a 1 m Z offset. The interior collision plane at
+local Z 1.660635 m becomes Z 0.660635 m. This matches the 3 recorded floor
+placements within the support tolerance.
+[Indoor placement report #844](https://github.com/KeganHollern/aaemu-cluster/issues/844)
+
 `3903da00` reads the hit normal and uses these exact support rules:
 
 | Surface | Normal Z | Required design flag |

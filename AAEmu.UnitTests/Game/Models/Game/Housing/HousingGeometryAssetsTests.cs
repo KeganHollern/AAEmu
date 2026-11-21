@@ -6,6 +6,7 @@ using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models.CryEngine.Physics;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
@@ -110,6 +111,119 @@ public sealed class HousingGeometryAssetsTests
                 .SequenceEqual(expected.Parts.Select(part => part.Transform))).IsTrue();
             house.PlaceDate = utcNow.AddDays(1);
             await Assert.That(assets.LoadHouse(house, utcNow).Bounds).IsEqualTo(resolver.LoadPose(uri, 0).Bounds);
+        }
+        finally { source.Close(); }
+    }
+
+    [Test]
+    public async Task LoadHouse_AutoZOffsetsModelGeometry()
+    {
+        const string xml = """
+            <PrefabsLibrary><Prefab Name="house"><Objects>
+              <Object Type="Comment" Name="helper" Pos="2,3,12"/>
+              <Object Type="WaterVolume" Pos="0,0,12" VolumeDepth="100"><Points>
+                <Point Pos="0,0,0"/><Point Pos="4,0,0"/><Point Pos="4,4,0"/><Point Pos="0,4,0"/>
+              </Points></Object>
+            </Objects></Prefab></PrefabsLibrary>
+            """;
+        var assets = new HousingGeometryAssets(path => path == "game/prefabs/house.xml"
+            ? new MemoryStream(Encoding.UTF8.GetBytes(xml)) : null, (_, _) => ["prefab://prefabs/house.xml/house"]);
+        var raw = assets.LoadModel(1);
+        var offset = new Vector3(2, 4, 1.5f);
+        HousingTemplate Template(bool autoZ) => new()
+        {
+            MainModelId = 1, AutoZ = autoZ,
+            AutoZOffsetX = offset.X, AutoZOffsetY = offset.Y, AutoZOffsetZ = offset.Z
+        };
+
+        var shifted = assets.LoadHouse(Template(true));
+        await Assert.That(shifted.Bounds.Min).IsEqualTo(raw.Bounds.Min - offset);
+        await Assert.That(shifted.Bounds.Max).IsEqualTo(raw.Bounds.Max - offset);
+        await Assert.That(shifted.Helpers.Single().Transform.Translation)
+            .IsEqualTo(raw.Helpers.Single().Transform.Translation - offset);
+        await Assert.That(assets.LoadHouse(Template(false)).Bounds).IsEqualTo(raw.Bounds);
+        await Assert.That(assets.LoadModel(1).Bounds).IsEqualTo(raw.Bounds);
+    }
+
+    [Test]
+    public async Task ExactClient_CottageInterior_UsesTheAutoZModelOffset()
+    {
+        var path = Environment.GetEnvironmentVariable("AAEMU_HOUSING_GAME_PAK");
+        Skip.Unless(!string.IsNullOrEmpty(path), "Set AAEMU_HOUSING_GAME_PAK for the r208022 cottage placement check.");
+        var source = new ClientSource { PathName = path, SourceType = ClientSourceType.GamePak };
+        await Assert.That(source.Open()).IsTrue();
+        try
+        {
+            Stream Open(string name) => source.FileExists(name) ? source.GetFileStream(name) : null;
+            const string prefix = "prefab://prefabs/housing_big.xml/nuia_housing_small.nuia_small_";
+            var assets = new HousingGeometryAssets(Open, (_, _) => [prefix + "floor01", prefix + "wall01", prefix + "roof01"]);
+            var template = new HousingTemplate
+            {
+                Id = 172, MainModelId = 1116, AutoZ = true, AutoZOffsetZ = 1,
+                GardenRadius = 7.5f, Alley = 1, ExtraHeightAbove = 10, ExtraHeightBelow = 10
+            };
+            var house = new House { Template = template };
+            house.SetInitialConstructionStep();
+            var logicalPosition = new Vector3(12476, 15692, 164.136f);
+            house.Transform.Local.SetPosition(logicalPosition, new Vector3(0, 0, 0.346317f));
+            var logical = HousingGeometryAssets.Transform(house);
+            var raw = assets.LoadModel(template.MainModelId);
+            var placed = assets.LoadHouse(house, DateTime.UnixEpoch);
+            await Assert.That(HousingGeometryAssets.Transform(house).Translation).IsEqualTo(logicalPosition);
+
+            using var heightmap = Open("game/worlds/main_world/cells/012_015/client/terrain/heightmap.dat");
+            var terrain = CryTerrainGrid.Read(heightmap, new Vector2(12288, 15360));
+            var rawScene = new CryGeometryScene(_ => [new CryGeometryInstance(0, raw, logical)], _ => true);
+            var instances = new List<CryGeometryInstance> { new(0, placed, logical) };
+            var scene = new CryGeometryScene(_ => instances, _ => true);
+            var houseBounds = HousingGeometryAssets.HouseBounds(placed.Bounds, logical);
+            var garden = HousingGeometryAssets.GardenBounds(template, placed.Bounds, logical);
+            var rotation = Matrix4x4.CreateFromQuaternion(new Quaternion(0, 0, -0.98504543f, -0.17229466f));
+            const string table = "prefab://prefabs/ndeco_valentine.xml/ndeco_valentine.ndeco_valentine_table_off";
+            const string chest = "prefab://prefabs/itempart.xml/craft.hs_f_safe_a";
+            (string Model, Vector3 Local)[] placements =
+            [
+                (table, new(-1.05499f, 1.8077122f, 0.6606293f)),
+                (table, new(-1.3619859f, 0.58440614f, 0.6606293f)),
+                (chest, new(-0.63212806f, -0.39377248f, 0.6606293f))
+            ];
+            HousingDecorationRayResult Trace(Vector3 from, Vector3 vector)
+            {
+                var length = vector.Length();
+                var direction = vector / length;
+                var collision = scene.Raycast(from, direction, length, out var hit);
+                if (collision == CryIntersection.Indeterminate)
+                    return new HousingDecorationRayResult(collision, false);
+                var terrainHit = terrain.Raycast(from, direction,
+                    collision == CryIntersection.Intersects ? hit.Hit.Distance : length, out _);
+                return terrainHit == CryIntersection.Clear
+                    ? new HousingDecorationRayResult(collision, false)
+                    : new HousingDecorationRayResult(terrainHit, true);
+            }
+
+            foreach (var (model, local) in placements)
+            {
+                var transform = rotation * Matrix4x4.CreateTranslation(local) * logical;
+                var pivot = transform.Translation;
+                var start = pivot + Vector3.UnitZ * 0.01f;
+                var direction = -Vector3.UnitZ;
+                await Assert.That(rawScene.Raycast(start, direction, 0.02f, out _)).IsEqualTo(CryIntersection.Clear);
+                await Assert.That(scene.Raycast(start, direction, 0.02f, out var hit)).IsEqualTo(CryIntersection.Intersects);
+                await Assert.That(Vector3.DistanceSquared(hit.Hit.Position, pivot) <= 0.01f * 0.01f).IsTrue();
+                await Assert.That(hit.Hit.Normal.Z >= 0.999f).IsTrue();
+
+                var item = assets.Load(model);
+                var design = new HousingDecoration { AllowOnFloor = true, AllowPivotOnGarden = model == table };
+                ErrorMessageType Check(Matrix4x4 pose) => HousingDecorationGeometry.Check(design, item.Bounds, pose,
+                    houseBounds, garden, true, hit.Hit.Normal, true, Trace, box => scene.IntersectBox(box));
+                await Assert.That(Check(transform)).IsEqualTo(ErrorMessageType.NoErrorMessage);
+                instances.Add(new CryGeometryInstance(1, item, transform));
+                await Assert.That(Check(transform)).IsEqualTo(ErrorMessageType.HouseCannotDecorateOverlap);
+                instances.RemoveAt(instances.Count - 1);
+
+                transform.Translation = new Vector3(12484, 15692, pivot.Z);
+                await Assert.That(Check(transform)).IsEqualTo(ErrorMessageType.HouseCannotDecorateOutOfGarden);
+            }
         }
         finally { source.Close(); }
     }

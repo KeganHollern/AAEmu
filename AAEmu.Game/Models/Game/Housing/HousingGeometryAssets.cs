@@ -22,6 +22,7 @@ public sealed class HousingGeometryAssets
     private readonly Func<uint, uint, IReadOnlyList<string>> _modelPaths;
     private readonly Func<string, System.IO.Stream> _openFile;
     private readonly ConcurrentDictionary<uint, CryGeometryAsset> _models = [];
+    private readonly ConcurrentDictionary<(uint ModelId, Vector3 Offset), CryGeometryAsset> _offsetHouseModels = [];
     private readonly ConcurrentDictionary<(WorldTemplate World, int X, int Y), Lazy<CryTerrainGrid>> _terrain = [];
     private readonly ConcurrentDictionary<WorldTemplate, Lazy<CryWorldObjectIndex>> _worlds = [];
     private readonly ConcurrentDictionary<WorldTemplate, Lazy<HousingWaterGeometry>> _water = [];
@@ -44,6 +45,10 @@ public sealed class HousingGeometryAssets
 
     public CryGeometryAsset LoadModel(uint id) => _models.GetOrAdd(id, modelId => LoadModelPose(modelId, null));
 
+    private CryGeometryAsset LoadHouseModel(uint modelId, Vector3 offset) => offset == Vector3.Zero
+        ? LoadModel(modelId)
+        : _offsetHouseModels.GetOrAdd((modelId, offset), key => OffsetModel(LoadModel(key.ModelId), key.Offset));
+
     private CryGeometryAsset LoadModelPose(uint id, double? elapsedSeconds)
     {
         var paths = _modelPaths(id, 1);
@@ -62,21 +67,43 @@ public sealed class HousingGeometryAssets
         };
     }
 
+    private static CryGeometryAsset OffsetModel(CryGeometryAsset model, Vector3 offset)
+    {
+        if (offset == Vector3.Zero)
+            return model;
+
+        var translation = Matrix4x4.CreateTranslation(offset);
+        return model with
+        {
+            Bounds = model.HasModelBounds ? new CryBounds(model.Bounds.Min + offset, model.Bounds.Max + offset) : model.Bounds,
+            Parts = model.Parts.Select(part => part with { Transform = part.Transform * translation }).ToArray(),
+            Helpers = model.Helpers.Select(helper => helper with { Transform = helper.Transform * translation }).ToArray(),
+            PoseRequirements = model.PoseRequirements.Select(pose => pose with { Transform = pose.Transform * translation }).ToArray()
+        };
+    }
+
+    // Native 390d5f20 and 390d6090 call 39104500 to subtract this offset from
+    // each prefab child. The house origin still anchors packets and decorations.
+    private static Vector3 HouseModelOffset(HousingTemplate template) => template.AutoZ
+        ? -new Vector3(template.AutoZOffsetX, template.AutoZOffsetY, template.AutoZOffsetZ)
+        : Vector3.Zero;
+
     public CryGeometryAsset LoadHouse(HousingTemplate template, int step = -1)
     {
         var modelId = step >= 0 && template.BuildSteps.TryGetValue(step, out var buildStep)
             ? buildStep.ModelId : template.MainModelId;
-        return LoadModel(modelId);
+        return LoadHouseModel(modelId, HouseModelOffset(template));
     }
 
     public CryGeometryAsset LoadHouse(House house, DateTime utcNow)
     {
         var modelId = house.CurrentStep >= 0 && house.Template.BuildSteps.TryGetValue(house.CurrentStep, out var step)
             ? step.ModelId : house.Template.MainModelId;
-        var asset = LoadModel(modelId);
+        var offset = HouseModelOffset(house.Template);
+        var asset = LoadHouseModel(modelId, offset);
         if (!asset.PoseRequirements.Any(pose => pose.Playing))
             return asset;
-        return LoadModelPose(modelId, ElapsedSeconds(house.PlaceDate, utcNow));
+        return OffsetModel(LoadModelPose(modelId, ElapsedSeconds(house.PlaceDate, utcNow)), offset);
     }
 
     public CryGeometryAsset LoadDoodad(DoodadTemplate template, uint phase = 0)
