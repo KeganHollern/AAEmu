@@ -50,7 +50,6 @@ public sealed partial class PlayerMailSendPersistenceTests
         player.ParentWorld = world;
         player.Connection = new GameConnection(Mock.Of<ISession>()) { ActiveChar = player };
         typeof(Character).GetField("<IsOnline>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(player, true);
-        player.CurrentInteractionObject = printer;
         var stream = new StreamConnection(Mock.Of<ISession>()) { GameConnection = player.Connection };
         var uccIds = new Mock<IUccIdManager>();
         var uccId = player.Id + 91;

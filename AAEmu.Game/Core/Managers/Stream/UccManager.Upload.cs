@@ -16,7 +16,8 @@ public partial class UccManager
 {
     private readonly Dictionary<StreamConnection, PendingUpload> _pendingUploads = [];
     internal Dictionary<uint, uint> Patterns { get; } = [];
-    internal Func<Doodad, DoodadFuncStampMaker> ResolveStampMaker { get; set; } = FindStampMaker;
+    internal Func<DoodadFunc, DoodadFuncStampMaker> ResolveStampMaker { get; set; } = function =>
+        DoodadManager.Instance.GetFuncTemplate(function.FuncId, function.FuncType) as DoodadFuncStampMaker;
     internal Func<Character, Ucc, bool> CommitPurchase { get; set; } = (character, ucc) =>
         SaveManager.Instance.TryCommitEconomy([character], context =>
         {
@@ -25,8 +26,8 @@ public partial class UccManager
             ucc.Save(command);
         });
 
-    private sealed record PendingUpload(Character Character, Doodad Printer, DoodadFuncStampMaker Maker,
-        DefaultUcc Ucc, UccUploadHandle Handle);
+    private sealed record PendingUpload(Character Character, Doodad Printer, DoodadFunc Function,
+        DoodadFuncStampMaker Maker, DefaultUcc Ucc, UccUploadHandle Handle);
 
     private void LoadPatterns()
     {
@@ -39,10 +40,21 @@ public partial class UccManager
             Patterns.Add(Convert.ToUInt32(reader["id"]), Convert.ToUInt32(reader["kind_id"]));
     }
 
-    private static DoodadFuncStampMaker FindStampMaker(Doodad printer)
+    private static Character GetUploadCharacter(StreamConnection connection)
     {
+        var game = connection.GameConnection;
+        return game?.ActiveChar is { IsOnline: true } character && ReferenceEquals(character.Connection, game)
+            ? character
+            : null;
+    }
+
+    private static DoodadFunc FindUsableStampMaker(Character character, Doodad printer)
+    {
+        if (printer == null || printer.Despawn != DateTime.MinValue || !ServiceInteraction.CanReach(character, printer))
+            return null;
+
         var function = printer.CurrentFuncs.FirstOrDefault(func => func.FuncType == nameof(DoodadFuncStampMaker));
-        return function == null ? null : DoodadManager.Instance.GetFuncTemplate(function.FuncId, function.FuncType) as DoodadFuncStampMaker;
+        return function != null && DoodadPermissionRules.Allows(character, printer, function.PermId) ? function : null;
     }
 
     public bool StartUpload(StreamConnection connection, uint printerId, int expectedSize, DefaultUcc ucc)
@@ -54,12 +66,13 @@ public partial class UccManager
                 connection.GameConnection?.ActiveChar?.SendErrorMessage(ErrorMessageType.UccOnUpload);
                 return false;
             }
-            var character = connection.GameConnection?.ActiveChar;
-            if (printerId == 0 || character == null || !character.IsOnline || !ReferenceEquals(character.Connection, connection.GameConnection) ||
-                !ServiceInteraction.CanUseDoodad(character, nameof(DoodadFuncStampMaker), printerId))
+            // The stream start carries the printer even if the client did not send a separate interaction.
+            var character = GetUploadCharacter(connection);
+            var printer = printerId == 0 ? null : character?.ParentWorld?.GetDoodad(printerId);
+            var function = FindUsableStampMaker(character, printer);
+            if (function == null)
                 return FailUpload(connection, ErrorMessageType.TooFarAway);
-            var printer = (Doodad)character.CurrentInteractionObject;
-            var maker = ResolveStampMaker(printer);
+            var maker = ResolveStampMaker(function);
             var custom = ucc is CustomUcc;
             if (maker == null || maker.ItemId == 0 || maker.ConsumeMoney < 0 || maker.ConsumeCount <= 0 ||
                 (custom && maker.ConsumeItemId == 0) || ucc == null ||
@@ -69,7 +82,7 @@ public partial class UccManager
 
             ucc.UploaderId = character.Id;
             var handle = custom ? new UccUploadHandle(expectedSize, (CustomUcc)ucc) : null;
-            _pendingUploads.Add(connection, new PendingUpload(character, printer, maker, ucc, handle));
+            _pendingUploads.Add(connection, new PendingUpload(character, printer, function, maker, ucc, handle));
             connection.SendPacket(new TCEmblemStreamRecvStatusPacket(custom ? EmblemStreamStatus.Continue : EmblemStreamStatus.Start));
             return true;
         }
@@ -95,11 +108,9 @@ public partial class UccManager
     }
 
     private bool CurrentUpload(StreamConnection connection, PendingUpload pending) =>
-        ReferenceEquals(connection.GameConnection?.ActiveChar, pending.Character) && pending.Character.IsOnline &&
-        ReferenceEquals(pending.Character.Connection, connection.GameConnection) &&
-        ReferenceEquals(pending.Character.CurrentInteractionObject, pending.Printer) &&
-        ServiceInteraction.CanUseDoodad(pending.Character, nameof(DoodadFuncStampMaker), pending.Printer.ObjId) &&
-        ReferenceEquals(ResolveStampMaker(pending.Printer), pending.Maker);
+        ReferenceEquals(GetUploadCharacter(connection), pending.Character) &&
+        ReferenceEquals(FindUsableStampMaker(pending.Character, pending.Printer), pending.Function) &&
+        ReferenceEquals(ResolveStampMaker(pending.Function), pending.Maker);
 
     public bool ConfirmDefaultUcc(StreamConnection connection, byte status)
     {

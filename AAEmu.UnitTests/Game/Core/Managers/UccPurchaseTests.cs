@@ -7,6 +7,7 @@ using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.Stream;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2S;
@@ -14,6 +15,8 @@ using AAEmu.Game.Core.Packets.S2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
+using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
@@ -63,8 +66,7 @@ public sealed class UccPurchaseTests
         _character = new CharacterMock { Id = 7, AccountId = 7, ObjId = 7, Name = "CrestMaker", Money = 100000,
             NumInventorySlots = 5, NumBankSlots = 5, Connection = new GameConnection(Mock.Of<ISession>().Object) };
         _character.Connection.ActiveChar = _character;
-        typeof(Character).GetField("<IsOnline>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .SetValue(_character, true);
+        SetOnline(_character, true);
         foreach (var type in Enum.GetValues<SlotType>())
         {
             if (type == SlotType.EquipmentMate) continue;
@@ -80,19 +82,23 @@ public sealed class UccPurchaseTests
         Install(worlds);
         var world = new WorldInstance(new WorldTemplate { Id = 1 }, 1, true, 1);
         SetField(worlds, "_worlds", new ConcurrentDictionary<uint, WorldInstance>(new[] { new KeyValuePair<uint, WorldInstance>(1, world) }));
-        _printer = new Doodad { ObjId = 99, TemplateId = 3038, ParentWorld = world };
+        _printer = new Doodad { ObjId = 99, TemplateId = 3038, OwnerType = DoodadOwnerType.System, ParentWorld = world };
         _printer.CurrentFuncs.Add(new DoodadFunc { FuncId = 2, FuncType = nameof(DoodadFuncStampMaker) });
         world.AddObject(_printer);
         _character.ParentWorld = world;
-        _character.CurrentInteractionObject = _printer;
         _connection = new StreamConnection(Mock.Of<ISession>().Object) { GameConnection = _character.Connection };
         var uccIds = Mock.Of<IUccIdManager>();
         uint uccId = 500;
         uccIds.GetNextId().Returns(() => uccId++);
         _maker = new DoodadFuncStampMaker { Id = 2, ConsumeMoney = 50000, ConsumeItemId = 11127, ConsumeCount = 1, ItemId = 17663 };
+        var doodads = new DoodadManager(null, null, null, null, null);
+        SetField(doodads, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
+        {
+            [nameof(DoodadFuncStampMaker)] = new() { [_maker.Id] = _maker }
+        });
+        Install(doodads);
         _uccs = new UccManager(uccIds.Object)
         {
-            ResolveStampMaker = _ => _maker,
             CommitPurchase = (_, _) => { _commits++; return _commit(); }
         };
         _uccs.Patterns.Add(8, 3);
@@ -146,8 +152,12 @@ public sealed class UccPurchaseTests
     [Arguments("full")]
     [Arguments("commit")]
     [Arguments("moved")]
-    [Arguments("interaction")]
+    [Arguments("replaced_printer")]
+    [Arguments("phase")]
+    [Arguments("permission")]
+    [Arguments("despawning")]
     [Arguments("replaced_character")]
+    [Arguments("game_connection")]
     [Arguments("cancel")]
     public async Task ConfirmationFailure_LeavesWalletAndItemsUnchanged(string reason)
     {
@@ -155,9 +165,7 @@ public sealed class UccPurchaseTests
         if (reason == "funds") _character.Money = 49999;
         if (reason == "full") { _character.Inventory.Bag.ContainerSize = 0; _character.Inventory.Bag.UpdateFreeSlotCount(); }
         if (reason == "commit") _commit = () => false;
-        if (reason == "moved") _character.Transform.Local.SetPosition(6, 0, 0);
-        if (reason == "interaction") _character.CurrentInteractionObject = null;
-        if (reason == "replaced_character") _connection.GameConnection.ActiveChar = new CharacterMock { Id = _character.Id };
+        InvalidateUploadContext(reason);
         var money = _character.Money;
         await Assert.That(_uccs.ConfirmDefaultUcc(_connection, reason == "cancel" ? (byte)1 : (byte)0)).IsFalse();
         await Assert.That(_character.Money).IsEqualTo(money);
@@ -187,7 +195,13 @@ public sealed class UccPurchaseTests
 
     [Test]
     [Arguments("printer")]
-    [Arguments("interaction")]
+    [Arguments("moved")]
+    [Arguments("removed_printer")]
+    [Arguments("permission")]
+    [Arguments("despawning")]
+    [Arguments("other_instance")]
+    [Arguments("game_connection")]
+    [Arguments("offline")]
     [Arguments("function")]
     [Arguments("background")]
     [Arguments("foreground")]
@@ -197,7 +211,7 @@ public sealed class UccPurchaseTests
     public async Task InvalidStart_RejectsBeforeQueueOrMutation(string reason)
     {
         var source = Simple();
-        if (reason == "interaction") _character.CurrentInteractionObject = null;
+        InvalidateUploadContext(reason);
         if (reason == "function") _printer.CurrentFuncs.Clear();
         if (reason == "background") source.Pattern1 = 3;
         if (reason == "foreground") source.Pattern2 = 8;
@@ -207,6 +221,29 @@ public sealed class UccPurchaseTests
         await Assert.That(_uccs.ConfirmDefaultUcc(_connection, 0)).IsFalse();
         await Assert.That(_commits).IsEqualTo(0);
         await Assert.That(_character.Money).IsEqualTo(100000L);
+    }
+
+    [Test]
+    [Arguments("moved")]
+    [Arguments("replaced_printer")]
+    [Arguments("phase")]
+    [Arguments("permission")]
+    [Arguments("despawning")]
+    [Arguments("replaced_character")]
+    public async Task UploadPart_InvalidatedPendingContext_LeavesMaterialAndWalletUnchanged(string reason)
+    {
+        var material = Material();
+        var data = Dds();
+        await Assert.That(_uccs.StartUpload(_connection, 99, data.Length, new CustomUcc())).IsTrue();
+        InvalidateUploadContext(reason);
+
+        var part = new UccPart { Total = data.Length, Size = data.Length, Data = data };
+        await Assert.That(_uccs.UploadPart(_connection, part)).IsFalse();
+        await Assert.That(_uccs.ConfirmDefaultUcc(_connection, 0)).IsFalse();
+        await Assert.That(_character.Inventory.Bag.Items.Single()).IsSameReferenceAs(material);
+        await Assert.That(material.Count).IsEqualTo(1);
+        await Assert.That(_character.Money).IsEqualTo(100000L);
+        await Assert.That(_commits).IsEqualTo(0);
     }
 
     [Test]
@@ -319,18 +356,25 @@ public sealed class UccPurchaseTests
     }
 
     [Test]
-    public async Task StartPacket_ExactNativeBodyConsumesAllFieldsAndUsesFileTime()
+    public async Task StartPacket_ExactNativeBodyWithoutInteraction_PurchasesAtFiveMeters()
     {
+        _character.Transform.Local.SetPosition(0, 0, 5);
         var source = Simple();
         var body = new PacketStream().WriteBc(99).Write(0UL).Write(0);
         source.Write(body);
         body.Rollback();
         new CTStartUploadEmblemStreamPacket { Connection = _connection }.Read(body);
         await Assert.That(body.LeftBytes).IsEqualTo(0);
+        await Assert.That(_character.CurrentInteractionObject).IsNull();
+
+        var otherInteraction = new Doodad();
+        _character.CurrentInteractionObject = otherInteraction;
         var status = new PacketStream().Write((byte)0);
         status.Rollback();
         new CTEmblemStreamUploadStatusPacket { Connection = _connection }.Read(status);
         await Assert.That(_commits).IsEqualTo(1);
+        await Assert.That(_character.Money).IsEqualTo(50000L);
+        await Assert.That(_character.CurrentInteractionObject).IsSameReferenceAs(otherInteraction);
         await Assert.That(status.LeftBytes).IsEqualTo(0);
         var wire = new PacketStream();
         source.Write(wire);
@@ -361,6 +405,59 @@ public sealed class UccPurchaseTests
         return _uccs.StartUpload(_connection, 99, data.Length, source) &&
             _uccs.UploadPart(_connection, new UccPart { Total = data.Length, Size = data.Length, Data = data });
     }
+
+    private void InvalidateUploadContext(string reason)
+    {
+        switch (reason)
+        {
+            case "moved":
+                _character.Transform.Local.SetPosition(0, 0, 5.01f);
+                break;
+            case "removed_printer":
+                _printer.ParentWorld.RemoveObject(_printer);
+                break;
+            case "replaced_printer":
+                var world = _printer.ParentWorld;
+                world.RemoveObject(_printer);
+                var replacement = new Doodad
+                {
+                    ObjId = _printer.ObjId, TemplateId = _printer.TemplateId, OwnerType = _printer.OwnerType, ParentWorld = world
+                };
+                replacement.CurrentFuncs.AddRange(_printer.CurrentFuncs);
+                world.AddObject(replacement);
+                break;
+            case "phase":
+                _printer.CurrentFuncs[0] = new DoodadFunc { GroupId = 8, FuncId = _maker.Id, FuncType = nameof(DoodadFuncStampMaker) };
+                break;
+            case "permission":
+                _printer.CurrentFuncs[0].PermId = (uint)DoodadFuncPermission.OwnerOnly;
+                break;
+            case "despawning":
+                _printer.Despawn = DateTime.UtcNow.AddMinutes(1);
+                break;
+            case "other_instance":
+                SetField(_printer.Transform, "_instanceId", 2u);
+                break;
+            case "replaced_character":
+                var character = new CharacterMock
+                {
+                    Id = _character.Id, Connection = _connection.GameConnection, ParentWorld = _character.ParentWorld
+                };
+                SetOnline(character, true);
+                _connection.GameConnection.ActiveChar = character;
+                break;
+            case "game_connection":
+                _character.Connection = new GameConnection(Mock.Of<ISession>().Object);
+                break;
+            case "offline":
+                SetOnline(_character, false);
+                break;
+        }
+    }
+
+    private static void SetOnline(Character character, bool online) => typeof(Character)
+        .GetField("<IsOnline>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+        .SetValue(character, online);
 
     private Item Material()
     {
