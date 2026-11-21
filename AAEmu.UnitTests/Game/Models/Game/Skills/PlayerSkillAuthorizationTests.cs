@@ -199,7 +199,8 @@ public sealed class PlayerSkillAuthorizationTests
         var skill = new SkillTemplate { Id = skillId, TargetType = SkillTargetType.Building };
         var otherSkill = new SkillTemplate { Id = otherSkillId, TargetType = SkillTargetType.Building };
         var unitTarget = new SkillCastUnitTarget(house.ObjId);
-        var doodadTarget = new SkillCastDoodadTarget { ObjId = house.ObjId };
+        var doodadTarget = SkillCastTarget.GetByType(SkillCastTargetType.Doodad);
+        doodadTarget.ObjId = house.ObjId;
 
         await Assert.That(CanUse(skill, unitTarget)).IsTrue();
         await Assert.That(CanUse(skill, doodadTarget)).IsTrue();
