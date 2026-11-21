@@ -316,7 +316,6 @@ public sealed class ZoneSkillRestrictionsTests
     [Arguments("other-book")]
     [Arguments("wrong-template")]
     [Arguments("wrong-caster")]
-    [Arguments("wrong-target")]
     [Arguments("doodad-target")]
     [Arguments("wrong-target-kind")]
     [Arguments("wrong-object")]
@@ -338,7 +337,6 @@ public sealed class ZoneSkillRestrictionsTests
             case "other-book": item.TemplateId = source.ItemTemplateId = 4046; break;
             case "wrong-template": source.ItemTemplateId = 4046; break;
             case "wrong-caster": source.ObjId = 71; break;
-            case "wrong-target": target.ObjId = 71; break;
             case "doodad-target": target = new SkillCastDoodadTarget { ObjId = 70 }; break;
             case "wrong-target-kind": skill.TargetType = SkillTargetType.Doodad; break;
             case "wrong-object": data = new SkillObjectPortalInfo(); break;

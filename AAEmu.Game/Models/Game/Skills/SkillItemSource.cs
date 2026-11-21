@@ -16,11 +16,12 @@ internal static class SkillItemSource
             return true;
 
         // r208022 SavePortal (3938f7d0) and RenamePortal (3938f950) both find book 4045,
-        // then start 11215/16841 with self target and SavePortalInfo. The book's normal
-        // UseSkillId is 11216. Binding status never authorizes an unrelated skill.
+        // then start 11215/16841 with a Unit target and SavePortalInfo. The packet
+        // carries the current selection, which can be 0. Skill resolves the authored
+        // Self target to the caster. The book's normal UseSkillId is 11216.
         return item.TemplateId == 4045 && item.Template.UseSkillId == 11216 &&
             skill.TargetType == SkillTargetType.Self &&
-            target is SkillCastUnitTarget && target.ObjId == casterObjectId &&
+            target is SkillCastUnitTarget &&
             skillObject is SkillObjectSavePortalInfo portal &&
             (skill.Id == 11215 && portal.Id == 0 || skill.Id == 16841 && portal.Id > 0);
     }

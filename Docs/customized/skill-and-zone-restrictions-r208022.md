@@ -132,8 +132,8 @@ The exact client defines 2 exceptions for portal book 4045:
 
 | Action | Native callback and implementation | Skill | Object and target |
 | --- | --- | --- | --- |
-| SavePortal | `394cace0` calls `3938f7d0`. | 11215 | `SavePortalInfo`, ID 0, self target. |
-| RenamePortal | `394cad10` calls `3938f950`. | 16841 | `SavePortalInfo`, selected portal ID, self target. |
+| SavePortal | `394cace0` calls `3938f7d0`. | 11215 | `SavePortalInfo`, ID 0, Unit target. |
+| RenamePortal | `394cad10` calls `3938f950`. | 16841 | `SavePortalInfo`, selected portal ID, Unit target. |
 
 Both implementations find item `0xfcd`, or 4045, through inventory function `394e0960`.
 They use its actual item data for the item caster.
@@ -143,8 +143,14 @@ The dump bytes at RVA `0xad7660` are `cf 2b 00 00 d0 2b 00 00 c9 41 00 00`.
 These values are 11215, 11216, and 16841.
 The compact gives book 4045 the normal use skill 11216 and binding value 2.
 
-The server permits only these alternate skills for book 4045 with the confirmed object and self target.
-Save needs portal ID 0, and rename needs a positive portal ID.
+The hearth Record dialog calls `X2Warp:SavePortal` through `edit_dialog_handler.alb`.
+Both native callbacks take the Unit target from the player's current selection at offset `0x1aa0`.
+The selection ID is 0 when the player has no target. The packet builder `397abbb0` copies that target into `CSStartSkill` (`0x052`).
+The Unit branch of `397bfa90` writes the selected ID in 3 bytes.
+
+The server permits these alternate skills for the owned book with the confirmed Unit target and `SavePortalInfo` object.
+The server uses the caster as the effective target for both authored Self skills.
+Save needs portal ID 0 and 1 Memory Ink. Rename needs a positive portal ID and uses no ink.
 The source check runs before GCD, labor, mana, effects, and item consumption.
 
 Fireplace skill 16387 has doodad target kind 8 and a `SavePortal` special effect.
