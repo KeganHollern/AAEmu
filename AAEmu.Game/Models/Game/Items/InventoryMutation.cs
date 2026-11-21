@@ -25,6 +25,7 @@ public sealed class InventoryMutation : IDisposable
     private readonly List<Item> _removed = [];
     private readonly HashSet<Item> _moved = [];
     private readonly Dictionary<ICharacter, List<ItemTask>> _tasks = [];
+    private Dictionary<ItemTask, ItemTaskType> _taskTypeOverrides;
     private readonly List<Action> _notifications = [];
     private bool _failed;
     private bool _finished;
@@ -147,6 +148,29 @@ public sealed class InventoryMutation : IDisposable
         return true;
     }
 
+    internal bool TryConsume(ItemContainer source, uint templateId, int count, Item preferred = null)
+    {
+        RequireActive();
+        if (count <= 0)
+            return true;
+        var items = preferred == null
+            ? source.Items.Where(item => item.TemplateId == templateId).OrderBy(item => item.Slot).ToArray()
+            : [preferred];
+        var needed = count;
+        foreach (var item in items)
+        {
+            var amount = Math.Min(needed, item.Count - TradeReservation.GetReservedCount(item));
+            if (amount <= 0)
+                continue;
+            if (!TryConsume(source, item, amount))
+                return false;
+            needed -= amount;
+            if (needed == 0)
+                return true;
+        }
+        return Fail();
+    }
+
     /// <summary>Moves the exact item, retaining its identity and all item-specific details.</summary>
     public bool TryMove(Item item, ItemContainer destination, int preferredSlot = -1)
     {
@@ -232,7 +256,8 @@ public sealed class InventoryMutation : IDisposable
     }
 
     public bool TryGrant(ItemContainer destination, uint templateId, int count,
-        out IReadOnlyList<Item> grantedItems, int grade = -1)
+        out IReadOnlyList<Item> grantedItems, int grade = -1, uint crafterId = 0, int? stackGradeOverride = null,
+        byte? crafterWorldId = null)
     {
         RequireActive();
         var granted = new List<Item>();
@@ -255,8 +280,9 @@ public sealed class InventoryMutation : IDisposable
         // Mail and auction records refer to exact attachment ids, so never merge their stacks.
         if (destination.ContainerType is not (SlotType.Mail or SlotType.Auction))
         {
+            var stackGrade = stackGradeOverride ?? grade;
             foreach (var item in destination.Items.Where(item => item.TemplateId == templateId &&
-                         item.Grade == grade).OrderBy(item => item.Slot).ToArray())
+                         (stackGrade < 0 || item.Grade == stackGrade)).OrderBy(item => item.Slot).ToArray())
             {
                 if (!IsHeldBy(item, destination) || item.Count > template.MaxCount)
                     return Fail();
@@ -281,6 +307,10 @@ public sealed class InventoryMutation : IDisposable
             var item = ItemManager.Instance.Create(templateId, added, (byte)grade);
             if (item == null)
                 return Fail();
+            if (crafterId != 0)
+                item.MadeUnitId = crafterId;
+            if (crafterWorldId is { } worldId)
+                item.WorldId = worldId;
             var owner = destination.Owner;
             var sync = new List<GamePacket>();
             if (template.ExpAbsLifetime > 0)
@@ -311,6 +341,16 @@ public sealed class InventoryMutation : IDisposable
         return _tasks.TryGetValue(character, out var tasks) ? tasks.AsReadOnly() : [];
     }
 
+    internal void SetTaskTypeForRange(ICharacter character, int firstTask, ItemTaskType taskType)
+    {
+        RequireActive();
+        if (!_tasks.TryGetValue(character, out var tasks))
+            return;
+        _taskTypeOverrides ??= [];
+        for (var index = firstTask; index < tasks.Count; index++)
+            _taskTypeOverrides[tasks[index]] = taskType;
+    }
+
     public bool Complete(bool publishItemTasks = true)
     {
         RequireActive();
@@ -323,15 +363,28 @@ public sealed class InventoryMutation : IDisposable
             ItemManager.Instance.ReleaseId(item.Id);
         foreach (var (owner, tasks) in _tasks)
         {
-            if (publishItemTasks && _taskType != ItemTaskType.Invalid && tasks.Count > 0)
-                foreach (var batch in tasks.Chunk(30))
-                    owner.SendPacket(new SCItemTaskSuccessPacket(_taskType, [.. batch], []));
+            if (publishItemTasks && _taskType != ItemTaskType.Invalid)
+                PublishTasks(owner, tasks);
         }
         foreach (var character in _wallets.Keys)
             character.UpdateGoldAchievement();
         foreach (var notification in _notifications)
             notification();
         return true;
+    }
+
+    private void PublishTasks(ICharacter owner, List<ItemTask> tasks)
+    {
+        ItemTaskType TypeOf(ItemTask task) => _taskTypeOverrides?.GetValueOrDefault(task, _taskType) ?? _taskType;
+        for (var first = 0; first < tasks.Count;)
+        {
+            var type = TypeOf(tasks[first]);
+            var next = first + 1;
+            while (next < tasks.Count && next - first < 30 && TypeOf(tasks[next]) == type)
+                next++;
+            owner.SendPacket(new SCItemTaskSuccessPacket(type, tasks.GetRange(first, next - first), []));
+            first = next;
+        }
     }
 
     /// <summary>

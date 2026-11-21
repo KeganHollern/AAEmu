@@ -116,24 +116,8 @@ internal sealed class SkillLaborBatch
     {
         if (count <= 0)
             return 0;
-        var items = preferred == null
-            ? container.Items.Where(item => item.TemplateId == templateId).OrderBy(item => item.Slot).ToArray()
-            : [preferred];
-        var needed = count;
-        foreach (var item in items)
-        {
-            var amount = Math.Min(needed, item.Count - TradeReservation.GetReservedCount(item));
-            if (amount <= 0)
-                continue;
-            if (!Inventory.TryConsume(container, item, amount))
-            {
-                Fail();
-                return 0;
-            }
-            needed -= amount;
-            if (needed == 0)
-                return count;
-        }
+        if (Inventory.TryConsume(container, templateId, count, preferred))
+            return count;
         Fail();
         return 0;
     }
