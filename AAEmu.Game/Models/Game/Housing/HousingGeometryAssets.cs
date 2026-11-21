@@ -21,7 +21,7 @@ public sealed class HousingGeometryAssets
     private readonly CryWorldGeometryResolver _staticResolver;
     private readonly Func<uint, uint, IReadOnlyList<string>> _modelPaths;
     private readonly Func<string, System.IO.Stream> _openFile;
-    private readonly ConcurrentDictionary<uint, CryGeometryAsset> _models = [];
+    private readonly ConcurrentDictionary<(uint ModelId, Vector3 Offset), CryGeometryAsset> _models = [];
     private readonly ConcurrentDictionary<(WorldTemplate World, int X, int Y), Lazy<CryTerrainGrid>> _terrain = [];
     private readonly ConcurrentDictionary<WorldTemplate, Lazy<CryWorldObjectIndex>> _worlds = [];
     private readonly ConcurrentDictionary<WorldTemplate, Lazy<HousingWaterGeometry>> _water = [];
@@ -42,9 +42,12 @@ public sealed class HousingGeometryAssets
 
     public CryGeometryAsset LoadStatic(CryWorldObjectInstance instance) => _staticResolver.Load(instance);
 
-    public CryGeometryAsset LoadModel(uint id) => _models.GetOrAdd(id, modelId => LoadModelPose(modelId, null));
+    public CryGeometryAsset LoadModel(uint id) => LoadModel(id, Vector3.Zero);
 
-    private CryGeometryAsset LoadModelPose(uint id, double? elapsedSeconds)
+    private CryGeometryAsset LoadModel(uint id, Vector3 offset) =>
+        _models.GetOrAdd((id, offset), key => LoadModelPose(key.ModelId, null, key.Offset));
+
+    private CryGeometryAsset LoadModelPose(uint id, double? elapsedSeconds, Vector3 offset)
     {
         var paths = _modelPaths(id, 1);
         if (paths.Count == 0)
@@ -52,7 +55,7 @@ public sealed class HousingGeometryAssets
         var assets = paths.Select(path => elapsedSeconds.HasValue ? _resolver.LoadPose(path, elapsedSeconds.Value) : Load(path)).ToArray();
         var bounds = assets.Where(asset => asset.HasModelBounds).Select(asset => (CryBounds?)asset.Bounds)
             .Aggregate((CryBounds?)null, (left, right) => left?.Union(right.Value) ?? right);
-        return new CryGeometryAsset(bounds ?? new CryBounds(Vector3.Zero, Vector3.Zero),
+        var model = new CryGeometryAsset(bounds ?? new CryBounds(Vector3.Zero, Vector3.Zero),
             assets.SelectMany(asset => asset.Parts).ToArray())
         {
             HasModelBounds = bounds.HasValue,
@@ -60,23 +63,41 @@ public sealed class HousingGeometryAssets
             Helpers = assets.SelectMany(asset => asset.Helpers).ToArray(),
             PoseRequirements = assets.SelectMany(asset => asset.PoseRequirements).ToArray()
         };
+        if (offset == Vector3.Zero)
+            return model;
+
+        var translation = Matrix4x4.CreateTranslation(offset);
+        return model with
+        {
+            Bounds = bounds.HasValue ? new CryBounds(model.Bounds.Min + offset, model.Bounds.Max + offset) : model.Bounds,
+            Parts = model.Parts.Select(part => part with { Transform = part.Transform * translation }).ToArray(),
+            Helpers = model.Helpers.Select(helper => helper with { Transform = helper.Transform * translation }).ToArray(),
+            PoseRequirements = model.PoseRequirements.Select(pose => pose with { Transform = pose.Transform * translation }).ToArray()
+        };
     }
+
+    // Native 390d5f20 and 390d6090 call 39104500 to subtract this offset from
+    // each prefab child. The house origin still anchors packets and decorations.
+    private static Vector3 HouseModelOffset(HousingTemplate template) => template.AutoZ
+        ? -new Vector3(template.AutoZOffsetX, template.AutoZOffsetY, template.AutoZOffsetZ)
+        : Vector3.Zero;
 
     public CryGeometryAsset LoadHouse(HousingTemplate template, int step = -1)
     {
         var modelId = step >= 0 && template.BuildSteps.TryGetValue(step, out var buildStep)
             ? buildStep.ModelId : template.MainModelId;
-        return LoadModel(modelId);
+        return LoadModel(modelId, HouseModelOffset(template));
     }
 
     public CryGeometryAsset LoadHouse(House house, DateTime utcNow)
     {
         var modelId = house.CurrentStep >= 0 && house.Template.BuildSteps.TryGetValue(house.CurrentStep, out var step)
             ? step.ModelId : house.Template.MainModelId;
-        var asset = LoadModel(modelId);
+        var offset = HouseModelOffset(house.Template);
+        var asset = LoadModel(modelId, offset);
         if (!asset.PoseRequirements.Any(pose => pose.Playing))
             return asset;
-        return LoadModelPose(modelId, ElapsedSeconds(house.PlaceDate, utcNow));
+        return LoadModelPose(modelId, ElapsedSeconds(house.PlaceDate, utcNow), offset);
     }
 
     public CryGeometryAsset LoadDoodad(DoodadTemplate template, uint phase = 0)
