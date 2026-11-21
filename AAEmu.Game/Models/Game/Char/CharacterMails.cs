@@ -130,13 +130,17 @@ public class CharacterMails
         {
             var source = MailManager.Instance.GetMailById(mailId);
             var now = DateTime.UtcNow;
-            if (source != null &&
-                (source.HasUnresolvedAttachments || source.Body.RecvDate > now || MailManager.IsExpired(source, now)))
+            if (source != null && (source.HasUnresolvedAttachments || MailManager.IsExpired(source, now)))
                 return false;
+            // MySQL can round an immediate auction delivery forward. The
+            // durable receipt path must handle replays before the due check.
             var claim = _auctionMailClaimManager.TryClaim(Self, this, mailId, takeMoney,
                 takeItems, takeAllSelected, specifiedItemId);
             if (claim != AuctionMailClaimResult.NotHandled)
                 return claim == AuctionMailClaimResult.Success;
+
+            if (source != null && source.Body.RecvDate > now)
+                return false;
 
             var res = false;
             if (MailManager.Instance._allPlayerMails.TryGetValue(mailId, out var thisMail) &&

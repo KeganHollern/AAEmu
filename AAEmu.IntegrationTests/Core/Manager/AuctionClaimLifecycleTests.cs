@@ -55,12 +55,22 @@ public sealed partial class AuctionSettlementPersistenceTests
         Assert.Equal(1, restored.Seller.ConsumedLaborPower);
         Assert.Equal(1u, restored.Seller.Achievements.GetAmount(901));
         Assert.Equal(1u, restored.Buyer.Achievements.GetAmount(900));
-        Assert.All(restored.OwnMails(), mail => Assert.Equal(0, mail.Header.Attachments));
+        var restoredMails = restored.OwnMails().ToArray();
+        Assert.All(restoredMails, mail => Assert.Equal(0, mail.Header.Attachments));
         var delivered = restored.Buyer.Inventory.Bag.Items.Single();
         Assert.Equal(mergeStack ? stack.Id : item.Id, delivered.Id);
         Assert.Equal(mergeStack ? 13 : 3, delivered.Count);
         if (mergeStack)
             Assert.Null(restored.Items.GetItemByItemId(item.Id));
+
+        // Whole-second MySQL timestamps can round ahead of the clock during an immediate reload.
+        // Keep both timestamps ahead through the replay to exercise that ordering deterministically.
+        var replayReceiveDate = DateTime.UtcNow.AddMinutes(1);
+        foreach (var mail in restoredMails)
+        {
+            mail.Body.RecvDate = replayReceiveDate;
+            mail.IsDirty = false;
+        }
         Assert.True(restored.Buyer.Mails.GetAttached(buy.Id, false, true, true));
         Assert.True(restored.Seller.Mails.GetAttached(sale.Id, true, false, true));
         Assert.Equal(11780, restored.Seller.Money);
