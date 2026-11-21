@@ -169,7 +169,7 @@ public class CharacterCraft(Character owner)
             CancelCraft();
     }
 
-    public void EndCraft()
+    public void EndCraft(Skill sourceSkill = null)
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
@@ -184,11 +184,11 @@ public class CharacterCraft(Character owner)
                     CancelCraft();
                     return;
                 }
-                EndCraftCore();
+                EndCraftCore(sourceSkill);
             }
             catch
             {
-                CancelCraft();
+                CancelCraft(sourceSkill);
                 throw;
             }
             finally
@@ -198,7 +198,7 @@ public class CharacterCraft(Character owner)
         }
     }
 
-    private void EndCraftCore()
+    private void EndCraftCore(Skill sourceSkill)
     {
         if (CurrentCraft == null)
         {
@@ -337,9 +337,21 @@ public class CharacterCraft(Character owner)
             }
         }
 
+        var batch = SkillLaborBatch.For(Owner);
+        using var localMutation = batch == null ? new InventoryMutation(ItemTaskType.CraftActSaved) : null;
+        var inventory = batch?.Inventory ?? localMutation;
+        var afterCommit = new List<Action>();
+        var previousBackpackId = 0UL;
+
+        void RejectCraft()
+        {
+            localMutation?.Dispose();
+            CancelCraft(sourceSkill);
+        }
+
         foreach (var product in CurrentCraft.CraftProducts)
         {
-            // Determine if this product should inherit grade  
+            // Determine if this product should inherit grade
             var productTemplate = ItemManager.Instance.GetTemplate(product.ItemId);
             var gradeToUse = -1;
 
@@ -355,41 +367,38 @@ public class CharacterCraft(Character owner)
             }
 
             // Check if template allows grade changes  
-            var template = ItemManager.Instance.GetTemplate(product.ItemId);
-            if (template != null)
+            if (productTemplate != null)
             {
-                Owner.SendDebugMessage($"Product template {product.ItemId} - FixedGrade: {template.FixedGrade}, Gradable: {template.Gradable}");
+                Owner.SendDebugMessage($"Product template {product.ItemId} - FixedGrade: {productTemplate.FixedGrade}, Gradable: {productTemplate.Gradable}");
             }
 
-            var productGranted = false;
-
-            // Check if we're crafting a trade pack, if so, try to remove currently equipped backpack slot
-            if (ItemManager.Instance.IsAutoEquipTradePack(product.ItemId) == false)
+            var crafterId = batch != null || productTemplate?.MaxCount == 1 ? Owner.Id : 0;
+            var crafterWorldId = batch == null && crafterId != 0 ? (byte?)WorldManager.DefaultWorldTemplateId : null;
+            // Local crafting historically selected stacks before normalizing the grade of new items.
+            var stackGradeOverride = batch == null ? (int?)gradeToUse : null;
+            if (ItemManager.Instance.IsAutoEquipTradePack(product.ItemId))
             {
-                productGranted = Owner.Inventory.Bag.AcquireDefaultItem(
-                    ItemTaskType.CraftActSaved,
-                    product.ItemId,
-                    product.Amount,
-                    gradeToUse,
-                    Owner.Id);
-            }
-            else
-            {
-                productGranted = Owner.Inventory.TryEquipNewBackPack(
-                    ItemTaskType.CraftPickupProduct,
-                    product.ItemId,
-                    product.Amount,
-                    gradeToUse,
-                    Owner.Id);
-                if (!productGranted)
+                var firstEquipmentTask = localMutation?.GetTasks(Owner).Count ?? 0;
+                var equipped = Owner.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack);
+                if (!Owner.Inventory.CanReplaceGliderInBackpackSlot() || !Owner.Inventory.TryStageNewBackPack(
+                        inventory, product.ItemId, product.Amount, gradeToUse, crafterId,
+                        crafterWorldId: crafterWorldId, stackGradeOverride: stackGradeOverride))
                 {
                     Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.BackpackOccupied, 0, false);
-                    CancelCraft();
+                    RejectCraft();
                     return;
                 }
+                previousBackpackId = equipped?.Id ?? 0;
+                localMutation?.SetTaskTypeForRange(Owner, firstEquipmentTask, ItemTaskType.CraftPickupProduct);
+            }
+            else if (!inventory.TryGrant(Owner.Inventory.Bag, product.ItemId, product.Amount, out _, gradeToUse, crafterId,
+                         stackGradeOverride: stackGradeOverride, crafterWorldId: crafterWorldId))
+            {
+                RejectCraft();
+                return;
             }
 
-            if (productGranted && productTemplate != null && product.Amount > 0)
+            if (productTemplate != null && product.Amount > 0)
             {
                 var actualGrade = productTemplate.FixedGrade >= 0
                     ? productTemplate.FixedGrade
@@ -413,16 +422,17 @@ Owner.Achievements?.Increment(
                         (uint)product.Amount,
                         true)
                 ]);
-                if (SkillLaborBatch.For(Owner) is { } productBatch)
-                    productBatch.AfterCommit(RecordProduct);
-                else
-                    RecordProduct();
+                afterCommit.Add(RecordProduct);
             }
         }
 
         foreach (var material in CurrentCraft.CraftMaterials)
         {
-            Owner.Inventory.Bag.ConsumeItem(ItemTaskType.CraftActSaved, material.ItemId, material.Amount, null);
+            if (!inventory.TryConsume(Owner.Inventory.Bag, material.ItemId, material.Amount))
+            {
+                RejectCraft();
+                return;
+            }
         }
 
         //Owner.Quests.OnCraft(_craft); // TODO added for quest Id=6024
@@ -437,23 +447,30 @@ Owner.Achievements?.Increment(
         var completedCraftId = CurrentCraft.Id;
         void CompleteCraft()
         {
-        Count--;
-        QuestManager.Instance.DoOnCraftEvents(Owner, completedCraftId);
+            foreach (var callback in afterCommit)
+                callback();
+            Count--;
+            QuestManager.Instance.DoOnCraftEvents(Owner, completedCraftId);
 
-        if (Count > 0)
-        {
-            ScheduleCraft();
-            // Owner.SendMessage($"Continue craft: {_craft.Id} for {_count} more times TaskId: {newCraft.Id}, cooldown: {nextCraftDelay.TotalMilliseconds}ms");
+            if (Count > 0)
+            {
+                ScheduleCraft();
+                // Owner.SendMessage($"Continue craft: {_craft.Id} for {_count} more times TaskId: {newCraft.Id}, cooldown: {nextCraftDelay.TotalMilliseconds}ms");
+            }
+            else
+            {
+                CancelCraft();
+            }
         }
-        else
-        {
-            CancelCraft();
-        }
-        }
-        if (SkillLaborBatch.For(Owner) is { } batch)
+        if (batch != null)
             batch.AfterCommit(CompleteCraft);
         else
+        {
+            if (previousBackpackId != 0)
+                Owner.Inventory.PreviousBackPackItemId = previousBackpackId;
+            localMutation.Complete();
             CompleteCraft();
+        }
     }
 
     private bool HasCraftPermission(uint doodadId)
@@ -537,8 +554,10 @@ Owner.Achievements?.Increment(
         TaskManager.Instance.Schedule(newCraft, nextCraftDelay);
     }
 
-    private void CancelCraft()
+    private void CancelCraft(Skill sourceSkill = null)
     {
+        if (sourceSkill != null)
+            sourceSkill.Cancelled = true;
         SkillLaborBatch.For(Owner)?.Fail();
         lock (SaveManager.PersistenceSyncRoot)
         {

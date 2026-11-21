@@ -776,16 +776,7 @@ public class Inventory
     public bool TryEquipNewBackPack(ItemTaskType taskType, uint itemId, int itemCount, int gradeToAdd = -1, uint crafterId = 0)
     {
         if (SkillLaborBatch.For(Owner) is { } batch)
-        {
-            var backpack = Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack);
-            if (backpack != null && !batch.Inventory.TryMove(backpack, Bag))
-                return batch.Fail();
-            if (!batch.Inventory.TryGrant(Equipment, itemId, itemCount, out var items, gradeToAdd))
-                return batch.Fail();
-            foreach (var item in items)
-                item.MadeUnitId = crafterId;
-            return true;
-        }
+            return TryStageNewBackPack(batch.Inventory, itemId, itemCount, gradeToAdd, crafterId) || batch.Fail();
         // Remove player backpack
         if (Owner.Inventory.TakeoffBackpack(taskType, true))
         {
@@ -793,6 +784,14 @@ public class Inventory
             return Owner.Inventory.Equipment.AcquireDefaultItem(taskType, itemId, itemCount, gradeToAdd, crafterId);
         }
         return false;
+    }
+
+    internal bool TryStageNewBackPack(InventoryMutation mutation, uint itemId, int itemCount, int gradeToAdd, uint crafterId,
+        byte? crafterWorldId = null, int? stackGradeOverride = null)
+    {
+        var backpack = Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack);
+        return (backpack == null || mutation.TryMove(backpack, Bag)) &&
+            mutation.TryGrant(Equipment, itemId, itemCount, out _, gradeToAdd, crafterId, stackGradeOverride, crafterWorldId);
     }
 
     /// <summary>

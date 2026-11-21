@@ -15,8 +15,10 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Crafts;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.UnitTests.Utils.Mocks;
 
@@ -71,12 +73,17 @@ public sealed class CharacterCraftReservationTests
         foreach (var type in Enum.GetValues<SlotType>())
         {
             if (type == SlotType.EquipmentMate) continue;
-            var container = new ItemContainer(7, type, false, _owner)
-                { Owner = _owner, ContainerId = (ulong)containers.Count + 1 };
+            var container = type == SlotType.Equipment
+                ? new EquipmentContainer(7, type, false, _owner)
+                : new ItemContainer(7, type, false, _owner);
+            container.Owner = _owner;
+            container.ContainerId = (ulong)containers.Count + 1;
             containers.Add(container.ContainerId, container);
         }
         SetField(_items, "_allPersistentContainers", containers);
         _owner.Inventory = new Inventory(_owner);
+        // The fixture has equipment and an owner but no world or gear-effect data.
+        _owner.Inventory.Equipment.ParentUnit = null;
         _craft = _owner.Craft = new CharacterCraft(_owner);
     }
 
@@ -229,9 +236,145 @@ public sealed class CharacterCraftReservationTests
         await Assert.That(_craft.IsCrafting).IsFalse();
     }
 
-    private Backpack CarryPack()
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task TimeCatcherToken_OnlyConsumesCoinsIfOutputFits(bool capped)
     {
-        var template = new BackpackTemplate { Id = 300, MaxCount = 1, BackpackType = BackpackType.TradePack };
+        const uint coinsId = 30214;
+        const uint tokenId = 30217;
+        _templates[coinsId] = new ItemTemplate { Id = coinsId, MaxCount = 1000, FixedGrade = -1 };
+        _templates[tokenId] = new ItemTemplate { Id = tokenId, MaxCount = 1, PickupLimit = 1, FixedGrade = -1 };
+        var coins = AddItem(coinsId, 1, 0, 200);
+        var heldToken = capped ? AddItem(tokenId, 2, 1, 1) : null;
+        _owner.InitializeLaborCache(4276, DateTime.UtcNow);
+        var session = new RecordingSession();
+        _owner.Connection = new GameConnection(session) { ActiveChar = _owner };
+        var skill = new Skill(new SkillTemplate { Id = 23347 });
+        Arm(new Craft { Id = 6078, SkillId = skill.Template.Id,
+            CraftMaterials = [new CraftMaterial { ItemId = coinsId, Amount = 200 }],
+            CraftProducts = [new CraftProduct { ItemId = tokenId, Amount = 1 }] });
+
+        _craft.EndCraft(skill);
+
+        await Assert.That(skill.Cancelled).IsEqualTo(capped);
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)4276);
+        await Assert.That(_craft.IsCrafting).IsFalse();
+        await Assert.That(coins.Count).IsEqualTo(capped ? 200 : 0);
+        var token = _owner.Inventory.Bag.Items.Single(item => item.TemplateId == tokenId);
+        await Assert.That(token.Count).IsEqualTo(1);
+        if (capped)
+        {
+            await Assert.That(token).IsSameReferenceAs(heldToken);
+            await Assert.That(_allItems.Count).IsEqualTo(2);
+            await Assert.That(session.Packets.Any(bytes => BitConverter.ToUInt16(bytes, 6) == SCOffsets.SCErrorMsgPacket &&
+                BitConverter.ToUInt16(bytes, 8) == (ushort)ErrorMessageType.ItemPickupLimit)).IsTrue();
+            await Assert.That(session.Packets.Any(bytes => BitConverter.ToUInt16(bytes, 6) == SCOffsets.SCItemTaskSuccessPacket)).IsFalse();
+        }
+        else
+        {
+            await Assert.That(token.MadeUnitId).IsEqualTo(_owner.Id);
+            await Assert.That(token.Grade).IsEqualTo((byte)0);
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RejectedLaterProduct_RestoresEarlierGrantAndGlider(bool autoEquip)
+    {
+        const uint cappedTemplateId = 201;
+        _templates[cappedTemplateId] = new ItemTemplate { Id = cappedTemplateId, MaxCount = 1, PickupLimit = 1 };
+        var material = Material(3);
+        var capped = AddItem(cappedTemplateId, 5, 1, 1);
+        var glider = autoEquip ? CarryPack(BackpackType.Glider) : null;
+        if (autoEquip)
+            _templates[200] = new BackpackTemplate { Id = 200, MaxCount = 1, BackpackType = BackpackType.TradePack };
+        var recipe = Recipe();
+        recipe.CraftProducts.Add(new CraftProduct { ItemId = cappedTemplateId, Amount = 1 });
+        Arm(recipe);
+        var skill = new Skill(new SkillTemplate { Id = recipe.SkillId });
+        var acquired = 0;
+        _owner.Events.OnItemGather += (_, _) => acquired++;
+
+        _craft.EndCraft(skill);
+
+        await Assert.That(skill.Cancelled).IsTrue();
+        await Assert.That(_craft.IsCrafting).IsFalse();
+        await Assert.That(material.Count).IsEqualTo(3);
+        await Assert.That(_owner.Inventory.Bag.Items).Contains(capped);
+        await Assert.That(_allItems.Values.Any(item => item.TemplateId == 200)).IsFalse();
+        await Assert.That(_owner.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack)).IsEqualTo(glider);
+        await Assert.That(_owner.Inventory.PreviousBackPackItemId).IsEqualTo(0UL);
+        await Assert.That(acquired).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task DefaultProductGrade_MergesIntoExistingStackOfAnyGrade()
+    {
+        var material = Material(3);
+        var product = AddItem(200, 2, 1, 2);
+        product.Grade = 3;
+        product.MadeUnitId = 91;
+        var recipe = Recipe();
+        Arm(recipe);
+
+        _craft.EndCraft(new Skill(new SkillTemplate { Id = recipe.SkillId }));
+
+        await Assert.That(material.Count).IsEqualTo(0);
+        await Assert.That(_owner.Inventory.Bag.Items.Single()).IsSameReferenceAs(product);
+        await Assert.That(product.Count).IsEqualTo(3);
+        await Assert.That(product.Grade).IsEqualTo((byte)3);
+        await Assert.That(product.MadeUnitId).IsEqualTo(91U);
+    }
+
+    [Test]
+    public async Task ExplicitProductGrade_SelectsStackBeforeNormalizingNewItemGrade()
+    {
+        Material(3);
+        _templates[200].FixedGrade = 2;
+        _templates[200].Gradable = false;
+        var fixedGrade = AddItem(200, 2, 1, 2);
+        fixedGrade.Grade = 2;
+        var requestedGrade = AddItem(200, 3, 2, 2);
+        requestedGrade.Grade = 6;
+        var recipe = Recipe();
+        recipe.CraftProducts[0].ItemGradeId = 6;
+        Arm(recipe);
+
+        _craft.EndCraft(new Skill(new SkillTemplate { Id = recipe.SkillId }));
+
+        await Assert.That(fixedGrade.Count).IsEqualTo(2);
+        await Assert.That(requestedGrade.Count).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task ZeroLaborTradePack_PreservesGliderAndItemTaskCodes()
+    {
+        var glider = CarryPack(BackpackType.Glider);
+        var material = Material(3);
+        _templates[200] = new BackpackTemplate { Id = 200, MaxCount = 1, BackpackType = BackpackType.TradePack };
+        var session = new RecordingSession();
+        _owner.Connection = new GameConnection(session) { ActiveChar = _owner };
+        var recipe = Recipe();
+        Arm(recipe);
+
+        _craft.EndCraft(new Skill(new SkillTemplate { Id = recipe.SkillId }));
+
+        var pack = _owner.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack);
+        await Assert.That(pack.TemplateId).IsEqualTo(200U);
+        await Assert.That(pack.MadeUnitId).IsEqualTo(_owner.Id);
+        await Assert.That(_owner.Inventory.PreviousBackPackItemId).IsEqualTo(glider.Id);
+        await Assert.That(_owner.Inventory.Bag.Items.Single()).IsSameReferenceAs(glider);
+        await Assert.That(material.Count).IsEqualTo(0);
+        var itemTaskCodes = session.Packets.Where(bytes => BitConverter.ToUInt16(bytes, 6) == SCOffsets.SCItemTaskSuccessPacket)
+            .Select(bytes => (ItemTaskType)bytes[8]).ToArray();
+        await Assert.That(itemTaskCodes).IsEquivalentTo([ItemTaskType.CraftPickupProduct, ItemTaskType.CraftActSaved]);
+    }
+
+    private Backpack CarryPack(BackpackType backpackType = BackpackType.TradePack)
+    {
+        var template = new BackpackTemplate { Id = 300, MaxCount = 1, BackpackType = backpackType };
         _templates[300] = template;
         var container = _owner.Inventory.Equipment;
         var item = new Backpack
@@ -240,6 +383,7 @@ public sealed class CharacterCraftReservationTests
             SlotType = SlotType.Equipment, Slot = (int)EquipmentItemSlot.Backpack, _holdingContainer = container
         };
         container.Items.Add(item);
+        container.UpdateFreeSlotCount();
         _allItems.Add(item.Id, item);
         return item;
     }
@@ -263,14 +407,16 @@ public sealed class CharacterCraftReservationTests
         CraftProducts = [new CraftProduct { ItemId = 200, Amount = 1 }]
     };
 
-    private Item Material(int count, bool bank = false)
+    private Item Material(int count, bool bank = false) => AddItem(100, 1, 0, count, bank);
+
+    private Item AddItem(uint templateId, ulong id, int slot, int count, bool bank = false)
     {
         var container = bank ? _owner.Inventory.Warehouse : _owner.Inventory.Bag;
-        var item = new Item { Id = 1, TemplateId = 100, Template = _templates[100], Count = count,
-            OwnerId = 7, SlotType = container.ContainerType, Slot = 0, _holdingContainer = container };
+        var item = new Item { Id = id, TemplateId = templateId, Template = _templates[templateId], Count = count,
+            OwnerId = 7, SlotType = container.ContainerType, Slot = slot, _holdingContainer = container };
         container.Items.Add(item);
         container.UpdateFreeSlotCount();
-        _allItems.Add(1, item);
+        _allItems.Add(id, item);
         return item;
     }
 

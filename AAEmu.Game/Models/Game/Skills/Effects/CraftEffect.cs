@@ -52,11 +52,11 @@ public class CraftEffect : EffectTemplate
                     }
                     else
                     {
-                        character.Craft.EndCraft();
+                        character.Craft.EndCraft(source.Skill);
                     }
                     break;
                 case WorldInteractionGroup.Collect:
-                    character.Craft.EndCraft();
+                    character.Craft.EndCraft(source.Skill);
                     break;
                 case WorldInteractionGroup.Building when target is House house:
                     AdvanceHouseConstruction(character, house, usedSkill, source.Skill);
@@ -78,7 +78,7 @@ public class CraftEffect : EffectTemplate
                     }
                     else
                     {
-                        character.Craft.EndCraft();
+                        character.Craft.EndCraft(source.Skill);
                     }
                     break;
             }
