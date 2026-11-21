@@ -21,7 +21,9 @@ using AAEmu.Game.Models.Game.Skills.Effects.Enums;
 using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Utils.DB;
 using AAEmu.UnitTests.Utils.Mocks;
+using Microsoft.Data.Sqlite;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Items;
 
@@ -126,6 +128,26 @@ public sealed class ItemEligibilityTests
         equipment.ParentUnit = _owner;
         await Assert.That(equipment.CanAccept(item, 0)).IsFalse();
         await Assert.That(equipment.RestorePersistedItem(new EquipItem(2, template, 1))).IsFalse();
+    }
+
+    [Test]
+    [Arguments("t", true)]
+    [Arguments("f", false)]
+    public async Task LoadGradeFlags_ReadsCompactText(string flag, bool enchantable)
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 't' AS gradable, $flag AS grade_enchantable";
+        command.Parameters.AddWithValue("$flag", flag);
+        using var reader = new SQLiteWrapperReader(command.ExecuteReader());
+        reader.Read();
+        var template = new ItemTemplate();
+
+        ItemManager.LoadGradeFlags(reader, template);
+
+        await Assert.That(template.Gradable).IsTrue();
+        await Assert.That(template.GradeEnchantable).IsEqualTo(enchantable);
     }
 
     [Test]
