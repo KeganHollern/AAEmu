@@ -11,7 +11,7 @@ public class CSTakeAttachmentSequentially() : GamePacket(CSOffsets.CSTakeAttachm
     public override void Read(PacketStream stream)
     {
         var mailId = stream.ReadInt64();
-        if (!ServiceInteraction.CanUseMailbox(Connection.ActiveChar))
+        if (!ServiceInteraction.CanClaimMail(Connection.ActiveChar))
         {
             Connection.ActiveChar.SendErrorMessage(ErrorMessageType.MailFailMailboxNotFound);
             return;

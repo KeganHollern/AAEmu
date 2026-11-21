@@ -27,7 +27,7 @@ public class CSTakeAttachmentItemPacket() : GamePacket(CSOffsets.CSTakeAttachmen
         var slotType = stream.ReadByte();
         var slot = stream.ReadByte();
 
-        if (!ServiceInteraction.CanUseMailbox(Connection.ActiveChar))
+        if (!ServiceInteraction.CanClaimMail(Connection.ActiveChar))
         {
             Connection.ActiveChar.SendErrorMessage(ErrorMessageType.MailFailMailboxNotFound);
             return;

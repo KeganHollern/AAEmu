@@ -67,14 +67,15 @@ public class CharacterMails
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            var now = DateTime.UtcNow;
             if (MailManager.Instance._allPlayerMails.TryGetValue(id, out var mail) &&
-                !MailManager.IsExpired(mail, DateTime.UtcNow) &&
-                (isSent ? mail.Header.SenderId == Self.Id : mail.Header.ReceiverId == Self.Id))
+                !MailManager.IsExpired(mail, now) &&
+                (isSent ? mail.Header.SenderId == Self.Id : mail.Header.ReceiverId == Self.Id && mail.Body.RecvDate <= now))
             {
                 if (mail.Header.Status == MailStatus.Unread && !isSent)
                 {
                     UnreadMailCount.UpdateReceived(mail.MailType, -1);
-                    mail.OpenDate = DateTime.UtcNow;
+                    mail.OpenDate = now;
                     mail.Header.Status = MailStatus.Read;
                     mail.IsDelivered = true;
                     MailManager.Instance.NotifyMailReceiverOpenedIfSenderOnline(mail);
@@ -128,7 +129,9 @@ public class CharacterMails
         lock (SaveManager.PersistenceSyncRoot)
         {
             var source = MailManager.Instance.GetMailById(mailId);
-            if (source != null && (source.HasUnresolvedAttachments || MailManager.IsExpired(source, DateTime.UtcNow)))
+            var now = DateTime.UtcNow;
+            if (source != null &&
+                (source.HasUnresolvedAttachments || source.Body.RecvDate > now || MailManager.IsExpired(source, now)))
                 return false;
             var claim = _auctionMailClaimManager.TryClaim(Self, this, mailId, takeMoney,
                 takeItems, takeAllSelected, specifiedItemId);
