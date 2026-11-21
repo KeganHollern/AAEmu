@@ -36,7 +36,7 @@ public class CSSendMailPacket() : GamePacket(CSOffsets.CSSendMailPacket, 1)
         }
 
         var doodadObjId = stream.ReadBc();
-        var mailCheckOK = ServiceInteraction.CanUseMailbox(Connection.ActiveChar, doodadObjId);
+        var mailCheckOK = ServiceInteraction.CanSendMail(Connection.ActiveChar, doodadObjId);
 
         if (mailCheckOK)
         {

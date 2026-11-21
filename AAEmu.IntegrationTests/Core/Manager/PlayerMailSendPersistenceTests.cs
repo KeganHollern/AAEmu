@@ -1,5 +1,7 @@
-﻿using System.Reflection;
+﻿using System.Collections.Concurrent;
+using System.Reflection;
 
+using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
@@ -7,14 +9,18 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Mails;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World;
 
 using Moq;
 using Xunit;
@@ -64,21 +70,75 @@ public sealed partial class PlayerMailSendPersistenceTests
     }
 
     [Theory]
-    [InlineData(MailType.Normal, 310)]
-    [InlineData(MailType.Express, 460)]
-    public void SuccessfulSend_ReloadsExactAttachmentsRecipientAndPaidMoney(MailType type, int cost)
+    [InlineData(MailType.Normal, 50, false, false)]
+    [InlineData(MailType.Express, 100, false, false)]
+    [InlineData(MailType.Normal, 310, true, false)]
+    [InlineData(MailType.Express, 460, true, false)]
+    [InlineData(MailType.Express, 460, true, true)]
+    public void SendPacket_ExactMailbox_ReloadsAttachmentsRecipientAndPostage(MailType type, int cost, bool attached, bool explicitInteraction)
     {
         using var graph = new SendGraph();
-        var first = graph.AddItem(0);
-        Assert.True(graph.Save.TryCommitEconomy([graph.Sender]));
-        first.Count = 7; // A previously saved attachment also has unsaved source changes.
-        var second = graph.AddEquipment(1);
-        Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM items WHERE id={second.Id}"));
+        Item[] attachments = [];
+        var copper = attached ? 200 : 0;
+        if (attached)
+        {
+            var first = graph.AddItem(0);
+            Assert.True(graph.Save.TryCommitEconomy([graph.Sender]));
+            first.Count = 7; // A previously saved attachment also has unsaved source changes.
+            var second = graph.AddEquipment(1);
+            Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM items WHERE id={second.Id}"));
+            attachments = [first, second];
+        }
 
-        Assert.Equal(MailResult.Success, graph.Send(type, 200, 0, 1));
+        var session = new Mock<ISession>();
+        graph.Sender.Connection = new GameConnection(session.Object) { ActiveChar = graph.Sender };
+        var mailbox = AddSendMailbox(graph.Sender, explicitInteraction);
+        var attachmentCount = (byte)(attachments.Length + (copper > 0 ? 1 : 0));
+        var body = new PacketStream().Write((byte)type).Write(graph.Receiver.Name).Write(0U)
+            .Write("Persistence test").Write("Exact attachments").Write(attachmentCount).Write(copper).Write(0).Write(0).Write(0L);
+        for (byte slot = 0; slot < MailBody.MaxMailAttachments; slot++)
+        {
+            if (slot < attachments.Length)
+                body.Write((byte)SlotType.Inventory).Write(slot);
+            else
+                body.Write((byte)0).Write((byte)0);
+        }
+        body.WriteBc(mailbox.ObjId);
+        body.Rollback();
 
-        graph.AssertCommitted(type, cost, 200, first, second);
-        graph.AssertReloaded(type, cost, 200, first, second);
+        new CSSendMailPacket { Connection = graph.Sender.Connection }.Read(body);
+
+        Assert.Equal(0, body.LeftBytes);
+        session.Verify(sender => sender.SendPacket(It.Is<byte[]>(packet => packet.Length >= 8 &&
+            BitConverter.ToUInt16(packet, 6) == SCOffsets.SCMailSentPacket)), Times.Once);
+        graph.AssertCommitted(type, cost, copper, attachments);
+        graph.AssertReloaded(type, cost, copper, attachments);
+    }
+
+    private static Doodad AddSendMailbox(Character sender, bool explicitInteraction)
+    {
+        var world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, 1);
+        SetField(WorldManager.Instance, "_worlds", new ConcurrentDictionary<uint, WorldInstance> { [world.Id] = world });
+        sender.ParentWorld = world;
+        var mailbox = new Doodad
+        {
+            ObjId = 99, TemplateId = 320, OwnerType = DoodadOwnerType.System, ParentWorld = world
+        };
+        mailbox.CurrentFuncs.Add(new DoodadFunc { FuncType = nameof(DoodadFuncNaviOpenMailbox) });
+        mailbox.Transform.Local.SetPosition(5, 0, 0);
+        world.AddObject(mailbox);
+        if (explicitInteraction)
+            sender.CurrentInteractionObject = mailbox;
+        else
+        {
+            world.SpawnManager = new SpawnManager(world);
+            var spawner = new DoodadSpawner { Id = 7, UnitId = mailbox.TemplateId, ParentWorld = world, Last = mailbox };
+            var registry = (Dictionary<uint, DoodadSpawner>)typeof(SpawnManager)
+                .GetProperty("DoodadSpawners", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(world.SpawnManager)!;
+            registry.Add(spawner.Id, spawner);
+            mailbox.Spawner = spawner;
+        }
+        return mailbox;
     }
 
     [Theory]
@@ -290,7 +350,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             Assert.Equal(Receiver.Id, mail.Header.ReceiverId);
             Assert.Equal(copper, mail.Body.CopperCoins);
             Assert.Equal(attachments, mail.Body.Attachments);
-            Assert.Equal(attachments.Length + 1, mail.Header.Attachments);
+            Assert.Equal(attachments.Length + (copper > 0 ? 1 : 0), mail.Header.Attachments);
             Assert.Equal(0, mail.Header.Extra);
             // Both recipients are offline in this fixture; delivery notification has not run.
             Assert.False(mail.IsDelivered);
@@ -346,6 +406,8 @@ public sealed partial class PlayerMailSendPersistenceTests
                 Assert.Equal(Receiver.Id, mail.Header.ReceiverId);
                 Assert.Equal(Receiver.Name, mail.ReceiverName);
                 Assert.Equal(copper, mail.Body.CopperCoins);
+                Assert.Equal(type == MailType.Normal ? MailManager.NormalMailDelay : TimeSpan.Zero,
+                    mail.Body.RecvDate - mail.Body.SendDate);
                 Assert.Equal(10000L - cost, Scalar($"SELECT money FROM characters WHERE id={Sender.Id}"));
                 Assert.Equal(attachments.Select(item => item.Id), mail.Body.Attachments.Select(item => item.Id));
                 foreach (var original in attachments)

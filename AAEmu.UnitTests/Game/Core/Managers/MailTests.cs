@@ -407,6 +407,71 @@ public sealed class MailTests
     }
 
     [Test]
+    [Arguments("zero")]
+    [Arguments("unknown")]
+    [Arguments("wrong-role")]
+    [Arguments("distant")]
+    [Arguments("permission")]
+    [Arguments("nonfixed")]
+    [Arguments("stale-interaction")]
+    public async Task SendMailPacket_InvalidExactMailbox_PreservesWalletAndMail(string condition)
+    {
+        var mailbox = AddFixedMailbox();
+        _character.Level = 50;
+        var targetId = mailbox.ObjId;
+        var world = mailbox.ParentWorld;
+        switch (condition)
+        {
+            case "zero":
+                _character.CurrentInteractionObject = mailbox;
+                targetId = 0;
+                break;
+            case "unknown":
+                targetId = mailbox.ObjId + 1;
+                break;
+            case "wrong-role":
+                var storage = new Doodad { ObjId = mailbox.ObjId + 1, ParentWorld = world };
+                storage.Transform.Local.SetPosition(16, 16, 2);
+                world.AddObject(storage);
+                targetId = storage.ObjId;
+                break;
+            case "distant":
+                mailbox.Transform.Local.SetPosition(16, 16, 7.01f);
+                break;
+            case "permission":
+                _character.CurrentInteractionObject = mailbox;
+                mailbox.CurrentFuncs[0].PermId = (uint)DoodadFuncPermission.OwnerOnly;
+                break;
+            case "nonfixed":
+                mailbox.Spawner = null;
+                break;
+            case "stale-interaction":
+                _character.CurrentInteractionObject = mailbox;
+                world.RemoveObject(mailbox);
+                var replacement = new Doodad { ObjId = mailbox.ObjId, ParentWorld = world };
+                replacement.Transform.Local.SetPosition(16, 16, 2);
+                replacement.CurrentFuncs.AddRange(mailbox.CurrentFuncs);
+                world.AddObject(replacement);
+                break;
+        }
+        var balance = _character.Money;
+        var body = new PacketStream().Write((byte)MailType.Express).Write(_otherRecipient.Name).Write(0U)
+            .Write("Mailbox test").Write("Exact target").Write((byte)1).Write(25).Write(0).Write(0).Write(0L);
+        for (var index = 0; index < MailBody.MaxMailAttachments; index++)
+            body.Write((byte)0).Write((byte)0);
+        body.WriteBc(targetId);
+        body.Rollback();
+
+        new CSSendMailPacket { Connection = _character.Connection }.Read(body);
+
+        await Assert.That(body.LeftBytes).IsEqualTo(0);
+        await Assert.That(_character.Money).IsEqualTo(balance);
+        await Assert.That(_mailManager.AllPlayerMails.Count).IsEqualTo(0);
+        _recipientSession.SendPacket(Is<byte[]>(packet => HasOpcode(packet, SCOffsets.SCErrorMsgPacket) &&
+            BitConverter.ToInt16(packet, 8) == (short)ErrorMessageType.MailFailMailboxNotFound)).WasCalled(Times.Once);
+    }
+
+    [Test]
     public async Task OfflineSender_ReadAndDelete_UsesStoredMailStateWithoutPackets()
     {
         _worldManager.GetCharacterById(_sender.Id).Returns((Character)null);
