@@ -1,6 +1,9 @@
 ﻿using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
+using AAEmu.Commons.Exceptions;
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
@@ -11,6 +14,7 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2S;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Core.Packets.S2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
@@ -18,6 +22,7 @@ using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.World;
@@ -35,6 +40,9 @@ public sealed class UccPurchaseTests
     private CharacterMock _character;
     private Doodad _printer;
     private StreamConnection _connection;
+    private RecordingSession _gameSession;
+    private Mock<IItemIdManager> _itemIds;
+    private Mock<IUccIdManager> _uccIds;
     private Dictionary<ulong, Item> _allItems;
     private int _commits;
     private Func<bool> _commit;
@@ -45,10 +53,10 @@ public sealed class UccPurchaseTests
     {
         _commits = 0;
         _commit = () => true;
-        var itemIds = Mock.Of<IItemIdManager>();
+        _itemIds = Mock.Of<IItemIdManager>();
         uint itemId = 100;
-        itemIds.GetNextId().Returns(() => itemId++);
-        _items = new ItemManager(Mock.Of<ISkillManager>().Object, itemIds.Object,
+        _itemIds.GetNextId().Returns(() => itemId++);
+        _items = new ItemManager(Mock.Of<ISkillManager>().Object, _itemIds.Object,
             Mock.Of<IContainerIdManager>().Object, Mock.Of<ILocalizationManager>().Object,
             Mock.Of<ITaskManager>().Object, Mock.Of<IWorldManager>().Object);
         Install(_items);
@@ -63,8 +71,9 @@ public sealed class UccPurchaseTests
         });
         var containers = new Dictionary<ulong, ItemContainer>();
         SetField(_items, "_allPersistentContainers", containers);
+        _gameSession = new RecordingSession();
         _character = new CharacterMock { Id = 7, AccountId = 7, ObjId = 7, Name = "CrestMaker", Money = 100000,
-            NumInventorySlots = 5, NumBankSlots = 5, Connection = new GameConnection(Mock.Of<ISession>().Object) };
+            NumInventorySlots = 5, NumBankSlots = 5, Connection = new GameConnection(_gameSession) };
         _character.Connection.ActiveChar = _character;
         SetOnline(_character, true);
         foreach (var type in Enum.GetValues<SlotType>())
@@ -87,9 +96,9 @@ public sealed class UccPurchaseTests
         world.AddObject(_printer);
         _character.ParentWorld = world;
         _connection = new StreamConnection(Mock.Of<ISession>().Object) { GameConnection = _character.Connection };
-        var uccIds = Mock.Of<IUccIdManager>();
+        _uccIds = Mock.Of<IUccIdManager>();
         uint uccId = 500;
-        uccIds.GetNextId().Returns(() => uccId++);
+        _uccIds.GetNextId().Returns(() => uccId++);
         _maker = new DoodadFuncStampMaker { Id = 2, ConsumeMoney = 50000, ConsumeItemId = 11127, ConsumeCount = 1, ItemId = 17663 };
         var doodads = new DoodadManager(null, null, null, null, null);
         SetField(doodads, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
@@ -97,7 +106,7 @@ public sealed class UccPurchaseTests
             [nameof(DoodadFuncStampMaker)] = new() { [_maker.Id] = _maker }
         });
         Install(doodads);
-        _uccs = new UccManager(uccIds.Object)
+        _uccs = new UccManager(_uccIds.Object)
         {
             CommitPurchase = (_, _) => { _commits++; return _commit(); }
         };
@@ -148,8 +157,116 @@ public sealed class UccPurchaseTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FirstCreatePacket_ContainsCommittedCrestIdAndFlag(bool custom)
+    {
+        var material = custom ? Material() : null;
+        DefaultUcc source = custom ? new CustomUcc() : Simple();
+        var started = custom
+            ? StartCustom((CustomUcc)source)
+            : _uccs.StartUpload(_connection, 99, 0, source);
+        await Assert.That(started).IsTrue();
+        await Assert.That(_uccs.ConfirmDefaultUcc(_connection, 0)).IsTrue();
+
+        var output = _character.Inventory.Bag.Items.Single();
+        var body = new PacketStream(_gameSession.Packets.First(IsCrestItemPacket)[8..]);
+        await Assert.That(body.ReadByte()).IsEqualTo((byte)ItemTaskType.GainItemWithUcc);
+        await Assert.That(body.ReadByte()).IsEqualTo((byte)2);
+        if (custom)
+        {
+            await Assert.That(body.ReadByte()).IsEqualTo((byte)ItemAction.Seize);
+            await Assert.That(body.ReadByte()).IsEqualTo((byte)SlotType.Inventory);
+            await Assert.That(body.ReadByte()).IsEqualTo((byte)0);
+            await Assert.That(body.ReadUInt64()).IsEqualTo(material.Id);
+        }
+        else
+        {
+            await Assert.That(body.ReadByte()).IsEqualTo((byte)ItemAction.ChangeMoneyAmount);
+            await Assert.That(body.ReadInt32()).IsEqualTo(-50000);
+        }
+        await Assert.That(body.ReadByte()).IsEqualTo((byte)ItemAction.Create);
+        await Assert.That(body.ReadByte()).IsEqualTo((byte)SlotType.Inventory);
+        await Assert.That(body.ReadByte()).IsEqualTo((byte)output.Slot);
+        await Assert.That(body.ReadUInt32()).IsEqualTo(17663u);
+        await Assert.That(body.ReadUInt64()).IsEqualTo(output.Id);
+        await Assert.That(body.ReadByte()).IsEqualTo(output.Grade);
+        var flags = (ItemFlag)body.ReadByte();
+        await Assert.That(body.ReadInt32()).IsEqualTo(1);
+        var detailLength = body.ReadInt16();
+        await Assert.That(detailLength).IsEqualTo((short)128);
+        var details = new PacketStream(body.ReadBytes(detailLength));
+        await Assert.That(details.ReadByte()).IsEqualTo((byte)ItemDetailType.Ucc);
+        var received = new UccItem();
+        received.ReadDetails(details);
+
+        await Assert.That(source.Id).IsEqualTo(500u);
+        await Assert.That(received.UccId).IsEqualTo((ulong)source.Id);
+        await Assert.That(output.UccId).IsEqualTo(received.UccId);
+        await Assert.That(flags.HasFlag(ItemFlag.HasUCC)).IsTrue();
+        await Assert.That(_gameSession.Packets.Count(IsCrestItemPacket)).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task CrestIdUnavailable_LeavesPaymentAndItemsUntouched(bool custom, bool allocatorThrows)
+    {
+        var material = custom ? Material() : null;
+        var started = custom ? StartCustom(new CustomUcc()) : _uccs.StartUpload(_connection, 99, 0, Simple());
+        await Assert.That(started).IsTrue();
+        if (allocatorThrows)
+        {
+            _uccIds.GetNextId().Throws(new GameException("Ran out of valid Id's."));
+            await Assert.That(() => _uccs.ConfirmDefaultUcc(_connection, 0)).Throws<GameException>();
+        }
+        else
+        {
+            _uccIds.GetNextId().Returns(0u);
+            await Assert.That(_uccs.ConfirmDefaultUcc(_connection, 0)).IsFalse();
+        }
+
+        _itemIds.GetNextId().WasCalled(custom ? Times.Once : Times.Never);
+        _uccIds.ReleaseId(Any<uint>()).WasCalled(Times.Never);
+        await Assert.That(_character.Money).IsEqualTo(100000L);
+        await Assert.That(_character.Inventory.Bag.Items.Count).IsEqualTo(custom ? 1 : 0);
+        await Assert.That(_allItems.Count).IsEqualTo(custom ? 1 : 0);
+        if (custom)
+        {
+            await Assert.That(material.Count).IsEqualTo(1);
+            await Assert.That(_character.Inventory.Bag.Items.Single()).IsSameReferenceAs(material);
+        }
+        await Assert.That(_commits).IsEqualTo(0);
+        await Assert.That(_gameSession.Packets.Any(IsCrestItemPacket)).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FullBag_ReleasesUnusedItemAndCrestIds(bool custom)
+    {
+        var material = Material();
+        material.Count = 2;
+        _character.Inventory.Bag.ContainerSize = 1;
+        _character.Inventory.Bag.UpdateFreeSlotCount();
+        var started = custom ? StartCustom(new CustomUcc()) : _uccs.StartUpload(_connection, 99, 0, Simple());
+        await Assert.That(started).IsTrue();
+        await Assert.That(_uccs.ConfirmDefaultUcc(_connection, 0)).IsFalse();
+
+        _itemIds.ReleaseId(101u).WasCalled(Times.Once);
+        _uccIds.ReleaseId(500u).WasCalled(Times.Once);
+        await Assert.That(_character.Money).IsEqualTo(100000L);
+        await Assert.That(material.Count).IsEqualTo(2);
+        await Assert.That(_character.Inventory.Bag.Items.Single()).IsSameReferenceAs(material);
+        await Assert.That(_allItems.Values.Single()).IsSameReferenceAs(material);
+        await Assert.That(_commits).IsEqualTo(0);
+        await Assert.That(_gameSession.Packets.Any(IsCrestItemPacket)).IsFalse();
+    }
+
+    [Test]
     [Arguments("funds")]
-    [Arguments("full")]
     [Arguments("commit")]
     [Arguments("moved")]
     [Arguments("replaced_printer")]
@@ -163,7 +280,6 @@ public sealed class UccPurchaseTests
     {
         await Assert.That(_uccs.StartUpload(_connection, 99, 0, Simple())).IsTrue();
         if (reason == "funds") _character.Money = 49999;
-        if (reason == "full") { _character.Inventory.Bag.ContainerSize = 0; _character.Inventory.Bag.UpdateFreeSlotCount(); }
         if (reason == "commit") _commit = () => false;
         InvalidateUploadContext(reason);
         var money = _character.Money;
@@ -458,6 +574,23 @@ public sealed class UccPurchaseTests
     private static void SetOnline(Character character, bool online) => typeof(Character)
         .GetField("<IsOnline>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
         .SetValue(character, online);
+
+    private static bool IsCrestItemPacket(byte[] packet) =>
+        packet.Length > 8 && BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(6)) == SCOffsets.SCItemTaskSuccessPacket &&
+        packet[8] == (byte)ItemTaskType.GainItemWithUcc;
+
+    private sealed class RecordingSession : ISession
+    {
+        internal List<byte[]> Packets { get; } = [];
+        public IPAddress Ip => IPAddress.Loopback;
+        public uint SessionId => 1;
+        public Socket Socket => null;
+        public void SendPacket(byte[] packet) => Packets.Add(packet.ToArray());
+        public void AddAttribute(string name, object attribute) { }
+        public object GetAttribute(string name) => null;
+        public void ClearAttribute(string name) { }
+        public void Close() { }
+    }
 
     private Item Material()
     {
