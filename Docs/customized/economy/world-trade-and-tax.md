@@ -102,6 +102,18 @@ For a demand price of 1430 copper, the server sends price 1501, bonus 71, and to
 The client displays base 1430, bonus 71, and total 1576.
 The script SHA-256 is `944dc8076da065746f4a65f767bd9870c1bb5138b641004edea2fc89e49321b9`.
 
+### House plaque tax status
+
+The client reads the 28-byte body of `SCHouseTaxInfo` (`0xc4`) in `397b40d0`.
+After the date at byte 14, it reads a 4-byte missed-week count at byte 22.
+It then reads the paid flag and heavy-tax flag at bytes 26 and 27.
+The handler at `391d7c20` passes these three fields to `3932e210` for `HOUSE_TAX_INFO`.
+The former writer placed the paid flag first, so the client read a paid house as one week overdue.
+
+The construction plaque in `material.alb` shows the date as the demolition date when the count is positive.
+The owner window in `maintain_window.alb` uses the demolition label for a count of 1.
+Game sends the next tax due date with the paid state and the protection end date with the overdue state.
+
 ## SQL review
 
 Two additive updates create `specialty_demand` and `house_tax_receipts`.

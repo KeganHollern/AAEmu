@@ -432,11 +432,19 @@ public partial class HousingManager(
         var baseTax = (int)(house.Template.Taxation?.Tax ?? 0);
         var depositTax = baseTax * 2;
 
+        DateTime taxDueDate;
+        DateTime protectionEndDate;
+        lock (house.TaxPaymentSyncRoot)
+        {
+            taxDueDate = house.TaxDueDate;
+            protectionEndDate = house.ProtectionEndDate;
+        }
         var utcNow = DateTime.UtcNow;
-        totalTaxAmountDue = HouseTaxAmount.WithLateFee(totalTaxAmountDue, house.TaxDueDate, utcNow,
+        totalTaxAmountDue = HouseTaxAmount.WithLateFee(totalTaxAmountDue, taxDueDate, utcNow,
             AppConfiguration.Instance.World.HouseLateFeePercent);
-        var isAlreadyPaid = house.TaxDueDate > utcNow;
+        var isAlreadyPaid = taxDueDate > utcNow;
         var weeksWithoutPay = isAlreadyPaid ? 0 : 1;
+        var statusDate = isAlreadyPaid ? taxDueDate : protectionEndDate;
 
         connection.SendPacket(
             new SCHouseTaxInfoPacket(
@@ -444,7 +452,7 @@ public partial class HousingManager(
                 0,  // TODO: implement when castles are added
                 depositTax, // this is used in the help text on (?) when you hover your mouse over it to display deposit tax for this building
                 totalTaxAmountDue, // Amount Due
-                house.ProtectionEndDate,
+                statusDate,
                 isAlreadyPaid,
                 weeksWithoutPay,  // TODO: do proper calculation ?
                 house.Template.HeavyTax

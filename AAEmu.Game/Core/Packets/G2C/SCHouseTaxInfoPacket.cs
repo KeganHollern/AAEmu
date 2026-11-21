@@ -21,8 +21,8 @@ public class SCHouseTaxInfoPacket(
         stream.Write(moneyAmount);
         stream.Write(moneyAmount2);
         stream.Write(due);
-        stream.Write(isAlreadyPaid);
         stream.Write(weeksWithoutPay);
+        stream.Write(isAlreadyPaid);
         stream.Write(isHeavyTaxHouse);
         return stream;
     }
