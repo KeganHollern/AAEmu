@@ -9,6 +9,7 @@ using AAEmu.Game.Core.Packets;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Crafts;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
@@ -199,6 +200,65 @@ public sealed partial class SkillLaborTests
     }
 
     [Test]
+    [Arguments(17684u, true)]
+    [Arguments(17684u, false)]
+    [Arguments(17683u, true)]
+    [Arguments(0u, true)]
+    public async Task HouseConstruction_ConsumesOnlyTheEquippedPackWithLabor(uint equippedTemplateId, bool commitSucceeds)
+    {
+        const uint stoneSkillId = 14575;
+        const uint stonePackId = 17684;
+        var world = new WorldManager(null, null, null, null, null);
+        SetField(world, "_worldInteractionGroups", new Dictionary<uint, WorldInteractionGroup>
+        {
+            [(uint)WorldInteractionType.GroundBuild] = WorldInteractionGroup.Building
+        });
+        SetInstance(world);
+        var cottage = new HousingTemplate();
+        cottage.BuildSteps.Add(0, new HousingBuildStep { ModelId = 1083, NumActions = 1, SkillId = stoneSkillId });
+        cottage.BuildSteps.Add(1, new HousingBuildStep { ModelId = 1084, NumActions = 1, SkillId = stoneSkillId });
+        cottage.BuildSteps.Add(2, new HousingBuildStep { ModelId = 1085, NumActions = 1, SkillId = 14574 });
+        var house = new House { ObjId = 80, TemplateId = 172, Template = cottage, CurrentStep = 0 };
+        var spare = AddConstructionPack(2, stonePackId, _owner.Inventory.Bag, 1);
+        var equipped = equippedTemplateId == 0 ? null : AddConstructionPack(3, equippedTemplateId,
+            _owner.Inventory.Equipment, (int)EquipmentItemSlot.Backpack);
+        var skill = new Skill(new SkillTemplate
+        {
+            Id = stoneSkillId, TargetType = SkillTargetType.Building, ConsumeLaborPower = 10,
+            Effects =
+            [
+                new SkillEffect
+                {
+                    ApplicationMethod = SkillEffectApplicationMethod.Target, Chance = 100, EndLevel = 99,
+                    ConsumeItemId = stonePackId, ConsumeItemCount = 1,
+                    Template = new CraftEffect { WorldInteraction = WorldInteractionType.GroundBuild }
+                }
+            ]
+        });
+        var commits = 0;
+        skill.CommitLaborBatch = (_, _) =>
+        {
+            commits++;
+            return commitSucceeds;
+        };
+
+        skill.ApplyEffects(_owner, new SkillCasterUnit(_owner.ObjId), house, new SkillCastUnitTarget(house.ObjId), null);
+
+        var success = equippedTemplateId == stonePackId && commitSucceeds;
+        await Assert.That(skill.Cancelled).IsEqualTo(!success);
+        await Assert.That(commits).IsEqualTo(equippedTemplateId == stonePackId ? 1 : 0);
+        await Assert.That(house.CurrentStep).IsEqualTo(success ? 1 : 0);
+        await Assert.That(house.CurrentAction).IsEqualTo(success ? 1 : 0);
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)(success ? 10 : 20));
+        await Assert.That(spare.Count).IsEqualTo(1);
+        await Assert.That(_owner.Inventory.Bag.GetItemBySlot(spare.Slot)).IsSameReferenceAs(spare);
+        await Assert.That(_owner.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack))
+            .IsSameReferenceAs(success ? null : equipped);
+        if (equipped != null)
+            await Assert.That(equipped.Count).IsEqualTo(success ? 0 : 1);
+    }
+
+    [Test]
     [Arguments(true)]
     [Arguments(false)]
     public async Task AsyncPlotNode_LaborMarkerAndProductShareOneBatch(bool hasLabor)
@@ -301,6 +361,18 @@ public sealed partial class SkillLaborTests
         await Assert.That(equipment.TemperMagical).IsEqualTo((ushort)(succeeds ? 105 : 104));
         await Assert.That(_owner.LaborPower).IsEqualTo((short)(succeeds ? 10 : 20));
         await Assert.That(_material.Count).IsEqualTo(succeeds ? 2 : 3);
+    }
+
+    private Backpack AddConstructionPack(ulong id, uint templateId, ItemContainer container, int slot)
+    {
+        var pack = new Backpack(id, new BackpackTemplate { Id = templateId, MaxCount = 1 }, 1)
+        {
+            Slot = slot, SlotType = container.ContainerType, OwnerId = _owner.Id, _holdingContainer = container
+        };
+        _items.Add(id, pack);
+        container.Items.Add(pack);
+        container.UpdateFreeSlotCount();
+        return pack;
     }
 
     private void Products()
