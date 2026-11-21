@@ -38,7 +38,7 @@ from each prefab child's local translation. The house origin still anchors
 decoration packets, saved decoration positions, and the garden grid.
 
 The server applies this offset to preview and placed model geometry before
-world rotation and translation. Cache entries use both the model ID and
+world rotation and translation. The offset cache uses both the model ID and
 the offset. Two house templates can reference the same model with different
 offsets.
 
