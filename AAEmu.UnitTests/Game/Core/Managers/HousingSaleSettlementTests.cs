@@ -17,13 +17,16 @@ using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.Features;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Mails;
+using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Taxations;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Interactions;
 using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.UnitTests.Utils.Mocks;
@@ -111,6 +114,68 @@ public sealed class HousingSaleSettlementTests
         foreach (var (type, instance) in _singletons)
             typeof(Singleton<>).MakeGenericType(type).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!.SetValue(null, instance);
         _singletons.Clear();
+    }
+
+    [Test]
+    public async Task Demolition_PaidOwnerNeedsTheActiveSessionAndReceivesOneRefund()
+    {
+        ReplaceSingleton(_housing);
+        ReplaceSingleton(_mail);
+        var foundation = new HousingTemplate { Id = 172, Taxation = new Taxation { Tax = 100000 } };
+        foundation.BuildSteps.Add(0, new HousingBuildStep { SkillId = 14575, NumActions = 1 });
+        _house.Template = foundation;
+        _house.CurrentStep = 0;
+        var world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, 0);
+        typeof(GameObject).GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(_house, world);
+        _house.ObjId = 82;
+        _seller.ObjId = 70;
+        const uint designId = 21166;
+        Template(designId);
+        Template(Item.BoundTaxCertificate);
+        SetField(HousingGameData.Instance, "_housingItemHousings", new List<HousingItemHousings>
+        {
+            new() { Design_Id = _house.Template.Id, Item_Id = designId }
+        });
+        var featuresProperty = typeof(FeaturesManager).GetProperty(nameof(FeaturesManager.Fsets))!;
+        var previousFeatures = FeaturesManager.Fsets;
+        var features = new FeatureSet();
+        features.Set(Feature.taxItem, true);
+        featuresProperty.SetValue(null, features);
+        try
+        {
+            var action = new Demolish();
+            var caster = new SkillCasterUnit(_seller.ObjId);
+            var target = new SkillCastUnitTarget(_house.ObjId);
+            void CompleteCast() => action.Execute(_seller, caster, _house, target, 12945, 0);
+
+            CompleteCast();
+            await Assert.That(_house.OwnerId).IsEqualTo(_seller.Id);
+            await Assert.That(_mail._allPlayerMails).IsEmpty();
+
+            var connection = new GameConnection(Mock.Of<ISession>().Object)
+            {
+                ActiveChar = new CharacterMock { Id = _seller.Id }
+            };
+            _seller.Connection = connection;
+            CompleteCast();
+            await Assert.That(_house.OwnerId).IsEqualTo(_seller.Id);
+            await Assert.That(_mail._allPlayerMails).IsEmpty();
+
+            connection.ActiveChar = _seller;
+            CompleteCast();
+            CompleteCast();
+
+            await Assert.That(_house.OwnerId).IsEqualTo(0u);
+            var mail = _mail._allPlayerMails.Values.Single();
+            await Assert.That(mail.Header.ReceiverId).IsEqualTo(_seller.Id);
+            await Assert.That(mail.MailType).IsEqualTo(MailType.Demolish);
+            await Assert.That(mail.Body.Attachments.Select(item => (item.TemplateId, item.Count)))
+                .IsEquivalentTo([(designId, 1), (Item.BoundTaxCertificate, 20)]);
+        }
+        finally
+        {
+            featuresProperty.SetValue(null, previousFeatures);
+        }
     }
 
     [Test]

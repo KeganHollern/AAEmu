@@ -214,6 +214,49 @@ public sealed class PlayerSkillAuthorizationTests
     }
 
     [Test]
+    [Arguments(-1)]
+    [Arguments(0)]
+    public async Task HouseDemolition_GrantsTheExactSkillToTheCurrentOwner(int step)
+    {
+        _character.AccountId = 10;
+        var template = new HousingTemplate { Id = 172, Hp = 1500 };
+        template.BuildSteps.Add(0, new HousingBuildStep { SkillId = 14575, NumActions = 1 });
+        var house = new House
+        {
+            Id = 1, TlId = 1, ObjId = 82, OwnerId = _character.Id, AccountId = _character.AccountId, Hp = template.Hp,
+            Template = template, IsBeingLoadedFromDb = true, CurrentStep = step
+        };
+        AddToWorld(house);
+        var skill = new SkillTemplate { Id = 12945, TargetType = SkillTargetType.AnyUnit };
+        var target = new SkillCastUnitTarget(house.ObjId);
+
+        await Assert.That(CanUse(skill, target)).IsTrue();
+        await Assert.That(CanUse(new SkillTemplate { Id = 12946, TargetType = skill.TargetType }, target)).IsFalse();
+        await Assert.That(CanUse(new SkillTemplate { Id = skill.Id, TargetType = SkillTargetType.Building }, target)).IsFalse();
+        await Assert.That(CanUse(skill, new SkillCastUnitTarget(_character.ObjId))).IsFalse();
+        var doodadTarget = SkillCastTarget.GetByType(SkillCastTargetType.Doodad);
+        doodadTarget.ObjId = house.ObjId;
+        await Assert.That(CanUse(skill, doodadTarget)).IsFalse();
+
+        house.OwnerId = _character.Id + 1;
+        house.CoOwnerId = _character.Id;
+        house.Permission = HousingPermission.Public;
+        await Assert.That(CanUse(skill, target)).IsFalse();
+
+        house.OwnerId = 0;
+        await Assert.That(CanUse(skill, target)).IsFalse();
+
+        house.OwnerId = _character.Id;
+        house.Hp = 0;
+        await Assert.That(CanUse(skill, target)).IsFalse();
+
+        house.Hp = template.Hp;
+        house.Transform.InstanceId = 1;
+        AddToWorld(house);
+        await Assert.That(CanUse(skill, target)).IsFalse();
+    }
+
+    [Test]
     [Arguments(0, 14737u)]
     [Arguments(1, 14740u)]
     [Arguments(2, 14738u)]
