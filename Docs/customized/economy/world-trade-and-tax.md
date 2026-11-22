@@ -114,6 +114,17 @@ The construction plaque in `material.alb` shows the date as the demolition date 
 The owner window in `maintain_window.alb` uses the demolition label for a count of 1.
 Game sends the next tax due date with the paid state and the protection end date with the overdue state.
 
+### Owner demolition action
+
+The r208022 plaque calls the native Demolish handler at `39478740`.
+The handler starts skill `12945` with the player's Unit caster and the house as the Unit target.
+The 13-byte `CSStartSkill` body (`0x052`) has a 32-bit skill ID, two Unit tags with 3-byte object IDs, and an empty skill object.
+The compact sets a 20-second base cast and one Demolish effect.
+
+Game grants the cast to the owner of a live house in the same world and instance.
+The effect needs the active owner's connection. The housing manager checks the current owner and tax due date at completion.
+The normal return mail carries the design and the deposit for a paid Tudor Slate Cottage foundation.
+
 ## SQL review
 
 Two additive updates create `specialty_demand` and `house_tax_receipts`.

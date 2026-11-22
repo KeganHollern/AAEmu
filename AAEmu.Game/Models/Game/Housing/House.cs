@@ -17,6 +17,8 @@ namespace AAEmu.Game.Models.Game.Housing;
 
 public sealed class House : Unit
 {
+    internal const uint DemolishSkillId = 12945;
+
     public override UnitTypeFlag TypeFlag { get => UnitTypeFlag.Housing; }
     public override BaseUnitType BaseUnitType => BaseUnitType.Housing;
     public override ModelPostureType ModelPostureType { get => ModelPostureType.HouseState; }

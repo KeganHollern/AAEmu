@@ -15,6 +15,16 @@ internal static class SkillCastAuthorization
             source is not SkillCasterUnit || source.ObjId != character.ObjId)
             return false;
 
+        // The r208022 plaque casts the demolition skill directly on the house.
+        if (skill.Id == House.DemolishSkillId)
+        {
+            return skill.TargetType == SkillTargetType.AnyUnit && target is SkillCastUnitTarget &&
+                character.ParentWorld is { } houseWorld &&
+                houseWorld.GetBaseUnit(target.ObjId) is House { IsDead: false } house &&
+                ReferenceEquals(house.ParentWorld, houseWorld) &&
+                house.Transform.InstanceId == character.Transform.InstanceId && house.OwnerId == character.Id;
+        }
+
         // AutoLearn and NeedLearn describe template behavior, not a grant to this player.
         if (skill.Id is 2 or 3 or 4 || SkillManager.Instance.IsDefaultSkill(skill.Id) ||
             character.Skills.Skills.ContainsKey(skill.Id) ||
