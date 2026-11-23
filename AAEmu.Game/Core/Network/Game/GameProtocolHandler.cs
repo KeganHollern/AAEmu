@@ -200,11 +200,12 @@ public class GameProtocolHandler : BaseProtocolHandler
                     var type = stream2.ReadUInt16();
                     if (!CanDispatch(connection, type, level))
                     {
-                        // r208022 can finish sending movement after the server saves the character
-                        // and grants Select Character. There is no world actor left to move.
+                        // r208022 can report movement and mount controllers after Game grants
+                        // Select Character. The old world actor and its mount have left.
                         if (!connection.IsClosed && connection.ReturnedToCharacterSelect &&
                             connection.State == GameState.Lobby && connection.ActiveChar == null &&
-                            level == 1 && type == CSOffsets.CSMoveUnitPacket)
+                            level == 1 && type is CSOffsets.CSMoveUnitPacket or
+                                CSOffsets.CSCreateSkillControllerPacket or CSOffsets.CSSkillControllerStatePacket)
                             continue;
                         GameSecurityTelemetry.PacketRejected(SecurityNetwork.Game, SecurityPacketRejection.InvalidState,
                             true, connection.Id, connection.Ip, type, level, metrics: connection.SecurityMetrics);
