@@ -23,12 +23,17 @@ public sealed class ReplicationSmoothing
     public float BankSmoothed { get; set; }
     /// <summary>Second low-pass on shore pitch delta for replication (targets <see cref="Slave.GroundPitchAngle"/>).</summary>
     public float GroundPitchSmoothed { get; set; }
+    /// <summary>Wave pitch from the last ship movement update, in radians.</summary>
+    public float WavePitch { get; set; }
     /// <summary>Remaining movement broadcasts with stronger smoothing after hull–hull resolution.</summary>
     public byte ContactHoldTicks { get; set; }
 
     public void Reset()
     {
         Seeded = false;
+        BankSmoothed = 0;
+        GroundPitchSmoothed = 0;
+        WavePitch = 0;
         ContactHoldTicks = 0;
     }
 }

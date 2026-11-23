@@ -49,8 +49,7 @@ internal static class SkillRange
             var points = SlaveGameData.Instance.GetAttachPointsForSlave(parent.ModelId);
             if (points != null && points.TryGetValue(attached.AttachPoint, out var point))
             {
-                var world = parent.Transform.World;
-                var position = world.Position + Vector3.Transform(point.AsPositionVector() * parent.Scale, world.ToQuaternion());
+                var position = parent.Transform.TransformPoint(point.AsPositionVector());
                 return Math.Max(0, Vector3.Distance(caster.Transform.World.Position, position) - caster.ModelSize);
             }
 

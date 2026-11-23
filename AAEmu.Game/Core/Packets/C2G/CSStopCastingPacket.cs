@@ -58,11 +58,11 @@ public class CSStopCastingPacket() : GamePacket(CSOffsets.CSStopCastingPacket, 1
 
         if (skillTask is EndChannelingTask ect)
         {
-            skillTask.Skill.Stop(character, ect._channelDoodad);
+            skillTask.Skill.Stop(character, ect._channelDoodad, stoppedBy: nameof(CSStopCastingPacket));
         }
         else
         {
-            skillTask.Skill.Stop(character);
+            skillTask.Skill.Stop(character, stoppedBy: nameof(CSStopCastingPacket));
         }
     }
 }

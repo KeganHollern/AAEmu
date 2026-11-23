@@ -376,6 +376,13 @@ public class Transform : IDisposable
         }
     }
 
+    internal Vector3 TransformPoint(Vector3 localPoint)
+    {
+        var pose = World;
+        var scale = GameObject is BaseUnit unit ? unit.Scale : 1f;
+        return pose.Position + Vector3.Transform(localPoint * scale, pose.ToQuaternion());
+    }
+
     /// <summary>
     /// Calculates and returns a Transform by processing all underlying parents
     /// </summary>

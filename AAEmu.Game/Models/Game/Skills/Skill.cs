@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using System.Runtime.CompilerServices;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
@@ -1763,11 +1764,18 @@ public partial class Skill
     /// </summary>
     /// <param name="caster"></param>
     /// <param name="channelDoodad"></param>
-    public void Stop(BaseUnit caster, Doodad channelDoodad = null, SkillCaster casterCaster = null)
+    public void Stop(BaseUnit caster, Doodad channelDoodad = null, SkillCaster casterCaster = null,
+        [CallerMemberName] string stoppedBy = null)
     {
         if (caster is not Unit unit) { return; }
         if (Interlocked.Exchange(ref _stopRequested, 1) != 0)
             return;
+        if (InitialTarget is Doodad { ParentObj: Slave ship,
+                AttachPoint: >= AttachPointKind.HealPoint0 and <= AttachPointKind.HealPoint9 } point)
+        {
+            Logger.Info("Cast at ship repair point stopped by {StopSource}: skill {SkillId}, caster {CasterId}, hull {HullId}, point {PointId}, caster parent {ParentId}, local position {Position}",
+                stoppedBy, Id, unit.ObjId, ship.ObjId, point.ObjId, unit.Transform.Parent?.GameObject?.ObjId, unit.Transform.Local.Position);
+        }
         Cancelled = true;
         if (unit.SkillTask?.Skill == this)
             unit.SkillTask.CastWindow?.TryCancel();

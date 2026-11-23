@@ -284,6 +284,9 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                     if (targetUnit == character)
                     {
                         var claimedPosition = new Vector3(dmt.X, dmt.Y, dmt.Z);
+                        // A deck contact sends local coordinates. Keep the movement history in world space across detachment.
+                        if (character.Transform.Parent is { } carrier)
+                            claimedPosition = carrier.TransformPoint(claimedPosition);
                         if (!MovementValidation.TryAccept(character, character, claimedPosition, "character",
                                 dmt.Flags.HasFlag(MoveTypeFlags.HasScTypeAndPhase)))
                         {
