@@ -10,6 +10,7 @@ using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Housing;
+using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Models;
 using AAEmu.Game.Services.Security;
 using NLog;
@@ -33,6 +34,7 @@ public class GameConnection
     private int _disconnected;
     internal object SessionSyncRoot { get; } = new();
     internal bool InGameCompleted { get; private set; }
+    internal bool ReturnedToCharacterSelect { get; private set; }
     internal bool MatchesSession(ISession session) => ReferenceEquals(_session, session);
     internal ISession Session => _session;
 
@@ -164,6 +166,7 @@ public class GameConnection
                 character == null || character.AccountId != AccountId)
                 return false;
             ActiveChar = character;
+            ReturnedToCharacterSelect = false;
             State = GameState.CharacterSelected;
             InGameCompleted = false;
             return true;
@@ -193,11 +196,12 @@ public class GameConnection
         }
     }
 
-    internal void ReturnToLobby()
+    internal void ReturnToLobby(LeaveWorldTargetType target)
     {
         ActiveChar = null;
         State = GameState.Lobby;
         InGameCompleted = false;
+        ReturnedToCharacterSelect = target == LeaveWorldTargetType.CharacterSelect;
     }
 
     /// <summary>
