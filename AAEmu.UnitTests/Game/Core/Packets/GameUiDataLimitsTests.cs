@@ -35,6 +35,28 @@ public sealed class GameUiDataLimitsTests
     }
 
     [Test]
+    public async Task SaveUiData_UnreadableOwnedDocumentKeepsLastOptionAndCharacterSwitchAvailable()
+    {
+        var player = new CharacterMock { Id = 40, AccountId = 10 };
+        player.SetOption(5, "last saved selection");
+        var connection = new GameConnection(new RecordingSession());
+        connection.TryAuthenticate(10);
+        connection.ActiveChar = player;
+        connection.State = GameState.World;
+
+        var packet = new CSSaveUIDataPacket { Connection = connection };
+        packet.Read(Body(5, player.Id, [65, 0, 66]));
+        await Assert.That(connection.IsClosed).IsFalse();
+        await Assert.That(GameProtocolHandler.CanDispatch(connection, CSOffsets.CSLeaveWorldPacket, 1)).IsTrue();
+        await Assert.That(player.GetOption(5)).IsEqualTo("last saved selection");
+        await Assert.That(player.HasPendingUiData).IsFalse();
+
+        packet.Read(Body(5, player.Id, Encoding.UTF8.GetBytes("next selection")));
+        await Assert.That(player.GetOption(5)).IsEqualTo("next selection");
+        await Assert.That(player.HasPendingUiData).IsTrue();
+    }
+
+    [Test]
     public async Task SaveUiData_WrongCharacterCannotChangeActiveUiState()
     {
         var player = new CharacterMock { Id = 20, AccountId = 10 };

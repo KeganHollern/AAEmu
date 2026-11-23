@@ -71,6 +71,10 @@ The following evidence is confirmed:
   [r208022-music-note-limits-520.md](r208022-music-note-limits-520.md).
 - The native read branch caps string bytes at `0x1fff` and then writes its local
   NUL. `OnResponseUIData`, `FUN_391e57e0`, also uses an 8192-byte native buffer.
+- The r208022 CryNetwork writer at RVA `0x4d86b` writes a 16-bit length, then
+  copies that many bytes. Its counterpart uses a caller-supplied buffer size.
+  The archived runtime CryNetwork image has SHA-256
+  `5115de707d457a85bd5ea95d78b6e069cba9d1c3f7b7b82dd41c8188995dbe11`.
 
 The confirmed CSSaveUIData level-1 body is:
 
@@ -83,7 +87,11 @@ The confirmed CSSaveUIData level-1 body is:
 
 The packet now rejects invalid keys, IDs, lengths, UTF-8, NUL bytes, truncated
 fields, and trailing bytes before it changes character state. The server counts
-bytes, not .NET characters. Malformed requests close that connection.
+bytes. For an unreadable document in a bounded request for the active character's
+own server-backed key, Game keeps the last good setting and continues to process
+the next request. The ordinary r208022 client can send this save immediately
+before Select Character. An invalid owner, unsupported key or out-of-bounds
+packet still closes the connection.
 
 ## UI persistence
 

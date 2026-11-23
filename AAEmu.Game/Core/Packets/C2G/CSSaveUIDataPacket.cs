@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text;
 using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
@@ -9,6 +10,7 @@ namespace AAEmu.Game.Core.Packets.C2G;
 public class CSSaveUIDataPacket() : GamePacket(CSOffsets.CSSaveUIDataPacket, 1)
 {
     private static readonly UTF8Encoding s_utf8 = new(false, true);
+    private const int HeaderSize = sizeof(ushort) + sizeof(uint) + sizeof(ushort);
 
     public override void Read(PacketStream stream)
     {
@@ -18,13 +20,27 @@ public class CSSaveUIDataPacket() : GamePacket(CSOffsets.CSSaveUIDataPacket, 1)
             Connection.Shutdown();
             return;
         }
+        var start = stream.Pos;
         var bodyLength = stream.LeftBytes;
         var validDocument = TryReadData(stream, out var key, out var ownerId, out var data);
-        if (!validDocument || ownerId != player.Id)
+        if (bodyLength < HeaderSize || bodyLength > HeaderSize + CharacterUiData.MaximumBytes ||
+            !CharacterUiData.IsServerKey(key) || ownerId == 0 || ownerId != player.Id)
         {
-            Logger.Info("Rejected UI save during {State}: key {Key}, {Length} bytes, valid document {Valid}, owner matches {OwnerMatches}",
-                Connection.State, key, bodyLength, validDocument, ownerId == player.Id);
             Connection.Shutdown();
+            return;
+        }
+        if (!validDocument)
+        {
+            // The client saves preferences before requesting Select Character. Keep its last
+            // good option and let the session finish the switch if one document is unreadable.
+            if (Connection.StateRejectionEvents.TryConsume())
+            {
+                var body = stream.Buffer.AsSpan(start, bodyLength);
+                var declared = BinaryPrimitives.ReadUInt16LittleEndian(body[(HeaderSize - sizeof(ushort))..]);
+                var document = body[HeaderSize..];
+                Logger.Info("Skipped UI save for key {Key}: declared {DeclaredBytes} bytes, received {DocumentBytes}, first NUL at {NulOffset}",
+                    key, declared, document.Length, document.IndexOf((byte)0));
+            }
             return;
         }
         lock (SaveManager.PersistenceSyncRoot)
@@ -40,7 +56,7 @@ public class CSSaveUIDataPacket() : GamePacket(CSOffsets.CSSaveUIDataPacket, 1)
         key = 0;
         ownerId = 0;
         data = null;
-        if (stream.LeftBytes < 8)
+        if (stream.LeftBytes < HeaderSize)
             return false;
         key = stream.ReadUInt16();
         ownerId = stream.ReadUInt32();
