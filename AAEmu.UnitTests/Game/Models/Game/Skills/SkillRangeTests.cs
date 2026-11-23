@@ -3,6 +3,7 @@ using System.Reflection;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -13,8 +14,13 @@ using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.StaticValues;
+using AAEmu.Game.Physics;
+using AAEmu.Game.Physics.Util;
+using AAEmu.Game.Utils;
+using Jitter2.LinearMath;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Skills;
 
@@ -155,6 +161,57 @@ public sealed class SkillRangeTests
         ship.Transform.Local.Rotation = new Vector3(0, 0, MathF.PI / 2);
         _caster.Transform.Local.Position = new Vector3(78, 0, 2);
         await Assert.That(SkillRange.Check(_skill, _caster, repair)).IsEqualTo(SkillResult.Success);
+    }
+
+    [Test]
+    [Arguments(0f)]
+    [Arguments(75f)]
+    [Arguments(90f)]
+    [Arguments(-150f)]
+    public async Task ClipperRepairPoint_FollowsTheDisplayedDeckBeforeAndAfterAMovementUpdate(float heading)
+    {
+        var ship = new Slave { ModelId = 2 };
+        var origin = new Vector3(12845, 13922, 100);
+        ship.Transform.Local.Position = origin;
+        var socket = new Vector3(-0.621f, 3.775f, 1.229f); // Model 128, HealPoint1.
+        _points[2] = new() { [AttachPointKind.HealPoint1] = new WorldSpawnPosition { X = socket.X, Y = socket.Y, Z = socket.Z } };
+        var repair = new Doodad { ParentObj = ship, AttachPoint = AttachPointKind.HealPoint1 };
+        var radians = heading * MathF.PI / 180;
+        var body = JQuaternion.CreateRotationY(radians);
+        var expected = origin + Vector3.Transform(socket, Quaternion.CreateFromAxisAngle(Vector3.UnitZ, radians));
+        var rep = new ReplicationSmoothing();
+        var move = new ShipMoveType();
+        _caster.Transform.Local.Position = expected;
+
+        PhysicsManager.ApplyDeckRotation(ship.Transform.Local, body, rep, move);
+        await Assert.That(Vector3.Distance(expected, origin + Vector3.Transform(socket, ship.Transform.Local.ToQuaternion()))).IsLessThan(0.003f);
+        await Assert.That(SkillRange.GetDistance(_caster, repair)).IsEqualTo(0f);
+        await Assert.That(move.RotationX).IsEqualTo((short)0);
+        await Assert.That(move.RotationY).IsEqualTo((short)0);
+        await Assert.That(Math.Abs(move.RotationZ * 0.00003052f - MathF.Sin(radians / 2))).IsLessThan(0.0001f);
+
+        PhysicsManager.ApplyDeckRotation(ship.Transform.Local, body, rep);
+        await Assert.That(SkillRange.GetDistance(_caster, repair)).IsEqualTo(0f);
+        _caster.Transform.Local.Position = expected + Vector3.UnitZ * 10;
+        await Assert.That(SkillRange.Check(_skill, _caster, repair)).IsEqualTo(SkillResult.TooFarRange);
+    }
+
+    [Test]
+    public async Task DeckRotation_PreservesThePublishedBankAndWavePitchAcrossPhysicsTicks()
+    {
+        var body = JQuaternion.CreateRotationY(1.3f);
+        var rep = new ReplicationSmoothing { BankSmoothed = 0.1f, GroundPitchSmoothed = 0.03f, WavePitch = -0.01f };
+        var (heading, roll, pitch) = PhysicsUtil.GetYawPitchRollFromMatrix(JMatrix.CreateFromQuaternion(body));
+        var (z, y, x) = MathUtil.GetSlaveRotationFromDegrees(heading, roll + rep.BankSmoothed, pitch + rep.GroundPitchSmoothed + rep.WavePitch);
+        var move = new ShipMoveType();
+        var transform = new PositionAndRotation();
+        PhysicsManager.ApplyDeckRotation(transform, body, rep, move);
+        await Assert.That((move.RotationX, move.RotationY, move.RotationZ)).IsEqualTo((x, y, z));
+
+        var xyz = new Vector3(x, y, z) * 0.00003052f;
+        var wire = new Quaternion(xyz, MathF.Sqrt(1 - xyz.LengthSquared()));
+        PhysicsManager.ApplyDeckRotation(transform, body, rep);
+        await Assert.That(MathF.Abs(Quaternion.Dot(transform.ToQuaternion(), wire))).IsGreaterThan(0.99999f);
     }
 
     [Test]

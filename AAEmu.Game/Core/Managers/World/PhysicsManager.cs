@@ -10,6 +10,7 @@ using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Physics;
 using AAEmu.Game.Physics.Debug;
 using AAEmu.Game.Physics.Forces;
@@ -471,8 +472,7 @@ public class PhysicsManager
         //}
 
         slave.Transform.Local.Translate(xDelta, yDelta, zDelta);
-        var rotation = slaveRigidBody.Orientation;
-        slave.Transform.Local.ApplyFromQuaternion(rotation.X, rotation.Z, rotation.Y, rotation.W);
+        ApplyDeckRotation(slave.Transform.Local, slaveRigidBody.Orientation, slave.ShipController.Replication);
     }
 
     /// <summary>
@@ -503,9 +503,9 @@ public class PhysicsManager
 
         // During PortalTime the physics thread skips ship processing (including transform sync),
         // so ensure the initial server-side Transform matches the physics spawn position.
+        ctrl.Replication.Reset();
         SyncTransformWithRigidBody(slave);
         slave.Transform.FinalizeTransform();
-        ctrl.Replication.Reset();
         slave.WavePitchPhase = 0f;
         slave.ShipHullCollisionDamageCooldownByOtherShipId.Clear();
         slave.StaticObstacleHullDamageContactActive = false;
@@ -711,11 +711,7 @@ public class PhysicsManager
         var moveType = (ShipMoveType)MoveType.GetType(MoveTypeEnum.Ship);
         moveType.UseSlaveBase(slave);
 
-        // Get current rotation of the ship
-        var rpy = PhysicsUtil.GetYawPitchRollFromMatrix(JMatrix.CreateFromQuaternion(rigidBody.Orientation));
-
-        // Visual-only bank (ship leans into turns). Applied to replicated rotation, not physics.
-        // Coordinate mapping is legacy: GetSlaveRotationFromDegrees reorders axes, so injecting into rpy.Item2 affects client-side roll.
+        // The displayed bank and trim move the deck and its attachments, but do not tilt the rigid body.
         var maxBankDeg = ComputeVisualMaxBankDegFromShipModel(slave.ShipController?.ShipModel, slave.Scale);
         const float bankResponse = 7.5f; // higher = snappier
         var dt = Math.Max(0.0001f, (float)deltaTime.TotalSeconds);
@@ -780,14 +776,7 @@ public class PhysicsManager
             rep.GroundPitchSmoothed += (slave.GroundPitchAngle - rep.GroundPitchSmoothed) * repAlphaV;
         }
 
-        var bankedRpy = (rpy.Item1, rpy.Item2 + rep.BankSmoothed, rpy.Item3 + rep.GroundPitchSmoothed + wavePitchRad);
-
-        // Physics yaw + euler; bank uses softer λ than vertical/trim.
-        var (rotZ, rotY, rotX) = MathUtil.GetSlaveRotationFromDegrees(bankedRpy.Item1, bankedRpy.Item2, bankedRpy.Item3);
-        moveType.RotationX = rotX;
-        moveType.RotationY = rotY;
-        moveType.RotationZ = rotZ;
-
+        rep.WavePitch = wavePitchRad;
         moveType.X = rep.PosX;
         moveType.Y = rep.PosY;
         moveType.Z = rep.PosZ;
@@ -805,11 +794,7 @@ public class PhysicsManager
 
         // Apply new Location/Rotation to GameObject
         slave.Transform.Local.SetPosition(rigidBody.Position.X, rigidBody.Position.Z, rigidBody.Position.Y);
-        slave.Transform.Local.ApplyFromQuaternion(rigidBody.Orientation);
-        slave.Transform.Local.SetRotation(
-            slave.Transform.Local.Rotation.X,
-            slave.Transform.Local.Rotation.Y + rep.BankSmoothed,
-            slave.Transform.Local.Rotation.Z + rep.GroundPitchSmoothed + wavePitchRad);
+        ApplyDeckRotation(slave.Transform.Local, rigidBody.Orientation, rep, moveType);
 
         // Send the packet
         slave.BroadcastPacket(new SCOneUnitMovementPacket(slave.ObjId, moveType), false);
@@ -819,6 +804,25 @@ public class PhysicsManager
 
         if (rep.ContactHoldTicks > 0)
             rep.ContactHoldTicks--;
+    }
+
+    internal static void ApplyDeckRotation(PositionAndRotation transform, JQuaternion physicsRotation,
+        ReplicationSmoothing rep, ShipMoveType movement = null)
+    {
+        // The hull and its repair points use the same axes as the displayed deck.
+        // Jitter uses Y for heading, while the game uses Z.
+        var (heading, roll, pitch) = PhysicsUtil.GetYawPitchRollFromMatrix(JMatrix.CreateFromQuaternion(physicsRotation));
+        var rotation = Quaternion.CreateFromYawPitchRoll(pitch + rep.GroundPitchSmoothed + rep.WavePitch,
+            heading, roll + rep.BankSmoothed);
+        var deck = new Quaternion(rotation.Y, rotation.Z, rotation.X, rotation.W);
+        transform.ApplyFromQuaternion(deck);
+        if (movement != null)
+        {
+            // The movement packet omits W. Choose the equivalent quaternion with positive W.
+            if (deck.W < 0)
+                deck = Quaternion.Negate(deck);
+            (movement.RotationX, movement.RotationZ, movement.RotationY) = MathUtil.GetSlaveRotationFromQuat(deck);
+        }
     }
 
     /// <summary>Encodes m/s for the signed 16-bit client velocity field without overflow reversal.</summary>
