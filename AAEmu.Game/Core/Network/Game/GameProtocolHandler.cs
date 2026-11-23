@@ -200,6 +200,12 @@ public class GameProtocolHandler : BaseProtocolHandler
                     var type = stream2.ReadUInt16();
                     if (!CanDispatch(connection, type, level))
                     {
+                        // r208022 can finish sending movement after the server saves the character
+                        // and grants Select Character. There is no world actor left to move.
+                        if (!connection.IsClosed && connection.ReturnedToCharacterSelect &&
+                            connection.State == GameState.Lobby && connection.ActiveChar == null &&
+                            level == 1 && type == CSOffsets.CSMoveUnitPacket)
+                            continue;
                         GameSecurityTelemetry.PacketRejected(SecurityNetwork.Game, SecurityPacketRejection.InvalidState,
                             true, connection.Id, connection.Ip, type, level, metrics: connection.SecurityMetrics);
                         connection.Shutdown(SecurityDisconnectReason.InvalidState);
@@ -216,6 +222,12 @@ public class GameProtocolHandler : BaseProtocolHandler
                         packet!.Level = level;
                         packet.Connection = connection;
                         packet.Decode(stream2);
+                        if (connection.IsClosed)
+                        {
+                            Logger.Info("Game connection {ConnectionId} closed during {Packet} in {State}",
+                                connection.Id, classType.Name, connection.State);
+                            return;
+                        }
                     }
                 }
                 else

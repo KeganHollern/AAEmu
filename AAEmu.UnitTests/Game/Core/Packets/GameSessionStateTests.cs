@@ -5,6 +5,7 @@ using AAEmu.Commons.Network.Core;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.C2G;
+using AAEmu.Game.Models.StaticValues;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Core.Packets;
@@ -67,9 +68,49 @@ public sealed class GameSessionStateTests
         await Assert.That(connection.TryAdvanceWorldEntry(GameState.EnteringWorld, GameState.World)).IsFalse();
         await Assert.That(connection.TryCompleteWorldEntry()).IsTrue();
         await Assert.That(connection.TryCompleteWorldEntry()).IsFalse();
-        connection.ReturnToLobby();
+        connection.ReturnToLobby(LeaveWorldTargetType.CharacterSelect);
         await Assert.That(connection.ActiveChar).IsNull();
         await Assert.That(connection.TrySelectCharacter(second)).IsTrue();
+    }
+
+    [Test]
+    public async Task SelectCharacter_FinalMovementDoesNotRunOrInterruptTheCharacterList()
+    {
+        var (connection, session) = MakeConnection(GameState.World);
+        connection.ReturnToLobby(LeaveWorldTargetType.CharacterSelect);
+        var handler = new GameProtocolHandler();
+        handler.RegisterPacket(CSOffsets.CSMoveUnitPacket, 1, typeof(ProbePacket));
+        handler.RegisterPacket(CSOffsets.CSRefreshInCharacterListPacket, 1, typeof(CSRefreshInCharacterListPacket));
+
+        byte[] frames = [.. Frame(CSOffsets.CSMoveUnitPacket), .. Frame(CSOffsets.CSRefreshInCharacterListPacket)];
+        handler.OnReceive(connection, frames, 0, frames.Length);
+        await Assert.That(connection.GetAttribute("decoded")).IsNull();
+        await Assert.That(session.PacketsSent).IsEqualTo(1);
+        await Assert.That(session.Closes).IsEqualTo(0);
+        await Assert.That(connection.ActiveChar).IsNull();
+
+        var nextCharacter = new CharacterMock { Id = 2, AccountId = 20 };
+        await Assert.That(connection.TrySelectCharacter(nextCharacter)).IsTrue();
+        await Assert.That(connection.ReturnedToCharacterSelect).IsFalse();
+        await Assert.That(connection.TryAdvanceWorldEntry(GameState.CharacterSelected, GameState.EnteringWorld)).IsTrue();
+        await Assert.That(connection.TryAdvanceWorldEntry(GameState.EnteringWorld, GameState.World)).IsTrue();
+        var movement = Frame(CSOffsets.CSMoveUnitPacket);
+        handler.OnReceive(connection, movement, 0, movement.Length);
+        await Assert.That(connection.GetAttribute("decoded")).IsEqualTo(true);
+        await Assert.That(session.Closes).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Movement_InFreshLobbyOrAfterQuitStillClosesTheSession(bool quit)
+    {
+        var (connection, session) = MakeConnection(quit ? GameState.World : GameState.Lobby);
+        if (quit)
+            connection.ReturnToLobby(LeaveWorldTargetType.QuitGame);
+        var movement = Frame(CSOffsets.CSMoveUnitPacket);
+        new GameProtocolHandler().OnReceive(connection, movement, 0, movement.Length);
+        await Assert.That(session.Closes).IsEqualTo(1);
     }
 
     [Test]
@@ -206,10 +247,11 @@ public sealed class GameSessionStateTests
     {
         private readonly Dictionary<string, object> _attributes = [];
         public int Closes { get; private set; }
+        public int PacketsSent { get; private set; }
         public IPAddress Ip => IPAddress.Loopback;
         public uint SessionId => 1;
         public Socket Socket => null;
-        public void SendPacket(byte[] packet) { }
+        public void SendPacket(byte[] packet) => PacketsSent++;
         public void AddAttribute(string name, object value) => _attributes[name] = value;
         public object GetAttribute(string name) => _attributes.GetValueOrDefault(name);
         public void ClearAttribute(string name) => _attributes.Remove(name);

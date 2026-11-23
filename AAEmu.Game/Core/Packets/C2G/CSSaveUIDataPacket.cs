@@ -13,10 +13,17 @@ public class CSSaveUIDataPacket() : GamePacket(CSOffsets.CSSaveUIDataPacket, 1)
     public override void Read(PacketStream stream)
     {
         var player = Connection.ActiveChar;
-        if (player == null || !Connection.IsAuthenticated || Connection.IsClosed ||
-            player.AccountId != Connection.AccountId || !TryReadData(stream, out var key, out var ownerId, out var data) ||
-            ownerId != player.Id)
+        if (player == null || !Connection.IsAuthenticated || Connection.IsClosed || player.AccountId != Connection.AccountId)
         {
+            Connection.Shutdown();
+            return;
+        }
+        var bodyLength = stream.LeftBytes;
+        var validDocument = TryReadData(stream, out var key, out var ownerId, out var data);
+        if (!validDocument || ownerId != player.Id)
+        {
+            Logger.Info("Rejected UI save during {State}: key {Key}, {Length} bytes, valid document {Valid}, owner matches {OwnerMatches}",
+                Connection.State, key, bodyLength, validDocument, ownerId == player.Id);
             Connection.Shutdown();
             return;
         }

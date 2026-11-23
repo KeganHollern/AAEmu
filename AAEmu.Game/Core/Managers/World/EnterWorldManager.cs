@@ -308,7 +308,7 @@ public class EnterWorldManager(
         }
         if (connection != null)
         {
-            connection.ReturnToLobby();
+            connection.ReturnToLobby(leaveWorldTarget);
             connection.LeaveTask = null;
             connection.SendPacket(new SCLeaveWorldGrantedPacket(leaveWorldTarget));
             connection.SendPacket(new ChangeStatePacket(0));
