@@ -17,6 +17,7 @@ using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.StaticValues;
+using AAEmu.Game.Models.Tasks.Skills;
 using AAEmu.Game.Physics;
 using AAEmu.Game.Physics.Util;
 using AAEmu.Game.Utils;
@@ -212,6 +213,52 @@ public sealed class SkillRangeTests
         var wire = new Quaternion(xyz, MathF.Sqrt(1 - xyz.LengthSquared()));
         PhysicsManager.ApplyDeckRotation(transform, body, rep);
         await Assert.That(MathF.Abs(Quaternion.Dot(transform.ToQuaternion(), wire))).IsGreaterThan(0.99999f);
+    }
+
+    [Test]
+    public async Task ShipRepair_FollowsItsStartingFootprintThroughContactChangesAndValidatesTheSamePoint()
+    {
+        var skill = new Skill(new SkillTemplate { Id = SkillsEnum.RepairShip, MaxRange = 4, TargetType = SkillTargetType.Doodad });
+        var ship = new Slave { ModelId = 2 };
+        ship.Transform.Local.Position = new Vector3(12880, 13930, 100);
+        var socket = new Vector3(-0.621f, 3.775f, 1.229f);
+        _points[2] = new() { [AttachPointKind.HealPoint1] = new WorldSpawnPosition { X = socket.X, Y = socket.Y, Z = socket.Z } };
+        var point = new Doodad { ParentObj = ship, AttachPoint = AttachPointKind.HealPoint1 };
+        ship.AttachedDoodads.Add(point);
+        _caster.Transform.Parent = ship.Transform;
+        _caster.Transform.Local.Position = socket;
+        var start = _caster.Transform.World.Position;
+        var task = new CastTask(skill, _caster, null, point, null, null)
+        {
+            CastWindow = new CastWindow(DateTime.UtcNow.AddSeconds(14), true, false, true)
+        };
+        _caster.SkillTask = task;
+        _caster.Transform.Parent = null;
+        _caster.Transform.Local.Position = start + new Vector3(-0.2f, 0.1f, 0);
+        SkillCastReactions.OnMovement(_caster, socket, _caster.Transform.Local.Position, false, false);
+        await Assert.That(task.CastWindow.Active).IsTrue();
+        _caster.Transform.Parent = ship.Transform;
+        SkillCastReactions.OnMovement(_caster, start, _caster.Transform.Local.Position, false, false);
+        await Assert.That(task.CastWindow.Active).IsTrue();
+
+        // Rotation and travel carry both the point and the caster to a new world position.
+        ship.Transform.Local.Position += new Vector3(-35, 7, 0);
+        ship.Transform.Local.SetRotation(0, 0, 1.3f);
+        await Assert.That(task.Repair.CanContinue(_caster)).IsTrue();
+        // Small individual steps must still accumulate relative to the original cast position.
+        _caster.Transform.Local.Position = socket + Vector3.UnitX * 0.4f;
+        await Assert.That(task.Repair.CanContinue(_caster)).IsTrue();
+        _caster.Transform.Local.Position += Vector3.UnitX * 0.2f;
+        await Assert.That(task.Repair.CanContinue(_caster)).IsFalse();
+        _caster.Transform.Local.Position = socket;
+        _caster.Transform.Parent = null;
+        ship.Transform.Local.Position += Vector3.UnitY * 10;
+        await Assert.That(task.Repair.CanContinue(_caster)).IsFalse();
+        _caster.Transform.Parent = ship.Transform;
+        _caster.Transform.Local.Position = socket;
+        ship.AttachedDoodads.Remove(point);
+        await Assert.That(task.Repair.CanContinue(_caster)).IsFalse();
+        await Assert.That(new CastTask(_skill, _caster, null, point, null, null).Repair).IsNull();
     }
 
     [Test]

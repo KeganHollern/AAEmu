@@ -29,7 +29,9 @@ internal static class SkillCastReactions
             plot.CancelCastWaits();
 
         var task = unit.SkillTask;
-        if (task?.CastWindow == null || (!moved && !task.Skill.Template.StopCastingByTurn) ||
+        if (task is CastTask { Repair: { } repair } && moved && repair.CanContinue(unit))
+            moved = false;
+        if (task?.CastWindow == null || (!moved && !(turned && task.Skill.Template.StopCastingByTurn)) ||
             !task.CastWindow.TryCancel())
             return;
         task.Skill.Stop(unit, (task as EndChannelingTask)?._channelDoodad);

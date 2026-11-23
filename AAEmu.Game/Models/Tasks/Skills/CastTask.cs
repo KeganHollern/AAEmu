@@ -13,6 +13,8 @@ public class CastTask(
     SkillObject skillObject)
     : SkillTask(skill)
 {
+    internal ShipRepairCast Repair { get; } = ShipRepairCast.Start(skill, caster, target);
+
     public override void Execute()
     {
         if (Cancelled || Skill.Cancelled || caster is not Unit unit || !Skill.IsItemProc && !ReferenceEquals(unit.SkillTask, this))
@@ -27,6 +29,11 @@ public class CastTask(
             return;
         }
 
+        if (Repair != null && !Repair.CanContinue(unit))
+        {
+            Skill.Stop(unit);
+            return;
+        }
         Skill.Cast(caster, casterCaster, target, targetCaster, skillObject);
     }
 }
