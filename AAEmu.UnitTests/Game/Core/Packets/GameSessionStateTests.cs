@@ -37,6 +37,8 @@ public sealed class GameSessionStateTests
     [Test]
     [Arguments(CSOffsets.CSStartSkillPacket)]
     [Arguments(CSOffsets.CSMoveUnitPacket)]
+    [Arguments(CSOffsets.CSCreateSkillControllerPacket)]
+    [Arguments(CSOffsets.CSSkillControllerStatePacket)]
     [Arguments(CSOffsets.CSSwapItemsPacket)]
     [Arguments(CSOffsets.CSSendMailPacket)]
     [Arguments(CSOffsets.CSStartTradePacket)]
@@ -74,15 +76,22 @@ public sealed class GameSessionStateTests
     }
 
     [Test]
-    public async Task SelectCharacter_FinalMovementDoesNotRunOrInterruptTheCharacterList()
+    public async Task SelectCharacter_FinalMovementAndMountControllersDoNotRunOrInterruptTheCharacterList()
     {
         var (connection, session) = MakeConnection(GameState.World);
         connection.ReturnToLobby(LeaveWorldTargetType.CharacterSelect);
         var handler = new GameProtocolHandler();
         handler.RegisterPacket(CSOffsets.CSMoveUnitPacket, 1, typeof(ProbePacket));
+        handler.RegisterPacket(CSOffsets.CSCreateSkillControllerPacket, 1, typeof(ProbePacket));
+        handler.RegisterPacket(CSOffsets.CSSkillControllerStatePacket, 1, typeof(ProbePacket));
         handler.RegisterPacket(CSOffsets.CSRefreshInCharacterListPacket, 1, typeof(CSRefreshInCharacterListPacket));
 
-        byte[] frames = [.. Frame(CSOffsets.CSMoveUnitPacket), .. Frame(CSOffsets.CSRefreshInCharacterListPacket)];
+        byte[] frames = [
+            .. Frame(CSOffsets.CSCreateSkillControllerPacket),
+            .. Frame(CSOffsets.CSSkillControllerStatePacket),
+            .. Frame(CSOffsets.CSMoveUnitPacket),
+            .. Frame(CSOffsets.CSRefreshInCharacterListPacket)
+        ];
         handler.OnReceive(connection, frames, 0, frames.Length);
         await Assert.That(connection.GetAttribute("decoded")).IsNull();
         await Assert.That(session.PacketsSent).IsEqualTo(1);
@@ -101,15 +110,19 @@ public sealed class GameSessionStateTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Movement_InFreshLobbyOrAfterQuitStillClosesTheSession(bool quit)
+    [Arguments(false, CSOffsets.CSMoveUnitPacket)]
+    [Arguments(true, CSOffsets.CSMoveUnitPacket)]
+    [Arguments(false, CSOffsets.CSCreateSkillControllerPacket)]
+    [Arguments(true, CSOffsets.CSCreateSkillControllerPacket)]
+    [Arguments(false, CSOffsets.CSSkillControllerStatePacket)]
+    [Arguments(true, CSOffsets.CSSkillControllerStatePacket)]
+    public async Task WorldActorUpdate_InFreshLobbyOrAfterQuitStillClosesTheSession(bool quit, ushort opcode)
     {
         var (connection, session) = MakeConnection(quit ? GameState.World : GameState.Lobby);
         if (quit)
             connection.ReturnToLobby(LeaveWorldTargetType.QuitGame);
-        var movement = Frame(CSOffsets.CSMoveUnitPacket);
-        new GameProtocolHandler().OnReceive(connection, movement, 0, movement.Length);
+        var update = Frame(opcode);
+        new GameProtocolHandler().OnReceive(connection, update, 0, update.Length);
         await Assert.That(session.Closes).IsEqualTo(1);
     }
 
