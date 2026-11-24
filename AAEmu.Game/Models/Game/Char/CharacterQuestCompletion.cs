@@ -62,7 +62,7 @@ public partial class CharacterQuests
                 : FlushQuestCompletion(quest, candidate, deferred);
             if (!persisted)
             {
-                quest.CompletionRetryPending = true;
+                quest.CompletionCommitPending = true;
                 return false;
             }
 
@@ -72,7 +72,7 @@ public partial class CharacterQuests
             quest.SkipUpdatePackets();
             ActiveQuests.Remove(quest.TemplateId);
             _removed.RemoveAll(id => id == quest.TemplateId);
-            quest.CompletionRetryPending = false;
+            quest.CompletionCommitPending = false;
             var notifications = deferred?.CreateCommittedNotifications();
             deferred?.Commit();
 

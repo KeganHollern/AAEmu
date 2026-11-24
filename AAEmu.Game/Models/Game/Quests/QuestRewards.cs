@@ -44,7 +44,10 @@ public partial class Quest
         {
             Logger.Error("Quest reward delivery pending: quest={QuestId}, owner={OwnerId}, step={Step}, item={ItemId}. No completion is recorded. Correct invalid reward content or resolve the delivery error, then retry; see Docs/customized/quest-reward-delivery.md.",
                 TemplateId, Owner.Id, Step, itemId);
-            Owner.SendErrorMessage(ErrorMessageType.MailUnknownFailure);
+            if (Step == QuestComponentKind.Reward)
+                Owner.SendPacket(new SCQuestContextFailedPacket(TemplateId, QuestStatusFailed.CantSupplyRewards));
+            else
+                Owner.SendErrorMessage(ErrorMessageType.MailUnknownFailure);
             _rewardFailureReported = true;
         }
         return false;

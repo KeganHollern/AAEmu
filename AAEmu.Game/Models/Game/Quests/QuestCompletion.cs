@@ -10,6 +10,19 @@ public partial class Quest
     private bool _sourceLessReportAccepted;
     private bool _restoredRewardReportAccepted;
 
+    internal bool CompletionRetryPending => _rewardFailureReported || CompletionCommitPending;
+
+    // A delivery failure still has reward work to do. A failed commit already ran those acts.
+    internal bool RetryCompletion()
+    {
+        if (!_rewardFailureReported)
+            return Owner.Quests.TryCompleteQuest(this);
+
+        _rewardFailureReported = false;
+        RunCurrentStep();
+        return Status == QuestStatus.Completed;
+    }
+
     public HashSet<uint> AppliedSideEffectActIds { get; } = [];
     public HashSet<uint> AppliedComponentEffectIds { get; } = [];
 

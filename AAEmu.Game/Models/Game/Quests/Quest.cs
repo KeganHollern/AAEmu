@@ -65,7 +65,7 @@ public partial class Quest : PacketMarshaler
     /// Current Quest Status
     /// </summary>
     public QuestStatus Status { get; set; }
-    internal bool CompletionRetryPending { get; set; }
+    internal bool CompletionCommitPending { get; set; }
 
     /// <summary>
     /// Current Quest Step
@@ -572,6 +572,8 @@ public partial class Quest : PacketMarshaler
     {
         // A saved Reward step already passed its authored report phase in the previous session.
         _restoredRewardReportAccepted = _step == QuestComponentKind.Reward;
+        // A saved undelivered item can be retried immediately. Loading it is not a new player claim.
+        _rewardFailureReported = _restoredRewardReportAccepted && QuestRewardItemsPool.Count > 0;
         // Older saves can contain Fail with Progress status because failed quests often have no Fail component.
         if (_step == QuestComponentKind.Fail)
             Status = QuestStatus.Failed;
