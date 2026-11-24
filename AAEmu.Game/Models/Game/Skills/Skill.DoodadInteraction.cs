@@ -27,14 +27,14 @@ public partial class Skill
 
     private bool TryStartDoodadCast(Character caster, BaseUnit target, bool selectedByUse = false)
     {
+        if (_interactionDoodad != null)
+            return _interactionDoodad == target && CanFinishDoodadCast();
         if (IsItemProc || caster == null || target is not Doodad { Template: { OnceOneMan: true, HasMultipleSeats: false } } doodad ||
             (BaseCastingTime ?? Template.CastingTime) <= 0 || !Template.Effects.Any(effect => effect.Template is InteractionEffect))
             return true;
 
         lock (SaveManager.PersistenceSyncRoot)
         {
-            if (_interactionDoodad != null)
-                return _interactionDoodad == doodad && CanFinishDoodadCast();
             if (!selectedByUse && DoodadManager.Instance.GetFunc(doodad.FuncGroupId, Id)?.FuncType is not
                     (nameof(DoodadFuncUse) or nameof(DoodadFuncOpenPaper) or nameof(DoodadFuncRemoveItem)))
                 return true;

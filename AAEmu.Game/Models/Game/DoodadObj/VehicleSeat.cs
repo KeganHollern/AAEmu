@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Models.Game.Char;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.DoodadObj;
@@ -35,60 +36,49 @@ public class VehicleSeat(BaseUnit parentVehicle)
 
     public void UnLoadPassenger(Character character, uint seatObjId)
     {
-        for (var i = 0; i < _seats[seatObjId].Count; i++)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (_seats[seatObjId][i] == character.Id)
+            for (var i = 0; i < _seats[seatObjId].Count; i++)
             {
-                _seats[seatObjId][i] = 0; // free up space
-                character.Transform.StickyParent = null;
-                if (parentVehicle is Transfer transfer)
-                    transfer.AttachedCharacters.Remove(character);
+                if (_seats[seatObjId][i] == character.Id)
+                {
+                    _seats[seatObjId][i] = 0; // free up space
+                    character.Transform.StickyParent = null;
+                    if (parentVehicle is Transfer transfer)
+                        transfer.AttachedCharacters.Remove(character);
+                }
             }
         }
     }
 
-    private int GetFreeSeat(uint seatObjId)
+    // The caller holds the same lock as doodad use and passenger changes.
+    internal int GetFreeSeat(uint seatObjId, int space)
     {
-        if (!_seats.TryGetValue(seatObjId, out var value)) { return -1; }
+        if (!_seats.TryGetValue(seatObjId, out var seats))
+            return space > 0 ? 0 : -1;
 
-        for (var i = 0; i < value.Count; i++)
-        {
-            if (_seats[seatObjId][i] == 0)
-            {
+        for (var i = 0; i < Math.Min(space, seats.Count); i++)
+            if (seats[i] == 0)
                 return i;
-            }
-        }
 
         return -1;
     }
 
     public int LoadPassenger(Character character, uint seatObjId, int space)
     {
-        if (!_seats.ContainsKey(seatObjId))
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            Init(seatObjId, space);
-        }
+            var spot = GetFreeSeat(seatObjId, space);
+            if (spot < 0)
+                return -1;
+            if (!_seats.ContainsKey(seatObjId))
+                Init(seatObjId, space);
 
-        var spot = GetFreeSeat(seatObjId);
-        if (spot == -1)
-        {
-            return spot;
-        }
-
-        if (spot < space)
-        {
             AddSeat(character, seatObjId, spot);
-        }
-        else
-        {
-            spot = -1;
-        }
-
-        if (spot != -1 && parentVehicle is Transfer transfer)
-            if (!transfer.AttachedCharacters.Contains(character))
+            if (parentVehicle is Transfer transfer && !transfer.AttachedCharacters.Contains(character))
                 transfer.AttachedCharacters.Add(character);
 
-        return spot;
+            return spot;
+        }
     }
 }
-

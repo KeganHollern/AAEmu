@@ -386,13 +386,40 @@ public partial class Skill
             }
         }
 
-        if (!TryStartDoodadCast(character, target))
+        if (character != null && target is Doodad doodad && (doodad.Template?.OnceOneMan == true || _interactionDoodad != null))
         {
-            Cancelled = true;
-            SkillTlIdManager.ReleaseId(TlId);
-            TlId = 0;
-            return SkillResult.Failure;
+            // Publish a timed cast or complete an instant seat action before another user can claim it.
+            lock (SaveManager.PersistenceSyncRoot)
+            {
+                var attachment = doodad.GetBondedSeatAction(Id);
+                if ((attachment != null && RejectFullSeat(character, doodad, attachment.Space)) ||
+                    !TryStartDoodadCast(character, doodad))
+                {
+                    Cancelled = true;
+                    SkillTlIdManager.ReleaseId(TlId);
+                    TlId = 0;
+                    return SkillResult.Failure;
+                }
+                if (attachment != null || _interactionDoodad != null)
+                    return StartValidatedCast(unit, character, casterCaster, target, targetCaster, skillObject);
+            }
         }
+        return StartValidatedCast(unit, character, casterCaster, target, targetCaster, skillObject);
+    }
+
+    private bool RejectFullSeat(Character character, Doodad seat, int space)
+    {
+        if (seat.Seat.GetFreeSeat(seat.ObjId, space) >= 0)
+            return false;
+
+        Cancelled = true;
+        character.SendErrorMessage(ErrorMessageType.AlreadyInteractingSomeoneElse);
+        return true;
+    }
+
+    private SkillResult StartValidatedCast(Unit unit, Character character, SkillCaster casterCaster,
+        BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject)
+    {
         if (!SkillCooldowns.TryStartGlobalCooldown(unit, Template, _bypassGcd, DateTime.UtcNow))
         {
             SkillTlIdManager.ReleaseId(TlId);
@@ -415,9 +442,9 @@ public partial class Skill
         // Cancel buffs if Template asks for it
         if (Template.CancelOngoingBuffs)
         {
-            if (caster is Units.Mate)
-                caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.UseSkill, Template.CancelOngoingBuffExceptionTagId);
-            caster.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.StartSkill, Template.CancelOngoingBuffExceptionTagId);
+            if (unit is Units.Mate)
+                unit.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.UseSkill, Template.CancelOngoingBuffExceptionTagId);
+            unit.Buffs.TriggerRemoveOn(Buffs.BuffRemoveOn.StartSkill, Template.CancelOngoingBuffExceptionTagId);
         }
 
         // Unmount character if skill asks for it
@@ -435,7 +462,7 @@ public partial class Skill
         // Plots must pass the same cooldown admission before their effects can run.
         if (Template.Plot != null)
         {
-            _ = SchedulePlot(caster, casterCaster, target, targetCaster, skillObject);
+            _ = SchedulePlot(unit, casterCaster, target, targetCaster, skillObject);
             if (Template.PlotOnly)
                 return SkillResult.Success;
         }
@@ -462,13 +489,13 @@ public partial class Skill
         if (castTime > 0)
         {
             // Has casting time, schedule a task for it
-            caster.BroadcastPacket(new SCSkillStartedPacket(Id, TlId, casterCaster, targetCaster, this, skillObject)
+            unit.BroadcastPacket(new SCSkillStartedPacket(Id, TlId, casterCaster, targetCaster, this, skillObject)
             {
                 BaseCastTimeDiv10 = (ushort)(castTime / 10),
                 RealCastTimeDiv10 = (ushort)(castTime / 10), // calculate with adjustments
             }, true);
 
-            var castTask = new CastTask(this, caster, casterCaster, target, targetCaster, skillObject)
+            var castTask = new CastTask(this, unit, casterCaster, target, targetCaster, skillObject)
             {
                 CastWindow = new CastWindow(DateTime.UtcNow.AddMilliseconds(castTime), true, false, Template.CastingDelayable)
             };
@@ -485,7 +512,7 @@ public partial class Skill
         else
         {
             // Immediate skill
-            Cast(caster, casterCaster, target, targetCaster, skillObject);
+            Cast(unit, casterCaster, target, targetCaster, skillObject);
         }
 
         return SkillResult.Success;
@@ -1231,10 +1258,10 @@ public partial class Skill
                         Dyeing.IsDyeingSkill(this) ? ItemTaskType.Dyeing : ItemTaskType.SkillEffectGainItem);
                 }
             }
-            else if (casterCaster is SkillItem || ItemSocketing.IsSocketingSkill(this) || Id == SkillsEnum.ThreatenRedDragonEgg)
+            else if (casterCaster is SkillItem || ItemSocketing.IsSocketingSkill(this) || Id == SkillsEnum.ThreatenRedDragonEgg ||
+                     caster is Character && targetSelf is Doodad seat && seat.GetBondedSeatAction(Id) != null)
             {
-                // Keep item-source validation, effects and consumption together with
-                // respect to inventory movement and persistence snapshots.
+                // Keep inventory consumption and seat capacity checks atomic through their effects.
                 lock (SaveManager.PersistenceSyncRoot)
                     ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
             }
@@ -1257,6 +1284,9 @@ public partial class Skill
             return;
         }
         var player = caster as Character;
+        if (player != null && targetSelf is Doodad seat && seat.GetBondedSeatAction(Id) is { } attachment &&
+            RejectFullSeat(player, seat, attachment.Space))
+            return;
         Item eggBow = null;
         if (Id == SkillsEnum.ThreatenRedDragonEgg && CheckRedDragonEgg(player, targetSelf, out eggBow) != SkillResult.Success)
         {
