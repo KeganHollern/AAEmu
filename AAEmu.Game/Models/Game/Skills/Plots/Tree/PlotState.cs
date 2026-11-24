@@ -123,6 +123,7 @@ public class PlotState(
     }
 
     public Skill ActiveSkill { get; set; } = skill;
+    internal uint ConsumedSourceItemTemplateId { get; set; }
     public Unit Caster { get; set; } = caster as Unit;
     public SkillCaster CasterCaster { get; set; } = casterCaster;
     public BaseUnit Target { get; set; } = target;

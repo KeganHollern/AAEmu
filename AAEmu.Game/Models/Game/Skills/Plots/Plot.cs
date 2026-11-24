@@ -57,11 +57,10 @@ public class Plot
             lock (SaveManager.PersistenceSyncRoot)
             {
                 var item = player.Inventory.GetItemById(skillItem.ItemId);
-                if (item == null)
-                    return;
                 if (!state.CancellationRequested())
-                    player.ItemUse(item);
-                player.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.ItemUnlock, new ItemUpdate(item), []));
+                    player.ItemUseByTemplate(item?.TemplateId ?? state.ConsumedSourceItemTemplateId);
+                if (item != null)
+                    player.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.ItemUnlock, new ItemUpdate(item), []));
             }
         }
     }

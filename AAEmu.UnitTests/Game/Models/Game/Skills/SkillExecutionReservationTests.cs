@@ -227,6 +227,52 @@ public sealed class SkillExecutionReservationTests
     }
 
     [Test]
+    [Arguments(1, false)]
+    [Arguments(2, false)]
+    [Arguments(1, true)]
+    public async Task Plot_UsedReagentGivesOneItemUseAfterSuccessfulCompletion(int initialCount, bool cancelAfterConsumption)
+    {
+        var skill = NewSkill();
+        skill.Template.PlotOnly = true;
+        _material.Count = initialCount;
+        var source = new SkillItem(_owner.ObjId, _material.Id, _material.TemplateId);
+        _reagents.Add(1, new SkillReagent { SkillId = skill.Id, ItemId = _material.TemplateId, Amount = 1 });
+        var usedTemplates = new List<uint>();
+        _owner.Events.OnItemUse += (_, args) => usedTemplates.Add(args.ItemId);
+        var plot = Plot(new SpecialEffect { SpecialEffectTypeId = SpecialType.ApplyReagents });
+        if (cancelAfterConsumption)
+        {
+            var cancel = Plot(() => skill.ActivePlotState.RequestCancellation());
+            plot.Tree.RootNode.Event.Effects.AddLast(cancel.Tree.RootNode.Event.Effects.First.Value);
+        }
+        skill.Template.Plot = plot;
+
+        await plot.RunAsync(_owner, source, _owner, new SkillCastUnitTarget(_owner.ObjId), null, skill);
+
+        await Assert.That(_owner.Inventory.GetItemsCount(_material.TemplateId)).IsEqualTo(initialCount - 1);
+        await Assert.That(usedTemplates).IsEquivalentTo(cancelAfterConsumption ? Array.Empty<uint>() : new[] { _material.TemplateId });
+    }
+
+    [Test]
+    public async Task Plot_MissingSourceAtReagentEffectDoesNotGiveItemUse()
+    {
+        var skill = NewSkill();
+        skill.Template.PlotOnly = true;
+        var source = new SkillItem(_owner.ObjId, _material.Id, _material.TemplateId);
+        var itemUses = 0;
+        _owner.Events.OnItemUse += (_, _) => itemUses++;
+        var plot = Plot(() => _owner.Inventory.Bag.Items.Remove(_material));
+        var reagent = Plot(new SpecialEffect { SpecialEffectTypeId = SpecialType.ApplyReagents });
+        plot.Tree.RootNode.Event.Effects.AddLast(reagent.Tree.RootNode.Event.Effects.First.Value);
+        skill.Template.Plot = plot;
+
+        await plot.RunAsync(_owner, source, _owner, new SkillCastUnitTarget(_owner.ObjId), null, skill);
+
+        await Assert.That(_material.Count).IsEqualTo(3);
+        await Assert.That(itemUses).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task PlotEffect_DestinationDenialStopsOtherTargetsWithoutAnAttachedActiveState()
     {
         ConfigureDestinationRule();
@@ -449,10 +495,12 @@ public sealed class SkillExecutionReservationTests
         ApplicationMethod = SkillEffectApplicationMethod.Source
     };
 
-    private Plot Plot(Action action, int delay = 0)
+    private Plot Plot(Action action, int delay = 0) => Plot(new ProbeEffect(action), delay);
+
+    private Plot Plot(EffectTemplate effect, int delay = 0)
     {
         var effectId = (uint)_effects.Count + 1;
-        _effects.Add(effectId, new ProbeEffect(action));
+        _effects.Add(effectId, effect);
         var evt = new PlotEventTemplate { Id = effectId, SourceUpdateMethodId = 1, TargetUpdateMethodId = 1 };
         evt.Effects.AddLast(new PlotEventEffect
         {
