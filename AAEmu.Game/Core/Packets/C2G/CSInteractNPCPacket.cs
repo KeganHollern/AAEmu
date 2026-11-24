@@ -16,7 +16,8 @@ public class CSInteractNPCPacket() : GamePacket(CSOffsets.CSInteractNPCPacket, 1
 
         var unit = objId > 0 ? Connection.ActiveChar.ParentWorld.GetNpc(objId) : null;
 
-        if (!ServiceInteraction.CanReach(Connection.ActiveChar, unit))
+        if (!ServiceInteraction.CanReach(Connection.ActiveChar, unit) &&
+            !ServiceInteraction.CanReachMerchant(Connection.ActiveChar, unit))
         {
             Connection.ActiveChar.CurrentInteractionObject = null;
             return;

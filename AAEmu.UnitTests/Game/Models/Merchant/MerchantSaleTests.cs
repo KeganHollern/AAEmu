@@ -189,8 +189,36 @@ public sealed class MerchantSaleTests
     }
 
     [Test]
+    public async Task Sale_OpensLargeMerchantAndChecksEdgeDistanceAgainBeforeSale()
+    {
+        using var models = new QuestInteractionTestModels();
+        var item = AddItem(1, _bag, 0);
+        _merchant.ModelId = _character.ModelId = 1;
+        _merchant.Template.Scale = 6f;
+        _merchant.Transform.Local.SetPosition(6.5f, 0, -5);
+        _character.CurrentInteractionObject = null;
+        var interact = new PacketStream().WriteBc(_merchant.ObjId).Write(false);
+        new CSInteractNPCPacket { Connection = _character.Connection }.Read(new PacketStream(interact.GetBytes()));
+        await Assert.That(_character.CurrentInteractionObject).IsSameReferenceAs(_merchant);
+
+        _session.Packets.Clear();
+        _character.Transform.Local.SetPosition(-0.01f, 0, 0);
+        SendPacket([Request(item)]);
+        await AssertSingleError(ErrorMessageType.TooFarAway);
+        await AssertUnchanged(item);
+
+        _character.Transform.Local.SetPosition(0, 0, 0);
+        SendPacket([Request(item)]);
+        await Assert.That(_character.Money).IsEqualTo(110L);
+        await Assert.That(_character.BuyBackItems.Items.Single()).IsSameReferenceAs(item);
+    }
+
+    [Test]
     public async Task MerchantAtThreeMetres_UsesExistingStoreRangeBoundary()
     {
+        using var models = new QuestInteractionTestModels();
+        _character.ModelId = 1;
+        _merchant.ModelId = 999; // This merchant has no actor model.
         var item = AddItem(1, _bag, 0);
         _merchant.Transform.Local.SetPosition(3, 0, 0);
         var result = Sell(item);

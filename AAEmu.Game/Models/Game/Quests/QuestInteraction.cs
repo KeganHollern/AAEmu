@@ -39,14 +39,17 @@ internal static class QuestInteraction
             npc, ModelManager.Instance.GetActorModel(npc.ModelId));
     }
 
-    internal static bool IsWithinNpcRange(Unit owner, ActorModel ownerModel, Unit npc, ActorModel npcModel)
+    internal static bool IsWithinNpcRange(Unit owner, ActorModel ownerModel, Unit npc, ActorModel npcModel) =>
+        GetActorEdgeDistance(owner, ownerModel, npc, npcModel) < NpcInteractionRange;
+
+    internal static double? GetActorEdgeDistance(Unit owner, ActorModel ownerModel, Unit npc, ActorModel npcModel)
     {
         // Unknown/non-actor collision models must not silently become points or guessed radii.
         if (!TryGetSphere(owner, ownerModel, out var ownerCenter, out var ownerRadius) ||
             !TryGetSphere(npc, npcModel, out var npcCenter, out var npcRadius))
-            return false;
+            return null;
 
-        return SphereEdgeDistance(ownerCenter, ownerRadius, npcCenter, npcRadius) < NpcInteractionRange;
+        return SphereEdgeDistance(ownerCenter, ownerRadius, npcCenter, npcRadius);
     }
 
     internal static bool CanInteractWithDoodad(Character owner, Doodad doodad)
