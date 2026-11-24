@@ -102,6 +102,9 @@ public class Doodad : BaseUnit
     /// </summary>
     public DoodadTemplate Template { get; set; }
 
+    // Skills from the same character can overlap when an interaction starts a child skill.
+    internal HashSet<Skill> InteractionCasts { get; set; }
+
     /// <summary>
     /// Relative scale to use for this Doodad
     /// </summary>

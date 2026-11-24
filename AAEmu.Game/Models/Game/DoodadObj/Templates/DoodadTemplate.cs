@@ -38,6 +38,7 @@ public class DoodadTemplate
 
     public List<DoodadFuncGroups> FuncGroups { get; set; } = [];
     internal uint[] InsertCounterSkills { get; set; } = [];
+    internal bool HasMultipleSeats { get; set; }
 
     // Helper Properties
     public int TotalDoodadGrowthTime { get; set; }

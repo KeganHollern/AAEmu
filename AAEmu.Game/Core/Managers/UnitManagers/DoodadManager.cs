@@ -2686,6 +2686,9 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
         // For all doodad templates
         foreach (var template in _templates.Values)
         {
+            template.HasMultipleSeats = template.OnceOneMan && template.FuncGroups.SelectMany(group => GetFuncsForGroup(group.Id))
+                .Any(func => func.FuncType == nameof(DoodadFuncAttachment) &&
+                    GetFuncTemplate(func.FuncId, func.FuncType) is DoodadFuncAttachment { Space: > 1 });
             template.InsertCounterSkills = template.FuncGroups.SelectMany(group => GetFuncsForGroup(group.Id))
                 .Where(func => func.FuncType == nameof(DoodadFuncInsertCounter))
                 .Select(func => func.SkillId).Distinct().ToArray();
