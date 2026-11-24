@@ -10,6 +10,7 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
@@ -37,6 +38,8 @@ public sealed partial class PlayerMailSendPersistenceTests
     [InlineData(false, false, "bank")]
     [InlineData(false, false, "cross_world")]
     [InlineData(false, false, "cap_full")]
+    [InlineData(false, false, "crop_in_last_slot")]
+    [InlineData(false, false, "bound_door_at_cap")]
     [InlineData(false, false, "unfinished")]
     [InlineData(false, false, "range")]
     [InlineData(false, false, "outside_bounds")]
@@ -97,7 +100,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                 OwnerId = outcome is "family" or "guild" ? graph.Receiver.Id : player.Id,
                 AccountId = outcome is "family" or "guild" ? graph.Receiver.AccountId : player.AccountId,
                 Template = new HousingTemplate { MainModelId = 1, HousingBindingDoodad = [], DecoLimit = 10,
-                    AbsoluteDecoLimit = outcome == "cap_full" ? 1u : 10u }, CurrentStep = -1,
+                    AbsoluteDecoLimit = outcome is "cap_full" or "crop_in_last_slot" or "bound_door_at_cap" ? 1u : 10u }, CurrentStep = -1,
                 Permission = outcome == "family" ? HousingPermission.Family :
                     outcome == "guild" ? HousingPermission.Guild : HousingPermission.Private
             };
@@ -109,10 +112,15 @@ public sealed partial class PlayerMailSendPersistenceTests
             SetParentWorld(house, outcome == "cross_world" ? HousingPlacementWorld(2) : world);
             house.Transform.Local.Position = new Vector3(100, 200, 300);
             house.Transform.ZoneId = 10;
-            if (outcome == "cap_full")
+            if (house.Template.AbsoluteDecoLimit == 1)
             {
-                var existing = new Doodad { ObjId = 255, TemplateId = 999, OwnerDbId = house.Id,
-                    OwnerType = DoodadOwnerType.Housing };
+                var existing = new Doodad
+                {
+                    ObjId = 255, TemplateId = outcome == "bound_door_at_cap" ? 4278u : 1u,
+                    ItemTemplateId = outcome == "crop_in_last_slot" ? 15182u : item.TemplateId,
+                    AttachPoint = outcome == "bound_door_at_cap" ? AttachPointKind.HealPoint0 : AttachPointKind.None,
+                    OwnerDbId = house.Id, OwnerType = DoodadOwnerType.Housing, ParentObj = house, ParentObjId = house.ObjId
+                };
                 ((ConcurrentDictionary<uint, Doodad>)typeof(WorldInstance)
                     .GetField("_doodads", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(world)!)
                     [existing.ObjId] = existing;
@@ -155,7 +163,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                 var result = housing.DecorateHouse(player, house.TlId, outcome == "wrong_design" ? 2u : 1u,
                     outcome == "outside_bounds" ? new Vector3(9.75f, 2, 3) : new Vector3(1, 2, 3),
                     Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 0.5f), outcome == "forged_parent" ? house.ObjId : 0, item.Id);
-                var success = outcome == "success";
+                var success = outcome is "success" or "crop_in_last_slot";
                 Assert.Equal(success, result);
                 Assert.Equal(success ? 1 : 0, publications);
                 Assert.Equal(success ? 1 : 0, Scalar($"SELECT COUNT(*) FROM doodads WHERE id={dbId}"));
