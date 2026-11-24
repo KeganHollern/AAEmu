@@ -21,7 +21,7 @@ namespace AAEmu.Game.Core.Managers;
 /// reply lands, using the newest history.
 /// </summary>
 // ReSharper disable once ClassNeverInstantiated.Global
-public partial class AikaChatManager : Singleton<AikaChatManager>, IAikaChatManager
+public class AikaChatManager : Singleton<AikaChatManager>, IAikaChatManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -79,7 +79,7 @@ public partial class AikaChatManager : Singleton<AikaChatManager>, IAikaChatMana
         if (channel.ChatType != ChatType.Ally)
             return; // NullChannel fallback for factions without an ally channel.
 
-        var historyText = ItemLinkPattern().Replace(message, DescribeLinkedItem);
+        var historyText = AikaItemLinks.ForHistory(message, config.MaxContextLineLength);
         var state = _channels.GetOrAdd(channel.Faction, _ => new ChannelState());
         bool startReply;
         lock (state.Sync)
@@ -175,36 +175,6 @@ public partial class AikaChatManager : Singleton<AikaChatManager>, IAikaChatMana
         state.History.Enqueue(line with { Text = text });
         while (state.History.Count > Math.Max(1, config.HistoryLength))
             state.History.Dequeue();
-    }
-
-    // The stock loot UI examples encode 235 characters. The r208022 item writer encodes 192 bytes into 256.
-    [GeneratedRegex(@"\|i([0-9]{1,10}),[0-9]{1,3},([0-9A-Za-z*+]+);", RegexOptions.CultureInvariant)]
-    private static partial Regex ItemLinkPattern();
-
-    private static string DescribeLinkedItem(Match link)
-    {
-        if (link.Groups[2].Length is not (235 or 256) || !uint.TryParse(link.Groups[1].ValueSpan, out var id))
-            return link.Value;
-
-        var item = ItemManager.Instance.GetTemplate(id);
-        if (item == null)
-            return $"[Unknown item #{id}]";
-
-        var localization = LocalizationManager.Instance;
-        var name = localization.Get("items", "name", id, item.Name);
-        var facts = new List<string> { name };
-        var category = localization.Get("item_categories", "name", item.CategoryId);
-        if (!string.IsNullOrEmpty(category))
-            facts.Add(category);
-        if (item.LevelRequirement > 0)
-            facts.Add($"requires level {item.LevelRequirement}");
-        if (item.UseSkillId != 0)
-        {
-            var skill = localization.Get("skills", "name", item.UseSkillId);
-            if (!string.IsNullOrEmpty(skill))
-                facts.Add($"use skill {skill}");
-        }
-        return $"[{string.Join(", ", facts)}]";
     }
 
     /// <summary>Word-boundary, case-insensitive matcher for the trigger word.</summary>
