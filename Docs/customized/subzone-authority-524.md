@@ -5,6 +5,9 @@ The server uses the character's current world, instance, and position to find co
 The client ID is only a hint among the containing polygons.
 A forged or stale hint cannot select an area outside the server position.
 If the hint is invalid, the server keeps the current containing area or selects the lowest containing ID.
+If the client names a district before the next movement update reaches its boundary, the server remembers that notice.
+Each local position update tests the named district's polygons. The character gets the visit only after entry.
+A new notice, an instance change, or travel farther than one region discards the pending notice.
 If no polygon contains the position, the server clears `SubZoneId` to 0.
 An absent world, stale instance, or non-finite position grants no destination.
 

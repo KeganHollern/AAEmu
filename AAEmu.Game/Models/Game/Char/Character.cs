@@ -1933,6 +1933,7 @@ public partial class Character : Unit, ICharacter
         // Probe slightly above the character "feet" position to avoid false drowning
         // when standing on a ship deck (server-side Z for attached characters can be lower).
         var probePos = Transform.World.Position;
+        Portals?.CheckPendingBoundary(probePos);
         Slave attachedSlave = null;
 
         // Find the closest Slave in the parent chain (direct parent or through sticky parent ancestry).

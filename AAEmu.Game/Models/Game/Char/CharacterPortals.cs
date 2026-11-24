@@ -1,7 +1,11 @@
 ﻿using AAEmu.Game.Core.Managers;
+using System.Numerics;
 using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Names;
+using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Zones;
 
 using MySql.Data.MySqlClient;
 
@@ -15,6 +19,8 @@ public class CharacterPortals(Character owner)
     private Dictionary<uint, VisitedDistrict> VisitedDistricts { get; } = [];
     private readonly List<uint> _removedVisitedDistricts = [];
     private readonly List<uint> _removedPrivatePortals = [];
+    private sealed record PendingBoundary(WorldInstance World, Vector3 From, Area[] Areas);
+    private volatile PendingBoundary _pendingBoundary;
 
     public Dictionary<uint, Portal> PrivatePortals { get; set; } = [];
     public Dictionary<uint, Portal> DistrictPortals { get; set; } = [];
@@ -50,6 +56,15 @@ public class CharacterPortals(Character owner)
 
     public void NotifySubZone(uint requestedSubZoneId)
     {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            _pendingBoundary = null;
+            ResolveSubZone(requestedSubZoneId);
+        }
+    }
+
+    private void ResolveSubZone(uint requestedSubZoneId)
+    {
         var world = Owner.ParentWorld;
         var transform = Owner.Transform;
         if (world?.Template == null || transform == null || transform.InstanceId != world.Id)
@@ -63,26 +78,58 @@ public class CharacterPortals(Character owner)
         // A stale or forged hint cannot select an area outside the server position.
         var subZoneId = subZones.Contains(requestedSubZoneId) ? requestedSubZoneId :
             subZones.Contains(Owner.SubZoneId) ? Owner.SubZoneId : subZones.FirstOrDefault();
-        Owner.SubZoneId = subZoneId;
-        if (subZoneId == 0)
-            return;
+        if (requestedSubZoneId != 0 && requestedSubZoneId != subZoneId)
+        {
+            // The region notice can precede the footstep that crosses its polygon.
+            var areas = world.Template.SubZones.Values.SelectMany(group => group)
+                .Where(area => area.Id == requestedSubZoneId).ToArray();
+            if (areas.Length > 0)
+                _pendingBoundary = new PendingBoundary(world, position, areas);
+        }
+        VisitSubZone(subZoneId, position);
+    }
 
+    internal void CheckPendingBoundary(Vector3 position)
+    {
+        if (_pendingBoundary == null)
+            return;
         lock (SaveManager.PersistenceSyncRoot)
         {
-            if (VisitedDistricts.ContainsKey(subZoneId))
+            var boundary = _pendingBoundary;
+            if (boundary == null)
                 return;
-            var portals = PortalManager.Instance.GetRecallBySubZoneId(subZoneId);
-            if (portals == null || portals.Count == 0)
-                return;
-
-            VisitedDistricts.Add(subZoneId, new VisitedDistrict
+            var travel = Vector3.DistanceSquared(boundary.From, position);
+            if (Owner.ParentWorld != boundary.World || Owner.Transform.InstanceId != boundary.World.Id ||
+                !float.IsFinite(travel) || travel > WorldManager.REGION_SIZE * WorldManager.REGION_SIZE)
             {
-                Id = VisitedSubZoneIdManager.Instance.GetNextId(), SubZone = subZoneId, Owner = Owner.Id
-            });
-            PopulateDistrictPortals();
-            Send();
-            Logger.Debug("Character {OwnerId} visited subzone {SubZoneId} at {Position}", Owner.Id, subZoneId, position);
+                _pendingBoundary = null;
+                return;
+            }
+            var entered = Array.Find(boundary.Areas, area => area.Contains(position));
+            if (entered != null)
+            {
+                _pendingBoundary = null;
+                VisitSubZone(entered.Id, position);
+            }
         }
+    }
+
+    private void VisitSubZone(uint subZoneId, Vector3 position)
+    {
+        Owner.SubZoneId = subZoneId;
+        if (subZoneId == 0 || VisitedDistricts.ContainsKey(subZoneId))
+            return;
+        var portals = PortalManager.Instance.GetRecallBySubZoneId(subZoneId);
+        if (portals == null || portals.Count == 0)
+            return;
+
+        VisitedDistricts.Add(subZoneId, new VisitedDistrict
+        {
+            Id = VisitedSubZoneIdManager.Instance.GetNextId(), SubZone = subZoneId, Owner = Owner.Id
+        });
+        PopulateDistrictPortals();
+        Send();
+        Logger.Debug("Character {OwnerId} visited subzone {SubZoneId} at {Position}", Owner.Id, subZoneId, position);
     }
 
     public void AddPrivatePortal(float x, float y, float z, float zRot, uint zoneId, string name)
