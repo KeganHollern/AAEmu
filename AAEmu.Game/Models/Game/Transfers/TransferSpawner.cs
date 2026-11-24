@@ -46,7 +46,7 @@ public class TransferSpawner : Spawner<Transfer>
         }
 
         transfer.Spawner = this;
-        var usesRoutePose = transfer.TrailerSocket.HasValue;
+        var usesRoutePose = transfer.UsesRoutePose;
         if (!usesRoutePose)
             transfer.Transform.ApplyWorldSpawnPosition(Position, transfer.Transform.InstanceId, true);
         if (transfer.Transform == null)

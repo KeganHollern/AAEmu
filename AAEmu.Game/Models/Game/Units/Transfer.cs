@@ -43,6 +43,10 @@ public class Transfer : Unit
         }
     }
 
+    // The unbound cart on tiger02 uses the same +Y model axis as the three coupled rail carts.
+    internal bool UsesRoutePose => TrailerSocket.HasValue ||
+        (ModelId == 565 && Template is { Id: 25, TransferBindings.Count: 0 });
+
     internal void InitializeRoutePose(WorldSpawnPosition spawn)
     {
         var route = Template.TransferRoads.FirstOrDefault()?.Pos;
@@ -537,8 +541,8 @@ public class Transfer : Unit
         {
             transfer.AngVel = new Vector3(-MaxVelocityForward, 0, 0);
         }
-        var trailerSocket = transfer.TrailerSocket;
-        if (trailerSocket.HasValue)
+        var usesRoutePose = transfer.UsesRoutePose;
+        if (usesRoutePose)
         {
             // The mesh faces +Y. The route angle is measured from +X.
             var modelYaw = (float)transfer.Angle - MathF.PI / 2;
@@ -564,7 +568,7 @@ public class Transfer : Unit
 
         // Added so whatever riding this, doesn't clip out of existence when moving
         transfer.Transform.FinalizeTransform();
-        if (!trailerSocket.HasValue)
+        if (!usesRoutePose)
         {
             transfer.SetPosition(transfer.vPosition.X, transfer.vPosition.Y, transfer.vPosition.Z, 0, 0, (float)transfer.Angle);
             transfer.Transform.World.SetPosition(transfer.vPosition, new Vector3(0, 0, (float)transfer.Angle));
@@ -576,7 +580,7 @@ public class Transfer : Unit
         if (transfer.Bounded is not null)
         {
             var child = transfer.Bounded;
-            if (trailerSocket is { } socket)
+            if (transfer.TrailerSocket is { } socket)
                 transfer.PlaceTrailer(child, socket, moving: true);
             else
             {

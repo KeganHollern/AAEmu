@@ -10,6 +10,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.CryEngine.Entities;
 using AAEmu.Game.Models.CryEngine.Loaders;
@@ -25,6 +26,7 @@ using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Transfers;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game;
@@ -247,6 +249,121 @@ public sealed class CarriageBoardingTests
     }
 
     [Test]
+    public async Task SingleTigerCart_ObserverAndMovementFaceTheRailsInBothDirections()
+    {
+        var world = SetUpStation(cells: 23, modelId: 565, vehicleModelId: 17);
+        ModelManager.Instance.GetVehicleModels(565).Velocity = 13;
+        // The stock compact contains trailer 29 but gives motor 25 no binding.
+        var template = Motor(565, AttachPointKind.Trailed0, 29).Template;
+        template.Id = 25;
+        template.Name = "Tiger Cart";
+        template.Cyclic = false;
+        template.WaitTime = 10;
+        template.PathSmoothing = 1;
+        ConfigureSpawn(template, cabinModelId: 565);
+        template.TransferBindings.Clear();
+        SetSingleton(new NameManager());
+        // The first four signed tiger02 points form a short return route.
+        List<WorldSpawnPosition> path =
+        [
+            new() { X = 22137.22485f, Y = 8481.6746f, Z = 481.34695f, ZoneId = 258 },
+            new() { X = 22137.96777f, Y = 8482.7140f, Z = 481.49744f, ZoneId = 258 },
+            new() { X = 22138.87878f, Y = 8483.9543f, Z = 482.01910f, ZoneId = 258 },
+            new() { X = 22139.95728f, Y = 8485.4526f, Z = 482.66196f, ZoneId = 258 }
+        ];
+        template.TransferAllPaths.Add(new TransferPaths { Id = 117, OwnerId = 25, PathName = "tiger02",
+            WaitTimeStart = 10, WaitTimeEnd = 10 });
+        template.TransferRoads.Add(new TransferRoads { Name = "tiger02", Pos = path });
+        world.TransferManager = new TransferManager();
+        var file = Path.Combine(AppContext.BaseDirectory, "Data", "Worlds", "main_world", "transfer_spawns.json");
+        var spawner = JsonHelper.DeserializeObject<List<TransferSpawner>>(await File.ReadAllTextAsync(file)).Single(s => s.UnitId == 25);
+        spawner.ParentWorld = world;
+        var motor = spawner.Spawn(0);
+        await Assert.That(world.TransferManager.GetTransfers().Single()).IsSameReferenceAs(motor);
+        await Assert.That(motor.Bounded).IsNull();
+        await Assert.That(motor.TimeLeft).IsGreaterThan(0u);
+        await CheckPoint(motor.Transform.World.Position, path[0].AsPositionVector());
+        var session = new TransferVisibilityTests.RecordingSession();
+        var viewer = new CharacterMock { ObjId = 400, ParentWorld = world, Connection = new GameConnection(session) };
+        viewer.Transform.Local.SetPosition(path[0].AsPositionVector());
+        world.GetRegionByPos(motor.Transform.World.Position).AddObject(viewer);
+        await CheckSingleCartHeading(motor, viewer, session, path[1].AsPositionVector() - path[0].AsPositionVector());
+
+        var sawForward = false;
+        var sawReverse = false;
+        for (var ticks = 0; ticks < 100 && !sawReverse; ticks++)
+        {
+            session.Packets.Clear();
+            motor.WaitTime = DateTime.MinValue;
+            var before = motor.Transform.World.Position;
+            motor.MoveTo(motor);
+            var travel = motor.Transform.World.Position - before;
+            if (travel.LengthSquared() < 0.0001f)
+                continue;
+            var direction = motor.Reverse ? -travel : travel;
+            var packet = session.Packets.Single();
+            await Assert.That(BitConverter.ToUInt16(packet, 6)).IsEqualTo(SCOffsets.SCOneUnitMovementPacket);
+            var stream = new PacketStream(packet, 8, packet.Length - 8);
+            await Assert.That(stream.ReadBc()).IsEqualTo(motor.ObjId);
+            await Assert.That(stream.ReadByte()).IsEqualTo((byte)MoveTypeEnum.Transfer);
+            var movement = new TransferData();
+            movement.Read(stream);
+            await Assert.That(movement.Reverse).IsEqualTo(motor.Reverse);
+            await Assert.That(Vector3.Distance(new Vector3(movement.X, movement.Y, movement.Z), motor.Transform.World.Position)).IsLessThan(0.02f);
+            var facing = Vector3.Transform(Vector3.UnitY, movement.Rot);
+            await CheckHeading(direction, facing);
+            await CheckSingleCartHeading(motor, viewer, session, direction);
+            sawForward |= !motor.Reverse;
+            sawReverse |= motor.Reverse;
+        }
+        await Assert.That(sawForward && sawReverse).IsTrue();
+    }
+
+    private static async Task CheckSingleCartHeading(Transfer motor, CharacterMock viewer,
+        TransferVisibilityTests.RecordingSession session, Vector3 forward)
+    {
+        // Parse the ordinary visibility notification for this unarmed, unparented transfer.
+        session.Packets.Clear();
+        motor.AddVisibleObject(viewer);
+        var packet = session.Packets.Single();
+        await Assert.That(BitConverter.ToUInt16(packet, 6)).IsEqualTo(SCOffsets.SCUnitStatePacket);
+        var state = new PacketStream(packet, 8, packet.Length - 8);
+        await Assert.That(state.ReadBc()).IsEqualTo(motor.ObjId);
+        state.ReadString(); // name
+        state.ReadByte(); // unit type
+        state.ReadUInt16(); // transfer link id
+        await Assert.That(state.ReadUInt32()).IsEqualTo(25u);
+        state.ReadString(); // owner name
+        var (x, y, z) = state.ReadPosition();
+        await Assert.That(Vector3.Distance(new Vector3(x, y, z), motor.Transform.World.Position)).IsLessThan(0.02f);
+        state.ReadSingle(); // scale
+        state.ReadByte(); // level
+        await Assert.That(state.ReadUInt32()).IsEqualTo(565u);
+        state.ReadBytes(7 * sizeof(uint)); // empty equipment body parts
+        state.ReadByte(); // model params type
+        state.ReadBc(); // unknown unit id
+        state.ReadInt32(); // health
+        state.ReadInt32(); // mana
+        await Assert.That(state.ReadByte()).IsEqualTo((byte)AttachPointKind.System);
+        state.ReadSByte(); // second attachment
+        state.ReadByte(); // turret posture
+        state.ReadBoolean(); // loot
+        state.ReadSingle(); // turret pitch
+        state.ReadSingle(); // turret yaw
+        state.ReadByte(); // active weapon
+        state.ReadByte(); // learned skills
+        state.ReadInt32(); // passive buffs
+        var rotation = PositionAndRotation.FromRollPitchYawSBytes(state.ReadSByte(), state.ReadSByte(), state.ReadSByte());
+        await CheckHeading(forward, new Vector3(-MathF.Sin(rotation.Z), MathF.Cos(rotation.Z), 0));
+    }
+
+    private static async Task CheckHeading(Vector3 direction, Vector3 facing)
+    {
+        var expected = Vector2.Normalize(new Vector2(direction.X, direction.Y));
+        await Assert.That(Vector2.Dot(expected, new Vector2(facing.X, facing.Y))).IsGreaterThan(0.999f);
+    }
+
+    [Test]
     public async Task CarriageWithoutRoute_UsesThePlacedMotorPoseIncludingRollAndPitch()
     {
         var motor = Motor(654, AttachPointKind.Trailed0, 46);
@@ -269,20 +386,24 @@ public sealed class CarriageBoardingTests
     [Arguments(604u, AttachPointKind.System, 30u)]
     public async Task OtherBindingsKeepTheirPlacement(uint modelId, AttachPointKind point, uint childId)
     {
-        await Assert.That(Motor(modelId, point, childId).TrailerSocket).IsNull();
+        var motor = Motor(modelId, point, childId);
+        await Assert.That(motor.TrailerSocket).IsNull();
+        await Assert.That(motor.UsesRoutePose).IsFalse();
     }
 
     [Test]
-    [Arguments(25u, 0u)]
-    [Arguments(40u, 28u)]
-    [Arguments(5u, 43u)]
-    public async Task OtherRailCartRoutesKeepTheirPlacement(uint motorId, uint trailerId)
+    [Arguments(25u, 0u, true)]
+    [Arguments(25u, 28u, false)]
+    [Arguments(40u, 28u, false)]
+    [Arguments(5u, 43u, false)]
+    public async Task RailCartsWithoutAStockTrailerUseOnlyTheSingleCartRoutePose(uint motorId, uint trailerId, bool usesRoutePose)
     {
         var motor = Motor(565, AttachPointKind.Trailed0, trailerId);
         motor.Template.Id = motorId;
         if (trailerId == 0)
             motor.Template.TransferBindings.Clear();
         await Assert.That(motor.TrailerSocket).IsNull();
+        await Assert.That(motor.UsesRoutePose).IsEqualTo(usesRoutePose);
     }
 
     [Test]
@@ -419,7 +540,7 @@ public sealed class CarriageBoardingTests
         var skills = new SkillManager(null, null);
         SetEmptyDictionaries(skills);
         var untouchable = (uint)BuffConstants.Untouchable;
-        SetField(skills, "_buffs", new Dictionary<uint, BuffTemplate> { [untouchable] = new() { Id = untouchable } });
+        SetField(skills, "_buffs", new Dictionary<uint, BuffTemplate> { [untouchable] = new() { Id = untouchable, Kind = BuffKind.Good } });
         SetSingleton(skills);
         var doodads = new DoodadManager(objects, null, null, null, null);
         SetEmptyDictionaries(doodads);

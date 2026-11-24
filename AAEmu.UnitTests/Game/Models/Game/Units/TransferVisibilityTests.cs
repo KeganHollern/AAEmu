@@ -84,7 +84,7 @@ public class TransferVisibilityTests
         regionType.GetField("_objectsSize", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(region, objects.Length);
     }
 
-    private sealed class RecordingSession : ISession
+    internal sealed class RecordingSession : ISession
     {
         private readonly Dictionary<string, object> _attributes = [];
 
