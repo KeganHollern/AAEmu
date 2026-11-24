@@ -966,6 +966,10 @@ public partial class NpcSpawner : Spawner<Npc>
             }
             npc.Delete();
 
+            // Removal without a corpse can follow the death notification for this same slot.
+            if (SelectSingleNpcByWeight && _pendingRespawns.Contains(npc))
+                return;
+
             // Schedules respawn if necessary
             if (IsSpawningScheduleEnabled() && RespawnTime > 0 && AreOtherNpcsInSpawnZone().Item2 < Template.MaxPopulation)
             {
