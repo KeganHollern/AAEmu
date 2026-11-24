@@ -943,6 +943,12 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
                     message = $"Placement '{placementId}' belongs to site '{placement.EventSiteKey}', not '{site.Key}'.";
                     return false;
                 }
+                if (binding.Equals("initial", StringComparison.OrdinalIgnoreCase) &&
+                    definition.TargetNpcSpawnerId is > 0 && placement.Template?.Id != definition.TargetNpcSpawnerId)
+                {
+                    message = $"Initial placement '{placementId}' uses spawner {placement.Template?.Id}, expected {definition.TargetNpcSpawnerId}.";
+                    return false;
+                }
             }
         }
         message = null;
