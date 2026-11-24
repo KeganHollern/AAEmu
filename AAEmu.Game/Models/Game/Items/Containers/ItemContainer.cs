@@ -413,6 +413,13 @@ public class ItemContainer
             {
                 itemTasks.Add(new ItemCountUpdate(currentPreferredSlotItem, item.Count));
             }
+            if (taskType == ItemTaskType.Mail && sourceSlotType == SlotType.Mail)
+            {
+                // An ordinary claim retires the merged attachment at the next save.
+                // Auction claims have already deleted their source in the receipt transaction.
+                item._holdingContainer = null;
+                ItemManager.Instance.ReleaseId(item.Id);
+            }
         }
         else
         {
