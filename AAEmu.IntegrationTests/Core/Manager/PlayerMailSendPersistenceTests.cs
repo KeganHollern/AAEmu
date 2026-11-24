@@ -375,17 +375,24 @@ public sealed partial class PlayerMailSendPersistenceTests
             }, slot);
         }
 
-        private Item Register(Item item, byte slot)
+        public Item AddWornStatuePack()
         {
+            var template = new BackpackTemplate { Id = 27301, MaxCount = 1 };
+            return Register(new Backpack(Sender.Id + 40UL, template, 1), (byte)EquipmentItemSlot.Backpack, Sender.Inventory.Equipment);
+        }
+
+        private Item Register(Item item, byte slot, ItemContainer container = null)
+        {
+            container ??= Sender.Inventory.Bag;
             item.OwnerId = Sender.Id;
-            item.SlotType = SlotType.Inventory;
+            item.SlotType = container.ContainerType;
             item.Slot = slot;
             item.CreateTime = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
-            item._holdingContainer = Sender.Inventory.Bag;
+            item._holdingContainer = container;
             _templates[item.TemplateId] = item.Template;
             _allItems.Add(item.Id, item);
-            Sender.Inventory.Bag.Items.Add(item);
-            Sender.Inventory.Bag.UpdateFreeSlotCount();
+            container.Items.Add(item);
+            container.UpdateFreeSlotCount();
             return item;
         }
 

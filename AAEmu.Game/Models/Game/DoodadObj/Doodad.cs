@@ -476,6 +476,21 @@ public class Doodad : BaseUnit
             ToNextPhase = false; // по умолчанию не выполняем следующую фазу
             //  first we find the functions, then we execute
             var funcWithSkill = DoodadManager.Instance.GetFunc(FuncGroupId, skillId); // if skillId > 0
+            if (caster is Character contributor && Template?.InsertCounterSkills.Contains(skillId) == true)
+            {
+                // A growth timer or another player can end the contribution stage during the cast.
+                if (funcWithSkill?.FuncType != nameof(DoodadFuncInsertCounter) || funcWithSkill.SkillId != skillId)
+                {
+                    SkillLaborBatch.For(contributor)?.Fail();
+                    contributor.SendErrorMessage(ErrorMessageType.NoInteractionAvailable);
+                    return;
+                }
+                DoFunc(contributor, skillId, funcWithSkill);
+                // A partial contribution keeps the current stage and its original growth deadline.
+                if (ToNextPhase)
+                    DoChangePhase(contributor, (int)FuncGroupId);
+                return;
+            }
             var allFuncsForGroup = DoodadManager.Instance.GetFuncsForGroup(FuncGroupId);
 
             if (allFuncsForGroup.Count <= 0)
@@ -1224,7 +1239,7 @@ public class Doodad : BaseUnit
             OverridePhase = overridePhase;
             OverridePhaseTime = overrideTime;
             _deleted = deleted;
-            Data = data;
+            SetData(data);
             PhaseRatio = ratio;
             CumulativePhaseRatio = cumulative;
             ItemId = itemId;
