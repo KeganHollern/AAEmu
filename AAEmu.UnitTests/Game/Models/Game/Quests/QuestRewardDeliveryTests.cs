@@ -203,6 +203,25 @@ public sealed class QuestRewardDeliveryTests
     }
 
     [Test]
+    public async Task MailSend_FullBag_RewardStaysInInboxAfterMailCheck()
+    {
+        var owner = CreateOwner(0);
+        var quest = CreateQuest(owner);
+        quest.QuestRewardItemsPool.Add(new ItemCreationDefinition(50_001));
+
+        var beforeReward = DateTime.UtcNow;
+        await Assert.That(quest.DistributeRewards(true)).IsTrue();
+        var mail = _mail.AllPlayerMails.Values.Single();
+        await Assert.That(mail.Body.SendDate).IsBetween(beforeReward, DateTime.UtcNow);
+        await Assert.That(mail.Body.RecvDate).IsEqualTo(mail.Body.SendDate);
+
+        _mail.CheckAllMailTimings(mail.Body.RecvDate.AddSeconds(5));
+        var received = _mail.GetCurrentMailList(owner.Id).Values.Single();
+        await Assert.That(received.Id).IsEqualTo(mail.Id);
+        await Assert.That(received.Body.Attachments.Single()).IsSameReferenceAs(owner.Inventory.MailAttachments.Items.Single());
+    }
+
+    [Test]
     public async Task MailSend_IdCollision_CleansNewAttachmentsAndRetainsExistingMail()
     {
         var owner = CreateOwner(0);
