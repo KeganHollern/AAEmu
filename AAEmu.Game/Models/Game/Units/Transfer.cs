@@ -47,9 +47,12 @@ public class Transfer : Unit
     private bool IsPublicAirship => ModelId == 657 && Template is
         { Id: 51 or 52 or 65 or (>= 110 and <= 114) or (>= 116 and <= 119), TransferBindings.Count: 0 };
 
+    // The Beaktalon cable roller turns about local X. Its normal travel follows local +Y.
+    private bool IsBeaktalonLift => ModelId == 548 && Template is { Id: 68 or 69, TransferBindings.Count: 0 };
+
     // The unbound cart on tiger02 also uses the +Y model axis.
     internal bool UsesRoutePose => TrailerSocket.HasValue ||
-        (ModelId == 565 && Template is { Id: 25, TransferBindings.Count: 0 }) || IsPublicAirship;
+        (ModelId == 565 && Template is { Id: 25, TransferBindings.Count: 0 }) || IsPublicAirship || IsBeaktalonLift;
 
     // The mesh faces +Y. The route angle is measured from +X.
     private float RouteModelYaw => (float)Angle - MathF.PI / 2;
@@ -61,8 +64,8 @@ public class Transfer : Unit
         {
             var start = route[0];
             var next = route[1];
-            // An airship can start with a waypoint inside the ordinary arrival radius (route 119).
-            if (IsPublicAirship)
+            // These routes can start with waypoints inside the ordinary arrival radius.
+            if (IsPublicAirship || IsBeaktalonLift)
                 next = route.Find(point => Vector3.Distance(start.AsPositionVector(), point.AsPositionVector()) >= RangeToCheckPoint) ?? next;
             Angle = MathUtil.CalculateDirection(start.AsPositionVector(), next.AsPositionVector());
             Transform.ApplyWorldSpawnPosition(start);
