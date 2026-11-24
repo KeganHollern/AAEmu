@@ -80,6 +80,21 @@ The reviewed inputs do not establish the retail server's riding XP calculation.
 An unconfirmed numeric match is not evidence of that calculation.
 The implementation must identify any chosen rate as a server rule.
 
+## Retail research result, November 24, 2026
+
+The r208022 tutorial identifies two sources of mount XP. In both compacts, `ui_texts` row 4062 uses key `tutorial_contents_2609_2_2`. Its Korean text describes combat XP while the mount is summoned and XP according to the distance ridden. The English text also describes long travel and combat. The tutorial gives no distance unit, rate, interval, or level multiplier. Both translations are in `localized_texts` under `ui_texts.text`, index 4062.
+
+Other stock records identify combat XP and item XP.
+
+- `bubble_effects.speech` 2010 tells players that a summoned mount can gain XP from combat after dismount. `sphere_chat_bubbles.speech` 1193 and `npc_chat_bubbles.bubble` 2641 describe this hunting award.
+- New Tricks Potion (item 27733) uses skill 22003. Its English and Korean descriptions give 5,000 XP to a summoned pet. Potent New Tricks Potion (27736) uses skill 22014 for 10,000 XP. The two item awards have named skills and fixed amounts.
+
+A November 2014 player account describes XP gains after dismount. It gives no before-and-after totals for a ride without combat. A later recording with the original client measured a mounted slide after input stopped. Its report gives no XP or mileage change for that slide. [Player account](https://thefanaticalswordsman.com/2014/11/11/the-pros-and-cons-of-archeage-crafting-and-travel/) · [Mounted movement recording](https://github.com/AAEmu/AABevy1.2/pull/88).
+
+The Rust emulator ports a C# task that grants 300 XP after a 60-second delay. The Bevy native review traces how the client applies an XP change from the server and reads the level cap. Neither source recovers the retail award calculation. [Rust task](https://github.com/AAEmu/AAEmu-1.2-Rust/blob/cfaf5699cefcf52fcbd0695a41b17383d2cb4359/rust/crates/aaemu-game/src/systems/vehicles/mates.rs#L1602-L1647) · [Native XP consumer](https://github.com/AAEmu/AABevy1.2/blob/6cecf7ad80bf3cab94b20e3387eeb61fc6be50ac/docs/aa-net.md#L3331-L3342).
+
+The reviewed sources leave the retail conversion and award timing unknown. The sources also leave open when accrued travel XP changes after a stop, dismount, resummon, or reconnect. A matching retail record needs the build, mount level, measured distance, elapsed time, and both XP and mileage before and after each change. The ride must exclude combat and item use. Origins keeps its approved rule below. [Research evidence](https://github.com/KeganHollern/aaemu-cluster/issues/683#issuecomment-7121764010).
+
 ## Defects at the reviewed source base
 
 `MateXpUpdateTask` fixes the award at 300 XP and sends a debug chat message to the owner.
@@ -135,7 +150,7 @@ The user approved the following server rule:
 - The existing authored mate XP thresholds remain unchanged.
 
 This is a custom server rule, not a confirmed retail formula.
-[Research issue #683](https://github.com/KeganHollern/aaemu-cluster/issues/683) tracks the missing retail evidence.
+[Research issue #683](https://github.com/KeganHollern/aaemu-cluster/issues/683) records the search for the retail rule.
 For each whole-metre update, the server uses the current rate at both interval endpoints:
 
 ```text
