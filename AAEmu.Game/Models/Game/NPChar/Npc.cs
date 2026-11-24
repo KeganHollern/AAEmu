@@ -1165,9 +1165,12 @@ public partial class Npc : Unit
         var (newX, newY, newZ) = World.Transform.PositionAndRotation.AddDistanceToFront(travelDist, targetDist, Transform.Local.Position, other);
         // aaemu-cluster#92: on an authored route the recorded waypoint height is authoritative; only
         // ad-hoc movement re-grounds every step through the geodata resolver.
+        // Use the requested destination for a level move. One short step toward a lower floor can appear level.
         var targetPositionZ = authoredPathZ
             ? AiUtils.ResolveAuthoredPathHeight(this, newX, newY, newZ)
-            : WorldManager.Instance.GetReferenceHeight(Ai, newX, newY, newZ, Transform.ZoneId);
+            : WorldManager.Instance.GetReferenceHeight(Ai, newX, newY, newZ, Transform.ZoneId,
+                Transform.Parent == null && Transform.StickyParent == null &&
+                MathF.Abs(other.Z - oldPosition.Z) <= AiGeoDataManager.StaticFloorPrecision ? oldPosition : null);
         Transform.Local.SetPosition(newX, newY, targetPositionZ);
 
         var angle = MathUtil.CalculateAngleFrom(Transform.Local.Position, other);

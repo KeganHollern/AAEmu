@@ -872,6 +872,9 @@ public class WorldManager(
     public const float NavigationAnchorTolerance = 1.5f;
 
     public float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId)
+        => GetReferenceHeight(ai, x, y, z, zoneId, null);
+
+    internal float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId, Vector3? previousPosition)
     {
         float finalHeight;
 
@@ -902,9 +905,15 @@ public class WorldManager(
         //    navigation-sourced heights are only a coarse hint and get re-anchored to ground truth.
         if (TryGetGroundSurface(zoneId, x, y, z, out finalHeight, out var source))
         {
-            return source == GroundSurfaceSource.Terrain
-                ? finalHeight
-                : AnchorNavigationSourcedHeight(ai, finalHeight);
+            if (source != GroundSurfaceSource.Terrain)
+                return AnchorNavigationSourcedHeight(ai, finalHeight);
+
+            if (previousPosition is { } from && finalHeight < from.Z &&
+                GetWorldTemplateByZoneKey(zoneId) is { Name: "main_world", GeoData: { } geoData } &&
+                geoData.TryFollowStaticFloor(from, new Vector3(x, y, from.Z), out var floor))
+                return floor;
+
+            return finalHeight;
         }
 
         // 4. Take the default height
