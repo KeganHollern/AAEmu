@@ -205,6 +205,99 @@ class QuestSphereAuditTests(unittest.TestCase):
         self.sql("DELETE FROM item_accept_quests; DELETE FROM quest_acts WHERE id=310;")
         self.assertFalse(self.run_audit()["ok"])
 
+    def add_starter_fixture(self):
+        self.sql("""
+            ALTER TABLE quest_contexts ADD COLUMN category_id INTEGER;
+            ALTER TABLE spheres ADD COLUMN sphere_detail_type TEXT;
+            ALTER TABLE spheres ADD COLUMN sphere_detail_id INTEGER;
+            CREATE TABLE sphere_quests(id INTEGER, quest_id INTEGER);
+            CREATE TABLE quest_act_con_accept_spheres(id INTEGER, sphere_id INTEGER);
+            INSERT INTO quest_components VALUES(11,1,2);
+            INSERT INTO quest_acts VALUES(111,11,200,'QuestActConAcceptSphere');
+            INSERT INTO quest_act_con_accept_spheres VALUES(200,2000);
+            INSERT INTO spheres VALUES(2000,'SphereQuest',9000);
+            INSERT INTO sphere_quests VALUES(9000,1);
+        """)
+        world = self.client / "game/worlds/main_world/world.xml"
+        world.write_text('<World name="main_world"><ZoneList><Zone id="142"/></ZoneList></World>')
+
+    def with_starters(self):
+        return AUDIT.audit(self.compact, self.client, self.worlds, self.manifest, include_starters=True)
+
+    def test_starter_needs_component_geometry_even_with_another_start_reference(self):
+        self.add_starter_fixture()
+        self.sql("INSERT INTO item_accept_quests VALUES(1); UPDATE zones SET closed='t';")
+        result = self.with_starters()
+        self.assertTrue(result["ok"], result["errors"])
+        starter, = result["starter_inventory"]["components"]
+        self.assertEqual("missing", starter["geometry_status"])
+        self.assertEqual([10], starter["other_geometry_components"])
+        self.assertEqual(["item_accept_quests"], starter["other_quest_references"])
+        self.assertTrue(starter["quest_zone_closed"])
+        self.assertEqual(["main_world"], starter["quest_zone_worlds"])
+
+    def test_component_only_hint_does_not_assign_an_area_to_each_sphere_id(self):
+        self.add_starter_fixture()
+        self.write_supplement(ComponentId=11)
+        self.assertEqual({"single_binding": 1}, self.with_starters()["starter_inventory"]["geometry_counts"])
+        self.sql("""INSERT INTO quest_acts VALUES(112,11,201,'QuestActConAcceptSphere');
+                    INSERT INTO quest_act_con_accept_spheres VALUES(201,2001);
+                    INSERT INTO spheres VALUES(2001,'SphereQuest',9001);
+                    INSERT INTO sphere_quests VALUES(9001,1);""")
+        inventory = self.with_starters()["starter_inventory"]
+        self.assertEqual((2, 1), (inventory["act_count"], inventory["component_count"]))
+        starter, = inventory["components"]
+        self.assertEqual("component_only", starter["geometry_status"])
+        self.assertEqual([2000, 2001], starter["quest_sphere_bindings"])
+
+    def test_starter_geometry_with_another_quest_binding_is_not_linked(self):
+        self.add_starter_fixture()
+        self.write_supplement(ComponentId=11)
+        self.sql("UPDATE sphere_quests SET quest_id=2;")
+        starter, = self.with_starters()["starter_inventory"]["components"]
+        self.assertEqual("component_only", starter["geometry_status"])
+        self.assertEqual([], starter["quest_sphere_bindings"])
+        self.assertEqual(2, starter["acts"][0]["mapped_quest_id"])
+
+    def test_starter_geometry_requires_its_own_world_and_quest(self):
+        self.add_starter_fixture()
+        self.write_supplement(world="other_world", ComponentId=11)
+        result = self.with_starters()
+        self.assertTrue(any("does not belong to its world" in message for message in result["errors"]))
+        self.write_supplement(ComponentId=11, QuestId=2)
+        result = self.with_starters()
+        self.assertTrue(any("quest ID differs" in message for message in result["errors"]))
+        self.assertEqual({"missing": 1}, result["starter_inventory"]["geometry_counts"])
+
+    def test_unsupported_binding_remains_a_quest_reference(self):
+        self.add_starter_fixture()
+        self.write_supplement(ComponentId=11)
+        self.sql("""UPDATE spheres SET sphere_detail_type='SphereAcceptQuest' WHERE id=2000;
+                    INSERT INTO sphere_accept_quest_quests VALUES(1);""")
+        result = self.with_starters()
+        self.assertTrue(result["ok"], result["errors"])
+        starter, = result["starter_inventory"]["components"]
+        self.assertEqual("component_only", starter["geometry_status"])
+        self.assertEqual(["sphere_accept_quest_quests"], starter["other_quest_references"])
+        self.assertEqual([], starter["quest_sphere_bindings"])
+
+    def test_starter_world_definition_and_sphere_metadata_are_checked(self):
+        self.add_starter_fixture()
+        world = self.client / "game/worlds/main_world/world.xml"
+        world.write_text('<World name="different_world"/>')
+        self.sql("DELETE FROM spheres WHERE id=2000;")
+        result = self.with_starters()
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("world definition" in message for message in result["errors"]))
+        self.assertTrue(any("no sphere metadata" in message for message in result["errors"]))
+
+    def test_orphan_and_non_start_components_do_not_enter_starter_inventory(self):
+        self.add_starter_fixture()
+        self.sql("""INSERT INTO quest_components VALUES(20,2,2),(21,1,4);
+                    INSERT INTO quest_acts VALUES(113,20,200,'QuestActConAcceptSphere'),
+                                                 (114,21,200,'QuestActConAcceptSphere');""")
+        self.assertEqual(1, self.with_starters()["starter_inventory"]["act_count"])
+
     def test_report_is_deterministic_and_database_is_unchanged(self):
         before = self.compact.read_bytes()
         first = self.run_audit()
