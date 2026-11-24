@@ -32,7 +32,7 @@ using AAEmu.Game.Models.Game.World;
 namespace AAEmu.UnitTests.Game.Models.Game.Skills;
 
 [NotInParallel]
-public class MountSkillAuthorizationTests
+public partial class MountSkillAuthorizationTests
 {
     private readonly Dictionary<FieldInfo, object> _instances = [];
     private Character _actor;
