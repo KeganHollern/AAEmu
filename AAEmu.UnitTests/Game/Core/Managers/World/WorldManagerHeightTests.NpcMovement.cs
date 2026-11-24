@@ -100,6 +100,64 @@ public sealed partial class WorldManagerHeightTests
     }
 
     [Test]
+    [Arguments(0.0043f, 0f, 1, Step, true, 18)]
+    [Arguments(0.0043f, 0f, -1, Step, true, 18)]
+    [Arguments(0f, 0.8f, 1, Step, false, 18)]
+    [Arguments(0f, 0.8f, 1, 0.01f, false, 18)]
+    [Arguments(0.1f, 0f, 1, Step, false, 18)]
+    [Arguments(0f, 0.019f, 1, Step, true, 18)]
+    [Arguments(0f, 0.021f, 1, Step, false, 18)]
+    [Arguments(0.0043f, 0f, 1, Step, false, 0)]
+    public async Task MoveTowards_GentlyInclinedCaveFace_UsesFootHeightAcrossALevelStep(
+        float xSlope, float ySlope, int direction, float distance, bool expectFloor, int terrainHeight)
+    {
+        const float startX = 111f;
+        Vector3 Point(float x, float y) => new(x, y, DeckZ + xSlope * (x - startX) + ySlope * (y - 100f));
+        var mesh = new CryTriangleMesh(
+            [Point(107f, 99.5f), Point(114.5f, 99.5f), Point(startX, 100.5f)], [0, 1, 2], []);
+        var npc = CreateDeckWalker(customMesh: mesh);
+        var world = npc.ParentWorld.Template;
+        world.ZoneBaiLoader.Clear();
+        SetTerrainHeight(world, (ushort)terrainHeight);
+        var start = Point(startX, 100f);
+        npc.Transform.Local.SetPosition(start);
+        npc.MoveTowards(start + direction * Vector3.UnitX, distance, rangeTolerance: 0f);
+
+        var expected = expectFloor ? DeckZ + direction * xSlope * distance : terrainHeight;
+        await Assert.That(npc.Transform.Local.Position.Z).IsEqualTo(expected).Within(0.0001f);
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(expected).Within(0.0001f);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    public async Task MoveTowards_CrossesGentlyInclinedCaveFacesOnlyWhenConnected(bool gap, bool reverse)
+    {
+        // Sanddeep faces 504, 543 and 542, translated to the fixture. Parts of the middle face
+        // outside the walked segment are more than one centimetre above or below the starting foot.
+        Vector3[] vertices = [
+            new(116.952f, 103.036f, 5.938305f), new(110.311f, 99.625f, 6.004345f),
+            new(112.247f, 96.074f, 6.016674f), new(112.863f, 105.722f, 5.98773f),
+            new(108.349f, 103.405f, 6.00918f)];
+        ushort[] indices = gap ? [0, 1, 2, 3, 4, 1] : [0, 1, 2, 1, 0, 3, 3, 4, 1];
+        var npc = CreateDeckWalker(customMesh: new CryTriangleMesh(vertices, indices, []));
+        var world = npc.ParentWorld.Template;
+        world.ZoneBaiLoader.Clear();
+        SetTerrainHeight(world, 18);
+
+        var from = new Vector3(111f, 99.6f, DeckZ);
+        var to = new Vector3(110.426f, 100.42f, DeckZ + 0.00304f);
+        if (reverse)
+            (from, to) = (to, from);
+        npc.Transform.Local.SetPosition(from);
+        npc.MoveTowards(to, 1.01f, rangeTolerance: 0f);
+        var expected = gap ? 18f : to.Z;
+        await Assert.That(npc.Transform.Local.Position.Z).IsEqualTo(expected).Within(0.0005f);
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(expected).Within(0.0005f);
+    }
+
+    [Test]
     public async Task MoveTowards_CaveFloorBelowTerrain_LeavesOnAnAuthoredAscent()
     {
         var npc = CreateDeckWalker();
