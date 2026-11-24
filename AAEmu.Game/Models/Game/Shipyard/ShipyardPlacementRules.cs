@@ -23,12 +23,13 @@ public static class ShipyardPlacementRules
     public static bool IsWithinRange(Vector3 owner, Vector3 position) => IsFinite(owner) && IsFinite(position) &&
         Vector3.DistanceSquared(owner, position) <= MaximumDistance * MaximumDistance;
 
-    public static bool IsOnWater(Vector3 position, float surface)
+    public static bool IsOnWater(Vector3 position, float surface, float oceanWaveSize = 0)
     {
-        // Native394d73e0 adds 9.9m to the water ray hit. A centimetre permits float
-        // composition at world coordinates; it does not permit another placement height.
+        // The cursor hits moving ocean water. The analytic ocean wave sums two sets of
+        // weights (1, .5, .25, .5) times .2, giving .9 * WavesSize at most.
+        var heightTolerance = 0.01f + 0.9f * oceanWaveSize;
         return IsFinite(position) && float.IsFinite(surface) &&
-            MathF.Abs(position.Z - (surface + PreviewHeight)) <= 0.01f;
+            MathF.Abs(position.Z - (surface + PreviewHeight)) <= heightTolerance;
     }
 
     public static CryBox ShipyardBox(CryBounds model, Vector3 position, float yaw, float buildRadius)
@@ -68,11 +69,11 @@ public static class ShipyardPlacementRules
         EvaluateGeometry(model, position, yaw, buildRadius, waterSurface, shipyards, intersect).Error;
 
     internal static ShipyardGeometryCheck EvaluateGeometry(CryBounds model, Vector3 position, float yaw, int buildRadius,
-        float waterSurface, IEnumerable<CryBox> shipyards, Func<CryBox, int, CryIntersection> intersect)
+        float waterSurface, IEnumerable<CryBox> shipyards, Func<CryBox, int, CryIntersection> intersect, float oceanWaveSize = 0)
     {
         if (!ValidBounds(model) || !float.IsFinite(yaw) || buildRadius < 0)
             return new("model_bounds", ErrorMessageType.CraftLocatingUnitIsNotExist);
-        if (!IsOnWater(position, waterSurface))
+        if (!IsOnWater(position, waterSurface, oceanWaveSize))
             return new("preview_height", ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater);
         var shipyardBox = ShipyardBox(model, position, yaw, buildRadius);
         if (shipyards.Any(neighbor => Overlaps(shipyardBox, neighbor)))

@@ -52,6 +52,34 @@ public sealed class HousingWaterGeometryTests
     }
 
     [Test]
+    public async Task OceanWaves_UseTheWorldSettingOnlyWhenOceanWinsTheSurfaceQuery()
+    {
+        var world = new WorldTemplate { Name = "test", Cells = new WorldCell[0, 0] };
+        var geometry = HousingWaterGeometry.Load(world, path => path == "game/worlds/test/env.xml"
+            ? new MemoryStream("<Environment><OceanAnimation WavesSize='0.75'/></Environment>"u8.ToArray()) : null);
+        geometry.Add(Water(surface: 10), Vector3.Zero);
+        var point = new Vector3(2, 2, 9);
+        await Assert.That(geometry.GetWaterLevel(point, 0, [], out var inland)).IsEqualTo(10f);
+        await Assert.That(inland).IsEqualTo(0f);
+        await Assert.That(geometry.GetWaterLevel(point, 10, [], out var levelWithOcean)).IsEqualTo(10f);
+        await Assert.That(levelWithOcean).IsEqualTo(0f);
+        await Assert.That(geometry.GetWaterLevel(point, 11, [], out var ocean)).IsEqualTo(11f);
+        await Assert.That(ocean).IsEqualTo(0.75f);
+    }
+
+    [Test]
+    [Arguments("<Environment/>")]
+    [Arguments("<Environment>")]
+    [Arguments("<Environment><OceanAnimation WavesSize='NaN'/></Environment>")]
+    public async Task MissingOrInvalidWaveSetting_KeepsTheFlatWaterCheck(string xml)
+    {
+        var world = new WorldTemplate { Name = "test", Cells = new WorldCell[0, 0] };
+        var geometry = HousingWaterGeometry.Load(world, _ => new MemoryStream(System.Text.Encoding.UTF8.GetBytes(xml)));
+        await Assert.That(geometry.GetWaterLevel(Vector3.Zero, 100, [], out var waveSize)).IsEqualTo(100f);
+        await Assert.That(waveSize).IsEqualTo(0f);
+    }
+
+    [Test]
     public async Task SameVolumeId_DoesNotAddADifferentContour()
     {
         var geometry = new HousingWaterGeometry();

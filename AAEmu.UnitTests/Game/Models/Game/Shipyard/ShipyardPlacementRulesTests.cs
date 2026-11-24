@@ -41,6 +41,37 @@ public sealed class ShipyardPlacementRulesTests
     }
 
     [Test]
+    [Arguments(13006.683f, 13679.304f, 109.87585f, -0.17453292f)]
+    [Arguments(12989.4f, 13682.096f, 109.55605f, 0.08726646f)]
+    public async Task Cutter_OceanCursorHeightReachesItsSubmittedClearanceBox(float x, float y, float z, float yaw)
+    {
+        var cursor = new Vector3(x, y, z);
+        var queried = new List<(CryBox, int)>();
+        var check = ShipyardPlacementRules.EvaluateGeometry(Model, cursor, yaw, 25, 100, [],
+            (box, mask) => { queried.Add((box, mask)); return CryIntersection.Clear; }, oceanWaveSize: 0.75f);
+        await Assert.That(check.Error).IsEqualTo(ErrorMessageType.NoErrorMessage);
+        await Assert.That(queried.SequenceEqual([
+            (ShipyardPlacementRules.LivingBox(Model, cursor, yaw), 8),
+            (ShipyardPlacementRules.ClearanceBox(Model, cursor, yaw, 25), 0x10d)])).IsTrue();
+        await Assert.That(ShipyardPlacementRules.IsOnWater(cursor, 100)).IsFalse();
+
+        var blocked = ShipyardPlacementRules.EvaluateGeometry(Model, cursor, yaw, 25, 100, [],
+            (_, mask) => mask == 8 ? CryIntersection.Clear : CryIntersection.Intersects, oceanWaveSize: 0.75f);
+        await Assert.That(blocked.Error).IsEqualTo(ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater);
+        await Assert.That(blocked.Stage).IsEqualTo("clearance");
+    }
+
+    [Test]
+    [Arguments(-0.686f, false)]
+    [Arguments(-0.684f, true)]
+    [Arguments(0.684f, true)]
+    [Arguments(0.686f, false)]
+    public async Task OceanCursorHeight_StaysWithinTheAuthoredWaveBand(float offset, bool allowed)
+    {
+        await Assert.That(ShipyardPlacementRules.IsOnWater(Position + Vector3.UnitZ * offset, 100, 0.75f)).IsEqualTo(allowed);
+    }
+
+    [Test]
     public async Task NativeBoxes_KeepDistinctHalfScalesAndForwardCentres()
     {
         var shipyard = ShipyardPlacementRules.ShipyardBox(Model, Vector3.Zero, 0, 26);
