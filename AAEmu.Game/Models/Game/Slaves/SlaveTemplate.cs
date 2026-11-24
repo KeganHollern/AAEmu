@@ -9,6 +9,7 @@ public class SlaveTemplate
     public string Name { get; set; }
     public uint ModelId { get; set; }
     public bool Mountable { get; set; }
+    public bool HasPassengerSeat { get; set; }
     public float SpawnXOffset { get; set; }
     public float SpawnYOffset { get; set; }
     public FactionsEnum FactionId { get; set; }

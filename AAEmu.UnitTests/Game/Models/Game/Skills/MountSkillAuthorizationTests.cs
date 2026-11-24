@@ -24,6 +24,7 @@ using AAEmu.Game.Models.Game.Mate;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
@@ -348,6 +349,49 @@ public class MountSkillAuthorizationTests
         container.ParentUnit = _mate;
         await Assert.That(container.RestorePersistedItem(duplicate)).IsFalse();
         await Assert.That(container.Items).HasSingleItem();
+    }
+
+    [Test]
+    [Arguments(106u, 1323u)]
+    [Arguments(112u, 1371u)]
+    [Arguments(116u, 1406u)]
+    public async Task SpeedcarPassenger_UsesAuthoredSeatWithoutGrantingVehicleSkills(uint template, uint model)
+    {
+        SlaveGameData.Instance.LoadSlaveAttachmentPointLocations();
+        var slave = new Slave { ObjId = 50, TlId = 51, Hp = 100, ModelId = model, TemplateId = template,
+            Template = new SlaveTemplate { Id = template, ModelId = model, Mountable = true, HasPassengerSeat = true } };
+        SetWorld(slave, _world);
+        _world.AddObject(slave);
+        slave.Transform.Local.SetPosition(100, 100, 10, 0, 0, MathF.PI / 2);
+        var source = new SkillCasterUnit(_actor.ObjId);
+        var target = new SkillCastUnitTarget(slave.ObjId);
+        var skill = new SkillTemplate { Id = 13863, TargetType = SkillTargetType.AnyUnit };
+        bool CanEnter() => SkillCastAuthorization.CanUseCharacterSkill(_actor, skill, source, target);
+
+        await Assert.That(SlaveManager.TryGetSeatPosition(slave, AttachPointKind.Passenger0, null, out var position)).IsTrue();
+        await Assert.That(Vector3.Distance(position, new Vector3(100.64054f, 100.49962f, 10.32363f))).IsLessThan(0.0001f);
+        _actor.Transform.Local.SetPosition(position.X + 4, position.Y, position.Z);
+        await Assert.That(CanEnter()).IsFalse();
+        _actor.Transform.Local.SetPosition(position.X + 1, position.Y, position.Z);
+        slave.Template.HasPassengerSeat = false;
+        await Assert.That(CanEnter()).IsFalse();
+        slave.Template.HasPassengerSeat = true;
+        slave.AttachedCharacters[AttachPointKind.Passenger0] = new Character(null);
+        await Assert.That(CanEnter()).IsFalse();
+        slave.AttachedCharacters.Clear();
+        await Assert.That(CanEnter()).IsTrue();
+
+        new AttachTo().Execute(_actor, source, slave, target, null, new Skill(skill), null,
+            DateTime.UtcNow, (int)AttachPointKind.Passenger0, 0, 0, 0);
+
+        await Assert.That(slave.AttachedCharacters[AttachPointKind.Passenger0]).IsSameReferenceAs(_actor);
+        await Assert.That(_actor.Transform.Parent).IsSameReferenceAs(slave.Transform);
+        await Assert.That(slave.AttachedCharacters.ContainsKey(AttachPointKind.Driver)).IsFalse();
+        await Assert.That(Authorize(slave, 83, 17092, out _)).IsFalse();
+        await Assert.That(CanEnter()).IsFalse();
+        _world.SlaveManager.UnbindSlave(_actor, slave.TlId, AttachUnitReason.SlaveBinding);
+        await Assert.That(_actor.AttachedPoint).IsEqualTo(AttachPointKind.None);
+        await Assert.That(slave.AttachedCharacters).IsEmpty();
     }
 
     [Test]

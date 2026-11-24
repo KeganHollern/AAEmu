@@ -32,7 +32,14 @@ public class SlaveGameData : Singleton<SlaveGameData>, IGameDataLoader
 
         using (var command = connection.CreateCommand())
         {
-            command.CommandText = "SELECT * FROM slaves";
+            command.CommandText = """
+                SELECT s.*, EXISTS (
+                    SELECT 1 FROM models m
+                    JOIN model_bindings b ON b.owner_type = 'Model' AND b.owner_id = m.id AND b.attach_point_id = 2
+                    JOIN attach_anims a ON a.owner_type = m.sub_type AND a.owner_id = m.sub_id AND a.attach_point_id = 2
+                    WHERE m.id = s.model_id AND m.sub_type = 'VehicleModel'
+                ) AS passenger_seat FROM slaves s
+                """;
             command.Prepare();
             using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
             {
@@ -46,6 +53,7 @@ public class SlaveGameData : Singleton<SlaveGameData>, IGameDataLoader
                                 reader.GetString("name")),
                         ModelId = reader.GetUInt32("model_id"),
                         Mountable = reader.GetBoolean("mountable", true),
+                        HasPassengerSeat = reader.GetBoolean("passenger_seat"),
                         SpawnXOffset = reader.GetFloat("spawn_x_offset"),
                         SpawnYOffset = reader.GetFloat("spawn_y_offset"),
                         FactionId = (FactionsEnum)reader.GetUInt32("faction_id", 0),
