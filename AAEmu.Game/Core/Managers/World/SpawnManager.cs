@@ -851,7 +851,6 @@ public class SpawnManager(WorldInstance parentWorld)
 
                     //doodad.Spawner = new DoodadSpawner();
                     //doodad.Spawner.UnitId = templateId;
-                    doodad.IsPersistent = true;
                     doodad.DbId = dbId;
                     doodad.FuncGroupId = phaseId;
                     doodad.OwnerId = ownerId;
@@ -876,7 +875,9 @@ public class SpawnManager(WorldInstance parentWorld)
                     if (parentDoodad > 0)
                     {
                         // var pDoodad = WorldManager.Instance.GetDoodadByDbId(parentDoodad);
-                        var pDoodad = PlayerDoodads.FirstOrDefault(d => d.DbId == parentDoodad);
+                        Doodad pDoodad;
+                        lock (SaveManager.PersistenceSyncRoot)
+                            pDoodad = PlayerDoodads.FirstOrDefault(d => d.DbId == parentDoodad);
                         if (pDoodad == null)
                         {
                             Logger.Warn($"Unable to place doodad {dbId} can't find it's parent doodad {parentDoodad}");
@@ -950,13 +951,18 @@ public class SpawnManager(WorldInstance parentWorld)
                         parentSlave.AttachedDoodads.Add(doodad);
                     }
 
-                    doodad.InitDoodad();
-
-                    PlayerDoodads.Add(doodad);
+                    // A restored phase timer can already be due. Register the object before
+                    // a removal callback can delete it from the saved player objects.
+                    lock (SaveManager.PersistenceSyncRoot)
+                    {
+                        // Phase setters can save. All persisted fields must be restored first.
+                        doodad.IsPersistent = true;
+                        doodad.InitDoodad();
+                        PlayerDoodads.Add(doodad);
+                        if (doSpawn)
+                            doodad.Spawn();
+                    }
                     spawnCount++;
-
-                    if (doSpawn)
-                        doodad.Spawn();
                 }
             }
         }
@@ -1066,21 +1072,25 @@ public class SpawnManager(WorldInstance parentWorld)
             if (PlayerDoodads.Count > 0)
                 Logger.Info($"Spawning {PlayerDoodads.Count} Player Doodads");
             var count = 0;
-            foreach (var doodad in PlayerDoodads)
+            // A due timer can remove its object during startup.
+            lock (SaveManager.PersistenceSyncRoot)
             {
-                if (doodad.Spawner == null)
+                foreach (var doodad in PlayerDoodads)
                 {
-                    doodad.Spawn();
-                    count++;
-                    if (count % 25 == 0)
+                    if (doodad.Spawner == null)
                     {
-                        Logger.Debug($"In world {World} player doodads spawned: {count}...");
+                        doodad.Spawn();
+                        count++;
+                        if (count % 25 == 0)
+                        {
+                            Logger.Debug($"In world {World} player doodads spawned: {count}...");
+                        }
                     }
-                }
-                else
-                {
-                    if (doodad.Spawner?.Spawn(doodad.ObjId) == null)
-                        Logger.Error($"Failed to spawn player doodad DbId:{doodad.DbId}, TemplateId: {doodad.TemplateId}");
+                    else
+                    {
+                        if (doodad.Spawner?.Spawn(doodad.ObjId) == null)
+                            Logger.Error($"Failed to spawn player doodad DbId:{doodad.DbId}, TemplateId: {doodad.TemplateId}");
+                    }
                 }
             }
             Logger.Info($"In world {World} player doodads spawned: {count} in {DateTime.UtcNow.Subtract(spawnStartTime)} ({GameService.TimeSinceStart} since server start)");
