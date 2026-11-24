@@ -229,25 +229,29 @@ public sealed class ShipWaterfallInteraction
         var clearanceToFarEdge = MathF.Max(0.5f,
             farEdgeProjection - Vector2.Dot(bodyCenter, direction) + hullRadiusAlong);
 
-        if (!TryFindReceivingWater(ship, direction, sourceSurface, waterfallMin.Z,
-                clearanceToFarEdge + LandingSearchExtraMeters,
-                out var receivingSurface, out var launchDistance))
-            return LaunchResult.Unsafe;
-
+        var originalPool = TryFindReceivingWater(ship, direction, sourceSurface, waterfallMin.Z,
+            clearanceToFarEdge + LandingSearchExtraMeters, out var receivingSurface, out var launchDistance);
         var drop = sourceSurface - receivingSurface;
-        var requiredSpeed = ComputeRequiredHorizontalSpeed(launchDistance, drop, LaunchUpwardMetersPerSecond);
-        if (!float.IsFinite(requiredSpeed))
-            return LaunchResult.Unsafe;
+        var requiredSpeed = originalPool
+            ? ComputeRequiredHorizontalSpeed(launchDistance, drop, LaunchUpwardMetersPerSecond)
+            : float.PositiveInfinity;
 
         IReadOnlyList<WaterfallArea>? clearanceBrushes = null;
         var lowerPoolProjection = farEdgeProjection - hullRadiusAlong * 0.35f;
         if (requiredSpeed > MaximumReplicableHorizontalSpeed)
         {
+            // Only a floating hull can use a newly admitted takeoff. The legacy launch
+            // above still handles its established direct lips and their terrain ridges.
+            if (ship.GroundContactLatched ||
+                !ship.ParentWorld.TryGetHeight(bodyCenter.X, bodyCenter.Y, out var sourceFloor) ||
+                !(sourceFloor <= sourceSurface - MinimumReceivingDepthMeters))
+                return LaunchResult.Unsafe;
+
             // The union's farthest corner can lie well to the side of the hull's path,
             // particularly where two angled waterfalls overlap. First clear every actual
             // brush along the flow, with the entire hull beyond its last boundary.
             var exit = GetDownstreamHullClearance(areas, hullBounds, direction);
-            if (exit + LandingSearchExtraMeters < launchDistance &&
+            if (exit < clearanceToFarEdge &&
                 TryFindReceivingWater(ship, direction, sourceSurface, waterfallMin.Z, exit + LandingSearchExtraMeters,
                     out var closerSurface, out var closerDistance))
             {
@@ -264,6 +268,8 @@ public sealed class ShipWaterfallInteraction
                 }
             }
 
+            if (!float.IsFinite(requiredSpeed))
+                return LaunchResult.Unsafe;
             if (requiredSpeed > MaximumReplicableHorizontalSpeed)
             {
                 // Padding can detect the brush before the same lower pool is in range.
@@ -322,14 +328,11 @@ public sealed class ShipWaterfallInteraction
     private static bool CanNavigateCloser(Slave ship, Vector2 start, Vector2 downstream,
         float sourceSurface, float distance)
     {
-        if (ship.GroundContactLatched)
-            return false;
-
         var world = ship.ParentWorld!;
-        // Two metres between heightmap vertices. Also sample both ends of the approach.
+        // The start was measured above. Check the rest at the heightmap spacing.
         const float sampleSpacing = (float)WorldManager.CELL_SIZE / WorldManager.CELL_HMAP_RESOLUTION;
         var steps = Math.Max(1, (int)MathF.Ceiling(distance / sampleSpacing));
-        for (var step = 0; step <= steps; step++)
+        for (var step = 1; step <= steps; step++)
         {
             var xy = start + downstream * (distance * step / steps);
             var water = world.Water.GetWaterSurface(new Vector3(xy, sourceSurface), out _);
