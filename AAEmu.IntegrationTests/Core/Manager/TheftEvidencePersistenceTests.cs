@@ -14,6 +14,7 @@ using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Duels;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.StaticValues;
@@ -174,6 +175,8 @@ public sealed partial class PlayerMailSendPersistenceTests
     [InlineData("non_crime_skill", false, false)]
     [InlineData("self", false, false)]
     [InlineData("system", false, false)]
+    [InlineData("paid", false, true)]
+    [InlineData("rejected", false, false)]
     public void Theft_DoodadUse_PreservesLootAndCreatesOnlyEligibleFootprints(string scenario, bool skillLess, bool evidence)
     {
         using var graph = new SendGraph();
@@ -205,15 +208,15 @@ public sealed partial class PlayerMailSendPersistenceTests
         });
         var objectIds = new Mock<IObjectIdManager>();
         objectIds.Setup(allocator => allocator.GetNextId()).Returns(graph.Sender.Id + 80);
-        var manager = new DoodadManager(objectIds.Object, Mock.Of<IDoodadIdManager>(), graph.Items,
+        var doodadIds = new DoodadIdManager();
+        Assert.True(doodadIds.Initialize());
+        var manager = new DoodadManager(objectIds.Object, doodadIds, graph.Items,
             new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>()), null);
         var oldDoodads = SwapSingleton(manager);
         var oldWorld = AppConfiguration.Instance.World;
         AppConfiguration.Instance.World = new WorldConfig { GrowthRate = 1, LootRate = 1 };
         var doodadIdField = typeof(DoodadIdManager).GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
         var oldIds = doodadIdField.GetValue(null);
-        var doodadIds = new DoodadIdManager();
-        Assert.True(doodadIds.Initialize());
         doodadIdField.SetValue(null, doodadIds);
         try
         {
@@ -224,7 +227,8 @@ public sealed partial class PlayerMailSendPersistenceTests
             });
             SetField(manager, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>>
             {
-                [1] = [new() { GroupId = 1, FuncId = 1, FuncType = nameof(DoodadFuncLootItem), SkillId = skillLess ? 0u : 50u, NextPhase = 2 }]
+                [1] = [new() { GroupId = 1, FuncId = 1, FuncType = nameof(DoodadFuncLootItem), SkillId = skillLess ? 0u : 50u, NextPhase = 2 }],
+                [2] = [new() { GroupId = 2, FuncId = 2, FuncType = nameof(DoodadFuncUse), SkillId = 51, NextPhase = 3 }]
             });
             SetField(manager, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
             {
@@ -241,10 +245,40 @@ public sealed partial class PlayerMailSendPersistenceTests
             if (scenario == "system") property.OwnerType = DoodadOwnerType.System;
             if (scenario == "public") property.PlantTime = DateTime.UtcNow.AddHours(-25);
 
-            property.Use(graph.Sender, skillLess ? 0u : 50u);
+            var rejected = scenario == "rejected";
+            if (scenario is "paid" or "rejected")
+            {
+                graph.Sender.InitializeLaborCache(10, DateTime.UtcNow);
+                Execute($"INSERT INTO accounts(account_id,labor) VALUES({graph.Sender.AccountId},10) ON DUPLICATE KEY UPDATE labor=10");
+                Assert.True(graph.Save.TryCommitEconomy([graph.Sender]));
+                property.IsPersistent = true;
+                property.Save();
+                var skill = new Skill(new SkillTemplate { Id = 50, ConsumeLaborPower = 1 });
+                var checkpointReached = false;
+                Doodad visibleAtCheckpoint = null;
+                skill.CommitLaborBatch = (_, write) => graph.Save.TryCommitEconomy([graph.Sender], context =>
+                {
+                    write(context);
+                    checkpointReached = true;
+                    visibleAtCheckpoint = world.GetDoodad(graph.Sender.Id + 80);
+                    if (rejected)
+                        throw new InvalidOperationException("Reject the crop harvest checkpoint.");
+                });
+                Assert.Equal(!rejected, SkillLaborBatch.Run(graph.Sender, skill, true, () => property.Use(graph.Sender, 50)));
+                Assert.True(checkpointReached);
+                Assert.Null(visibleAtCheckpoint);
+                Assert.Equal(rejected ? 10 : 9, Scalar($"SELECT labor FROM accounts WHERE account_id={graph.Sender.AccountId}"));
+                Assert.Equal(rejected ? 1 : 2, Scalar($"SELECT current_phase_id FROM doodads WHERE id={property.DbId}"));
+                Assert.Equal(rejected ? countBefore : countBefore + 1,
+                    Scalar($"SELECT SUM(count) FROM items WHERE owner={graph.Sender.Id} AND template_id={loot.TemplateId}"));
+                if (rejected)
+                    Assert.Null(world.GetDoodad(graph.Sender.Id + 80));
+            }
+            else
+                property.Use(graph.Sender, skillLess ? 0u : 50u);
 
-            Assert.Equal(countBefore + 1, graph.Sender.Inventory.Bag.Items.Where(item => item.TemplateId == loot.TemplateId).Sum(item => item.Count));
-            Assert.Equal(2u, property.FuncGroupId);
+            Assert.Equal(rejected ? countBefore : countBefore + 1, graph.Sender.Inventory.Bag.Items.Where(item => item.TemplateId == loot.TemplateId).Sum(item => item.Count));
+            Assert.Equal(rejected ? 1u : 2u, property.FuncGroupId);
             Assert.Equal(0, graph.Sender.CrimePoint);
             Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM crime WHERE criminal={graph.Sender.Id}"));
             Assert.Equal(evidence ? 1 : 0, Scalar($"SELECT COUNT(*) FROM doodads WHERE owner_id={graph.Sender.Id} AND template_id={DoodadConstants.FootprintMale}"));

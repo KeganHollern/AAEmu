@@ -24,11 +24,17 @@ namespace AAEmu.UnitTests.Game.Models.Game.Skills;
 public sealed partial class SkillLaborTests
 {
     [Test]
-    [Arguments(true)]
-    [Arguments(false)]
-    public async Task MiningCompletion_PreservesTheBrokenVeinPhaseOnlyAfterCommit(bool succeeds)
+    [Arguments(true, true)]
+    [Arguments(false, true)]
+    [Arguments(false, false)]
+    public async Task MiningCompletion_PreservesTheBrokenVeinPhaseOnlyAfterCommit(bool succeeds, bool hasSpace)
     {
         var doodad = CreateMiningDoodad();
+        if (!hasSpace)
+        {
+            _owner.Inventory.Bag.ContainerSize = 1;
+            _owner.Inventory.Bag.UpdateFreeSlotCount();
+        }
         var callbacks = new List<uint>();
         doodad.ParentWorld.DoodadPhaseChanged += (current, phase) =>
         {
@@ -41,7 +47,7 @@ public sealed partial class SkillLaborTests
         skill.CommitLaborBatch = (_, _) =>
         {
             emittedBeforeCommit = doodad.Phases.Count + callbacks.Count;
-            return succeeds;
+            return succeeds || !hasSpace;
         };
 
         var previousWorldConfig = AppConfiguration.Instance.World;
@@ -57,7 +63,7 @@ public sealed partial class SkillLaborTests
         }
 
         await Assert.That(result).IsEqualTo(succeeds);
-        await Assert.That(emittedBeforeCommit).IsEqualTo(0);
+        await Assert.That(emittedBeforeCommit).IsEqualTo(hasSpace ? 0 : -1);
         await Assert.That(doodad.FuncGroupId).IsEqualTo(succeeds ? 17070u : 3054u);
         await Assert.That(_owner.LaborPower).IsEqualTo(succeeds ? (short)10 : (short)20);
         await Assert.That(_owner.Inventory.Bag.Items.Any(item => item.TemplateId == 200)).IsEqualTo(succeeds);

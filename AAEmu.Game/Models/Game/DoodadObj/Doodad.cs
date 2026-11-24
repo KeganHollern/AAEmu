@@ -462,6 +462,10 @@ public class Doodad : BaseUnit
             FuncGroupId = (uint)funcGroupId;
         }
 
+        var player = caster.GetOwnerCharacter();
+        // One use can run the harvest action and then its loot phase. Both belong to the same theft.
+        var checkTheft = player != null && OwnerType == DoodadOwnerType.Character && OwnerId != player.Id &&
+            (startedSkillId == 0 || startedSkillTemplate?.CrimePoint > 0) && PlantTime.AddHours(24) >= DateTime.UtcNow;
         while (true)
         {
             if (Logger.IsTraceEnabled)
@@ -509,35 +513,10 @@ public class Doodad : BaseUnit
                 }
             }
 
-            // Not sure if this is a good position to place it, but using any player owned doodad (directly owned, not on house)
-            // and also not being the owner seems to be a good enough criteria.
-            // If somebody finds an edge-case where this would generate a footprint when not needed, we need to adjust this
-            var casterOwningCharacter = caster.GetOwnerCharacter();
-
-            // Theft happens whenever a player interacts with a doodad directly owned by a *different* character.
-            var isDifferentCharacterOwner =
-                OwnerType == DoodadOwnerType.Character && OwnerId != casterOwningCharacter?.Id;
-
-            // CrimePoint > 0 alone is NOT a sufficient guard: it makes theft evidence 100% dependent on the DB and
-            // silently drops the footprint for legitimate theft paths when:
-            //   - startedSkillId == 0 (skill-less loot/recover, e.g. CSLootOpenBagPacket -> Use(..., 0) on ship debris
-            //     and similar loot-driven doodads), so startedSkillTemplate is null;
-            //   - the skill exists but has CrimePoint == 0 / unset in the DB.
-            // So we keep the historical "owned by another character" fallback for skill-less pickups, and only rely on
-            // CrimePoint > 0 as an *additional* explicit-crime signal when an actual skill is involved.
-            var isExplicitCrimeSkill = startedSkillTemplate?.CrimePoint > 0;
-            var isSkillLessPickup = startedSkillId == 0;
-            var isPublicPropertyByAge = (PlantTime.AddHours(24) < DateTime.UtcNow);
-            var shouldGenerateTheftEvidence = isDifferentCharacterOwner && (isSkillLessPickup || isExplicitCrimeSkill) && (!isPublicPropertyByAge);
-
-            if (shouldGenerateTheftEvidence)
+            if (checkTheft && ToNextPhase)
             {
-                // Picking up something from a doodad that isn't owned by the player, need to check permissions
-                // TODO: Enforce theft minimum level
-                // CrimeManager resolves the current owner faction, including offline owners.
-                // TODO: Move/change this to better take into account functions that are marked as criminal
-                var newFootprint = CrimeManager.Instance.GenerateEvidenceFromTheft(casterOwningCharacter, this);
-                Logger.Debug($"Created footprint evidence at {newFootprint?.Transform} for {casterOwningCharacter?.Name}, doodad {TemplateId}");
+                checkTheft = false;
+                CrimeManager.Instance.GenerateEvidenceFromTheft(player, this);
             }
 
             // then execute the phase functions (the FuncGroupId may change to a different one than it was before)

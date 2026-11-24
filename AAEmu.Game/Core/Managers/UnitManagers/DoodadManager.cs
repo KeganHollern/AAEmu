@@ -3002,6 +3002,9 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
 
         // Create doodad
         var doodad = Instance.Create(character.ParentWorld, 0, id, character, true);
+        var batch = SkillLaborBatch.Current;
+        if (batch != null)
+            ReservePlacementIds(batch, doodad);
         doodad.IsPersistent = true;
         doodad.Transform = character.Transform.CloneDetached(doodad);
         doodad.Transform.InstanceId = character.ParentWorld.Id;
@@ -3012,7 +3015,7 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
         doodad.PlantTime = DateTime.UtcNow;
         doodad.FarmType = farmType;
         doodad.ItemTemplateId = itemTemplateId;
-        doodad.Data = customData;
+        doodad.SetData(customData);
         if (targetHouse != null)
         {
             doodad.OwnerDbId = targetHouse.Id;
@@ -3035,12 +3038,18 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
         if (doodad is DoodadCoffer coffer)
         {
             coffer.InitializeCoffer(character.Id);
+            batch?.Enlist(null, () => ItemManager.Instance.ForgetCommittedItemContainer(coffer.ItemContainer));
         }
 
-        doodad.InitDoodad();
-        doodad.Spawn();
-        doodad.Save();
-        character.ParentWorld.SpawnManager.AddPlayerDoodad(doodad);
+        if (batch != null)
+            StagePlacement(batch, doodad);
+        else
+        {
+            doodad.InitDoodad();
+            doodad.Spawn();
+            doodad.Save();
+            character.ParentWorld.SpawnManager.AddPlayerDoodad(doodad);
+        }
 
         return doodad;
     }

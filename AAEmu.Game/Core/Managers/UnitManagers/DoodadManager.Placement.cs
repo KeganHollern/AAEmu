@@ -22,6 +22,27 @@ public partial class DoodadManager
         doodad.ParentWorld.SpawnManager.AddPlayerDoodad(doodad);
     };
 
+    private void ReservePlacementIds(SkillLaborBatch batch, Doodad doodad)
+    {
+        batch.Enlist(null, () =>
+        {
+            doodad.Transform.Parent = null;
+            objectIdManager.ReleaseId(doodad.ObjId);
+            if (doodad.DbId > 0)
+                doodadIdManager.ReleaseId(doodad.DbId);
+        });
+        doodad.DbId = doodadIdManager.GetNextId();
+    }
+
+    private void StagePlacement(SkillLaborBatch batch, Doodad doodad)
+    {
+        doodad.InitializeGrowthTime();
+        if (doodad.PhaseTime == DateTime.MinValue)
+            doodad.PhaseTime = doodad.PlantTime;
+        batch.TrackDoodad(doodad);
+        batch.AfterCommit(() => PublishPlayerDoodadPlacement(doodad));
+    }
+
     private Doodad CreatePaidPlayerDoodad(Character character, uint templateId, float x, float y, float z,
         float zRot, float scale, ulong itemId, FarmType farmType, int customData, bool ignoreHouses, int laborCost)
     {
@@ -76,14 +97,7 @@ public partial class DoodadManager
                     batch.Fail();
                     return;
                 }
-                batch.Enlist(null, () =>
-                {
-                    doodad.Transform.Parent = null;
-                    objectIdManager.ReleaseId(doodad.ObjId);
-                    if (doodad.DbId > 0)
-                        doodadIdManager.ReleaseId(doodad.DbId);
-                });
-                doodad.DbId = doodadIdManager.GetNextId();
+                ReservePlacementIds(batch, doodad);
                 doodad.IsPersistent = true;
                 doodad.Transform = character.Transform.CloneDetached(doodad);
                 doodad.Transform.Local.SetPosition(x, y, z);
@@ -110,15 +124,8 @@ public partial class DoodadManager
                     batch.Enlist(null, () => ItemManager.Instance.ForgetCommittedItemContainer(coffer.ItemContainer));
                 }
 
-                doodad.InitializeGrowthTime();
-                if (doodad.PhaseTime == DateTime.MinValue)
-                    doodad.PhaseTime = doodad.PlantTime;
-                batch.TrackDoodad(doodad);
-                batch.AfterCommit(() =>
-                {
-                    PublishPlayerDoodadPlacement(doodad);
-                    character.ItemUse(item);
-                });
+                StagePlacement(batch, doodad);
+                batch.AfterCommit(() => character.ItemUse(item));
             });
             return succeeded ? doodad : null;
         }
