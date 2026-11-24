@@ -60,10 +60,11 @@ public partial class HousingManager
 
         var decorationItem = HousingGameData.Instance.GetItemHousingDecorationByItem(item.TemplateId);
         var houseDoodads = house.ParentWorld.GetDoodadByHouseDbId(house.Id)
-            .Where(candidate => candidate.TemplateId != ForSaleMarkerDoodadId).ToArray();
-        var limitError = HousingDecorationRules.Check(house.Template, house.CurrentStep, houseDoodads.Length,
-            decorationItem, design, HousingDecorationRules.GetPlaced(houseDoodads, HousingGameData.Instance),
-            HousingDecorationGameData.Instance);
+            .Where(candidate => candidate.ParentObjId == house.ObjId && candidate.TemplateId != ForSaleMarkerDoodadId).ToArray();
+        var placed = HousingDecorationRules.GetPlaced(houseDoodads, HousingGameData.Instance);
+        var boundCount = houseDoodads.Count(candidate => candidate.AttachPoint != AttachPointKind.None);
+        var limitError = HousingDecorationRules.Check(house.Template, house.CurrentStep, boundCount + placed.Count,
+            decorationItem, design, placed, HousingDecorationGameData.Instance);
         if (limitError != ErrorMessageType.NoErrorMessage)
         {
             player.SendErrorMessage(limitError);

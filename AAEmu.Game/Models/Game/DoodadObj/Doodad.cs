@@ -8,11 +8,13 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.CommonFarm.Static;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Units;
@@ -1033,24 +1035,19 @@ public class Doodad : BaseUnit
         stream.WriteBc(ObjId); //The object # in the list
         stream.Write(TemplateId); //The template id needed for that object, the client then uses the template configurations, not the server
         stream.WriteBc(OwnerObjId); //The creator of the object
-        stream.WriteBc(ParentObjId); //Things like boats or cars,
+        // r208022 counts every reported house child as furniture. Keep crops and dropped packs in world space.
+        var parentId = ParentObjId;
+        if (parentId != 0 && ParentObj is House && AttachPoint == AttachPointKind.None &&
+            HousingDecorationRules.GetDecoration(this, HousingGameData.Instance) == null)
+            parentId = 0;
+        stream.WriteBc(parentId);
         stream.Write((byte)AttachPoint); // attachPoint, relative to the parentObj (Door or window on a house, seats on carriage, etc.)
-        if (AttachPoint > 0 || ParentObjId > 0)
-        {
-            stream.WritePosition(Transform.Local.Position.X, Transform.Local.Position.Y, Transform.Local.Position.Z);
-            var (roll, pitch, yaw) = Transform.Local.ToRollPitchYawShorts();
-            stream.Write(roll);
-            stream.Write(pitch);
-            stream.Write(yaw);
-        }
-        else
-        {
-            stream.WritePosition(Transform.World.Position.X, Transform.World.Position.Y, Transform.World.Position.Z);
-            var (roll, pitch, yaw) = Transform.World.ToRollPitchYawShorts();
-            stream.Write(roll);
-            stream.Write(pitch);
-            stream.Write(yaw);
-        }
+        var pose = AttachPoint > 0 || parentId > 0 ? Transform.Local : Transform.World;
+        stream.WritePosition(pose.Position.X, pose.Position.Y, pose.Position.Z);
+        var (roll, pitch, yaw) = pose.ToRollPitchYawShorts();
+        stream.Write(roll);
+        stream.Write(pitch);
+        stream.Write(yaw);
 
         stream.Write(Scale); //The size of the object
         // Mark doodad as lootable for client UI (gear icon) ONLY when its current phase is exclusively driven by
