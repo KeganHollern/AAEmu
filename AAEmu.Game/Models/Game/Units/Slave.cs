@@ -735,7 +735,7 @@ public class Slave : Unit
     /// <summary>
     /// Destroys (de-spawns) any child doodads and slaves and drops trade packs if present in a random 1m range to the center of the vehicle
     /// </summary>
-    private void DestroyAttachedItems()
+    internal void DestroyAttachedItems()
     {
         // Destroy Doodads
         foreach (var doodad in AttachedDoodads)
