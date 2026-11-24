@@ -41,6 +41,7 @@ public class Nudge : ICommand
             return;
         }
 
+        character.Mates?.PrepareForTeleport();
         character.DisabledSetPosition = true;
         // CommandManager.SendNormalText(this, messageOutput,$"from {character.Transform}");
         character.Transform.Local.AddDistanceToFront(distance, false);

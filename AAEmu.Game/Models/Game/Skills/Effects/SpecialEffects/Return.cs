@@ -52,6 +52,7 @@ public class Return : SpecialEffectAction
         if (trp != null)
         {
             // return to main_world
+            character.Mates?.PrepareForTeleport();
             character.DisabledSetPosition = true;
             character.SendPacket(
                 new SCLoadInstancePacket(
@@ -79,6 +80,7 @@ public class Return : SpecialEffectAction
         }
         else if (character.MainWorldPosition != null)
         {
+            character.Mates?.PrepareForTeleport();
             character.DisabledSetPosition = true;
             character.SendPacket(
                 new SCLoadInstancePacket(

@@ -49,6 +49,7 @@ public class TestHeight : ICommand
 
         if (args.Length > firstarg && args[firstarg] == "testpos")
         {
+            targetPlayer.Mates?.PrepareForTeleport();
             targetPlayer.DisabledSetPosition = true;
             targetPlayer.SendPacket(new SCTeleportUnitPacket(0, 0, TargetX, TargetY, TargetZ, 0f));
             targetPlayer.SendMessage(
