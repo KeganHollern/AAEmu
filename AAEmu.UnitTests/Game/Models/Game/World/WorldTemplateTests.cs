@@ -682,7 +682,7 @@ public class WorldTemplateTests
         return heightMap;
     }
 
-    private static ushort[,] CreateHeightMap(ushort height = 0)
+    internal static ushort[,] CreateHeightMap(ushort height = 0)
     {
         var heightMap = new ushort[WorldManager.CELL_HMAP_RESOLUTION, WorldManager.CELL_HMAP_RESOLUTION];
         if (height == 0)
@@ -702,7 +702,7 @@ public class WorldTemplateTests
         return template;
     }
 
-    private static WorldTemplate CreateWorldTemplate(int cellCountX, int cellCountY)
+    internal static WorldTemplate CreateWorldTemplate(int cellCountX, int cellCountY)
     {
         return new WorldTemplate
         {
@@ -730,7 +730,7 @@ public class WorldTemplateTests
         return bai;
     }
 
-    private static void SetLoadedCell(WorldTemplate template, int cellX, int cellY, ushort[,] heightMap)
+    internal static void SetLoadedCell(WorldTemplate template, int cellX, int cellY, ushort[,] heightMap)
     {
         var cell = new WorldCell(cellX, cellY, template);
         SetPrivateProperty(cell, nameof(WorldCell.HeightMap), heightMap);

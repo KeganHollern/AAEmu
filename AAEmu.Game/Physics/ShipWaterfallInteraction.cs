@@ -60,8 +60,9 @@ public sealed class ShipWaterfallInteraction
     {
         public required SafePose RecoveryPose;
         public required Vector2 Direction;
-        public required Vector3 ReceivingFlow;
-        public float ReceivingSurface;
+        public float SourceSurface;
+        public float WaterfallBottom;
+        public float ProjectedReceivingSurface;
         public float FarEdgeProjection;
         public float HullRadiusAlongDirection;
         public float WaterlineCenterOffset;
@@ -192,7 +193,7 @@ public sealed class ShipWaterfallInteraction
 
         if (!TryFindReceivingWater(ship, direction, sourceSurface, waterfallMin.Z,
                 clearanceToFarEdge + LandingSearchExtraMeters,
-                out var receivingSurface, out var receivingFlow, out var launchDistance))
+                out var receivingSurface, out var launchDistance))
             return false;
 
         var drop = sourceSurface - receivingSurface;
@@ -207,8 +208,9 @@ public sealed class ShipWaterfallInteraction
         {
             RecoveryPose = recoveryPose,
             Direction = direction,
-            ReceivingFlow = receivingFlow,
-            ReceivingSurface = receivingSurface,
+            SourceSurface = sourceSurface,
+            WaterfallBottom = waterfallMin.Z,
+            ProjectedReceivingSurface = receivingSurface,
             FarEdgeProjection = farEdgeProjection,
             HullRadiusAlongDirection = hullRadiusAlong,
             WaterlineCenterOffset = body.Position.Y - sourceSurface,
@@ -225,8 +227,7 @@ public sealed class ShipWaterfallInteraction
     }
 
     private static bool TryFindReceivingWater(Slave ship, Vector2 direction, float sourceSurface,
-        float waterfallBottom, float firstDistance, out float receivingSurface, out Vector3 receivingFlow,
-        out float launchDistance)
+        float waterfallBottom, float firstDistance, out float receivingSurface, out float launchDistance)
     {
         var world = ship.ParentWorld!;
         var body = ship.RigidBody!;
@@ -237,22 +238,27 @@ public sealed class ShipWaterfallInteraction
             var x = body.Position.X + direction.X * distance;
             var y = body.Position.Z + direction.Y * distance;
             var probe = new Vector3(x, y, waterfallBottom);
-            var surface = world.Water.GetWaterSurface(probe, out var flow);
-            var terrain = world.GetHeight(x, y);
-            if (!float.IsFinite(surface) || sourceSurface - surface < MinimumDropMeters ||
-                surface < waterfallBottom - 5f || terrain > surface - MinimumReceivingDepthMeters)
+            if (!TryGetReceivingWater(world, probe, sourceSurface, waterfallBottom, out var surface, out _, out _))
                 continue;
 
             receivingSurface = surface;
-            receivingFlow = flow;
             launchDistance = distance;
             return true;
         }
 
         receivingSurface = 0f;
-        receivingFlow = Vector3.Zero;
         launchDistance = 0f;
         return false;
+    }
+
+    private static bool TryGetReceivingWater(WorldInstance world, Vector3 point, float sourceSurface,
+        float waterfallBottom, out float surface, out Vector3 flow, out float floor)
+    {
+        surface = world.Water.GetWaterSurface(point, out flow);
+        floor = 0f;
+        return float.IsFinite(surface) && sourceSurface - surface >= MinimumDropMeters &&
+               surface >= waterfallBottom - 5f && world.TryGetHeight(point.X, point.Y, out floor) &&
+               floor <= surface - MinimumReceivingDepthMeters;
     }
 
     private static bool AdvanceTransit(Slave ship, TrackedShip tracked, float dt)
@@ -262,7 +268,7 @@ public sealed class ShipWaterfallInteraction
         state.ElapsedSeconds += dt;
 
         if (!IsFinite(body) || state.ElapsedSeconds > state.MaximumSeconds ||
-            body.Position.Y < state.ReceivingSurface - GetRecoveryDepth(ship))
+            body.Position.Y < state.ProjectedReceivingSurface - GetRecoveryDepth(ship))
         {
             Recover(ship, tracked, state.RecoveryPose, "waterfall flight failed");
             return false;
@@ -270,22 +276,30 @@ public sealed class ShipWaterfallInteraction
 
         var projection = body.Position.X * state.Direction.X + body.Position.Z * state.Direction.Y;
         var reachedLowerPool = projection >= state.FarEdgeProjection - state.HullRadiusAlongDirection * 0.35f;
-        if (!ShouldCaptureLowerWater(body.Position.Y, body.Velocity.Y, state.ReceivingSurface,
+        // No eligible pool can be higher than the source minus the minimum drop.
+        if (!ShouldCaptureLowerWater(body.Position.Y, body.Velocity.Y, state.SourceSurface - MinimumDropMeters,
                 state.WaterlineCenterOffset, reachedLowerPool))
             return true;
 
-        CaptureLowerWater(ship, tracked, state);
+        // Resolve the water at the hull. The flight can clear an overhang or pass the edge of the projected pool.
+        var arrival = new Vector3(body.Position.X, body.Position.Z, body.Position.Y - state.WaterlineCenterOffset);
+        if (!TryGetReceivingWater(ship.ParentWorld!, arrival, state.SourceSurface, state.WaterfallBottom,
+                out var surface, out var flow, out var floor) ||
+            !AtCaptureHeight(body.Position.Y, surface, state.WaterlineCenterOffset))
+            return true;
+        CaptureLowerWater(ship, tracked, state, surface, flow, floor);
         return false;
     }
 
-    private static void CaptureLowerWater(Slave ship, TrackedShip tracked, TransitState state)
+    private static void CaptureLowerWater(Slave ship, TrackedShip tracked, TransitState state,
+        float surface, Vector3 flow, float floor)
     {
         var body = ship.RigidBody!;
-        var targetCenterY = state.ReceivingSurface + state.WaterlineCenterOffset;
+        var targetCenterY = surface + state.WaterlineCenterOffset;
         if (body.Position.Y < targetCenterY - 0.35f)
             body.Position = body.Position with { Y = targetCenterY - 0.35f };
 
-        var waterVelocity = new JVector(state.ReceivingFlow.X, state.ReceivingFlow.Z, state.ReceivingFlow.Y);
+        var waterVelocity = new JVector(flow.X, flow.Z, flow.Y);
         var relative = body.Velocity - waterVelocity;
         var relativeHorizontal = new JVector(relative.X, 0f, relative.Z) * LandingHorizontalDamping;
         var relativeSpeed = MathF.Sqrt(relativeHorizontal.X * relativeHorizontal.X +
@@ -300,16 +314,16 @@ public sealed class ShipWaterfallInteraction
         body.AngularVelocity *= 0.5f;
         body.SetActivationState(true);
 
-        ship.CachedWaterSurface = state.ReceivingSurface;
-        ship.CachedWaterFlow = state.ReceivingFlow;
-        ship.CachedFloorLevel = ship.ParentWorld!.GetHeight(body.Position.X, body.Position.Z);
+        ship.CachedWaterSurface = surface;
+        ship.CachedWaterFlow = flow;
+        ship.CachedFloorLevel = floor;
         ClearGroundState(ship);
         ship.WaterfallTransitActive = false;
         tracked.Transit = null;
         tracked.RetryCooldown = RecoveryCooldownSeconds;
         ShipShipInteraction.SyncSlaveSpeedFromBowVelocity(ship);
         tracked.LastSafePose = CapturePose(ship);
-        Logger.Debug($"Waterfall capture ship={ship.ObjId} surface={state.ReceivingSurface:F1}");
+        Logger.Debug($"Waterfall capture ship={ship.ObjId} surface={surface:F1}");
     }
 
     private static void Recover(Slave ship, TrackedShip tracked, SafePose pose, string reason)
@@ -447,6 +461,8 @@ public sealed class ShipWaterfallInteraction
 
     internal static bool ShouldCaptureLowerWater(float bodyHeight, float verticalVelocity,
         float receivingSurface, float waterlineCenterOffset, bool reachedLowerPool) =>
-        reachedLowerPool && verticalVelocity <= 0f &&
-        bodyHeight <= receivingSurface + MathF.Max(0.35f, waterlineCenterOffset + 0.35f);
+        reachedLowerPool && verticalVelocity <= 0f && AtCaptureHeight(bodyHeight, receivingSurface, waterlineCenterOffset);
+
+    private static bool AtCaptureHeight(float bodyHeight, float surface, float waterlineCenterOffset) =>
+        bodyHeight <= surface + MathF.Max(0.35f, waterlineCenterOffset + 0.35f);
 }
