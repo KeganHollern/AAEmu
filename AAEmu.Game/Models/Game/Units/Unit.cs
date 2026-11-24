@@ -634,7 +634,15 @@ public partial class Unit : BaseUnit, IUnit
             resurrectWaitTime = thisNpc.Spawner.RespawnTime;
         }
         
-        killer.BroadcastPacket(new SCUnitDeathPacket(ObjId, killReason, resurrectWaitTime, lostExp, durabilityLoss, killerUnit), true);
+        var death = new SCUnitDeathPacket(ObjId, killReason, resurrectWaitTime, lostExp, durabilityLoss, killerUnit);
+        if (thisCharacter != null && killer != this)
+        {
+            // A delayed hit can kill a player who already left the attacker's region.
+            var observers = WorldManager.GetAround<Character>(killer);
+            killer.SendPacketToPlayers([.. observers, killer, thisCharacter], death);
+        }
+        else
+            killer.BroadcastPacket(death, true);
         if (killer == this)
         {
             switch (this)
