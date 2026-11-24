@@ -529,6 +529,40 @@ public sealed partial class SlaveRemovalTests
             await Assert.That(LastError()).IsEqualTo(ErrorMessageType.SlaveEquipmentLoadedItem);
     }
 
+    [Test]
+    public async Task SelectOwnerAfterLogout_KeepsLoadedShipWithoutPendingDespawn()
+    {
+        var cargo = AddCargo(false);
+        var scroll = SetSavedSummonLocation();
+        var details = SummonDetails(scroll);
+        _world.SlaveManager.RemoveAndDespawnAllActiveOwnedSlaves(_owner);
+        await Assert.That(LastError()).IsEqualTo(ErrorMessageType.SlaveEquipmentLoadedItem);
+        await Assert.That(_slave.CancelTokenSource).IsNull();
+
+        _world.SlaveManager.CancelPendingDespawnForOwner(_owner.ObjId);
+
+        await Assert.That(_world.SlaveManager.GetActiveSlaveByOwnerObjId(_owner.ObjId)).IsSameReferenceAs(_slave);
+        await Assert.That(_slave.AttachedDoodads.Single()).IsSameReferenceAs(cargo);
+        await Assert.That(cargo.ItemId).IsEqualTo(77UL);
+        await Assert.That(SummonDetails(scroll).SequenceEqual(details)).IsTrue();
+        await Assert.That(Despawns()).IsEmpty();
+    }
+
+    [Test]
+    public async Task SelectOwner_CancelsOnlyThatOwnersPendingDespawn()
+    {
+        using var pending = new CancellationTokenSource();
+        _slave.CancelTokenSource = pending;
+        _world.SlaveManager.CancelPendingDespawnForOwner(_owner.ObjId + 1);
+        await Assert.That(pending.IsCancellationRequested).IsFalse();
+
+        _world.SlaveManager.CancelPendingDespawnForOwner(_owner.ObjId);
+        _world.SlaveManager.CancelPendingDespawnForOwner(_owner.ObjId);
+
+        await Assert.That(pending.IsCancellationRequested).IsTrue();
+        await Assert.That(_world.SlaveManager.GetActiveSlaveByOwnerObjId(_owner.ObjId)).IsSameReferenceAs(_slave);
+    }
+
     private Slave NewSlave(uint objId, ushort tlId, BaseUnitType ownerType = BaseUnitType.Character)
     {
         var slave = new Slave
