@@ -51,10 +51,8 @@ public class Transfer : Unit
     internal bool UsesRoutePose => TrailerSocket.HasValue ||
         (ModelId == 565 && Template is { Id: 25, TransferBindings.Count: 0 }) || IsPublicAirship;
 
-    // Airship movement sends the three quaternion vector components. Keep its implicit W positive.
-    private float RouteModelYaw => IsPublicAirship
-        ? MathF.IEEERemainder((float)Angle - MathF.PI / 2, MathF.Tau)
-        : (float)Angle - MathF.PI / 2;
+    // The mesh faces +Y. The route angle is measured from +X.
+    private float RouteModelYaw => (float)Angle - MathF.PI / 2;
 
     internal void InitializeRoutePose(WorldSpawnPosition spawn)
     {
@@ -556,7 +554,6 @@ public class Transfer : Unit
         var usesRoutePose = transfer.UsesRoutePose;
         if (usesRoutePose)
         {
-            // The mesh faces +Y. The route angle is measured from +X.
             var modelYaw = transfer.RouteModelYaw;
             transfer.SetPosition(transfer.vPosition.X, transfer.vPosition.Y, transfer.vPosition.Z, 0, 0, modelYaw);
             transfer.Rot = transfer.Transform.Local.ToQuaternion();
