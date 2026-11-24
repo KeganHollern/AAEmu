@@ -12,73 +12,90 @@ internal sealed class ShipCargoPickupCast
     private readonly Doodad _rack;
     private readonly Slave _ship;
     private readonly ulong _itemId;
-    private readonly bool _startedOnRack;
+    private readonly Transform _startSupport;
     private readonly Vector3 _start;
-    private readonly Vector3 _socket;
+    private readonly Vector3 _targetSocket;
+    private readonly Vector3 _startSocket;
 
     private ShipCargoPickupCast(Doodad rack, Slave ship, Character player)
     {
         _rack = rack;
         _ship = ship;
         _itemId = rack.ItemId;
-        _startedOnRack = player.Transform.Parent == rack.Transform;
+        _startSupport = player.Transform.Parent;
         _start = player.Transform.Local.Position;
-        _socket = rack.Transform.Local.Position;
+        _targetSocket = rack.Transform.Local.Position;
+        _startSocket = SocketOnHull(_startSupport);
     }
 
     internal static ShipCargoPickupCast Start(Skill skill, BaseUnit caster, BaseUnit target)
     {
         if (skill.Id != 15309 || caster is not Character player ||
             target is not Doodad { TemplateId: 3446, FuncGroupId: 8265, ItemId: > 0, ParentObj: Slave ship } rack ||
-            ship.Template?.IsABoat() != true || !ship.AttachedDoodads.Contains(rack) || rack.Transform.Parent != ship.Transform ||
-            (player.Transform.Parent != rack.Transform && player.Transform.Parent != ship.Transform))
+            ship.Template?.IsABoat() != true || !ship.AttachedDoodads.Contains(rack) || rack.Transform.Parent != ship.Transform)
+            return null;
+        var support = player.Transform.Parent;
+        if (support != rack.Transform && support != ship.Transform && !IsInstalledEmptyRack(support, ship))
             return null;
         return new ShipCargoPickupCast(rack, ship, player);
     }
 
-    internal bool IsSupport(Transform support) => support == _rack.Transform || support == _ship.Transform;
+    private static bool IsInstalledEmptyRack(Transform support, Slave ship) =>
+        support?.GameObject is Doodad { TemplateId: 3446, FuncGroupId: 8264, ItemId: 0 } rack &&
+        rack.Transform == support && support.Parent == ship.Transform && rack.ParentObj == ship &&
+        rack.ParentWorld == ship.ParentWorld && rack.Despawn == default && ship.AttachedDoodads.Contains(rack);
+
+    internal bool IsSupport(Transform support) =>
+        support == _rack.Transform || support == _ship.Transform || IsInstalledEmptyRack(support, _ship);
+
+    private Vector3 SocketOnHull(Transform support) =>
+        support == _ship.Transform ? Vector3.Zero : support.Local.Position;
+
+    private bool UsesHullAxes(Transform support) => support == _ship.Transform ||
+        support.Local.Rotation == Vector3.Zero && support.GameObject is Doodad rack && rack.Scale == _ship.Scale;
 
     internal bool CanContinue(Unit player)
     {
         var support = player.Transform.Parent;
-        if (!IsSupport(support) || player.ParentWorld != _ship.ParentWorld || _rack.ParentWorld != _ship.ParentWorld ||
+        if (!IsSupport(support) || !IsSupport(_startSupport) || SocketOnHull(_startSupport) != _startSocket ||
+            player.ParentWorld != _ship.ParentWorld || _rack.ParentWorld != _ship.ParentWorld ||
             _ship.IsDead || _ship.AttachmentsRetired || _rack.ItemId != _itemId || _rack.FuncGroupId != 8265 ||
             _rack.Despawn != default || _rack.ParentObj != _ship || _rack.Transform.Parent != _ship.Transform ||
-            !_ship.AttachedDoodads.Contains(_rack) || _rack.Transform.Local.Position != _socket)
+            !_ship.AttachedDoodads.Contains(_rack) || _rack.Transform.Local.Position != _targetSocket)
             return false;
 
         var now = player.Transform.Local.Position;
-        var onRack = support == _rack.Transform;
-        if (onRack == _startedOnRack)
+        if (support == _startSupport)
             return SkillCastReactions.SameMovementPosition(_start, now);
 
-        // Stock ship cargo racks share the hull's axes and scale. Compare both native
-        // reports in the hull frame, anchored to the start of the cast even after more contact changes.
-        if (_rack.Transform.Local.Rotation != Vector3.Zero || _rack.Scale != _ship.Scale)
+        // Either support can be a stock cargo rack. Compare both reports in one hull frame
+        // only for registered, fixed racks whose local axes and scale agree with the hull.
+        if (!UsesHullAxes(_startSupport) || !UsesHullAxes(support))
             return false;
-        var rack = SkillCastReactions.PackedPosition(onRack ? now : _start);
-        var deck = SkillCastReactions.PackedPosition(onRack ? _start : now);
+        var start = SkillCastReactions.PackedPosition(_start);
+        var end = SkillCastReactions.PackedPosition(now);
+        var endSocket = SocketOnHull(support);
         // Z uses nearest rounding. Restore the difference in wire steps before comparing:
         // the reader rounds each decoded height to 4 decimal places.
         const double heightStep = 4196d / 4194304;
-        var heightSteps = Math.Round((deck.Z - rack.Z) / heightStep);
-        return OverlappingHorizontalCells(rack.X, deck.X, _socket.X) &&
-               OverlappingHorizontalCells(rack.Y, deck.Y, _socket.Y) &&
-               Math.Abs(heightSteps * heightStep - _socket.Z) < heightStep;
+        var heightSteps = Math.Round((end.Z - start.Z) / heightStep);
+        return OverlappingHorizontalCells(start.X, end.X, (double)_startSocket.X - endSocket.X) &&
+               OverlappingHorizontalCells(start.Y, end.Y, (double)_startSocket.Y - endSocket.Y) &&
+               Math.Abs(heightSteps * heightStep - ((double)_startSocket.Z - endSocket.Z)) < heightStep;
     }
 
-    private static bool OverlappingHorizontalCells(float rack, float deck, float offset)
+    private static bool OverlappingHorizontalCells(float start, float end, double offset)
     {
         // ConvertPosition truncates each signed XY coordinate toward zero. Zero
         // can represent either sign. Require an intersection, not a larger movement radius.
         const double step = 8d / 4096;
-        var rackOnDeck = (double)offset + rack;
-        if (rackOnDeck == deck)
+        var startInEndFrame = offset + start;
+        if (startInEndFrame == end)
             return true; // The reported endpoint itself belongs to both cells, including with opposite signs.
-        var rackLow = rackOnDeck - (rack <= 0 ? step : 0);
-        var rackHigh = rackOnDeck + (rack >= 0 ? step : 0);
-        var deckLow = (double)deck - (deck <= 0 ? step : 0);
-        var deckHigh = (double)deck + (deck >= 0 ? step : 0);
-        return rackLow < deckHigh && deckLow < rackHigh;
+        var startLow = startInEndFrame - (start <= 0 ? step : 0);
+        var startHigh = startInEndFrame + (start >= 0 ? step : 0);
+        var endLow = (double)end - (end <= 0 ? step : 0);
+        var endHigh = (double)end + (end >= 0 ? step : 0);
+        return startLow < endHigh && endLow < startHigh;
     }
 }

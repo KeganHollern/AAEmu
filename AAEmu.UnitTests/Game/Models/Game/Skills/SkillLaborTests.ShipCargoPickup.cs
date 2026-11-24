@@ -55,22 +55,9 @@ public sealed partial class SkillLaborTests
     [Arguments("cumulative", false)]
     public async Task LoadedShipRack_OnlyAStationarySupportChangeCompletesThePickup(string action, bool completes)
     {
-        var worlds = new WorldManager(null, null, null, null, null);
-        SetInstance(worlds);
-        var (rack, _, _) = SetUpSign(true);
-        var world = _owner.ParentWorld;
-        SetField(worlds, "_worlds", new ConcurrentDictionary<uint, WorldInstance> { [world.Id] = world });
-        using var sus = new SusManager(worlds) { WriteBatch = _ => { } };
+        var (rack, world, live) = SetUpWorldForCargoPickup();
+        using var sus = new SusManager(WorldManager.Instance) { WriteBatch = _ => { } };
         SetInstance(sus);
-        SetField(SkillManager.Instance, "_buffs", new Dictionary<uint, BuffTemplate>());
-        MovementValidation.Reset(_owner.ObjId);
-        _owner.Transform.InstanceId = world.Id;
-        rack.Transform.InstanceId = world.Id;
-        var live = (ConcurrentDictionary<uint, BaseUnit>)typeof(WorldInstance)
-            .GetField("_baseUnits", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(world)!;
-        live[_owner.ObjId] = _owner;
-        typeof(Character).GetProperty("FinishedLoading", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(_owner, true);
-        _owner.Connection = new GameConnection(new RankFeedbackSession()) { ActiveChar = _owner };
         var (ship, skill) = SetUpShipRack(rack, world, live, action == "other-target" ? 3054u : 3446u,
             action == "other-skill" ? 15307u : 15309u);
         var pack = PutOriginalPackOnRack(rack);
@@ -156,6 +143,105 @@ public sealed partial class SkillLaborTests
         await Assert.That(pack.Count).IsEqualTo(1);
         await Assert.That(pack.UccId).IsEqualTo(753u);
         await Assert.That(rack.FuncGroupId).IsEqualTo(completes ? 8264u : 8265u);
+    }
+
+    [Test]
+    [Arguments("hold", true)]
+    [Arguments("deck", true)]
+    [Arguments("deck-return", true)]
+    [Arguments("hull-to-neighbor", true)]
+    [Arguments("neighbor-to-target", true)]
+    [Arguments("rotated", false)]
+    [Arguments("walk", false)]
+    [Arguments("unregistered", false)]
+    [Arguments("other-deck", false)]
+    [Arguments("moved-socket", false)]
+    [Arguments("removed-at-finish", false)]
+    public async Task LoadedShipRack_CanCollectFromItsInstalledNeighbor(string action, bool completes)
+    {
+        var (target, world, live) = SetUpWorldForCargoPickup();
+        using var sus = new SusManager(WorldManager.Instance) { WriteBatch = _ => { } };
+        SetInstance(sus);
+        var (ship, skill) = SetUpShipRack(target, world, live, 3446, 15309);
+        var pack = PutOriginalPackOnRack(target);
+        var neighbor = new Doodad
+        {
+            ObjId = 201, TemplateId = 3446, Template = target.Template, ParentWorld = world,
+            OwnerType = DoodadOwnerType.Slave, OwnerDbId = ship.Id, AttachPoint = AttachPointKind.Box0,
+            FuncGroupId = 8264
+        };
+        neighbor.Transform.Parent = ship.Transform;
+        var socket = new Vector3(-.53421f, 11.2297f, 1.87821f);
+        neighbor.Transform.Local.SetPosition(socket, Vector3.Zero);
+        live[neighbor.ObjId] = neighbor;
+        if (action != "unregistered")
+            ship.AttachedDoodads.Add(neighbor);
+
+        var localFoot = new Vector3(.0625f, -.076171875f, .0634f);
+        BaseUnit startSupport = action == "hull-to-neighbor" ? ship : neighbor;
+        _owner.Transform.Parent = startSupport.Transform;
+        MoveAtContact(startSupport, startSupport == ship ? socket + localFoot : localFoot);
+        var castTarget = new SkillCastDoodadTarget { ObjId = target.ObjId };
+        await Assert.That(skill.Use(_owner, new SkillCasterUnit(_owner.ObjId), castTarget,
+            new SkillObject(), true, out _)).IsEqualTo(SkillResult.Success);
+        var cast = (CastTask)_owner.SkillTask;
+        BaseUnit nextSupport = ship;
+        var nextFoot = socket + localFoot;
+        if (action is "hold" or "hull-to-neighbor")
+        {
+            nextSupport = neighbor;
+            nextFoot = localFoot;
+        }
+        if (action == "neighbor-to-target")
+        {
+            nextSupport = target;
+            nextFoot -= target.Transform.Local.Position;
+        }
+        if (action == "rotated")
+            neighbor.Transform.Local.SetZRotation(.1f);
+        if (action == "other-deck")
+        {
+            nextSupport = new Slave { ObjId = 207, Template = ship.Template, ParentWorld = world };
+            nextSupport.Transform.Local.SetPosition(ship.Transform.Local.Position, ship.Transform.Local.Rotation);
+            live[nextSupport.ObjId] = nextSupport;
+        }
+        if (action == "walk")
+            nextFoot.X += .25f;
+        if (action == "moved-socket")
+            neighbor.Transform.Local.SetPosition(socket + Vector3.UnitY);
+        MoveAtContact(nextSupport, nextFoot);
+        if (action == "deck-return")
+            MoveAtContact(neighbor, localFoot);
+        if (action == "removed-at-finish")
+            ship.AttachedDoodads.Remove(neighbor);
+
+        cast.CastWindow = new CastWindow(DateTime.UtcNow.AddSeconds(-1), true, false, false);
+        cast.Execute();
+        cast.Execute();
+        await Assert.That(skill.Cancelled).IsEqualTo(!completes);
+        await Assert.That(_owner.Inventory.Equipment.Items.Contains(pack)).IsEqualTo(completes);
+        await Assert.That(_owner.Inventory.SystemContainer.Items.Contains(pack)).IsEqualTo(!completes);
+        await Assert.That(target.ItemId).IsEqualTo(completes ? 0ul : pack.Id);
+        await Assert.That(pack.Count).IsEqualTo(1);
+    }
+
+    private (Doodad Rack, WorldInstance World, ConcurrentDictionary<uint, BaseUnit> Units) SetUpWorldForCargoPickup()
+    {
+        var worlds = new WorldManager(null, null, null, null, null);
+        SetInstance(worlds);
+        var (rack, _, _) = SetUpSign(true);
+        var world = _owner.ParentWorld;
+        SetField(worlds, "_worlds", new ConcurrentDictionary<uint, WorldInstance> { [world.Id] = world });
+        SetField(SkillManager.Instance, "_buffs", new Dictionary<uint, BuffTemplate>());
+        MovementValidation.Reset(_owner.ObjId);
+        _owner.Transform.InstanceId = world.Id;
+        rack.Transform.InstanceId = world.Id;
+        var live = (ConcurrentDictionary<uint, BaseUnit>)typeof(WorldInstance)
+            .GetField("_baseUnits", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(world)!;
+        live[_owner.ObjId] = _owner;
+        typeof(Character).GetProperty("FinishedLoading", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(_owner, true);
+        _owner.Connection = new GameConnection(new RankFeedbackSession()) { ActiveChar = _owner };
+        return (rack, world, live);
     }
 
     private (Slave, Skill) SetUpShipRack(Doodad rack, WorldInstance world, ConcurrentDictionary<uint, BaseUnit> live,
