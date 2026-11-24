@@ -28,7 +28,7 @@ using AAEmu.Game.Models.Game.World;
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
 [NotInParallel]
-public sealed class SlaveRemovalTests
+public sealed partial class SlaveRemovalTests
 {
     private readonly List<(FieldInfo Field, object Previous)> _singletons = [];
     private WorldInstance _world;
