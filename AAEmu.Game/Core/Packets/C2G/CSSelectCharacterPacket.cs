@@ -57,12 +57,7 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
             // Add to server pool
             WorldManager.Instance.TryAddCharacter(character);
 
-            var mySlave = Connection.ActiveChar.ParentWorld.SlaveManager.GetActiveSlaveByOwnerObjId(Connection.ActiveChar.ObjId);
-            if (mySlave != null)
-            {
-                Logger.Warn($"{Connection.ActiveChar.Name}: Abort the task of disabling vehicles");
-                mySlave.CancelTokenSource.Cancel();
-            }
+            character.ParentWorld.SlaveManager.CancelPendingDespawnForOwner(character.ObjId);
 
             Connection.ActiveChar.Simulation = new Simulation(character);
 

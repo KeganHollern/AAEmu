@@ -51,6 +51,12 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         }
     }
 
+    internal void CancelPendingDespawnForOwner(uint ownerObjId)
+    {
+        // A loaded vehicle can stay in the world after an ordinary return to the lobby.
+        GetActiveSlaveByOwnerObjId(ownerObjId)?.CancelTokenSource?.Cancel();
+    }
+
     /// <summary>
     /// Returns a list of all Slaves of specific SlaveKind
     /// </summary>
