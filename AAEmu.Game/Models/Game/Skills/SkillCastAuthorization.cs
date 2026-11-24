@@ -15,6 +15,12 @@ internal static class SkillCastAuthorization
             source is not SkillCasterUnit || source.ObjId != character.ObjId)
             return false;
 
+        // Take Extra Seat is cast by the character standing beside the vehicle.
+        if (skill.Id == 13863)
+            return skill.TargetType == SkillTargetType.AnyUnit && target is SkillCastUnitTarget &&
+                character.ParentWorld?.GetSlaveByObjId(target.ObjId) is { } vehicle &&
+                SlaveManager.CanEnterPassengerSeat(character, vehicle);
+
         // The r208022 plaque casts the demolition skill directly on the house.
         if (skill.Id == House.DemolishSkillId)
         {

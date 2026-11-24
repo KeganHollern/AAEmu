@@ -176,9 +176,7 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         lock (slave.AttachmentSyncRoot)
         {
             if (!ReferenceEquals(GetSlaveByObjId(objId), slave) ||
-                !TryGetSeatPosition(slave, attachPoint, interaction, out var position) ||
-                slave.AttachedCharacters.ContainsKey(attachPoint) ||
-                !MountSeatAuthorization.CanEnter(character, slave, position, MountSeatAuthorization.SlaveRange))
+                !CanEnterSeat(character, slave, attachPoint, interaction, out var position))
                 return;
 
             if (attachPoint == AttachPointKind.Driver && slave.Buffs.CheckBuff((uint)BuffConstants.OwnersMark) &&
@@ -225,6 +223,22 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         BindSlave(unit, slave.ObjId, AttachPointKind.Driver, AttachUnitReason.NewMaster);
     }
 
+    internal static bool CanEnterPassengerSeat(Character character, Slave slave)
+    {
+        if (slave.Template?.HasPassengerSeat != true)
+            return false;
+
+        lock (character.AttachmentSyncRoot)
+        lock (slave.AttachmentSyncRoot)
+            return CanEnterSeat(character, slave, AttachPointKind.Passenger0, null, out _);
+    }
+
+    private static bool CanEnterSeat(Character character, Slave slave, AttachPointKind seat,
+        Doodad interaction, out Vector3 position) =>
+        TryGetSeatPosition(slave, seat, interaction, out position) &&
+        !slave.AttachedCharacters.ContainsKey(seat) &&
+        MountSeatAuthorization.CanEnter(character, slave, position, MountSeatAuthorization.SlaveRange);
+
     internal static bool TryGetSeatPosition(Slave slave, AttachPointKind seat, Doodad interaction, out Vector3 position)
     {
         position = default;
@@ -238,9 +252,9 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
 
         var points = SlaveGameData.Instance.GetAttachPointsForSlave(slave.ModelId);
         var point = points?.GetValueOrDefault(seat);
-        // CSBindSlave always selects Driver. Other seats need an authored attachment function
-        // or a seat in this vehicle's own mount skill data.
+        // A passenger can occupy an authored seat without receiving any mount skills.
         if (seat != AttachPointKind.Driver && interaction == null &&
+            !(seat == AttachPointKind.Passenger0 && slave.Template.HasPassengerSeat) &&
             !MateGameData.Instance.HasAttachedSeat(SlaveGameData.Instance.GetSlaveMountSkillList(slave.TemplateId), seat))
             return false;
         if (point != null)
