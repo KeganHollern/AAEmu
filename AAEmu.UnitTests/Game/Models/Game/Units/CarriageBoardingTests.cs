@@ -158,11 +158,12 @@ public sealed class CarriageBoardingTests
     [Test]
     public async Task MarianopleTram_BothBenchesUseTheCabinModelSockets()
     {
-        var world = SetUpStation();
+        var world = SetUpStation(modelId: 606, vehicleModelId: 20);
         var motorTemplate = Motor(606, AttachPointKind.Trailed0, 4).Template;
         motorTemplate.Id = 3;
         var start = new WorldSpawnPosition { X = 10936.2905f, Y = 12044.841f, Z = 130.25333f, ZoneId = 183 };
         var next = new WorldSpawnPosition { X = 10933.959f, Y = 12024.92f, Z = 131.47528f, ZoneId = 183 };
+        motorTemplate.TransferAllPaths.Add(new TransferPaths { Id = 7, OwnerId = 3, PathName = "mari_tram_01", WaitTimeEnd = 15 });
         motorTemplate.TransferRoads.Add(new TransferRoads { Name = "mari_tram_01", Pos = [start, next] });
         ConfigureSpawn(motorTemplate, cabinModelId: 314, seatId: 5921, phaseId: 15276);
         world.TransferManager = new TransferManager();
@@ -175,9 +176,21 @@ public sealed class CarriageBoardingTests
         var front = cabin.AttachedDoodads.Single(d => d.AttachPoint == AttachPointKind.Passenger0);
         var rear = cabin.AttachedDoodads.Single(d => d.AttachPoint == AttachPointKind.Passenger1);
         // Compiled nodes $passenger0 and $passenger1 on transfers_floatship02.cgf.
-        await CheckTramBench(front, cabin, new Vector3(0.02091537f, 5.013110f, 1.463596f), -Vector3.UnitY);
-        await CheckTramBench(rear, cabin, new Vector3(0.02785782f, -2.598603f, 1.463596f), Vector3.UnitY);
+        var frontSocket = new Vector3(0.02091537f, 5.013110f, 1.463596f);
+        var rearSocket = new Vector3(0.02785782f, -2.598603f, 1.463596f);
+        await CheckTramBench(front, cabin, frontSocket, -Vector3.UnitY);
+        await CheckTramBench(rear, cabin, rearSocket, Vector3.UnitY);
         await BoardAndLeave(passenger, front);
+        await BoardAndLeave(passenger, rear);
+
+        var parked = cabin.Transform.World.Position;
+        motor.WaitTime = DateTime.MinValue;
+        motor.MoveTo(motor);
+        motor.WaitTime = DateTime.MinValue;
+        motor.MoveTo(motor);
+        await Assert.That(Vector3.Distance(parked, cabin.Transform.World.Position)).IsGreaterThan(0.01f);
+        await CheckTramBench(front, cabin, frontSocket, -Vector3.UnitY);
+        await CheckTramBench(rear, cabin, rearSocket, Vector3.UnitY);
         await BoardAndLeave(passenger, rear);
     }
 
@@ -197,7 +210,7 @@ public sealed class CarriageBoardingTests
         return new Transfer { Template = template, TemplateId = template.Id, ModelId = modelId, ObjId = 1 };
     }
 
-    private WorldInstance SetUpStation()
+    private WorldInstance SetUpStation(uint modelId = 654, uint vehicleModelId = 22)
     {
         AppConfiguration.Instance.World = new WorldConfig { GrowthRate = 1, GeoDataMode = true };
         var world = CreateStationWorld();
@@ -211,14 +224,14 @@ public sealed class CarriageBoardingTests
         var models = new ModelManager();
         SetField(models, "_models", new Dictionary<string, Dictionary<uint, Model>>
         {
-            ["VehicleModel"] = new() { [22] = new VehicleModel
+            ["VehicleModel"] = new() { [vehicleModelId] = new VehicleModel
             {
-                Id = 22, Velocity = 8, AngVel = 1, WheeledVehicleMass = 1000,
+                Id = vehicleModelId, Velocity = 8, AngVel = 1, WheeledVehicleMass = 1000,
                 WheeledVehicleMaxGear = 2, WheeledVehicleGearSpeedRatio2 = 1
             } }
         });
         SetField(models, "_modelTypes", new Dictionary<uint, ModelType>
-            { [654] = new() { Id = 654, SubId = 22, SubType = "VehicleModel" } });
+            { [modelId] = new() { Id = modelId, SubId = vehicleModelId, SubType = "VehicleModel" } });
         SetSingleton(models);
         return world;
     }
