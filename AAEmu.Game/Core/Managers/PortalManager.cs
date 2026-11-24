@@ -468,13 +468,11 @@ public class PortalManager(ILocalizationManager localizationManager, IWorldManag
             return;
         }
 
+        character.Mates?.PrepareForTeleport();
         character.DisabledSetPosition = true;
         character.BroadcastPacket(new SCUnitPortalUsedPacket(character.ObjId), true);
         if (changesInstance)
-        {
-            character.ParentWorld.MateManager?.RemoveAndDespawnAllActiveOwnedMates(character);
             slaveManager?.RemoveAndDespawnAllActiveOwnedSlaves(character);
-        }
 
         character.Transform.ApplyWorldTransformToLocalPosition(destination);
         if (changesInstance)

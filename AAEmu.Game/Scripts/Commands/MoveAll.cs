@@ -20,6 +20,7 @@ public class MoveAll : ICommand
         {
             if (otherChar != character)
             {
+                otherChar.Mates?.PrepareForTeleport();
                 otherChar.DisabledSetPosition = true;
                 otherChar.SendPacket(new SCTeleportUnitPacket(TeleportReason.Gm, 0,
                     character.Transform.World.Position.X, character.Transform.World.Position.Y,

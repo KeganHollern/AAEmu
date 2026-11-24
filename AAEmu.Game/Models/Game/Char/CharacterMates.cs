@@ -3,6 +3,7 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
@@ -180,6 +181,18 @@ public class CharacterMates(Character owner)
         //Logger.Warn($"Spawn the pet:{mount.ObjId} X={mount.Transform.World.Position.X} Y={mount.Transform.World.Position.Y}");
         Owner.ParentWorld.MateManager.AddActiveMateAndSpawn(Owner, mount, item);
         mount.PostUpdateCurrentHp(mount, 0, mount.Hp, KillReason.Unknown);
+    }
+
+    public void PrepareForTeleport()
+    {
+        var manager = Owner.ParentWorld?.MateManager;
+        if (manager == null)
+            return;
+
+        // Dismissing an owned mount releases all its riders. A visitor leaves only their own seat.
+        if (Owner.Transform.Parent?.GameObject is Units.Mate mount && mount.OwnerId != Owner.Id)
+            manager.UnMountMate(Owner, mount.TlId, Owner.AttachedPoint, AttachUnitReason.PrefabChanged);
+        manager.RemoveAndDespawnAllActiveOwnedMates(Owner);
     }
 
     public void DespawnMate(uint tlId)

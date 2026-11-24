@@ -289,6 +289,7 @@ public class SphereCommandUtil
                         if (sphere.Id == jsonId)
                         {
                             found = true;
+                            character.Mates?.PrepareForTeleport();
                             character.SendPacket(new SCTeleportUnitPacket(0, 0, sphere.Position.X, sphere.Position.Y, sphere.Position.Z, 0));
                             break;
                         }

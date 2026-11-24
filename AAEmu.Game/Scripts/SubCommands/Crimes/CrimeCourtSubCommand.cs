@@ -100,6 +100,7 @@ public class CrimeCourtSubCommand : SubCommandBase
                 if (courtRoom != null)
                 {
                     SendMessage(messageOutput, $"Moving {targetCharacter.Name} to jail of {courtRoom.Name} ({courtRoomId})");
+                    targetCharacter.Mates?.PrepareForTeleport();
                     targetCharacter.ForceDismount();
                     targetCharacter.DisabledSetPosition = true;
                     if (!targetCharacter.Buffs.CheckBuff((uint)BuffConstants.ForciblyAwaitingTrial))

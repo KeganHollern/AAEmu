@@ -178,6 +178,7 @@ public class TrialData
         defendant.Buffs.AddBuff((uint)BuffConstants.Trial_Defendant, defendant);
 
         // Teleport defendant
+        defendant.Mates?.PrepareForTeleport();
         defendant.SendPacket(new SCTeleportUnitPacket(TeleportReason.Defendant, 0, CourtRoom.Defendant.X, CourtRoom.Defendant.Y, CourtRoom.Defendant.Z, CourtRoom.Defendant.Yaw.DegToRad()));
 
         // Summon defendant packet (starts trial cycle for client?)
@@ -295,6 +296,7 @@ public class TrialData
 
                 // Teleport the jury
                 var pos = juryEntry.Seat.Transform.World.Position;
+                player.Mates?.PrepareForTeleport();
                 player.SendPacket(new SCTeleportUnitPacket(TeleportReason.Jury, 0, pos.X, pos.Y, pos.Z, juryEntry.Seat.Transform.World.Rotation.Z));
                 player.Transform.World.SetPosition(pos);
                 player.SendMessage($"New location {player.Transform.World.Position}");

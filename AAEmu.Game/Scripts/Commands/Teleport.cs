@@ -646,6 +646,7 @@ public class Teleport : ICommand
                             $"Teleporting to |cFFFFFFFFX:{CommandSurfaceResult.Format(destination.X)} " +
                             $"Y:{CommandSurfaceResult.Format(destination.Y)} Z:{CommandSurfaceResult.Format(destination.Z)}|r " +
                             surface.FormatHeights());
+                        character.Mates?.PrepareForTeleport();
                         character.ForceDismount();
                         character.DisabledSetPosition = true;
                         character.SendPacket(new SCTeleportUnitPacket(0, 0, destination.X,
@@ -682,6 +683,7 @@ public class Teleport : ICommand
                     {
                         CommandManager.SendNormalText(this, messageOutput,
                             "Teleporting to |cFFFFFFFF" + item.Info + "|r");
+                        character.Mates?.PrepareForTeleport();
                         character.ForceDismount();
                         character.DisabledSetPosition = true;
                         character.SendPacket(new SCTeleportUnitPacket(0, 0, item.X, item.Y, item.Z, 0));

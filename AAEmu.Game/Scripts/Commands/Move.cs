@@ -63,6 +63,7 @@ public class Move : ICommand
                 targetPlayer.SendMessage($"[GM] |cFFFFFFFF{character.Name}|r has called upon your presence !");
             }
 
+            targetPlayer.Mates?.PrepareForTeleport();
             targetPlayer.DisabledSetPosition = true;
             targetPlayer.SendPacket(new SCTeleportUnitPacket(0, 0, myX, myY, myZ, 0f));
             CommandManager.SendNormalText(this, messageOutput,
@@ -77,6 +78,7 @@ public class Move : ICommand
             var targetZ =
                 targetPlayer.Transform.World.Position.Z +
                 2f; // drop me slightly above them to avoid weird collision stuff
+            character.Mates?.PrepareForTeleport();
             character.DisabledSetPosition = true;
             character.SendPacket(new SCTeleportUnitPacket(0, 0, targetX, targetY, targetZ, 0f));
             CommandManager.SendNormalText(this, messageOutput, $"Moved to |cFFFFFFFF{targetPlayer.Name}|r.");
@@ -92,6 +94,7 @@ public class Move : ICommand
                     $"[GM] |cFFFFFFFF{character.Name}|r has moved you do position X: {newX}, Y: {newY}, Z: {newZ}");
             }
 
+            targetPlayer.Mates?.PrepareForTeleport();
             targetPlayer.DisabledSetPosition = true;
             targetPlayer.SendPacket(new SCTeleportUnitPacket(0, 0, newX, newY, newZ, 0f));
             CommandManager.SendNormalText(this, messageOutput,
