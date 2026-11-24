@@ -3,6 +3,7 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.World.Interactions;
 
 namespace AAEmu.Game.Models.Game.Skills;
 
@@ -74,7 +75,9 @@ internal static class SkillCastAuthorization
             var doodad = world.GetDoodad(target.ObjId);
             return doodad != null && ReferenceEquals(doodad.ParentWorld, world) &&
                 doodad.Transform.InstanceId == character.Transform.InstanceId &&
-                SkillGrantGameData.Instance.HasDoodadGrant(doodad.FuncGroupId, skill.Id);
+                (SkillGrantGameData.Instance.HasDoodadGrant(doodad.FuncGroupId, skill.Id) ||
+                 skill.Id == RecoverItem.CollectSkillId && skill.TargetType == SkillTargetType.Doodad &&
+                 doodad.CurrentFuncs.Any(func => RecoverItem.IsDefaultFurnitureAction(character, doodad, func)));
         }
 
         if (target is SkillCastUnitTarget)
