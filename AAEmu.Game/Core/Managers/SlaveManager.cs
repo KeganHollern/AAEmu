@@ -14,6 +14,7 @@ using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Buffs;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
@@ -479,6 +480,45 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         return position.Position;
     }
 
+    internal static void PlaceLegacyBoat(PositionAndRotation position, WorldTemplate terrain, WaterBodies water, ShipModelV1 model)
+    {
+        // Keep the initial waterline if no forward probe has sufficient measured depth.
+        position.SetHeight(water.GetWaterSurface(position.Position, out _));
+        var minimumDepth = model.MassBoxSizeZ - model.MassCenterZ + 1f;
+        for (var distance = 0f; distance < 50f + model.MassBoxSizeX; distance += 1f)
+        {
+            var probe = position.Clone();
+            probe.AddDistanceToFront(distance);
+            var point = probe.Position;
+            if (!terrain.TryGetHeight(point.X, point.Y, out var seabed))
+                continue;
+
+            var surface = water.GetWaterSurface(point, out _);
+            if (surface - seabed > minimumDepth)
+            {
+                position.SetPosition(point.X, point.Y, surface);
+                break;
+            }
+        }
+
+        var keelOffset = (model.MassCenterZ < 0f ? model.MassCenterZ / 2f : 0f) - model.KeelHeight;
+        position.SetHeight(position.Position.Z + keelOffset);
+    }
+
+    internal static void ApplyPortalBoatWaterline(PositionAndRotation position, WaterBodies water)
+    {
+        if (water == null)
+            return;
+        var surface = water.GetWaterSurface(position.Position, out _);
+        var densityMultiplier = AAEmu.Game.Physics.Forces.Buoyancy.ShipWaterDensityMul;
+        if (!float.IsFinite(surface) || densityMultiplier <= 0f)
+            return;
+
+        var targetZ = surface - 1f / (AAEmu.Game.Physics.Forces.Buoyancy.BaseWaterDensity * densityMultiplier);
+        if (position.Position.Z < targetZ)
+            position.SetHeight(targetZ);
+    }
+
     internal static bool CanSummonItem(Character owner, Item item, DateTime now)
     {
         if (item is not SummonSlave summonItem)
@@ -524,7 +564,6 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
 
         using var spawnPos = positionOverride?.CloneDetached() ?? new Transform(null);
         spawnPos.InstanceId = World.Id;
-        var spawnOffsetPos = new Vector3();
 
         var dbId = 0u;
         var slaveName = string.Empty;
@@ -596,8 +635,6 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
             // spawnPos.Local.AddDistanceToRight(slaveTemplate.SpawnXOffset);
             if (slaveTemplate.IsABoat())
             {
-                // If we're spawning a boat, put it at the water level regardless of our own height
-                // TODO: if not at ocean level, get actual target location water body height (for example rivers)
                 var world = WorldManager.Instance.GetWorld(spawnPos.InstanceId);
                 if (world == null)
                 {
@@ -605,38 +642,8 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
                     return null;
                 }
 
-                var worldWaterLevel = world.Water.GetWaterSurface(spawnPos.World.Position, out _);
-                spawnPos.Local.SetHeight(worldWaterLevel);
-
-                // temporary grab ship information so that we can use it to find a suitable spot in front to summon it
-                var tempShipModel = ModelManager.Instance.GetShipModel(slaveTemplate.ModelId);
-                var minDepth = tempShipModel.MassBoxSizeZ - tempShipModel.MassCenterZ + 1f;
-
-                // Somehow take into account where the ship will end up related to it's mass center (also check boat physics)
-                spawnOffsetPos.Z += (tempShipModel.MassCenterZ < 0f ? tempShipModel.MassCenterZ / 2f : 0f) -
-                                    tempShipModel.KeelHeight;
-
-                for (var inFront = 0f; inFront < 50f + tempShipModel.MassBoxSizeX; inFront += 1f)
-                {
-                    using var depthCheckPos = spawnPos.CloneDetached();
-                    depthCheckPos.Local.AddDistanceToFront(inFront);
-                    var floorHeight = World.Template.GeoData.GetHeight(depthCheckPos.World.Position);// WorldManager.Instance.GetHeight(depthCheckPos);
-                    if (floorHeight > 0f)
-                    {
-                        var surfaceHeight = world.Water.GetWaterSurface(depthCheckPos.World.Position, out _);
-                        var delta = surfaceHeight - floorHeight;
-                        if (delta > minDepth)
-                        {
-                            // owner.SendMessage("Extra inFront = {0}, required Depth = {1}", inFront, minDepth);
-                            // spawnPos.Dispose();
-
-                            spawnPos.ApplyWorldTransformToLocalPosition(depthCheckPos);
-                            break;
-                        }
-                    }
-                }
-
-                spawnPos.Local.Position += spawnOffsetPos;
+                var shipModel = ModelManager.Instance.GetShipModel(slaveTemplate.ModelId);
+                PlaceLegacyBoat(spawnPos.Local, world.Template, world.Water, shipModel);
             }
             else
             {
@@ -728,18 +735,7 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         if (summonedSlave.Template.IsABoat() && summonedSlave.Template.PortalTime > 0f)
         {
             var spawnWorld = WorldManager.Instance.GetWorld(summonedSlave.Transform.InstanceId);
-            var waterAtFinal = spawnWorld?.Water?.GetWaterSurface(summonedSlave.Transform.World.Position, out _) ?? 0f;
-            if (waterAtFinal > 0f)
-            {
-                var mul = AAEmu.Game.Physics.Forces.Buoyancy.ShipWaterDensityMul;
-                if (mul > 0f)
-                {
-                    var targetSubmerged = 1f / (AAEmu.Game.Physics.Forces.Buoyancy.BaseWaterDensity * mul);
-                    var targetZ = waterAtFinal - targetSubmerged;
-                    if (summonedSlave.Transform.Local.Position.Z < targetZ)
-                        summonedSlave.Transform.Local.SetHeight(targetZ);
-                }
-            }
+            ApplyPortalBoatWaterline(summonedSlave.Transform.Local, spawnWorld?.Water);
         }
 
         summonedSlave.Spawn();
