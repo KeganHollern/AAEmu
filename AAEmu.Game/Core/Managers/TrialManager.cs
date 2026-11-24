@@ -362,6 +362,7 @@ public class TrialManager : Singleton<TrialManager>, ITrialManager
         else
         {
             var position = player.MainWorldPosition?.World.Position ?? player.Transform.World.Position;
+            player.Mates?.PrepareForTeleport();
             player.ForceDismount();
             player.DisabledSetPosition = true;
             player.Transform.World.SetPosition(position);

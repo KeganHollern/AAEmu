@@ -89,7 +89,10 @@ public partial class InstantGame
                 if (killer.Hp == 0)
                     killer.BroadcastPacket(new SCCharacterResurrectedPacket(killer.ObjId, spawn.X, spawn.Y, spawn.Z, spawn.RotationZ), true);
                 else
+                {
+                    killer.Mates?.PrepareForTeleport();
                     killer.SendPacket(new SCTeleportUnitPacket(0, 0, spawn.X, spawn.Y, spawn.Z, spawn.RotationZ));
+                }
                 killer.Hp = killer.MaxHp;
                 killer.Mp = killer.MaxMp;
                 killer.BroadcastPacket(new SCUnitPointsPacket(killer.ObjId, killer.Hp, killer.Mp), true);

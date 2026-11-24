@@ -34,7 +34,7 @@ internal static class PrisonerAccess
             var oldWorld = character.ParentWorld;
             var crossesInstance = character.Transform.InstanceId != world.Id;
             CancelInstanceAdmissions(character);
-            oldWorld?.MateManager?.RemoveAndDespawnAllActiveOwnedMates(character);
+            character.Mates?.PrepareForTeleport();
             if (crossesInstance)
             {
                 WorldManager.RemoveVisibleObject(character);

@@ -49,6 +49,7 @@ public class Escape : SpecialEffectAction
             }
 
             // force transported out
+            character.Mates?.PrepareForTeleport();
             character.BroadcastPacket(
                 new SCCharacterResurrectedPacket(
                     character.ObjId,

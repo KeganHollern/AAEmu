@@ -8,6 +8,7 @@ using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
@@ -17,6 +18,8 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
+using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
@@ -24,6 +27,7 @@ using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
+using AAEmu.Game.Scripts.Commands;
 
 using Portal = AAEmu.Game.Models.Game.Units.Portal;
 
@@ -48,6 +52,7 @@ public sealed class PortalUseTests
         Install(_worldManager);
         Install(new SusManager(_worldManager));
         Install(new TrialManager());
+        Install(new PermissionManager(null));
         var skills = new SkillManager(null, null);
         SetField(skills, "_taggedBuffs", new Dictionary<uint, List<uint>>());
         Install(skills);
@@ -207,6 +212,134 @@ public sealed class PortalUseTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task UsePortal_DismissesTheOwnersMountAndReleasesTheRider(bool changesInstance)
+    {
+        var mate = AddOwnedMount();
+        _character.IsRiding = true;
+        _character.AttachedPoint = AttachPointKind.Driver;
+        _character.Transform.Parent = mate.Transform;
+        mate.Passengers[AttachPointKind.Driver]._objId = _character.ObjId;
+        if (changesInstance)
+            _portal.TeleportPosition = new Transform(null, null, 0, _otherWorld.Id, 20, 30, 40, 0f);
+
+        PortalManager.UsePortal(_character, _portal.ObjId, true, _now);
+
+        await Assert.That(_world.GetUnit(mate.ObjId)).IsNull();
+        await Assert.That(_world.MateManager.GetActiveMates(_character.Id)).IsEmpty();
+        await Assert.That(_character.Mates.GetMateInfo(mate.ItemId)).IsSameReferenceAs(mate.DbInfo);
+        await Assert.That(mate.DbInfo.Xp).IsEqualTo(4321);
+        await Assert.That(mate.DbInfo.Mileage).IsEqualTo(987);
+        await Assert.That(mate.Passengers[AttachPointKind.Driver]._objId).IsEqualTo(0u);
+        await Assert.That(_character.IsRiding).IsFalse();
+        await Assert.That(_character.AttachedPoint).IsEqualTo(AttachPointKind.None);
+        await Assert.That(_character.Transform.Parent).IsNull();
+        await Assert.That(_character.Transform.World.Position).IsEqualTo(new Vector3(20, 30, 40));
+    }
+
+    [Test]
+    public async Task UsePortal_LeavesAnotherOwnersMountInTheWorldAndFreesTheVisitorsSeat()
+    {
+        var mate = AddOwnedMount();
+        var visitor = new RecordingCharacter
+        {
+            Id = 8, ObjId = 80, ParentWorld = _world, Connection = new GameConnection(new RecordingSession()),
+            IsRiding = true, AttachedPoint = AttachPointKind.Passenger0
+        };
+        visitor.Portals = new CharacterPortals(visitor);
+        visitor.Mates = new CharacterMates(visitor);
+        visitor.Connection.ActiveChar = visitor;
+        _world.AddObject(visitor);
+        visitor.Transform.Parent = mate.Transform;
+        mate.Passengers[AttachPointKind.Passenger0]._objId = visitor.ObjId;
+
+        PortalManager.UsePortal(visitor, _portal.ObjId, false, _now);
+
+        await Assert.That(visitor.Transform.World.Position).IsEqualTo(new Vector3(20, 30, 40));
+        await Assert.That(visitor.IsRiding).IsFalse();
+        await Assert.That(mate.Passengers[AttachPointKind.Passenger0]._objId).IsEqualTo(0u);
+        await Assert.That(_world.GetUnit(mate.ObjId)).IsSameReferenceAs(mate);
+        await Assert.That(_world.MateManager.GetOwnedMate(_character, mate.TlId)).IsSameReferenceAs(mate);
+    }
+
+    [Test]
+    public async Task StaffMove_DismissesTheTargetPlayersMount()
+    {
+        var mate = AddOwnedMount();
+        var staff = new RecordingCharacter { Id = 8, ObjId = 80, ParentWorld = _world };
+        staff.Transform.Local.Position = new Vector3(20, 30, 40);
+
+        new MoveAll().Execute(staff, [], null);
+
+        await Assert.That(_world.GetUnit(mate.ObjId)).IsNull();
+        await Assert.That(_session.Packets.Select(Opcode)).Contains(SCOffsets.SCTeleportUnitPacket);
+    }
+
+    [Test]
+    public async Task UsePortal_LeavesTheMountAtARejectedPortal()
+    {
+        var mate = AddOwnedMount();
+        _portal.Transform.Local.Position = new Vector3(10, 0, 0);
+
+        PortalManager.UsePortal(_character, _portal.ObjId, true, _now);
+
+        await Assert.That(LastError()).IsEqualTo(ErrorMessageType.InvalidPortal);
+        await Assert.That(_world.MateManager.GetOwnedMate(_character, mate.TlId)).IsSameReferenceAs(mate);
+        await Assert.That(_world.GetUnit(mate.ObjId)).IsSameReferenceAs(mate);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Recall_DismissesTheMountOnlyWhenTheMemoryTomeHasADestination(bool bound)
+    {
+        var mate = AddOwnedMount();
+        var manager = new PortalManager(null, null, null, null, null, null);
+        Install(manager);
+        _character.Faction = new SystemFaction();
+        var point = new AAEmu.Game.Models.Game.Portal { Id = 8, X = 20, Y = 30, Z = 40 };
+        SetField(manager, "_districtReturnPoints", new Dictionary<uint, DistrictReturnPoints>
+        {
+            [1] = new() { DistrictId = 1, ReturnPointId = point.Id }
+        });
+        SetField(manager, "_recallsKey", new Dictionary<uint, uint> { [8] = 9 });
+        SetField(manager, "_recalls", new Dictionary<uint, List<AAEmu.Game.Models.Game.Portal>> { [9] = [point] });
+        _character.ReturnDistrictId = bound ? 1u : 2u;
+
+        new SpecialEffect { SpecialEffectTypeId = SpecialType.Return }.Apply(
+            _character, null, _character, null, null, new EffectSource(), null, _now.UtcDateTime);
+
+        await Assert.That(_world.GetUnit(mate.ObjId) == null).IsEqualTo(bound);
+        await Assert.That(_character.Transform.World.Position).IsEqualTo(bound ? new Vector3(20, 30, 40) : Vector3.Zero);
+    }
+
+    private Mate AddOwnedMount()
+    {
+        _world.MateManager = new MateManager(_world);
+        _world.AddObject(_character);
+        _character.Mates = new CharacterMates(_character);
+        var saved = new MateDb { Id = 3, Owner = _character.Id, ItemId = 12345 };
+        SetField(_character.Mates, "_mates", new Dictionary<ulong, MateDb> { [saved.ItemId] = saved });
+        var objectIds = new ObjectIdManager();
+        var tlIds = new TlIdManager();
+        Replace(typeof(ObjectIdManager).GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!, objectIds);
+        Replace(typeof(TlIdManager).GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!, tlIds);
+        objectIds.Initialize();
+        tlIds.Initialize();
+        var mate = new Mate
+        {
+            Template = new NpcTemplate { Scale = 1 },
+            Id = saved.Id, OwnerId = _character.Id, OwnerObjId = _character.ObjId,
+            ItemId = saved.ItemId, DbInfo = saved, ObjId = objectIds.GetNextId(),
+            TlId = (ushort)tlIds.GetNextId(), ParentWorld = _world, Experience = 4321, Mileage = 987
+        };
+        _world.MateManager.TrackActiveMate(_character.Id, mate);
+        mate.TryRunSpawnLifecycle(() => { }, () => _world.AddObject(mate));
+        return mate;
+    }
+
+    [Test]
     public async Task UsePortal_CrossInstanceUsesInstanceIdAndKeepsDestinationCoordinates()
     {
         _portal.TeleportPosition = new Transform(null, null, 0, _otherWorld.Id, 20, 30, 40, 0f);
@@ -341,9 +474,11 @@ public sealed class PortalUseTests
     private static void SetField(object target, string name, object value) =>
         target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(target, value);
 
-    private void Install<T>(T value) where T : class
+    private void Install<T>(T value) where T : class =>
+        Replace(typeof(Singleton<T>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!, value);
+
+    private void Replace(FieldInfo field, object value)
     {
-        var field = typeof(Singleton<T>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
         _singletons.Add((field, field.GetValue(null)));
         field.SetValue(null, value);
     }
