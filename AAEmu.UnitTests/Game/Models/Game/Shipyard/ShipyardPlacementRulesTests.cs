@@ -72,8 +72,8 @@ public sealed class ShipyardPlacementRulesTests
     public async Task Geometry_RejectsLivingUnitAndUnknownShape(CryIntersection collision)
     {
         var calls = new List<int>();
-        var error = Check((_, mask) => { calls.Add(mask); return collision; });
-        await Assert.That(error).IsEqualTo(ErrorMessageType.CraftLocatingUnitIsTooCloseToUnit);
+        var check = Check((_, mask) => { calls.Add(mask); return collision; });
+        await Assert.That(check).IsEqualTo(new ShipyardGeometryCheck("living", ErrorMessageType.CraftLocatingUnitIsTooCloseToUnit, collision));
         await Assert.That(calls.SequenceEqual([8])).IsTrue();
     }
 
@@ -83,9 +83,19 @@ public sealed class ShipyardPlacementRulesTests
     public async Task Geometry_RejectsStaticObjectsAndShallowTerrain(CryIntersection collision)
     {
         var calls = new List<int>();
-        var error = Check((_, mask) => { calls.Add(mask); return mask == 8 ? CryIntersection.Clear : collision; });
-        await Assert.That(error).IsEqualTo(ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater);
+        var check = Check((_, mask) => { calls.Add(mask); return mask == 8 ? CryIntersection.Clear : collision; });
+        await Assert.That(check).IsEqualTo(new ShipyardGeometryCheck("clearance",
+            ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater, collision));
         await Assert.That(calls.SequenceEqual([8, 0x10d])).IsTrue();
+    }
+
+    [Test]
+    public async Task Geometry_RecordsIncorrectPreviewHeightBeforeAnyCollisionQuery()
+    {
+        var check = ShipyardPlacementRules.EvaluateGeometry(Model, Position, 0, 26, 99, [],
+            (_, _) => throw new InvalidOperationException("The height check must stop before collision queries."));
+        await Assert.That(check).IsEqualTo(new ShipyardGeometryCheck("preview_height",
+            ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater));
     }
 
     [Test]
@@ -96,7 +106,8 @@ public sealed class ShipyardPlacementRulesTests
             [ShipyardPlacementRules.ShipyardBox(Model, Position, 0, 0)], (_, _) => { queried = true; return CryIntersection.Clear; });
         await Assert.That(error).IsEqualTo(ErrorMessageType.CraftLocatingUnitIsTooCloseToOther);
         await Assert.That(queried).IsFalse();
-        await Assert.That(Check((_, _) => CryIntersection.Clear)).IsEqualTo(ErrorMessageType.NoErrorMessage);
+        await Assert.That(Check((_, _) => CryIntersection.Clear)).IsEqualTo(
+            new ShipyardGeometryCheck("clearance", ErrorMessageType.NoErrorMessage, CryIntersection.Clear));
     }
 
     [Test]
@@ -112,6 +123,6 @@ public sealed class ShipyardPlacementRulesTests
         await Assert.That(scene.IntersectBox(query)).IsEqualTo(CryIntersection.Intersects);
     }
 
-    private static ErrorMessageType Check(Func<CryBox, int, CryIntersection> intersect) =>
-        ShipyardPlacementRules.CheckGeometry(Model, Position, 0, 26, 100, [], intersect);
+    private static ShipyardGeometryCheck Check(Func<CryBox, int, CryIntersection> intersect) =>
+        ShipyardPlacementRules.EvaluateGeometry(Model, Position, 0, 26, 100, [], intersect);
 }

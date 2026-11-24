@@ -4,6 +4,8 @@ using AAEmu.Game.Models.CryEngine.Physics;
 
 namespace AAEmu.Game.Models.Game.Shipyard;
 
+internal readonly record struct ShipyardGeometryCheck(string Stage, ErrorMessageType Error, CryIntersection? Intersection = null);
+
 /// <summary>The r208022 shipyard preview volumes, in metres.</summary>
 public static class ShipyardPlacementRules
 {
@@ -62,18 +64,25 @@ public static class ShipyardPlacementRules
         != CryIntersection.Clear;
 
     public static ErrorMessageType CheckGeometry(CryBounds model, Vector3 position, float yaw, int buildRadius,
+        float waterSurface, IEnumerable<CryBox> shipyards, Func<CryBox, int, CryIntersection> intersect) =>
+        EvaluateGeometry(model, position, yaw, buildRadius, waterSurface, shipyards, intersect).Error;
+
+    internal static ShipyardGeometryCheck EvaluateGeometry(CryBounds model, Vector3 position, float yaw, int buildRadius,
         float waterSurface, IEnumerable<CryBox> shipyards, Func<CryBox, int, CryIntersection> intersect)
     {
         if (!ValidBounds(model) || !float.IsFinite(yaw) || buildRadius < 0)
-            return ErrorMessageType.CraftLocatingUnitIsNotExist;
+            return new("model_bounds", ErrorMessageType.CraftLocatingUnitIsNotExist);
         if (!IsOnWater(position, waterSurface))
-            return ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater;
+            return new("preview_height", ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater);
         var shipyardBox = ShipyardBox(model, position, yaw, buildRadius);
         if (shipyards.Any(neighbor => Overlaps(shipyardBox, neighbor)))
-            return ErrorMessageType.CraftLocatingUnitIsTooCloseToOther;
-        if (intersect(LivingBox(model, position, yaw), 8) != CryIntersection.Clear)
-            return ErrorMessageType.CraftLocatingUnitIsTooCloseToUnit;
-        return intersect(ClearanceBox(model, position, yaw, buildRadius), 0x10d) == CryIntersection.Clear
+            return new("neighbor_shipyard", ErrorMessageType.CraftLocatingUnitIsTooCloseToOther);
+        var living = intersect(LivingBox(model, position, yaw), 8);
+        if (living != CryIntersection.Clear)
+            return new("living", ErrorMessageType.CraftLocatingUnitIsTooCloseToUnit, living);
+        var clearance = intersect(ClearanceBox(model, position, yaw, buildRadius), 0x10d);
+        var error = clearance == CryIntersection.Clear
             ? ErrorMessageType.NoErrorMessage : ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater;
+        return new("clearance", error, clearance);
     }
 }

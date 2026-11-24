@@ -1,25 +1,33 @@
 ﻿using System.Reflection;
 
+using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Schedules;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World;
 using AAEmu.UnitTests.Utils.Mocks;
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+
+using DayOfWeek = AAEmu.Game.Models.Game.Schedules.DayOfWeek;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
@@ -115,6 +123,76 @@ public sealed class QuestItemGainStarterTests
         await Assert.That(owner.Quests.IsQuestComplete(QuestId)).IsFalse();
         if (!expected)
             await Assert.That(QuestIdManager.Instance.GetNextId()).IsEqualTo(initialId);
+    }
+
+    [Test]
+    public async Task LivingLedgers_MondayRefusalClosesTheDialogAndTuesdayAcceptanceStartsTheQuest()
+    {
+        const uint questId = 6089;
+        const uint npcId = 14451;
+        InitializeQuestStartDependencies();
+        using var models = new QuestInteractionTestModels();
+        var template = new QuestTemplate { Id = questId };
+        var start = new QuestComponentTemplate(template) { Id = 26199, KindId = QuestComponentKind.Start };
+        start.ActTemplates.Add(new QuestActConAcceptNpc(start) { ActId = 35934, NpcId = npcId });
+        template.Components.Add(start.Id, start);
+        var progress = new QuestComponentTemplate(template) { Id = 26200, KindId = QuestComponentKind.Progress };
+        progress.ActTemplates.Add(new QuestActObjItemGather(progress)
+        {
+            ActId = 35966, ItemId = 30823, Count = 15, ThisComponentObjectiveIndex = 0
+        });
+        template.Components.Add(progress.Id, progress);
+        RegisterTemplate(template);
+
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-11-23T23:59:59Z"));
+        var schedules = new GameScheduleManager(null, clock);
+        schedules.LoadGameSchedules(new Dictionary<int, GameSchedules>
+        {
+            [121] = new() { Id = 121, DayOfWeekId = DayOfWeek.Tuesday, EndTime = 23, EndTimeMin = 58 }
+        });
+        schedules.LoadGameScheduleQuests(new Dictionary<int, GameScheduleQuests>
+        {
+            [113] = new() { Id = 113, QuestId = (int)questId, GameScheduleId = 121 }
+        });
+        var (owner, items) = CreateOwnerWithItems(7, (ItemTemplateId, 1));
+        var saved = new List<Quest>();
+        owner.Quests = new CharacterQuests(owner, _ => true, _ => { }, saved.Add, schedules);
+        owner.ModelId = 1;
+        var world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, 1);
+        owner.Region = QuestInteractionTestModels.CreateRegion(world);
+        var npc = new Npc
+        {
+            ObjId = 81, TemplateId = npcId, Template = new NpcTemplate { Scale = 1 },
+            ModelId = 1, Region = owner.Region, IsVisible = true
+        };
+        var worldField = typeof(GameObject).GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        worldField.SetValue(owner, world);
+        worldField.SetValue(npc, world);
+        world.AddObject(npc);
+        var session = Mock.Of<ISession>();
+        owner.Connection = new GameConnection(session.Object) { ActiveChar = owner };
+        var refusal = new SCQuestContextFailedPacket(questId, QuestStatusFailed.UnitRequirementCheck).Encode().GetBytes();
+        var notice = new SCChatMessagePacket(ChatType.System, "This quest is not available at this time.").Encode().GetBytes();
+        var replies = new List<string>();
+        session.SendPacket(Is<byte[]>(p => p.SequenceEqual(refusal))).Callback(() => replies.Add("refusal"));
+        session.SendPacket(Is<byte[]>(p => p.SequenceEqual(notice))).Callback(() => replies.Add("schedule notice"));
+        session.SendPacket(Is<byte[]>(p => BitConverter.ToUInt16(p, 6) == SCOffsets.SCQuestContextStartedPacket))
+            .Callback(() => replies.Add("started"));
+
+        await Assert.That(owner.Quests.AddQuestFromClient(questId, npc.ObjId, 0)).IsFalse();
+        await Assert.That(replies.SequenceEqual(["refusal", "schedule notice"])).IsTrue();
+        await Assert.That(owner.Quests.ActiveQuests).IsEmpty();
+        await Assert.That(saved).IsEmpty();
+        await Assert.That(owner.Quests.HasQuestCompleted(questId)).IsFalse();
+        await Assert.That(items[ItemTemplateId].Count).IsEqualTo(1);
+        await Assert.That(owner.Experience).IsEqualTo(0);
+        await Assert.That(owner.Money).IsEqualTo(0L);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Assert.That(owner.Quests.AddQuestFromClient(questId, npc.ObjId, 0)).IsTrue();
+        await Assert.That(replies.SequenceEqual(["refusal", "schedule notice", "started"])).IsTrue();
+        await Assert.That(saved.Single()).IsSameReferenceAs(owner.Quests.ActiveQuests[questId]);
+        await Assert.That(items[ItemTemplateId].Count).IsEqualTo(1);
     }
 
     [Test]
