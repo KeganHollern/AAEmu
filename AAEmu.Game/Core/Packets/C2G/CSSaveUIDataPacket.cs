@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Text;
 using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
@@ -9,7 +8,6 @@ namespace AAEmu.Game.Core.Packets.C2G;
 
 public class CSSaveUIDataPacket() : GamePacket(CSOffsets.CSSaveUIDataPacket, 1)
 {
-    private static readonly UTF8Encoding s_utf8 = new(false, true);
     private const int HeaderSize = sizeof(ushort) + sizeof(uint) + sizeof(ushort);
 
     public override void Read(PacketStream stream)
@@ -63,17 +61,6 @@ public class CSSaveUIDataPacket() : GamePacket(CSOffsets.CSSaveUIDataPacket, 1)
         var length = stream.ReadUInt16();
         if (!CharacterUiData.IsServerKey(key) || ownerId == 0 || length > CharacterUiData.MaximumBytes || stream.LeftBytes != length)
             return false;
-        var bytes = stream.ReadBytes(length);
-        if (bytes.AsSpan().Contains((byte)0))
-            return false;
-        try
-        {
-            data = s_utf8.GetString(bytes);
-            return true;
-        }
-        catch (DecoderFallbackException)
-        {
-            return false;
-        }
+        return CharacterUiData.TryDecode(key, stream.ReadBytes(length), out data);
     }
 }

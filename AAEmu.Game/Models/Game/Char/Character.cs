@@ -2260,7 +2260,10 @@ public partial class Character : Unit, ICharacter
         if (activeQuests == null || activeQuests.Count == 0)
             return value;
 
-        return QuestTrackerUiData.EnsureActiveQuestsChecked(value, activeQuests.Keys);
+        var withDefaults = QuestTrackerUiData.EnsureActiveQuestsChecked(value, activeQuests.Keys);
+        if (withDefaults != value && CharacterUiData.GetClientBytes(key, withDefaults).Length > CharacterUiData.MaximumBytes)
+            return value;
+        return withDefaults;
     }
 
     public void PushSubscriber(IDisposable disposable)
