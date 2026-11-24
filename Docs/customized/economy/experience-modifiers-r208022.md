@@ -33,9 +33,10 @@ NPC kill XP uses the NPC's `ExpMul` after its template multiplier and adder.
 XP totals and ability totals use wider addition before the current maximum caps apply.
 
 Negative XP changes do not receive gain modifiers.
-Recovered death XP uses `RestoreExperience`, which bypasses the world rate and gain modifiers.
-This rule prevents a scroll from creating extra XP during death recovery.
-The priest recovery path already restores the recorded loss directly.
+Death recovery bypasses the world rate and XP gain modifiers.
+Paid priest recovery restores the recorded priest share.
+Full XP Restoration scrolls restore the exact XP lost at death.
+Older saves contain only the priest share. A scroll restores that amount when the full loss is unknown.
 
 ## Native premium field
 
@@ -73,6 +74,6 @@ The patron tests check both compact point values.
 
 After publication, compare the same XP reward before and after a 20 percent scroll.
 Compare the same labor action before and after a labor XP buff.
-Check death recovery while an XP scroll is active. Recovery must return only the recorded recoverable XP.
+Check priest and scroll recovery while a bonus XP buff is active. Each service must return its recorded amount.
 Check the patron display with an active period and with no period.
 These client checks do not yet have human validation.

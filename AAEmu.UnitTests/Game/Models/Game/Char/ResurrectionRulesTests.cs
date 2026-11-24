@@ -62,12 +62,13 @@ public sealed class ResurrectionRulesTests
     [Arguments(0, 83, 97_000)]
     [Arguments(0, 181, 0)]
     [Arguments(1, 83, 0)]
-    public async Task Reconnect_CharacterStateWritesOnlyTheOutstandingManualWait(int hp, int secondsSinceDeath, int expected)
+    public async Task Reconnect_CharacterStateWritesOutstandingWaitAndExperienceLoss(int hp, int secondsSinceDeath, int expected)
     {
         var character = new Character(new UnitCustomModelParams())
         {
             Id = 7, Name = "Temple", Faction = new(), FactionName = "Nuia", Hp = hp,
-            DeadCount = 5, RezWaitDuration = 180_000, RezPenaltyDuration = 600_000
+            DeadCount = 5, RezWaitDuration = 180_000, RezPenaltyDuration = 600_000,
+            RecoverableExp = 804, LastExpLoss = 1005
         };
         character.Mails = new CharacterMails(character, null);
         var items = new ItemManager(null, null, null, null, null, null);
@@ -88,6 +89,10 @@ public sealed class ResurrectionRulesTests
             await Assert.That(stream.ReadInt32()).IsBetween(Math.Max(0, expected - elapsed), expected);
             var persistedCharacter = character.Write(new PacketStream()).GetBytes();
             await Assert.That(stream.ReadBytes(persistedCharacter.Length).SequenceEqual(persistedCharacter)).IsTrue();
+            stream.ReadBytes(3 * sizeof(float)); // world rotation
+            await Assert.That(stream.ReadInt32()).IsEqualTo(character.Experience);
+            await Assert.That(stream.ReadInt32()).IsEqualTo(804);
+            await Assert.That(stream.ReadInt32()).IsEqualTo(1005);
         }
         finally
         {

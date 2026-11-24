@@ -13,8 +13,7 @@ public class RecoverExpEffect : EffectTemplate
     public bool NeedLaborPower { get; init; }
 
     public bool NeedPriest { get; init; }
-    // TODO: 1.2 specific field Penaltied, not sure how this is used
-    // public bool Penaltied { get; set; }
+    public bool Penaltied { get; init; }
 
     public override bool OnActionTime => false;
 
@@ -76,6 +75,6 @@ public class RecoverExpEffect : EffectTemplate
 
         // Preserve the current level-based cost. Scroll effect 5 explicitly has no labor charge.
         var neededLaborCost = !NeedLaborPower ? 0 : player.Level <= 50 ? player.Level : 50 + ((player.Level - 50) * 20);
-        player.StageExperienceRecovery((short)neededLaborCost);
+        player.StageExperienceRecovery((short)neededLaborCost, Penaltied);
     }
 }
