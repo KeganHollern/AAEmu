@@ -132,6 +132,55 @@ public sealed class CarriageBoardingTests
     }
 
     [Test]
+    [Arguments(123u, "safari_1", 654u, 20111.8713f, 27249.229f, 113.85671f, 20117.4846f, 27220.8556f, 112.99648f)]
+    [Arguments(124u, "safari_6", 661u, 20462.0981f, 27158.4453f, 137.02292f, 20487.6902f, 27181.3293f, 139.74445f)]
+    public async Task GhostSafari_ChairAndTelescopeFollowTheirCabin(uint id, string path, uint pathId,
+        float startX, float startY, float startZ, float nextX, float nextY, float nextZ)
+    {
+        var world = SetUpStation(28, 1463, 57);
+        var template = Motor(1463, AttachPointKind.Trailed0, 122).Template;
+        template.Id = id;
+        var first = new WorldSpawnPosition { X = startX, Y = startY, Z = startZ, ZoneId = 301 };
+        var next = new WorldSpawnPosition { X = nextX, Y = nextY, Z = nextZ, ZoneId = 301 };
+        template.TransferAllPaths.Add(new TransferPaths { Id = pathId, OwnerId = id, PathName = path,
+            WaitTimeStart = id == 123 ? 30 : 0, WaitTimeEnd = 150 });
+        template.TransferRoads.Add(new TransferRoads { Name = path, Pos = [first, next] });
+        ConfigureSpawn(template);
+        world.TransferManager = new TransferManager();
+        var file = Path.Combine(AppContext.BaseDirectory, "Data", "Worlds", "main_world", "transfer_spawns.json");
+        var spawner = JsonHelper.DeserializeObject<List<TransferSpawner>>(await File.ReadAllTextAsync(file)).Single(s => s.UnitId == id);
+        spawner.ParentWorld = world;
+        var motor = spawner.Spawn(0);
+        var cabin = motor.Bounded;
+        var chair = cabin.AttachedDoodads.Single(d => d.TemplateId == 7156);
+        var telescope = cabin.AttachedDoodads.Single(d => d.TemplateId == 7959);
+        await Assert.That(cabin.TemplateId).IsEqualTo(122u);
+        await Assert.That(cabin.ModelId).IsEqualTo(1459u);
+        await Assert.That(cabin.AttachPointId).IsEqualTo(AttachPointKind.Trailed0);
+        await Assert.That(chair.AttachPoint).IsEqualTo(AttachPointKind.Passenger0);
+        await Assert.That(telescope.AttachPoint).IsEqualTo(AttachPointKind.Passenger1);
+        await CheckPoint(motor.Transform.World.Position, first.AsPositionVector());
+        // The head mesh faces +Y. Both signed head meshes place $trailed0 9.24417 m behind the motor.
+        var forward = Vector2.Normalize(new Vector2(nextX - startX, nextY - startY));
+        var expected = first.AsPositionVector() + new Vector3(-forward.X * 9.24417f, -forward.Y * 9.24417f, 1.2507599f);
+        var distance = Vector2.Distance(new(cabin.Transform.World.Position.X, cabin.Transform.World.Position.Y), new(expected.X, expected.Y));
+        Console.WriteLine($"Safari {id} initial cabin XY error {distance:F3} m. Motor {motor.Transform.World.Position}, cabin {cabin.Transform.World.Position}, expected {expected}.");
+        await CheckPoint(cabin.Transform.World.Position, expected);
+        await CheckSeats(motor, cabin, chair, telescope);
+        var passenger = new CharacterMock { Id = 10, ObjId = 100, ParentWorld = world };
+        await BoardAndLeave(passenger, chair, 23464, AttachPointKind.None);
+        await Assert.That(motor.TimeLeft).IsGreaterThan(0u);
+        motor.MoveTo(motor);
+        await CheckPoint(cabin.Transform.World.Position, expected);
+        motor.WaitTime = DateTime.MinValue;
+        motor.MoveTo(motor);
+        motor.WaitTime = DateTime.MinValue;
+        motor.MoveTo(motor);
+        await Assert.That(motor.Transform.World.Position.X).IsGreaterThan(startX);
+        await CheckSeats(motor, cabin, chair, telescope);
+    }
+
+    [Test]
     public async Task CarriageWithoutRoute_UsesThePlacedMotorPoseIncludingRollAndPitch()
     {
         var motor = Motor(654, AttachPointKind.Trailed0, 46);
@@ -147,7 +196,9 @@ public sealed class CarriageBoardingTests
 
     [Test]
     [Arguments(654u, AttachPointKind.Passenger0, 46u)]
-    [Arguments(1463u, AttachPointKind.Trailed0, 122u)]
+    [Arguments(1463u, AttachPointKind.Passenger0, 122u)]
+    [Arguments(1463u, AttachPointKind.Trailed0, 46u)]
+    [Arguments(654u, AttachPointKind.Trailed0, 122u)]
     [Arguments(565u, AttachPointKind.Trailed0, 28u)]
     [Arguments(604u, AttachPointKind.System, 30u)]
     public async Task OtherBindingsKeepTheirPlacement(uint modelId, AttachPointKind point, uint childId)
@@ -162,10 +213,10 @@ public sealed class CarriageBoardingTests
         return new Transfer { Template = template, TemplateId = template.Id, ModelId = modelId, ObjId = 1 };
     }
 
-    private WorldInstance SetUpStation()
+    private WorldInstance SetUpStation(int cells = 16, uint modelId = 654, uint vehicleModelId = 22)
     {
         AppConfiguration.Instance.World = new WorldConfig { GrowthRate = 1, GeoDataMode = true };
-        var world = CreateStationWorld();
+        var world = CreateStationWorld(cells);
         var worlds = new WorldManager(null, null, null, null, null);
         SetField(worlds, "_worlds", new ConcurrentDictionary<uint, WorldInstance> { [0] = world });
         SetSingleton(worlds);
@@ -176,22 +227,21 @@ public sealed class CarriageBoardingTests
         var models = new ModelManager();
         SetField(models, "_models", new Dictionary<string, Dictionary<uint, Model>>
         {
-            ["VehicleModel"] = new() { [22] = new VehicleModel
+            ["VehicleModel"] = new() { [vehicleModelId] = new VehicleModel
             {
-                Id = 22, Velocity = 8, AngVel = 1, WheeledVehicleMass = 1000,
+                Id = vehicleModelId, Velocity = 8, AngVel = 1, WheeledVehicleMass = 1000,
                 WheeledVehicleMaxGear = 2, WheeledVehicleGearSpeedRatio2 = 1
             } }
         });
         SetField(models, "_modelTypes", new Dictionary<uint, ModelType>
-            { [654] = new() { Id = 654, SubId = 22, SubType = "VehicleModel" } });
+            { [modelId] = new() { Id = modelId, SubId = vehicleModelId, SubType = "VehicleModel" } });
         SetSingleton(models);
         return world;
     }
 
-    private static WorldInstance CreateStationWorld()
+    private static WorldInstance CreateStationWorld(int cells)
     {
-        const int cells = 16;
-        const int regions = cells * WorldManager.SECTORS_PER_CELL;
+        var regions = cells * WorldManager.SECTORS_PER_CELL;
         var template = new WorldTemplate
         {
             CellX = cells, CellY = cells, Cells = new WorldCell[cells, cells],
@@ -212,11 +262,12 @@ public sealed class CarriageBoardingTests
 
     private void ConfigureSpawn(TransferTemplate motor)
     {
-        var cabin = new TransferTemplate { Id = 46, ModelId = 653 };
-        cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = 5890, AttachPointId = AttachPointKind.Passenger0 });
-        cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = 5890, AttachPointId = AttachPointKind.Passenger1 });
+        var safari = motor.ModelId == 1463;
+        var cabin = new TransferTemplate { Id = safari ? 122u : 46u, ModelId = safari ? 1459u : 653u };
+        cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = safari ? 7156u : 5890u, AttachPointId = AttachPointKind.Passenger0 });
+        cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = safari ? 7959u : 5890u, AttachPointId = AttachPointKind.Passenger1 });
         var data = new TransferGameData();
-        SetField(data, "_templates", new Dictionary<uint, TransferTemplate> { [motor.Id] = motor, [46] = cabin });
+        SetField(data, "_templates", new Dictionary<uint, TransferTemplate> { [motor.Id] = motor, [cabin.Id] = cabin });
         SetSingleton(data);
         var buffs = new BuffGameData();
         SetEmptyDictionaries(buffs);
@@ -244,9 +295,14 @@ public sealed class CarriageBoardingTests
         SetSingleton(skills);
         var doodads = new DoodadManager(objects, null, null, null, null);
         SetEmptyDictionaries(doodads);
-        var seat = new DoodadTemplate { Id = 5890 };
-        seat.FuncGroups.Add(new DoodadFuncGroups { Id = 15181, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Start });
-        SetField(doodads, "_templates", new Dictionary<uint, DoodadTemplate> { [seat.Id] = seat });
+        var doodadTemplates = new Dictionary<uint, DoodadTemplate>();
+        foreach (var (templateId, phase) in new[] { (5890u, 15181u), (7156u, 19351u), (7959u, 21906u) })
+        {
+            var doodad = new DoodadTemplate { Id = templateId };
+            doodad.FuncGroups.Add(new DoodadFuncGroups { Id = phase, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Start });
+            doodadTemplates.Add(doodad.Id, doodad);
+        }
+        SetField(doodads, "_templates", doodadTemplates);
         SetSingleton(doodads);
     }
 
@@ -264,12 +320,13 @@ public sealed class CarriageBoardingTests
         field.SetValue(null, value);
     }
 
-    private static async Task BoardAndLeave(CharacterMock passenger, Doodad seat)
+    private static async Task BoardAndLeave(CharacterMock passenger, Doodad seat, uint skillId = 15857,
+        AttachPointKind attachPoint = AttachPointKind.Passenger0)
     {
-        // Stock seat 5890, phase 15181, skill 15857, attachment 167.
-        var action = new DoodadFuncAttachment { AttachPointId = AttachPointKind.Passenger0, Space = 2, BondKindId = BondKind.BondChairDouble };
+        // Stock seat 5890 uses attachment 167. Safari chair 7156 uses attachment 193. Both give a two-place chair.
+        var action = new DoodadFuncAttachment { AttachPointId = attachPoint, Space = 2, BondKindId = BondKind.BondChairDouble };
         passenger.Transform.Local.SetPosition(seat.Transform.World.Position);
-        action.Use(passenger, seat, 15857);
+        action.Use(passenger, seat, skillId);
         await Assert.That(passenger.Bonding.GetOwner()).IsSameReferenceAs(seat);
         await Assert.That(passenger.Transform.Parent).IsSameReferenceAs(seat.Transform);
         await CheckPoint(passenger.Transform.World.Position, seat.Transform.World.Position);

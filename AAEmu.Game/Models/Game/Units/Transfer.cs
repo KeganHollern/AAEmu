@@ -21,11 +21,12 @@ public class Transfer : Unit
     /// </summary>
     public const float BoundedChildAlongFrontOffsetMeters = -9.24417f;
 
-    // Model 654, transfers_carriageb01.cgf: $trailed0 in model-local metres.
+    // The stock carriage and ghost safari heads have the same model-local $trailed0 socket.
     private static readonly Vector3 CarriageSocket = new(0, BoundedChildAlongFrontOffsetMeters, 1.2507583f);
 
-    internal bool UsesCarriageSocket => ModelId == 654 &&
-        Template?.TransferBindings.FirstOrDefault() is { TransferId: 46, AttachPointId: AttachPointKind.Trailed0 };
+    internal bool UsesCarriageSocket =>
+        Template?.TransferBindings.FirstOrDefault() is { AttachPointId: AttachPointKind.Trailed0 } binding &&
+        (ModelId, binding.TransferId) is (654, 46) or (1463, 122);
 
     internal void InitializeCarriageMotor(WorldSpawnPosition spawn)
     {
