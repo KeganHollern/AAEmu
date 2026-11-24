@@ -84,7 +84,10 @@ python3 k8s/vendor/AAEmu/Tools/quest_sphere_audit.py \
 
 The audit covers client geometry and all server supplements.
 It rejects absent geometry, incorrect worlds, invalid volumes, and stale exclusions for sphere objectives and `CheckSphere` acts.
-It does not classify every `AcceptSphere` starter as an objective.
+Add `--include-starters` to inventory the start components that use `QuestActConAcceptSphere`.
+Extract the client `game/worlds/*/world.xml` files into the same source tree for this option.
+The [starter findings](starter-findings.md) explain the report fields and the current open locations.
+A missing starter volume appears in the inventory. Invalid input still fails the audit.
 The fork build workflow runs the audit fixture tests with Python.
 
 The [recorded audit report](audit-report.json) covers 126 acts, with 110 covered acts and 16 checked exclusions.
@@ -101,7 +104,7 @@ The destination evidence and supplement tests supply that separate check.
 
 Use `--exclusions` to select a candidate manifest.
 The script returns exit code `1` for gaps, invalid volumes, or stale exclusions.
-Run the 16 fixture tests from the fork root:
+Run the fixture tests from the fork root:
 
 ```sh
 python3 -m unittest discover -s Tools/tests -p 'test_quest_sphere_audit.py'
