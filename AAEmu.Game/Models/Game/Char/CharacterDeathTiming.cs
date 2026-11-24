@@ -38,6 +38,13 @@ public partial class Character
         }
     }
 
-    internal bool CanResurrect(DateTime now) => Hp <= 0 && now >= DeadTime &&
-        (now - DeadTime).TotalMilliseconds >= Math.Max(0, RezWaitDuration);
+    internal int GetRemainingResurrectionWait(DateTime now)
+    {
+        if (Hp > 0)
+            return 0;
+        var remainingMilliseconds = Math.Max(0, RezWaitDuration) - (now - DeadTime).TotalMilliseconds;
+        return (int)Math.Clamp(Math.Ceiling(remainingMilliseconds), 0, int.MaxValue);
+    }
+
+    internal bool CanResurrect(DateTime now) => Hp <= 0 && GetRemainingResurrectionWait(now) == 0;
 }
