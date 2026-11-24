@@ -539,7 +539,7 @@ public sealed partial class SlaveRemovalTests
         await Assert.That(LastError()).IsEqualTo(ErrorMessageType.SlaveEquipmentLoadedItem);
         await Assert.That(_slave.CancelTokenSource).IsNull();
 
-        _world.SlaveManager.CancelPendingDespawnForOwner(_owner.ObjId);
+        _world.SlaveManager.ResumeSelectedOwnersVehicle(_owner);
 
         await Assert.That(_world.SlaveManager.GetActiveSlaveByOwnerObjId(_owner.ObjId)).IsSameReferenceAs(_slave);
         await Assert.That(_slave.AttachedDoodads.Single()).IsSameReferenceAs(cargo);
@@ -553,11 +553,11 @@ public sealed partial class SlaveRemovalTests
     {
         using var pending = new CancellationTokenSource();
         _slave.CancelTokenSource = pending;
-        _world.SlaveManager.CancelPendingDespawnForOwner(_owner.ObjId + 1);
+        _world.SlaveManager.ResumeSelectedOwnersVehicle(new RecordingCharacter { ObjId = _owner.ObjId + 1 });
         await Assert.That(pending.IsCancellationRequested).IsFalse();
 
-        _world.SlaveManager.CancelPendingDespawnForOwner(_owner.ObjId);
-        _world.SlaveManager.CancelPendingDespawnForOwner(_owner.ObjId);
+        _world.SlaveManager.ResumeSelectedOwnersVehicle(_owner);
+        _world.SlaveManager.ResumeSelectedOwnersVehicle(_owner);
 
         await Assert.That(pending.IsCancellationRequested).IsTrue();
         await Assert.That(_world.SlaveManager.GetActiveSlaveByOwnerObjId(_owner.ObjId)).IsSameReferenceAs(_slave);
@@ -567,7 +567,7 @@ public sealed partial class SlaveRemovalTests
     {
         var slave = new Slave
         {
-            ObjId = objId, TlId = tlId, Hp = 100, Summoner = _owner,
+            ObjId = objId, TlId = tlId, Hp = 100, Summoner = _owner, OwnerObjId = _owner.ObjId,
             ParentWorld = _world, Template = new SlaveTemplate { PortalTime = 3 },
             IsVisible = true, Region = _world.Regions[0, 0], OwnerType = ownerType
         };
