@@ -1,20 +1,26 @@
 ﻿using System.Collections.Concurrent;
 using System.Reflection;
 
+using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Mails;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
+using AAEmu.Game.Models.Game.World;
 using AAEmu.UnitTests.Utils.Mocks;
 
 using Microsoft.Extensions.DependencyInjection;
@@ -97,6 +103,94 @@ public sealed class QuestRewardDeliveryTests
         SetField(_quests, "_questTemplates", new Dictionary<uint, QuestTemplate> { [quest.TemplateId] = (QuestTemplate)quest.Template });
         await Assert.That(_quests.ValidateRewardReferences(_items.GetTemplate)).IsEqualTo(2);
     }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SilverBoat_CappedReportClosesAndAValidRetryDeliversOneReward(bool reconnect)
+    {
+        using var models = new QuestInteractionTestModels();
+        var owner = CreateOwner(10);
+        var session = Mock.Of<ISession>();
+        owner.Connection = new GameConnection(session.Object) { ActiveChar = owner };
+        var world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, 1);
+        owner.ModelId = 1;
+        owner.Region = QuestInteractionTestModels.CreateRegion(world);
+        var lucas = new Npc
+        {
+            ObjId = 81, TemplateId = 4629, Template = new NpcTemplate { Scale = 1 },
+            ModelId = 1, Region = owner.Region, IsVisible = true
+        };
+        var worldField = typeof(GameObject).GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        worldField.SetValue(owner, world);
+        worldField.SetValue(lucas, world);
+        world.AddObject(lucas);
+
+        const uint rowboat = 17944;
+        _templates.Add(rowboat, new ItemTemplate { Id = rowboat, MaxCount = 1, FixedGrade = 0, PickupLimit = 1 });
+        await Assert.That(owner.Inventory.Bag.AcquireDefaultItem(ItemTaskType.Gm, rowboat, 1)).IsTrue();
+        var original = owner.Inventory.Bag.Items.Single();
+        var template = new QuestTemplate { Id = 2059, Level = 10 };
+        SetField(_quests, "_supplies", new Dictionary<byte, QuestSupplies>
+        {
+            [10] = new() { Level = 10, Copper = 152 }
+        });
+        var ready = new QuestComponentTemplate(template) { Id = 9480, KindId = QuestComponentKind.Ready };
+        ready.ActTemplates.Add(new QuestActConReportNpc(ready) { ActId = 13995, NpcId = lucas.TemplateId });
+        var reward = new QuestComponentTemplate(template) { Id = 9486, KindId = QuestComponentKind.Reward };
+        reward.ActTemplates.Add(new QuestActSupplyItem(reward) { ActId = 13997, ItemId = rowboat, Count = 1 });
+        template.Components.Add(ready.Id, ready);
+        template.Components.Add(reward.Id, reward);
+        Quest NewAttempt() => new(template, owner, _quests, Mock.Of<ITaskManager>().Object,
+            Mock.Of<ISkillManager>().Object, Mock.Of<IExpressTextManager>().Object, Mock.Of<IWorldManager>().Object);
+        var quest = NewAttempt();
+        quest.Step = QuestComponentKind.Ready;
+        quest.Status = QuestStatus.Ready;
+        owner.Quests.ActiveQuests.Add(template.Id, quest);
+
+        _quests.DoReportEvents(owner, template.Id, lucas.ObjId, 0, 0);
+        await Assert.That(quest.RunCurrentStep()).IsTrue();
+        await Assert.That(quest.RunCurrentStep()).IsFalse();
+        session.SendPacket(Is<byte[]>(packet => IsSilverBoatRefusal(packet))).WasCalled(Times.Once);
+        await Assert.That(owner.Quests.HasQuestCompleted(template.Id)).IsFalse();
+        await Assert.That(quest.QuestRewardItemsPool.Single().TemplateId).IsEqualTo(rowboat);
+        await Assert.That(owner.Inventory.Bag.Items.Single()).IsSameReferenceAs(original);
+
+        if (reconnect)
+        {
+            var saved = quest.WriteData();
+            quest.FinalizeQuestActs();
+            quest = NewAttempt();
+            owner.Quests.ActiveQuests[template.Id] = quest;
+            quest.ReadData(saved);
+            quest.Status = QuestStatus.Ready;
+            quest.RestoreLoadedState();
+            await Assert.That(quest.RunCurrentStep()).IsFalse();
+            session.SendPacket(Is<byte[]>(packet => IsSilverBoatRefusal(packet))).WasCalled(Times.Once);
+        }
+        _quests.DoReportEvents(owner, template.Id, lucas.ObjId, 0, 0);
+        session.SendPacket(Is<byte[]>(packet => IsSilverBoatRefusal(packet))).WasCalled(Times.Exactly(2));
+        await Assert.That(owner.Inventory.Bag.RemoveItem(ItemTaskType.Gm, original, true)).IsTrue();
+        _quests.DoReportEvents(owner, template.Id, 0, 0, 0);
+        _quests.DoReportEvents(owner, template.Id, lucas.ObjId, 0, 1);
+        await Assert.That(owner.Inventory.Bag.Items).IsEmpty();
+        await Assert.That(owner.Quests.HasQuestCompleted(template.Id)).IsFalse();
+        await Assert.That(owner.Money).IsEqualTo(0L);
+
+        _quests.DoReportEvents(owner, template.Id, lucas.ObjId, 0, 0);
+        _quests.DoReportEvents(owner, template.Id, lucas.ObjId, 0, 0);
+        await Assert.That(owner.Quests.HasQuestCompleted(template.Id)).IsTrue();
+        await Assert.That(owner.Quests.ActiveQuests).IsEmpty();
+        await Assert.That(owner.Inventory.Bag.Items.Single().TemplateId).IsEqualTo(rowboat);
+        await Assert.That(quest.QuestRewardItemsPool).IsEmpty();
+        await Assert.That(owner.Money).IsEqualTo(152L);
+        session.SendPacket(Is<byte[]>(packet => BitConverter.ToUInt16(packet, 6) == SCOffsets.SCQuestContextCompletedPacket))
+            .WasCalled(Times.Once);
+    }
+
+    private static bool IsSilverBoatRefusal(byte[] packet) =>
+        packet.Length == 13 && packet[3] == 1 && BitConverter.ToUInt16(packet, 6) == SCOffsets.SCQuestContextFailedPacket &&
+        BitConverter.ToUInt32(packet, 8) == 2059 && packet[12] == (byte)QuestStatusFailed.CantSupplyRewards;
 
     [Test]
     public async Task RewardStep_InvalidReference_DoesNotRunOtherSideEffectsOrComplete()

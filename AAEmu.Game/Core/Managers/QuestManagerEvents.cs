@@ -47,7 +47,7 @@ public partial class QuestManager
             if (quest.Step == QuestComponentKind.Reward)
             {
                 if (quest.CanRetryCompletionReport(selected, npcTemplateId: npc.TemplateId))
-                    owner.Quests.TryCompleteQuest(quest);
+                    quest.RetryCompletion();
                 return;
             }
 
@@ -72,7 +72,7 @@ public partial class QuestManager
             if (quest.Step == QuestComponentKind.Reward)
             {
                 if (quest.CanRetryCompletionReport(selected, doodadTemplateId: doodad.TemplateId))
-                    owner.Quests.TryCompleteQuest(quest);
+                    quest.RetryCompletion();
                 return;
             }
 
@@ -91,7 +91,7 @@ public partial class QuestManager
             if (quest.Step == QuestComponentKind.Reward)
             {
                 if (quest.CanRetryCompletionReport(selected))
-                    owner.Quests.TryCompleteQuest(quest);
+                    quest.RetryCompletion();
             }
             else
                 quest.TryReportWithoutSource(selected);
@@ -114,7 +114,7 @@ public partial class QuestManager
             !quest.Template.LetItDone ||
             !quest.IsValidSelectedRewardIndex(selected))
             return false;
-        if (quest.Step == QuestComponentKind.Reward && quest.CompletionRetryPending && selected == quest.SelectedRewardIndex)
+        if (quest.Step == QuestComponentKind.Reward && quest.CompletionCommitPending && selected == quest.SelectedRewardIndex)
             return owner.Quests.TryCompleteQuest(quest);
         if (quest.Step != QuestComponentKind.Progress ||
             quest.GetQuestObjectiveStatus() < QuestObjectiveStatus.CanEarlyComplete)

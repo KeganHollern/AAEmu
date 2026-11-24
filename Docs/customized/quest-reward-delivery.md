@@ -28,12 +28,12 @@ active reward emits:
 Quest reward delivery pending: quest=<questId>, owner=<ownerId>, step=<step>, item=<itemId>. No completion is recorded.
 ```
 
-The runtime error is reported once while that failure remains pending. An item
+The server logs the error once per failed claim. An item
 value of zero can identify an inventory/mail operation failure rather than a
 specific missing template. Inspect the surrounding item or mail diagnostic and
 record the quest, owner, component/act if available, and source/content revision.
-The player receives the existing mail-failure error rather than a success-only
-completion notification.
+At the Reward step, the client receives the quest ID and failure reason
+`CantSupplyRewards`. The matching reward dialog closes. The quest stays active.
 
 ## Correct content and retry
 
@@ -45,17 +45,12 @@ not evidence for a replacement ID.
 Prepare and review the specific content correction through the existing AAEmu
 and cluster release process, then publish a forward release through GitHub
 Actions and Keel. If the correction also changes launcher-managed client
-content, use the existing coordinated client-content release workflow. The
-server validation and retry-state changes described here do not require local
-client binaries, Lua extraction, a changed quest packet, or a client patch.
+content, use the existing coordinated client-content release workflow.
 
-For an inventory or mail failure, resolve the reported cause and reconnect the
-character. Loading the active quest queues evaluation of its saved pending
-state. A quest still waiting in its Ready step may require the report action
-again. A quest already in Reward resumes delivery of its remaining items;
-previous successful grants are not queued again. Keep the active quest intact
-while correcting the failure rather than manually marking it completed or
-replacing its reward with an unverified item.
+For an inventory or mail failure, correct the cause and report the quest again.
+Use the original report source and reward choice. The server retries delivery
+of the pending items and records completion after delivery succeeds. A normal
+reconnect also restores the pending items and queues evaluation of the quest.
 
 ## Persistence and deployment
 
