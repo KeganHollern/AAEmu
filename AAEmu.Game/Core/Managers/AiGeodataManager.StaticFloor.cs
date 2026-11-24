@@ -49,7 +49,8 @@ public partial class AiGeoDataManager
         }
         trace?.Skip("NoLoadedBrushData");
 
-        if (TryFollowFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, out floor, trace))
+        var belowTerrain = separation < 0f;
+        if (TryFollowFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, belowTerrain, out floor, trace))
             return true;
 
         // A brush belongs to one cell even where its floor extends into the next cell.
@@ -58,13 +59,14 @@ public partial class AiGeoDataManager
         for (var x = cellX - 1; x <= cellX + 1; x++)
         {
             if ((x != cellX || y != cellY) &&
-                TryFollowFloorInCell(worldTemplate.GetCell(x, y), from, to, out floor, trace))
+                TryFollowFloorInCell(worldTemplate.GetCell(x, y), from, to, belowTerrain, out floor, trace))
                 return true;
         }
         return false;
     }
 
-    private bool TryFollowFloorInCell(WorldCell cell, Vector3 from, Vector3 to, out float floor, NpcStepSurfaceTrace trace)
+    private bool TryFollowFloorInCell(WorldCell cell, Vector3 from, Vector3 to, bool belowTerrain,
+        out float floor, NpcStepSurfaceTrace trace)
     {
         floor = default;
         if (cell?.LoadedObjectDat is not { HasUnparsedObjects: false } objects)
@@ -102,14 +104,14 @@ public partial class AiGeoDataManager
                     if (part.PhysicsType != 0x1000 || part.Shape is not CryTriangleMesh mesh)
                         continue;
                     trace?.Observe(NoStartFace, cell, brush, index);
-                    if (!TryFloorHit(part, brush.Transform, from, out var first))
+                    if (!TryFloorHit(part, brush.Transform, from, belowTerrain, out var first))
                         continue;
                     trace?.Observe(NoEndFace, cell, brush, index, first.TriangleIndex);
-                    if (!TryFloorHit(part, brush.Transform, to, out var last))
+                    if (!TryFloorHit(part, brush.Transform, to, belowTerrain, out var last))
                         continue;
 
                     if (!CanFollowFloorFaces(mesh,
-                            part.Transform * brush.Transform, first.TriangleIndex, last.TriangleIndex, from, to))
+                            part.Transform * brush.Transform, first.TriangleIndex, last.TriangleIndex, from, to, belowTerrain))
                     {
                         trace?.Observe(FacesDisconnectedAlongStep, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
                         continue;
@@ -142,15 +144,29 @@ public partial class AiGeoDataManager
     }
 
     // The short ray tolerates floating-point roundoff at the accepted foot height. It cannot select another level.
-    private static bool TryFloorHit(CryGeometryPart part, Matrix4x4 transform, Vector3 foot, out CryRayHit hit) =>
-        CryGeometryQueries.Raycast(part, transform, foot + Vector3.UnitZ * StaticFloorPrecision,
-            -Vector3.UnitZ, StaticFloorPrecision * 2, true, out hit) && hit.Normal.Z == 1f;
+    private static bool TryFloorHit(CryGeometryPart part, Matrix4x4 transform, Vector3 foot,
+        bool belowTerrain, out CryRayHit hit)
+    {
+        if (!CryGeometryQueries.Raycast(part, transform, foot + Vector3.UnitZ * StaticFloorPrecision,
+                -Vector3.UnitZ, StaticFloorPrecision * 2, true, out hit))
+            return false;
+        return hit.Normal.Z == 1f || belowTerrain && IsGentlyInclined(hit.Normal);
+    }
+
+    private static bool IsGentlyInclined(Vector3 normal)
+    {
+        // Allow at most one centimetre of rise over half a metre in any direction.
+        // A short last step along a steep wall must not make the wall qualify as a floor.
+        const float referenceSpan = 0.5f;
+        var horizontalNormal = new Vector2(normal.X, normal.Y);
+        return normal.Z > 0 && referenceSpan * horizontalNormal.Length() <= StaticFloorPrecision * normal.Z;
+    }
 
     // Adjacent faces cover most steps. Build the per-mesh vertex index only for a longer chain.
     private static readonly ConditionalWeakTable<CryTriangleMesh, ILookup<ushort, int>> FacesByVertex = new();
 
     private static bool CanFollowFloorFaces(CryTriangleMesh mesh, Matrix4x4 transform, int first, int last,
-        Vector3 from, Vector3 to)
+        Vector3 from, Vector3 to, bool belowTerrain)
     {
         if (first == last || CrossesSharedEdge(mesh, transform, first, last, from, to))
             return true;
@@ -187,10 +203,20 @@ public partial class AiGeoDataManager
                     var q = mesh.Vertices[next[1]];
                     var r = mesh.Vertices[next[2]];
                     var normal = Vector3.Normalize(Vector3.TransformNormal(Vector3.Cross(q - p, r - p), normalTransform));
-                    if (normal.Z == 1f &&
-                        MathF.Abs(Vector3.Transform(p, transform).Z - from.Z) <= StaticFloorPrecision &&
-                        MathF.Abs(Vector3.Transform(q, transform).Z - from.Z) <= StaticFloorPrecision &&
-                        MathF.Abs(Vector3.Transform(r, transform).Z - from.Z) <= StaticFloorPrecision)
+                    var vertex = Vector3.Transform(p, transform);
+                    if (belowTerrain && normal.Z != 1f)
+                    {
+                        // Bound the plane along the step. Other corners of the same cave face can
+                        // lie outside the height band. The signed plane distance is normal.Z times the vertical gap.
+                        var band = StaticFloorPrecision * normal.Z;
+                        if (IsGentlyInclined(normal) && MathF.Abs(Vector3.Dot(normal, from - vertex)) <= band &&
+                            MathF.Abs(Vector3.Dot(normal, to - vertex)) <= band)
+                            pending.Push(neighbor);
+                    }
+                    else if (normal.Z == 1f &&
+                             MathF.Abs(vertex.Z - from.Z) <= StaticFloorPrecision &&
+                             MathF.Abs(Vector3.Transform(q, transform).Z - from.Z) <= StaticFloorPrecision &&
+                             MathF.Abs(Vector3.Transform(r, transform).Z - from.Z) <= StaticFloorPrecision)
                         pending.Push(neighbor);
                 }
             }
