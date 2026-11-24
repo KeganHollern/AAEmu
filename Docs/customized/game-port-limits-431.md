@@ -82,10 +82,18 @@ The confirmed CSSaveUIData level-1 body is:
 | --- | --- | --- | --- |
 | 0 | u16 little-endian | UI key | 1 through 5 for server storage |
 | 2 | u32 little-endian | Current character ID | Must equal the active character |
-| 6 | u16 little-endian | UTF-8 byte count | 0 through 8191 |
-| 8 | UTF-8 bytes | UI document | Exact byte count, no NUL or trailing fields |
+| 6 | u16 little-endian | Document byte count | 0 through 8191 |
+| 8 | bytes | UI document | Exact byte count, no NUL or trailing fields |
 
-The packet now rejects invalid keys, IDs, lengths, UTF-8, NUL bytes, truncated
+The quest tracker document can start with a quoted single-byte marker on its own CRLF line.
+Four saved r208022 tracker documents had an encoding replacement at that position.
+On release #875, the normal client sent key 5 for character 37 immediately before logout.
+Its declared and received lengths were 582 bytes. No NUL occurred. The strict UTF-8 check discarded the entire setting.
+The server now preserves a non-UTF-8 byte in that quoted marker, and validates the rest of the document as UTF-8.
+A leading NUL in the SQL text distinguishes the saved marker from a UTF-8 document. The server restores the original byte for the client.
+The response gives the byte count of the document plus its local terminator.
+
+The packet rejects invalid keys, IDs, lengths, other invalid UTF-8, NUL bytes, truncated
 fields, and trailing bytes before it changes character state. The server counts
 bytes. For an unreadable document in a bounded request for the active character's
 own server-backed key, Game keeps the last good setting and continues to process

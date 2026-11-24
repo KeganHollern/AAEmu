@@ -17,6 +17,25 @@ public sealed class GameUiAuditPersistenceTests(GameMySqlFixture fixture)
     private const uint Owner = 941431;
 
     [Fact]
+    public void UiSave_TrackerMarkerAndChoicesSurviveTheOptionsColumn()
+    {
+        var player = CreateSavedPlayer(Owner);
+        byte[] document = [(byte)'"', 0xff, .. "\"\r\nquest_context_state_values\r\n    checkBoxStates ( 3094 false, 1313 true )\r\nversion 1\r\n"u8];
+        Assert.True(CharacterUiData.TryDecode(5, document, out var value));
+        player.SetOption(5, value);
+        player.SaveOption(5);
+        lock (SaveManager.PersistenceSyncRoot)
+            UiDataSaveManager.SaveBatch([player]);
+        Assert.False(player.HasPendingUiData);
+
+        using var connection = MySQL.CreateConnection();
+        using var read = connection.CreateCommand();
+        read.CommandText = $"SELECT value FROM options WHERE owner={Owner} AND `key`=5";
+        var saved = Assert.IsType<string>(read.ExecuteScalar());
+        Assert.Equal(document, CharacterUiData.GetClientBytes(5, saved));
+    }
+
+    [Fact]
     public void UiSave_CoalescesRowsAndAcknowledgesOnlyAfterCommit()
     {
         using var connection = MySQL.CreateConnection();
