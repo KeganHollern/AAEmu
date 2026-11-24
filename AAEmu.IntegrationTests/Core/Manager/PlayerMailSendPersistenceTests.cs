@@ -363,6 +363,10 @@ public sealed partial class PlayerMailSendPersistenceTests
             return Register(new Item(Sender.Id + 10UL + slot, template, 5), slot);
         }
 
+        public Item AddFurniture(byte slot, uint templateId) =>
+            Register(new Item(Sender.Id + 10UL + slot,
+                new ItemTemplate { Id = templateId, MaxCount = 1, FixedGrade = -1 }, 1), slot);
+
         public EquipItem AddEquipment(byte slot)
         {
             var template = new EquipItemTemplate { Id = Sender.Id + 3, MaxCount = 1,
