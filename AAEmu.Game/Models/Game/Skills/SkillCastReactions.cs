@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.Tasks.Skills;
 using AAEmu.Game.Utils;
 
@@ -12,15 +13,13 @@ namespace AAEmu.Game.Models.Game.Skills;
 internal static class SkillCastReactions
 {
     internal static void OnMovement(Unit unit, Vector3 oldPosition, Vector3 newPosition,
-        bool sameParent, bool turned)
+        bool sameParent, bool turned, Transform previousParent = null)
     {
         // Compare accepted local coordinates. A carried actor does not move locally.
         // Active server controllers own forced movement and must finish their skill.
         if (unit.ActiveSkillController != null)
             return;
-        var encoded = Helpers.ConvertPosition(oldPosition.X, oldPosition.Y, oldPosition.Z);
-        var (x, y, z) = Helpers.ConvertPosition(encoded);
-        var moved = !sameParent || (oldPosition != newPosition && new Vector3(x, y, z) != newPosition);
+        var moved = !sameParent || !SameMovementPosition(oldPosition, newPosition);
         if (!moved && !turned)
             return;
 
@@ -31,10 +30,22 @@ internal static class SkillCastReactions
         var task = unit.SkillTask;
         if (task is CastTask { Repair: { } repair } && moved && repair.CanContinue(unit))
             moved = false;
+        if (!sameParent && task is CastTask { CargoPickup: { } pickup } &&
+            pickup.IsSupport(previousParent) && pickup.CanContinue(unit))
+            moved = false;
         if (task?.CastWindow == null || (!moved && !(turned && task.Skill.Template.StopCastingByTurn)) ||
             !task.CastWindow.TryCancel())
             return;
         task.Skill.Stop(unit, (task as EndChannelingTask)?._channelDoodad);
+    }
+
+    internal static bool SameMovementPosition(Vector3 expected, Vector3 received)
+        => expected == received || PackedPosition(expected) == received;
+
+    internal static Vector3 PackedPosition(Vector3 position)
+    {
+        var (x, y, z) = Helpers.ConvertPosition(Helpers.ConvertPosition(position.X, position.Y, position.Z));
+        return new Vector3(x, y, z);
     }
 
     internal static bool HasTurned(Vector3 oldRotation, Vector3 newRotation)

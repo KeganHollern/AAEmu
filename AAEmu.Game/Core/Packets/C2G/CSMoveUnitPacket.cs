@@ -323,7 +323,7 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                     if (targetUnit is Unit castUnit)
                         SkillCastReactions.OnMovement(castUnit, previousPosition, targetUnit.Transform.Local.Position,
                             ReferenceEquals(previousParent, targetUnit.Transform.Parent),
-                            SkillCastReactions.HasTurned(previousRotation, targetUnit.Transform.Local.Rotation));
+                            SkillCastReactions.HasTurned(previousRotation, targetUnit.Transform.Local.Rotation), previousParent);
 
                     // Observe only accepted world movement. The optional native report
                     // signals contact on roofs/objects, but its number never sets damage.
