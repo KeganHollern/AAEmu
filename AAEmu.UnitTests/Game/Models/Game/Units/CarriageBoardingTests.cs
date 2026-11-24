@@ -37,7 +37,7 @@ using AAEmu.UnitTests.Utils.Mocks;
 namespace AAEmu.UnitTests.Game.Models.Game.Units;
 
 [NotInParallel]
-public sealed class CarriageBoardingTests
+public sealed partial class CarriageBoardingTests
 {
     private static readonly WorldSpawnPosition Spawn = new() { X = 12609.46f, Y = 15359.16f, Z = 158.5336f };
     private static readonly WorldSpawnPosition Start = new() { X = 12738.3428f, Y = 15307.42065f, Z = 162.12067f, ZoneId = 195 };
@@ -287,7 +287,7 @@ public sealed class CarriageBoardingTests
         var viewer = new CharacterMock { ObjId = 400, ParentWorld = world, Connection = new GameConnection(session) };
         viewer.Transform.Local.SetPosition(path[0].AsPositionVector());
         world.GetRegionByPos(motor.Transform.World.Position).AddObject(viewer);
-        await CheckSingleCartHeading(motor, viewer, session, path[1].AsPositionVector() - path[0].AsPositionVector());
+        await CheckObserverHeading(motor, viewer, session, path[1].AsPositionVector() - path[0].AsPositionVector());
 
         var sawForward = false;
         var sawReverse = false;
@@ -312,14 +312,14 @@ public sealed class CarriageBoardingTests
             await Assert.That(Vector3.Distance(new Vector3(movement.X, movement.Y, movement.Z), motor.Transform.World.Position)).IsLessThan(0.02f);
             var facing = Vector3.Transform(Vector3.UnitY, movement.Rot);
             await CheckHeading(direction, facing);
-            await CheckSingleCartHeading(motor, viewer, session, direction);
+            await CheckObserverHeading(motor, viewer, session, direction);
             sawForward |= !motor.Reverse;
             sawReverse |= motor.Reverse;
         }
         await Assert.That(sawForward && sawReverse).IsTrue();
     }
 
-    private static async Task CheckSingleCartHeading(Transfer motor, CharacterMock viewer,
+    private static async Task CheckObserverHeading(Transfer motor, CharacterMock viewer,
         TransferVisibilityTests.RecordingSession session, Vector3 forward)
     {
         // Parse the ordinary visibility notification for this unarmed, unparented transfer.
@@ -332,13 +332,13 @@ public sealed class CarriageBoardingTests
         state.ReadString(); // name
         state.ReadByte(); // unit type
         state.ReadUInt16(); // transfer link id
-        await Assert.That(state.ReadUInt32()).IsEqualTo(25u);
+        await Assert.That(state.ReadUInt32()).IsEqualTo(motor.TemplateId);
         state.ReadString(); // owner name
         var (x, y, z) = state.ReadPosition();
         await Assert.That(Vector3.Distance(new Vector3(x, y, z), motor.Transform.World.Position)).IsLessThan(0.02f);
         state.ReadSingle(); // scale
         state.ReadByte(); // level
-        await Assert.That(state.ReadUInt32()).IsEqualTo(565u);
+        await Assert.That(state.ReadUInt32()).IsEqualTo(motor.ModelId);
         state.ReadBytes(7 * sizeof(uint)); // empty equipment body parts
         state.ReadByte(); // model params type
         state.ReadBc(); // unknown unit id
