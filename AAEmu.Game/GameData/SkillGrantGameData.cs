@@ -28,6 +28,12 @@ public sealed class SkillGrantGameData : Singleton<SkillGrantGameData>, IGameDat
             SELECT f.doodad_func_group_id, u.skill_id
             FROM doodad_funcs f JOIN doodad_func_uses u ON u.id = f.actual_func_id
             WHERE f.actual_func_type = 'DoodadFuncUse'
+            UNION
+            -- r208022 gives a quest-start function skill 11006 when the phase has no explicit skill.
+            SELECT f.doodad_func_group_id, 11006
+            FROM doodad_funcs f JOIN doodad_func_quests q ON q.id = f.actual_func_id
+            WHERE f.actual_func_type = 'DoodadFuncQuest' AND COALESCE(f.func_skill_id, 0) = 0
+              AND q.quest_kind_id = 1 AND q.quest_id > 0
             """);
     }
 
