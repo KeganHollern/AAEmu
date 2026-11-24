@@ -214,7 +214,53 @@ public sealed partial class WorldManagerHeightTests
         await Assert.That(npc.Transform.Local.Position).IsEqualTo(new Vector3(edge.X, edge.Y, 0f));
     }
 
-    private MovementProbeNpc CreateDeckWalker(bool hasDeck = true, bool hasGap = false, List<string> overlappingModelReads = null)
+    public enum StripSurface { Floor, Gap, DownwardFace }
+
+    [Test]
+    [Arguments(StripSurface.Floor, 1, DeckZ)]
+    [Arguments(StripSurface.Floor, -1, DeckZ)]
+    [Arguments(StripSurface.Gap, 1, 0f)]
+    [Arguments(StripSurface.Gap, -1, 0f)]
+    [Arguments(StripSurface.DownwardFace, 1, 0f)]
+    public async Task MoveTowards_ManyFloorFaces_OnlyCrossesTheConnectedStrip(StripSurface middle, int direction, float expected)
+    {
+        // The distant band connects both ends even when the straight path has a gap.
+        var vertices = new List<Vector3>();
+        var indices = new List<ushort>();
+        for (var column = 0; column < 6; column++)
+        {
+            var x = 110.45f + column * 0.12f;
+            foreach (var y in new[] { 99.5f, 100.25f, 100.5f })
+                vertices.Add(new Vector3(x, y, DeckZ));
+
+            if (column == 0)
+                continue;
+            var previous = (ushort)((column - 1) * 3);
+            for (var band = 0; band < 2; band++)
+            {
+                var surface = column == 3 && band == 0 ? middle : StripSurface.Floor;
+                if (surface == StripSurface.Gap)
+                    continue;
+
+                var a = (ushort)(previous + band);
+                var b = (ushort)(a + 3);
+                var c = (ushort)(b + 1);
+                var d = (ushort)(a + 1);
+                indices.AddRange(surface == StripSurface.Floor ? [a, b, c, a, c, d] : [a, c, b, a, d, c]);
+            }
+        }
+
+        var npc = CreateDeckWalker(customMesh: new CryTriangleMesh([.. vertices], [.. indices], []));
+        npc.ParentWorld.Template.ZoneBaiLoader.Clear();
+        var start = new Vector3(direction > 0 ? 110.5f : 111f, 100f, DeckZ);
+        npc.Transform.Local.SetPosition(start);
+        npc.MoveTowards(start + Vector3.UnitX * direction, Step, rangeTolerance: 0f);
+
+        await Assert.That(npc.Transform.Local.Position.Z).IsEqualTo(expected);
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(expected);
+    }
+
+    private MovementProbeNpc CreateDeckWalker(bool hasDeck = true, bool hasGap = false, List<string> overlappingModelReads = null, CryTriangleMesh customMesh = null)
     {
         AppConfiguration.Instance.World.GeoDataMode = true;
         var manager = CreateManagerWithFlatHeightTemplate(worldName: "main_world");
@@ -245,14 +291,14 @@ public sealed partial class WorldManagerHeightTests
 
         var bounds = new CryBounds(new(107f, 99.5f, DeckZ), new(114.5f, 100.5f, DeckZ));
         // The continuous deck shares its diagonal. The gap splits the same brush into disconnected faces.
-        var mesh = hasGap
+        var mesh = customMesh ?? (hasGap
             ? new CryTriangleMesh(
                 [bounds.Min, new(110.65f, 99.5f, DeckZ), new(110.65f, 100.5f, DeckZ), new(107f, 100.5f, DeckZ),
                  new(110.85f, 99.5f, DeckZ), new(114.5f, 99.5f, DeckZ), bounds.Max, new(110.85f, 100.5f, DeckZ)],
                 [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7], [])
             : new CryTriangleMesh(
                 [bounds.Min, new(114.5f, 99.5f, DeckZ), bounds.Max, new(107f, 100.5f, DeckZ)],
-                [0, 1, 2, 0, 2, 3], []);
+                [0, 1, 2, 0, 2, 3], []));
         var part = new CryGeometryPart(mesh, Matrix4x4.Identity, 4096, "", "deck");
         var geometry = new CryGeometryAsset(bounds, [part]);
         template.GeoData = new AiGeoDataManager(template)

@@ -70,7 +70,7 @@ public partial class AiGeoDataManager
                         !TryFloorHit(part, brush.Transform, to, out var last))
                         continue;
 
-                    if (first.TriangleIndex != last.TriangleIndex && !CrossesSharedEdge(mesh,
+                    if (!CanFollowFloorFaces(mesh,
                             part.Transform * brush.Transform, first.TriangleIndex, last.TriangleIndex, from, to))
                         continue;
 
@@ -104,6 +104,69 @@ public partial class AiGeoDataManager
         CryGeometryQueries.Raycast(part, transform, foot + Vector3.UnitZ * StaticFloorPrecision,
             -Vector3.UnitZ, StaticFloorPrecision * 2, true, out hit) && hit.Normal.Z == 1f;
 
+    // Adjacent faces cover most steps. Build the per-mesh vertex index only for a longer chain.
+    private static readonly ConditionalWeakTable<CryTriangleMesh, ILookup<ushort, int>> FacesByVertex = new();
+
+    private static bool CanFollowFloorFaces(CryTriangleMesh mesh, Matrix4x4 transform, int first, int last,
+        Vector3 from, Vector3 to)
+    {
+        if (first == last || CrossesSharedEdge(mesh, transform, first, last, from, to))
+            return true;
+
+        var faces = FacesByVertex.GetValue(mesh, static geometry =>
+            Enumerable.Range(0, geometry.Indices.Length).ToLookup(i => geometry.Indices[i], i => i / 3));
+        Matrix4x4.Invert(transform, out var inverse); // The two successful raycasts already checked this transform.
+        var normalTransform = Matrix4x4.Transpose(inverse);
+        var visited = new HashSet<int> { first };
+        var pending = new Stack<int>();
+        pending.Push(first);
+        while (pending.TryPop(out var current))
+        {
+            var indices = mesh.Indices.AsSpan(current * 3, 3);
+            for (var edge = 0; edge < 3; edge++)
+            {
+                var a = indices[edge];
+                var b = indices[(edge + 1) % 3];
+                if (!EdgeCrossesStep(mesh, transform, a, b, from, to))
+                    continue;
+
+                foreach (var neighbor in faces[a])
+                {
+                    if (visited.Contains(neighbor))
+                        continue;
+                    var next = mesh.Indices.AsSpan(neighbor * 3, 3);
+                    if (!next.Contains(b))
+                        continue;
+                    if (neighbor == last)
+                        return true; // Its upward support at the destination was already measured.
+
+                    visited.Add(neighbor);
+                    var p = mesh.Vertices[next[0]];
+                    var q = mesh.Vertices[next[1]];
+                    var r = mesh.Vertices[next[2]];
+                    var normal = Vector3.Normalize(Vector3.TransformNormal(Vector3.Cross(q - p, r - p), normalTransform));
+                    if (normal.Z == 1f &&
+                        MathF.Abs(Vector3.Transform(p, transform).Z - from.Z) <= StaticFloorPrecision &&
+                        MathF.Abs(Vector3.Transform(q, transform).Z - from.Z) <= StaticFloorPrecision &&
+                        MathF.Abs(Vector3.Transform(r, transform).Z - from.Z) <= StaticFloorPrecision)
+                        pending.Push(neighbor);
+                }
+            }
+        }
+        return false;
+    }
+
+    private static bool EdgeCrossesStep(CryTriangleMesh mesh, Matrix4x4 transform, ushort a, ushort b,
+        Vector3 from, Vector3 to)
+    {
+        var start = Vector3.Transform(mesh.Vertices[a], transform);
+        var end = Vector3.Transform(mesh.Vertices[b], transform);
+        // Collinear edges can lie beyond either foot. The straight step must touch the finite edge.
+        return Math.Max(start.X, end.X) >= Math.Min(from.X, to.X) && Math.Min(start.X, end.X) <= Math.Max(from.X, to.X) &&
+               Math.Max(start.Y, end.Y) >= Math.Min(from.Y, to.Y) && Math.Min(start.Y, end.Y) <= Math.Max(from.Y, to.Y) &&
+               Side(from, to, start) * Side(from, to, end) <= 0f && Side(start, end, from) * Side(start, end, to) <= 0f;
+    }
+
     private static bool CrossesSharedEdge(CryTriangleMesh mesh, Matrix4x4 transform, int first, int last,
         Vector3 from, Vector3 to)
     {
@@ -116,10 +179,7 @@ public partial class AiGeoDataManager
             if (!lastIndices.Contains(a) || !lastIndices.Contains(b))
                 continue;
 
-            var edgeStart = Vector3.Transform(mesh.Vertices[a], transform);
-            var edgeEnd = Vector3.Transform(mesh.Vertices[b], transform);
-            return Side(from, to, edgeStart) * Side(from, to, edgeEnd) <= 0f &&
-                   Side(edgeStart, edgeEnd, from) * Side(edgeStart, edgeEnd, to) <= 0f;
+            return EdgeCrossesStep(mesh, transform, a, b, from, to);
         }
         return false;
     }
