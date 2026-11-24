@@ -51,10 +51,41 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         }
     }
 
-    internal void CancelPendingDespawnForOwner(uint ownerObjId)
+    internal void ResumeSelectedOwnersVehicle(Character owner)
     {
-        // A loaded vehicle can stay in the world after an ordinary return to the lobby.
-        GetActiveSlaveByOwnerObjId(ownerObjId)?.CancelTokenSource?.Cancel();
+        var slave = GetActiveSlaveByOwnerObjId(owner.ObjId);
+        if (slave == null)
+            return;
+
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (slave.AttachmentSyncRoot)
+        {
+            var previous = slave.Summoner;
+            if (previous == null || previous.Id != owner.Id || previous.AccountId != owner.AccountId ||
+                slave.AttachmentsRetired || slave.IsDead || !ReferenceEquals(GetSlaveByObjId(slave.ObjId), slave) ||
+                !ReferenceEquals(owner.ParentWorld, World) || !ReferenceEquals(slave.ParentWorld, World))
+                return;
+
+            // The character list reloads the Character but reuses its persistent item containers.
+            // Only the original scroll for this saved hull can restore its in-memory owner.
+            if (!ReferenceEquals(previous, owner) && slave.SummoningItem is SummonSlave scroll)
+            {
+                if (previous.Connection is { IsClosed: false } session && ReferenceEquals(session.ActiveChar, previous))
+                    return;
+                if (slave.OwnerType != BaseUnitType.Character || slave.OwnerId != owner.Id || slave.OwnerObjId != owner.ObjId ||
+                    slave.Id == 0 || scroll.SlaveDbId != slave.Id ||
+                    !ReferenceEquals(owner.Inventory?.GetItemById(scroll.Id), scroll))
+                    return;
+
+                slave.Summoner = owner;
+                foreach (var child in slave.AttachedSlaves)
+                {
+                    if (ReferenceEquals(child.ParentObj, slave) && ReferenceEquals(child.Summoner, previous))
+                        child.Summoner = owner;
+                }
+            }
+            slave.CancelTokenSource?.Cancel();
+        }
     }
 
     /// <summary>
@@ -320,14 +351,17 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
     private bool DeleteForCleanup(Character owner, uint objId, bool ignoreAttachedItemWarning) =>
         RemoveSlave(owner, GetSlaveByObjId(objId), ignoreAttachedItemWarning, RemovalRequest.Cleanup);
 
-    private bool RemoveSlave(Character owner, Slave slaveInfo, bool ignoreAttachedItemWarning, RemovalRequest request)
+    private bool RemoveSlave(Character owner, Slave slaveInfo, bool ignoreAttachedItemWarning, RemovalRequest request,
+        bool requireCurrentSummoner = false)
     {
         if (slaveInfo == null)
             return false;
         List<Character> passengers;
         lock (slaveInfo.AttachmentSyncRoot)
         {
-            if (slaveInfo.AttachmentsRetired || !ReferenceEquals(GetSlaveByObjId(slaveInfo.ObjId), slaveInfo))
+            if (slaveInfo.AttachmentsRetired || !ReferenceEquals(GetSlaveByObjId(slaveInfo.ObjId), slaveInfo) ||
+                (requireCurrentSummoner && slaveInfo.Id != 0 && slaveInfo.SummoningItem is SummonSlave &&
+                    !ReferenceEquals(slaveInfo.Summoner, owner)))
                 return false;
             if (request != RemovalRequest.Cleanup && !CanPlayerRemove(owner, slaveInfo, request))
                 return false;
@@ -1234,7 +1268,8 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         var activeSlaveInfo = GetActiveSlaveByOwnerObjId(owner.ObjId);
         if (activeSlaveInfo != null)
         {
-            DeleteForCleanup(owner, activeSlaveInfo.ObjId, forceDelete);
+            // A delayed logout callback may still refer to the previous Character object.
+            RemoveSlave(owner, activeSlaveInfo, forceDelete, RemovalRequest.Cleanup, requireCurrentSummoner: true);
         }
 
         ClearSlaveAttachmentState(owner);
