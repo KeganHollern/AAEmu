@@ -1,4 +1,8 @@
-﻿using AAEmu.Game.GameData;
+﻿using System.Numerics;
+
+using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Units;
 
@@ -13,11 +17,40 @@ internal static class NpcAggroLink
 {
     internal static bool TryHelp(Npc source, Npc helper, Unit abuser)
     {
-        if (helper == null || ReferenceEquals(source, helper))
-            return false;
+        return CanHelp(source, helper, abuser) && StartAssistance(helper, abuser);
+    }
 
+    internal static void RequestGuardHelp(Character victim, Character attacker)
+    {
+        if (victim.Faction?.GuardHelp != true || victim == attacker || attacker.Faction == null || !IsCurrentAlive(attacker) ||
+            !ReferenceEquals(victim.ParentWorld, attacker.ParentWorld) ||
+            !ReferenceEquals(victim.ParentWorld.GetUnit(victim.ObjId), victim))
+            return;
+
+        const float scanRadius = 50f;
+        foreach (var guard in WorldManager.GetAround<Npc>(victim, scanRadius))
+        {
+            if (guard.Template is not { AggroLinkSpecialGuard: true, AcceptAggroLink: true } template ||
+                guard.Faction == null || guard.IsInBattle || !guard.AggroTable.IsEmpty || !IsCurrentAlive(guard) ||
+                !ReferenceEquals(guard.ParentWorld, victim.ParentWorld))
+                continue;
+
+            var distanceSquared = Vector3.DistanceSquared(guard.Transform.World.Position, victim.Transform.World.Position);
+            if (distanceSquared > scanRadius * scanRadius)
+                continue;
+
+            // A sight-based guard must see the victim. Distance-based guards use their authored help range.
+            var inRange = template.AggroLinkSightCheck ? guard.CanSeeTarget(victim) :
+                float.IsFinite(template.AggroLinkHelpDist) && guard.GetDistanceTo(victim, true) <= template.AggroLinkHelpDist;
+            if (inRange && AcceptsFactionRule(guard, victim) && guard.CanAttack(attacker))
+                StartAssistance(guard, attacker);
+        }
+    }
+
+    private static bool StartAssistance(Npc helper, Unit abuser)
+    {
         var ai = helper.Ai;
-        if (!CanHelp(source, helper, abuser) || ai == null || !ReferenceEquals(ai.Owner, helper))
+        if (ai == null || !ReferenceEquals(ai.Owner, helper))
             return false;
 
         // The initial-entry gate belongs to the combat mutation. It must remain atomic
@@ -61,6 +94,11 @@ internal static class NpcAggroLink
         if (NpcAggroLinkGameData.Instance.AreLinked(source.TemplateId, helper.TemplateId))
             return true;
 
+        return AcceptsFactionRule(helper, source);
+    }
+
+    private static bool AcceptsFactionRule(Npc helper, Unit source)
+    {
         return helper.Template.AggroLinkSpecialRuleId switch
         {
             AggroLinkSpecialRuleKind.FactionHelp =>
