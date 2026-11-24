@@ -68,6 +68,40 @@ public sealed class NpcGroupSpawnTests
         worlds[_world.Id] = _world;
     }
 
+    [Test]
+    public async Task RedDragonEgg_BindsOnlyTheCapturedBossToItsInactiveEffectPlacement()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Data", "Worlds", "main_world", "npc_spawns.json");
+        var captures = JsonHelper.DeserializeObject<List<NpcSpawner>>(await File.ReadAllTextAsync(path));
+        var capture = captures.Single(record => record.UnitId == 12411);
+        _world.SpawnManager.AddNpcSpawner(capture);
+
+        var dragon = _world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(120194).Single();
+        await Assert.That(dragon.Template.Npcs.Single().MemberId).IsEqualTo(12411u);
+        await Assert.That(dragon.IsActive).IsFalse();
+        await Assert.That(dragon.IsRuntimeActivated).IsFalse();
+        await Assert.That(_world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(13759)).IsEmpty();
+
+        var definition = new ProbeDefinition { NpcSpawnerTemplateId = dragon.SpawnerId, MemberType = "Npc", MemberId = 12411 };
+        definition.Position = capture.Position;
+        dragon.Template.Npcs = [definition];
+        dragon.InitializeSpawnableNpcs(dragon.Template);
+        dragon.Update();
+        await Assert.That(definition.Published).IsEmpty();
+
+        var caster = new ProbeNpc { ParentWorld = _world, Hp = 100 };
+        var effect = new NpcSpawnerSpawnEffect { Id = 2668, SpawnerId = 120194 };
+        effect.Apply(caster, null, caster, null, null, null, null, DateTime.UtcNow);
+        var summoned = definition.Published.Single();
+        await Assert.That(summoned.TemplateId).IsEqualTo(12411u);
+        await Assert.That(dragon.IsRuntimeActivated).IsFalse();
+        summoned.Hp = 0;
+        dragon.DoDespawn(summoned);
+        dragon.Despawn(summoned);
+        dragon.Update();
+        await Assert.That(definition.Positions.Count).IsEqualTo(1);
+    }
+
     [After(Test)]
     public void TearDown()
     {

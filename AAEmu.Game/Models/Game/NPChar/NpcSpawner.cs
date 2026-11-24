@@ -31,7 +31,7 @@ public partial class NpcSpawner : Spawner<Npc>
     private int _scheduledCount;
     private HashSet<Npc> _pendingRespawns = [];
     // Вычисляемое свойство, возвращающее текущее количество NPC из SpawnedNpcs для данного SpawnerId.
-    private int CurrentSpawnCount => CountPopulation();
+    internal int CurrentSpawnCount => CountPopulation();
     private bool IsSpawnScheduled { get; set; } = false;
     private bool IsDespawnScheduled { get; set; } = false;
     // ReSharper disable once InconsistentNaming
