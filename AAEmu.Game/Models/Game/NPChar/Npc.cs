@@ -1094,6 +1094,22 @@ public partial class Npc : Unit
     /// </summary>
     private const short DefaultMovementVelocity = 4000;
 
+    internal static Vector3 GetRequestedStep(Vector3 from, Vector3 destination, float distance, float targetDistance)
+    {
+        var (x, y, z) = World.Transform.PositionAndRotation.AddDistanceToFront(Math.Min(targetDistance, distance), targetDistance, from, destination);
+        return new Vector3(x, y, z);
+    }
+
+    internal float ResolveStepHeight(Vector3 from, Vector3 destination, Vector3 next, NpcStepSurfaceTrace trace = null)
+    {
+        // A short first step toward another floor can appear level. Check the full destination.
+        var levelStep = Transform.Parent == null && Transform.StickyParent == null &&
+            MathF.Abs(destination.Z - from.Z) <= AiGeoDataManager.StaticFloorPrecision;
+        if (!levelStep)
+            trace?.Skip("DestinationChangesLayer");
+        return WorldManager.Instance.GetReferenceHeight(Ai, next.X, next.Y, next.Z, Transform.ZoneId, levelStep ? from : null, trace);
+    }
+
     /// <summary>
     /// Moves towards the target position
     /// </summary>
@@ -1159,19 +1175,13 @@ public partial class Npc : Unit
 
         var moveType = (UnitMoveType)MoveType.GetType(MoveTypeEnum.Unit);
 
-        var travelDist = Math.Min(targetDist, distance);
-
-        // TODO: Implement proper use for Transform.World.AddDistanceToFront
-        var (newX, newY, newZ) = World.Transform.PositionAndRotation.AddDistanceToFront(travelDist, targetDist, Transform.Local.Position, other);
+        var next = GetRequestedStep(oldPosition, other, distance, targetDist);
         // aaemu-cluster#92: on an authored route the recorded waypoint height is authoritative; only
         // ad-hoc movement re-grounds every step through the geodata resolver.
-        // Use the requested destination for a level move. One short step toward a lower floor can appear level.
         var targetPositionZ = authoredPathZ
-            ? AiUtils.ResolveAuthoredPathHeight(this, newX, newY, newZ)
-            : WorldManager.Instance.GetReferenceHeight(Ai, newX, newY, newZ, Transform.ZoneId,
-                Transform.Parent == null && Transform.StickyParent == null &&
-                MathF.Abs(other.Z - oldPosition.Z) <= AiGeoDataManager.StaticFloorPrecision ? oldPosition : null);
-        Transform.Local.SetPosition(newX, newY, targetPositionZ);
+            ? AiUtils.ResolveAuthoredPathHeight(this, next.X, next.Y, next.Z)
+            : ResolveStepHeight(oldPosition, other, next);
+        Transform.Local.SetPosition(next.X, next.Y, targetPositionZ);
 
         var angle = MathUtil.CalculateAngleFrom(Transform.Local.Position, other);
         // aaemu-cluster#92: tell the client how fast we actually are, so it plays the matching gait
