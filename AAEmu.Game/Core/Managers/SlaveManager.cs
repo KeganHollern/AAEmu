@@ -946,6 +946,21 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         }
     }
 
+    internal static void RestoreSchoonerRackPosition(Slave ship, Doodad rack)
+    {
+        // Older saves placed the Merchant Schooner's second cargo rack at Box13.
+        if (ship.ModelId != 1205 || rack.TemplateId != 3446 || rack.AttachPoint != AttachPointKind.Box1)
+            return;
+
+        var points = SlaveGameData.Instance.GetAttachPointsForSlave(ship.ModelId);
+        if (points == null || !points.TryGetValue(AttachPointKind.Box1, out var box1) ||
+            !points.TryGetValue(AttachPointKind.Box13, out var box13))
+            return;
+
+        if (Vector3.DistanceSquared(rack.Transform.Local.Position, box13.AsPositionVector()) < 0.000001f)
+            rack.Transform.Local.SetPosition(box1.AsPositionVector());
+    }
+
     /// <summary>
     /// Applies buff and bonuses to Slave
     /// </summary>

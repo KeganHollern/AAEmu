@@ -41,6 +41,62 @@ public sealed partial class PlayerMailSendPersistenceTests
     public sealed class VehicleCargoDropPersistenceTests
     {
         [Theory]
+        [InlineData(AttachPointKind.Box1, 1205, true, true)]
+        [InlineData(AttachPointKind.Box13, 1205, true, false)]
+        [InlineData(AttachPointKind.Box1, 1385, true, false)]
+        [InlineData(AttachPointKind.Box1, 1205, false, false)]
+        public void SavedSchoonerRack_RestoresOnlyTheMisplacedBox1(AttachPointKind socket, uint model,
+            bool atOldPosition, bool needsCorrection)
+        {
+            using var fixture = new ShipyardGraph();
+            fixture.EnableSalvage();
+            ConfigureCargoBindings();
+            var data = new SlaveGameData();
+            data.LoadSlaveAttachmentPointLocations();
+            var oldData = SwapSingleton(data);
+            var oldHousing = SwapSingleton(new HousingManager(null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null));
+            try
+            {
+                var owner = fixture.Graph.Sender;
+                var ship = new Slave { Id = owner.Id + 87, ParentWorld = fixture.World, ModelId = model };
+                ship.Transform.Local.SetPosition(100, 120, 40);
+                ship.Transform.Local.SetRotation(0, 0, 1.2f);
+                var item = CreateCargoItem(fixture.Graph);
+                var rack = CreateCargoSlot(fixture.World, ship, item, fixture.ObjectIds.Object);
+                // The stock hull has different helpers for Box1 and Box13.
+                var box1 = new Vector3(0.73276245f, 11.22975f, 1.88176865f);
+                var box13 = new Vector3(0.0151721f, 8.16805f, 2.66416f);
+                var saved = atOldPosition ? box13 : new Vector3(1, 2, 3);
+                rack.AttachPoint = socket;
+                rack.Transform.Local.SetPosition(saved);
+                rack.Save();
+
+                var reloaded = new Slave { Id = ship.Id, ParentWorld = fixture.World, ModelId = model };
+                reloaded.Transform.Local.SetPosition(100, 120, 40);
+                reloaded.Transform.Local.SetRotation(0, 0, 1.2f);
+                Assert.Equal(1, fixture.World.SpawnManager.SpawnPersistentDoodads(DoodadOwnerType.Slave, (int)ship.Id, reloaded));
+                var loaded = Assert.Single(reloaded.AttachedDoodads);
+                Assert.Same(reloaded.Transform, loaded.Transform.Parent);
+                var expected = needsCorrection ? box1 : saved;
+                Assert.InRange(Vector3.Distance(expected, loaded.Transform.Local.Position), 0f, 0.0001f);
+                Assert.Equal(rack.DbId, loaded.DbId);
+                Assert.Equal(socket, loaded.AttachPoint);
+                Assert.Equal(item.Id, loaded.ItemId);
+                loaded.Save();
+                Assert.Equal(1, Scalar(FormattableString.Invariant($"""
+                    SELECT COUNT(*) FROM doodads WHERE item_id={item.Id} AND id={rack.DbId}
+                        AND ABS(x-{expected.X})<0.0001 AND ABS(y-{expected.Y})<0.0001 AND ABS(z-{expected.Z})<0.0001
+                    """)));
+            }
+            finally
+            {
+                SwapSingleton(oldHousing);
+                SwapSingleton(oldData);
+            }
+        }
+
+        [Theory]
         [InlineData(57, 100, 100)]
         [InlineData(71, 100, 71)]
         [InlineData(0, 29, 0)]
@@ -141,7 +197,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             return item;
         }
 
-        private static Doodad CreateCargoSlot(WorldInstance world, Slave vehicle, Backpack item, ObjectIdManager objectIds)
+        private static Doodad CreateCargoSlot(WorldInstance world, Slave vehicle, Backpack item, IObjectIdManager objectIds)
         {
             var slot = DoodadManager.Instance.Create(world, objectIds.GetNextId(), 3446, null, true);
             slot.OwnerType = DoodadOwnerType.Slave;
