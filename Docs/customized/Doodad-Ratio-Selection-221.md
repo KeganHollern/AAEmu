@@ -106,6 +106,12 @@ Previously, that value could replace the next interaction's authored destination
 Template 3094 demonstrates the defect. Ratio row 170 selects its current phase,
 7079, but interaction 6385 must still advance to phase 7080 afterward.
 
+Arak's Webbed Cocoon also has a 15-second timeout in phase 7079.
+Compact row 7224 sets timer 1648 before rows 7283 and 7284 select a phase.
+The loader uses compact row order for this group. A choice of 7079 keeps the
+timer. A choice of 7080 or the normal destroy action replaces it with the
+1-second removal task. [Issue 879](https://github.com/KeganHollern/aaemu-cluster/issues/879)
+
 Labor transactions capture both the roll and cumulative weight.
 A failed transaction restores both values with the previous phase.
 The normal transaction path defers a selected replacement until commit.
