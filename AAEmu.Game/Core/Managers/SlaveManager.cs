@@ -276,14 +276,35 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         TryGetSeatPosition(slave, seat, interaction, out position) &&
         !slave.AttachedCharacters.ContainsKey(seat) &&
         MountSeatAuthorization.CanEnter(character, slave, position, MountSeatAuthorization.SlaveRange,
-            GetWheelDeckSupport(character, slave, seat, interaction));
+            GetShipDeckSupport(character, slave, seat, interaction));
 
-    private static Transform GetWheelDeckSupport(Character character, Slave slave, AttachPointKind seat, Doodad wheel)
+    private static Transform GetShipDeckSupport(Character character, Slave slave, AttachPointKind seat, Doodad wheel)
     {
-        // Standing on a deck or its wheel sets Parent without assigning a seat.
         var support = character.Transform.Parent;
-        if (support == null || seat != AttachPointKind.Driver || wheel?.AttachPoint != AttachPointKind.Helms ||
-            character.Transform.StickyParent != null || !ReferenceEquals(wheel.Transform.Parent, slave.Transform) ||
+        if (support == null || seat != AttachPointKind.Driver || character.Transform.StickyParent != null)
+            return null;
+
+        // The stock Harpoon Cannon is a child with its own Driver seat. Its operator can already stand on the parent deck.
+        if (wheel == null)
+        {
+            const uint harpoonCannonTemplate = 48;
+            if (slave.TemplateId != harpoonCannonTemplate || slave.ParentObj is not Slave hull ||
+                !ReferenceEquals(support, hull.Transform) ||
+                !ReferenceEquals(slave.Transform.Parent, support) || hull.Template?.IsABoat() != true ||
+                hull.IsDead || hull.AttachmentsRetired || !hull.AttachedSlaves.Contains(slave))
+                return null;
+
+            var attachment = (AttachPointKind)slave.AttachPointId;
+            var deckSocket = SlaveGameData.Instance.GetAttachPointsForSlave(hull.ModelId)?.GetValueOrDefault(attachment);
+            if (deckSocket == null || slave.Transform.Local.Position != deckSocket.AsPositionVector())
+                return null;
+
+            return hull.Template.SlaveBindings.Exists(binding => binding.SlaveId == slave.TemplateId &&
+                binding.AttachPointId == attachment) ? support : null;
+        }
+
+        // Standing on a deck or its wheel sets Parent without assigning a seat.
+        if (wheel.AttachPoint != AttachPointKind.Helms || !ReferenceEquals(wheel.Transform.Parent, slave.Transform) ||
             (!ReferenceEquals(support, slave.Transform) && !ReferenceEquals(support, wheel.Transform)))
             return null;
 
