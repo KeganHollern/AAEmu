@@ -6,7 +6,9 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.CryEngine.Entities;
 using AAEmu.Game.Models.CryEngine.Loaders;
 using AAEmu.Game.Models.CryEngine.Readers;
+using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Transform;
 
 namespace AAEmu.UnitTests.Game.Models.Game.World;
 
@@ -488,6 +490,102 @@ public class WorldTemplateTests
         await Assert.That(found).IsFalse();
         await Assert.That(height).IsEqualTo(0f);
     }
+
+    [Test]
+    public async Task LegacyBoatSelectsZeroSeabedAfterTheShallowAndThresholdProbes()
+    {
+        // A Harpoon Clipper needs depth strictly greater than 7 - 3 + 1 = 5 metres.
+        var map = CreateHeightMap(10);
+        map[5, 6] = 0;
+        var terrain = CreateWorldTemplate(map);
+        AddNetMissionBai(terrain, new Vector3(10, 10, 1), BaiNavigationType.WaypointHuman);
+        var water = new WaterBodies { OceanLevel = 10 };
+        var position = new PositionAndRotation(10, 10, 20, 0, 0, 0);
+        // The old navigation query reports a false nine-metre depth at the shallow starting point.
+        await Assert.That(new AiGeoDataManager(terrain).GetHeight(position.Position)).IsEqualTo(1f);
+        await Assert.That(terrain.TryGetHeight(10, 10, out var shallow)).IsTrue();
+        await Assert.That(shallow).IsEqualTo(10f);
+
+        SlaveManager.PlaceLegacyBoat(position, terrain, water, ClipperModel());
+
+        await Assert.That(position.Position).IsEqualTo(new Vector3(10, 12, 9.9f));
+    }
+
+    [Test]
+    public async Task LegacyBoatUsesWaterAtTheSuccessfulForwardProbe()
+    {
+        var terrain = CreateWorldTemplate(CreateHeightMap(9));
+        var water = new WaterBodies { OceanLevel = 10 };
+        water.AddSquareArea("raised water", new Vector3(10, 15, 20), 4, 25);
+        var position = new PositionAndRotation(10, 10, 20, 0, 0, 0);
+        var model = ClipperModel();
+        model.MassCenterZ = -2;
+
+        SlaveManager.PlaceLegacyBoat(position, terrain, water, model);
+
+        // A negative mass centre supplies its half-offset before the keel.
+        await Assert.That(position.Position.Y).IsGreaterThan(10f);
+        await Assert.That(water.GetWaterSurface(position.Position, out _)).IsEqualTo(20f);
+        await Assert.That(position.Position.Z).IsEqualTo(18.9f);
+    }
+
+    [Test]
+    public async Task LegacyBoatSkipsUnavailableCellsBeforeAValidZeroSeabed()
+    {
+        var terrain = CreateWorldTemplate(1, 2);
+        SetLoadedCell(terrain, 0, 1, CreateHeightMap(0));
+        var water = new WaterBodies { OceanLevel = 10 };
+        var position = new PositionAndRotation(10, WorldManager.CELL_SIZE - 2, 40, 0, 0, 0);
+
+        SlaveManager.PlaceLegacyBoat(position, terrain, water, ClipperModel());
+
+        await Assert.That(position.Position).IsEqualTo(new Vector3(10, WorldManager.CELL_SIZE, 9.9f));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LegacyBoatKeepsItsInitialWaterlineWhenNoProbeHasEnoughDepth(bool hasTerrain)
+    {
+        var terrain = hasTerrain ? CreateWorldTemplate(CreateHeightMap(8)) : CreateWorldTemplate(1, 1);
+        var water = new WaterBodies { OceanLevel = 10 };
+        var position = new PositionAndRotation(10, 10, 40, 0, 0, 0.5f);
+
+        SlaveManager.PlaceLegacyBoat(position, terrain, water, ClipperModel());
+
+        await Assert.That(position.Position).IsEqualTo(new Vector3(10, 10, 9.9f));
+        await Assert.That(position.Rotation.Z).IsEqualTo(0.5f);
+    }
+
+    [Test]
+    [Arguments(0f, -4f)]
+    [Arguments(-10f, -11f)]
+    [Arguments(100f, 95f)]
+    [Arguments(0f, 1f)]
+    public async Task PortalBoatUsesTheAvailableWaterlineAtAnyElevation(float waterZ, float initialZ)
+    {
+        var position = new PositionAndRotation(10, 10, initialZ, 0, 0, 0);
+        var depth = 1f / (AAEmu.Game.Physics.Forces.Buoyancy.BaseWaterDensity *
+            AAEmu.Game.Physics.Forces.Buoyancy.ShipWaterDensityMul);
+
+        SlaveManager.ApplyPortalBoatWaterline(position, new WaterBodies { OceanLevel = waterZ });
+
+        await Assert.That(position.Position.Z).IsEqualTo(Math.Max(initialZ, waterZ - depth));
+    }
+
+    [Test]
+    public async Task PortalBoatWithNoWaterSourcePreservesTheSubmittedHeight()
+    {
+        var position = new PositionAndRotation(10, 10, -4, 0, 0, 0);
+        SlaveManager.ApplyPortalBoatWaterline(position, null);
+        await Assert.That(position.Position.Z).IsEqualTo(-4f);
+    }
+
+    // The r208022 compact binds Harpoon Clipper 14 to model 128 and ship model 3.
+    private static ShipModelV1 ClipperModel() => new()
+    {
+        MassBoxSizeX = 4, MassBoxSizeZ = 7, MassCenterZ = 3, KeelHeight = 0.1f
+    };
 
     private static ushort[,] CreateSingleRaisedCornerHeightMap()
     {
