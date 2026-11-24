@@ -43,9 +43,18 @@ public class Transfer : Unit
         }
     }
 
-    // The unbound cart on tiger02 uses the same +Y model axis as the three coupled rail carts.
+    // The public airship prefab has its starboard propeller on +X and its tail on -Y.
+    private bool IsPublicAirship => ModelId == 657 && Template is
+        { Id: 51 or 52 or 65 or (>= 110 and <= 114) or (>= 116 and <= 119), TransferBindings.Count: 0 };
+
+    // The unbound cart on tiger02 also uses the +Y model axis.
     internal bool UsesRoutePose => TrailerSocket.HasValue ||
-        (ModelId == 565 && Template is { Id: 25, TransferBindings.Count: 0 });
+        (ModelId == 565 && Template is { Id: 25, TransferBindings.Count: 0 }) || IsPublicAirship;
+
+    // Airship movement sends the three quaternion vector components. Keep its implicit W positive.
+    private float RouteModelYaw => IsPublicAirship
+        ? MathF.IEEERemainder((float)Angle - MathF.PI / 2, MathF.Tau)
+        : (float)Angle - MathF.PI / 2;
 
     internal void InitializeRoutePose(WorldSpawnPosition spawn)
     {
@@ -54,9 +63,12 @@ public class Transfer : Unit
         {
             var start = route[0];
             var next = route[1];
+            // An airship can start with a waypoint inside the ordinary arrival radius (route 119).
+            if (IsPublicAirship)
+                next = route.Find(point => Vector3.Distance(start.AsPositionVector(), point.AsPositionVector()) >= RangeToCheckPoint) ?? next;
             Angle = MathUtil.CalculateDirection(start.AsPositionVector(), next.AsPositionVector());
             Transform.ApplyWorldSpawnPosition(start);
-            Transform.Local.SetZRotation((float)Angle - MathF.PI / 2);
+            Transform.Local.SetZRotation(RouteModelYaw);
         }
         else
             Transform.ApplyWorldSpawnPosition(spawn);
@@ -545,7 +557,7 @@ public class Transfer : Unit
         if (usesRoutePose)
         {
             // The mesh faces +Y. The route angle is measured from +X.
-            var modelYaw = (float)transfer.Angle - MathF.PI / 2;
+            var modelYaw = transfer.RouteModelYaw;
             transfer.SetPosition(transfer.vPosition.X, transfer.vPosition.Y, transfer.vPosition.Z, 0, 0, modelYaw);
             transfer.Rot = transfer.Transform.Local.ToQuaternion();
         }
