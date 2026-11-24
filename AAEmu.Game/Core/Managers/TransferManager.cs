@@ -107,7 +107,10 @@ public class TransferManager
         owner.Hp = owner.MaxHp;
         owner.Mp = owner.MaxMp;
         owner.Bounded = null;
-        owner.Transform.ApplyWorldSpawnPosition(spawner.Position);
+        if (owner.UsesCarriageSocket)
+            owner.InitializeCarriageMotor(spawner.Position);
+        else
+            owner.Transform.ApplyWorldSpawnPosition(spawner.Position);
         owner.Transform.ResetFinalizeTransform();
         owner.Faction = FactionManager.Instance.GetFaction(FactionsEnum.PcFriendly); // formerly set to 164
         owner.Patrol = null;
@@ -142,11 +145,16 @@ public class TransferManager
         transfer.Hp = transfer.MaxHp;
         transfer.Mp = transfer.MaxMp;
         transfer.Transform.ApplyWorldSpawnPosition(spawner.Position);
-        transfer.Transform.Local.AddDistanceToFront(Transfer.BoundedChildAlongFrontOffsetMeters);
-        transfer.Transform.Local.SetHeight(transfer.ParentWorld.Template.GeoData.GetHeight(transfer.Transform.World.Position)); // WorldManager.Instance.GetHeight(transfer.Transform)));
-        transfer.Transform.StickyParent = owner.Transform; // stick it to the driver/motor
-        transfer.Transform.Parent = null;
-        owner.Transform.Parent = transfer.Transform;
+        if (owner.UsesCarriageSocket)
+            owner.PlaceCarriageCabin(transfer, moving: false);
+        else
+        {
+            transfer.Transform.Local.AddDistanceToFront(Transfer.BoundedChildAlongFrontOffsetMeters);
+            transfer.Transform.Local.SetHeight(transfer.ParentWorld.Template.GeoData.GetHeight(transfer.Transform.World.Position)); // WorldManager.Instance.GetHeight(transfer.Transform)));
+            transfer.Transform.StickyParent = owner.Transform; // stick it to the driver/motor
+            transfer.Transform.Parent = null;
+            owner.Transform.Parent = transfer.Transform;
+        }
         transfer.Transform.ResetFinalizeTransform();
 
         transfer.Faction = FactionManager.Instance.GetFaction(FactionsEnum.PcFriendly); // used to be 164
