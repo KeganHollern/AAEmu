@@ -238,9 +238,8 @@ public sealed class ShipWaterfallInteraction
             var y = body.Position.Z + direction.Y * distance;
             var probe = new Vector3(x, y, waterfallBottom);
             var surface = world.Water.GetWaterSurface(probe, out var flow);
-            var terrain = world.GetHeight(x, y);
             if (!float.IsFinite(surface) || sourceSurface - surface < MinimumDropMeters ||
-                surface < waterfallBottom - 5f || terrain > surface - MinimumReceivingDepthMeters)
+                surface < waterfallBottom - 5f || !TryGetReceivingFloor(world, x, y, surface, out _))
                 continue;
 
             receivingSurface = surface;
@@ -254,6 +253,9 @@ public sealed class ShipWaterfallInteraction
         launchDistance = 0f;
         return false;
     }
+
+    private static bool TryGetReceivingFloor(WorldInstance world, float x, float y, float surface, out float floor)
+        => world.TryGetHeight(x, y, out floor) && floor <= surface - MinimumReceivingDepthMeters;
 
     private static bool AdvanceTransit(Slave ship, TrackedShip tracked, float dt)
     {
@@ -274,11 +276,18 @@ public sealed class ShipWaterfallInteraction
                 state.WaterlineCenterOffset, reachedLowerPool))
             return true;
 
-        CaptureLowerWater(ship, tracked, state);
+        // The hull can reach the projected waterline before clearing an overhang or outside the projected pool.
+        var world = ship.ParentWorld!;
+        var arrival = new Vector3(body.Position.X, body.Position.Z, state.ReceivingSurface);
+        var localSurface = world.Water.GetWaterSurface(arrival, out _);
+        if (!float.IsFinite(localSurface) ||
+            !TryGetReceivingFloor(world, arrival.X, arrival.Y, MathF.Min(localSurface, state.ReceivingSurface), out var floor))
+            return true;
+        CaptureLowerWater(ship, tracked, state, floor);
         return false;
     }
 
-    private static void CaptureLowerWater(Slave ship, TrackedShip tracked, TransitState state)
+    private static void CaptureLowerWater(Slave ship, TrackedShip tracked, TransitState state, float floor)
     {
         var body = ship.RigidBody!;
         var targetCenterY = state.ReceivingSurface + state.WaterlineCenterOffset;
@@ -302,7 +311,7 @@ public sealed class ShipWaterfallInteraction
 
         ship.CachedWaterSurface = state.ReceivingSurface;
         ship.CachedWaterFlow = state.ReceivingFlow;
-        ship.CachedFloorLevel = ship.ParentWorld!.GetHeight(body.Position.X, body.Position.Z);
+        ship.CachedFloorLevel = floor;
         ClearGroundState(ship);
         ship.WaterfallTransitActive = false;
         tracked.Transit = null;
