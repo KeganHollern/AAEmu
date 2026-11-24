@@ -262,6 +262,18 @@ public partial class Skill
             return SkillResult.NeedReagent;
         }
 
+        if (Id == SkillsEnum.ThreatenRedDragonEgg)
+        {
+            var eggResult = CheckRedDragonEgg(character, target, out _);
+            if (eggResult != SkillResult.Success)
+            {
+                Cancelled = true;
+                if (eggResult is SkillResult.NeedReagent or SkillResult.ItemLocked)
+                    skillResultValueUInt = DancingGoddessHunt;
+                return eggResult;
+            }
+        }
+
         var mateRecoveryResult = MateRecovery.Check(caster, casterCaster, targetCaster, this);
         if (mateRecoveryResult != SkillResult.Success)
         {
@@ -1164,7 +1176,7 @@ public partial class Skill
                         Dyeing.IsDyeingSkill(this) ? ItemTaskType.Dyeing : ItemTaskType.SkillEffectGainItem);
                 }
             }
-            else if (casterCaster is SkillItem || ItemSocketing.IsSocketingSkill(this))
+            else if (casterCaster is SkillItem || ItemSocketing.IsSocketingSkill(this) || Id == SkillsEnum.ThreatenRedDragonEgg)
             {
                 // Keep item-source validation, effects and consumption together with
                 // respect to inventory movement and persistence snapshots.
@@ -1190,6 +1202,12 @@ public partial class Skill
             return;
         }
         var player = caster as Character;
+        Item eggBow = null;
+        if (Id == SkillsEnum.ThreatenRedDragonEgg && CheckRedDragonEgg(player, targetSelf, out eggBow) != SkillResult.Success)
+        {
+            Cancelled = true;
+            return;
+        }
         var usedItemTemplateId = casterCaster is SkillItem usedItemSource
             ? player?.Inventory.GetItemById(usedItemSource.ItemId)?.TemplateId ?? 0
             : 0;
@@ -1444,6 +1462,20 @@ public partial class Skill
             }
         }
 
+        if (eggBow != null)
+        {
+            // The egg interaction carries the bow cost. Its separate spawn effect has no cost.
+            var bowCost = effectsToApply.Find(entry => entry.effect.Template is InteractionEffect &&
+                entry.effect.ConsumeItemId == DancingGoddessHunt).effect;
+            if (bowCost == null || bowCost.ConsumeItemCount != 1 ||
+                !effectsToApply.Exists(entry => entry.effect.Template is NpcSpawnerSpawnEffect))
+            {
+                Cancelled = true;
+                return;
+            }
+            consumedItems.Add((eggBow, bowCost.ConsumeItemCount));
+        }
+
         // Handle consumption of items from effects
         // Placed outside the loop to prevent multiple uses
         if (lastAppliedEffect != null)
@@ -1462,7 +1494,7 @@ public partial class Skill
                 }
             }
 
-            if (player != null && lastAppliedEffect.ConsumeItemId != 0 && lastAppliedEffect.ConsumeItemCount > 0)
+            if (eggBow == null && player != null && lastAppliedEffect.ConsumeItemId != 0 && lastAppliedEffect.ConsumeItemCount > 0)
             {
                 if (targetSelf is House or Shipyard.Shipyard && Template.TargetType == SkillTargetType.Building &&
                     lastAppliedEffect.Template is CraftEffect)
@@ -1702,6 +1734,27 @@ public partial class Skill
                         amount, null);
             }
         }
+    }
+
+    private const uint DancingGoddessHunt = 29301;
+
+    private static SkillResult CheckRedDragonEgg(Character player, BaseUnit target, out Item bow)
+    {
+        bow = null;
+        if (player?.ParentWorld == null || target is not Doodad { TemplateId: 7056, FuncGroupId: 18936 } egg ||
+            player.ParentWorld.GetDoodad(egg.ObjId) != egg)
+            return SkillResult.InvalidTarget;
+
+        var placements = player.ParentWorld.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(120194);
+        if (placements is not [{ UnitId: 12411, CurrentSpawnCount: 0 }])
+            return SkillResult.InvalidTarget;
+
+        player.Inventory.GetAllItemsByTemplate([SlotType.Inventory, SlotType.Equipment], DancingGoddessHunt, -1,
+            out var bows, out _);
+        bow = bows.Find(item => item.Count > TradeReservation.GetReservedCount(item));
+        if (bow != null)
+            return SkillResult.Success;
+        return bows.Count == 0 ? SkillResult.NeedReagent : SkillResult.ItemLocked;
     }
 
     private static Item GetEquippedConstructionPack(Character character, SkillEffect effect)
