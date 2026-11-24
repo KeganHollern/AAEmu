@@ -20,7 +20,9 @@ using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Spheres;
+using AAEmu.Game.Scripts.Commands;
 using AAEmu.Game.Utils;
+using AAEmu.Game.Utils.Scripts;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Quests;
@@ -435,6 +437,28 @@ public sealed class QuestFollowUnitTests
         await Assert.That(second.Skills).IsEmpty();
         await Assert.That(quest.TryGetFollowNpc(4729, out var bound)).IsTrue();
         await Assert.That(bound).IsSameReferenceAs(second);
+    }
+
+    [Test]
+    public async Task StaffFollowCommand_ReportsTheTargetThatTheNpcSelected()
+    {
+        var follower = CreateNpc(81, 4729);
+        var target = CreateNpc(82, 999);
+        _owner.Region.AddObject(target);
+        _owner.CurrentTarget = follower;
+        var output = new CharacterMessageOutput(_owner);
+        var command = new TestAI();
+
+        command.Execute(_owner, ["follow_npc", "999"], output);
+
+        await Assert.That(follower.Ai.AiFollowUnitObj).IsSameReferenceAs(target);
+        await Assert.That(follower.Ai.GetCurrentBehavior()).IsTypeOf<FollowUnitBehavior>();
+        await Assert.That(output.Messages.Single()).Contains("NPC 81 found a @NPC_NAME(999) (999) to follow.");
+
+        command.Execute(_owner, ["follow_npc", "998"], output);
+
+        await Assert.That(output.Messages.Last()).Contains("Could not find");
+        await Assert.That(follower.Ai.AiFollowUnitObj).IsSameReferenceAs(target);
     }
 
     private CharacterMock CreateOwner(uint id, uint objId)
