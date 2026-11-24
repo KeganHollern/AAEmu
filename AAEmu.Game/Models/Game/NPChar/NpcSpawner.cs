@@ -516,13 +516,14 @@ public partial class NpcSpawner : Spawner<Npc>
         }
 
         // Используем вычисляемое свойство CurrentSpawnCount вместо _spawnCount
-        if (Template.SuspendSpawnCount > 0 && CurrentSpawnCount + AreOtherNpcsInSpawnZone().Item2 >= Template.SuspendSpawnCount)
+        var population = CurrentSpawnCount + OtherPopulationForOrdinarySpawn();
+        if (Template.SuspendSpawnCount > 0 && population >= Template.SuspendSpawnCount)
         {
             //Logger.Debug($"Spawn count ({CurrentSpawnCount}:{AreOtherNpcsInSpawnZone().Item2}) for SpawnerId: {UnitId}:{SpawnerId} reached suspend limit ({Template.SuspendSpawnCount}).");
             return false;
         }
 
-        if (CurrentSpawnCount + AreOtherNpcsInSpawnZone().Item2 >= maxPopulation)
+        if (population >= maxPopulation)
         {
             //Logger.Debug($"Spawn count ({CurrentSpawnCount}:{AreOtherNpcsInSpawnZone().Item2}) for SpawnerId: {UnitId}:{SpawnerId} reached maximum limit ({Template.MaxPopulation}).");
             return false;
@@ -676,6 +677,10 @@ public partial class NpcSpawner : Spawner<Npc>
 
     // Словарь для хранения кэша
     private readonly Dictionary<int, SpawnerNpcsInZoneCache> _npcsInZoneCache = new();
+
+    // A weighted placement owns one ordinary population slot. Another binding at the same
+    // capture cannot occupy that slot or cancel its death timer.
+    private int OtherPopulationForOrdinarySpawn() => SelectSingleNpcByWeight ? 0 : AreOtherNpcsInSpawnZone().Item2;
 
     /// <summary>
     /// Checks if there are NPCs in other spawners.
@@ -880,7 +885,7 @@ public partial class NpcSpawner : Spawner<Npc>
                 {
                     QueueGroupRespawn(npc);
                 }
-                else if (IsSpawningScheduleEnabled() && RespawnTime > 0 && AreOtherNpcsInSpawnZone().Item2 + _scheduledCount < Template.MaxPopulation)
+                else if (IsSpawningScheduleEnabled() && RespawnTime > 0 && OtherPopulationForOrdinarySpawn() + _scheduledCount < Template.MaxPopulation)
                 {
                     // Планируем респаун и обновляем _scheduledCount
                     IncrementCount(true);
@@ -960,6 +965,10 @@ public partial class NpcSpawner : Spawner<Npc>
                 return;
             }
             npc.Delete();
+
+            // Removal without a corpse can follow the death notification for this same slot.
+            if (SelectSingleNpcByWeight && _pendingRespawns.Contains(npc))
+                return;
 
             // Schedules respawn if necessary
             if (IsSpawningScheduleEnabled() && RespawnTime > 0 && AreOtherNpcsInSpawnZone().Item2 < Template.MaxPopulation)

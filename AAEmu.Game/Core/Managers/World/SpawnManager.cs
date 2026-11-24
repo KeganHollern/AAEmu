@@ -1138,7 +1138,7 @@ public class SpawnManager(WorldInstance parentWorld)
         }
     }
 
-    private HashSet<GameObject> GetRespawnsReady()
+    internal HashSet<GameObject> GetRespawnsReady(DateTime utcNow)
     {
         HashSet<GameObject> temp;
         lock (Respawns)
@@ -1147,7 +1147,7 @@ public class SpawnManager(WorldInstance parentWorld)
         }
 
         var res = new HashSet<GameObject>();
-        foreach (var npc in temp.Where(npc => npc.Respawn <= DateTime.UtcNow))
+        foreach (var npc in temp.Where(npc => npc.Respawn <= utcNow))
             res.Add(npc);
 
         return res;
@@ -1222,7 +1222,7 @@ public class SpawnManager(WorldInstance parentWorld)
     {
         while (_work)
         {
-            var respawns = GetRespawnsReady();
+            var respawns = GetRespawnsReady(DateTime.UtcNow);
             if (respawns.Count > 0)
             {
                 foreach (var obj in respawns)

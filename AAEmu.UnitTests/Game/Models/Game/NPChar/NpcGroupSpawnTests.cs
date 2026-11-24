@@ -6,15 +6,21 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Items.Loots;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.NpcGroup;
 using AAEmu.Game.Models.Game.Schedules;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.TowerDefs;
+using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
 
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 
 namespace AAEmu.UnitTests.Game.Models.Game.NPChar;
@@ -380,6 +386,121 @@ public sealed class NpcGroupSpawnTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task VyravaPlacement_RetainsItsOwnDeathDeadlineWhileBothOtherGiantsLive(bool repeatRemoval)
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 24, 6, 59, 0, TimeSpan.Zero));
+        var config = new AppConfiguration
+        {
+            World = new WorldConfig { Time = new WorldTimeConfig { Mode = WorldTimeMode.TimeZone, TimeZoneId = "UTC" } }
+        };
+        var time = new TimeManager(null, null, clock, Options.Create(config));
+        Replace(time);
+        time.GetSnapshot();
+        var anchor = new WorldSpawnPosition { X = 30197.527f, Y = 7188.55f, Z = 407.25623f };
+        var player = new Character(null) { Id = 1, ObjId = 1, ParentWorld = _world };
+        player.Transform.Local.SetPosition(anchor.AsPositionVector());
+        WorldManager.Instance.TryAddCharacter(player);
+        RegisterVyravaTemplate(14354, 10, false, false);
+        RegisterVyravaTemplate(14399, 3600, true, true);
+        RegisterVyravaTemplate(15025, 3600, true, false);
+        _world.SpawnManager.AddNpcSpawner(new NpcSpawner { UnitId = 12926, Position = anchor });
+        var weighted = _world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(14399).Single();
+        var timed = _world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(15025).Single();
+        var permanent = _world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(14354).Single();
+        weighted.DoSpawn();
+        timed.DoSpawn();
+        permanent.DoSpawn();
+        await Assert.That(weighted.CurrentSpawnCount).IsZero();
+        await Assert.That(timed.CurrentSpawnCount).IsZero();
+        var permanentGiant = permanent.SpawnedNpcs[14354].Single();
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        weighted.DoSpawn();
+        timed.DoSpawn();
+        var victim = weighted.SpawnedNpcs[14399].Single();
+        var timedGiant = timed.SpawnedNpcs[15025].Single();
+        await Assert.That(victim.Spawner).IsSameReferenceAs(weighted);
+        // This fixture substitutes the NPC model. Use the fixed delay assigned by stock NPC preparation.
+        weighted.RespawnTime = (int)weighted.Template.SpawnDelayMin;
+        victim.Hp = 0;
+        victim.Template = new NpcTemplate();
+        var items = new ItemManager(null, null, null, null, null, null);
+        typeof(ItemManager).GetField("_lootPackDroppingNpc", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(items, new Dictionary<uint, List<LootPackDroppingNpc>>());
+        Replace(items);
+        var previousWorldConfig = AppConfiguration.Instance.World;
+        try
+        {
+            AppConfiguration.Instance.World = config.World;
+            victim.DoDie(timedGiant, KillReason.Damage);
+        }
+        finally
+        {
+            AppConfiguration.Instance.World = previousWorldConfig;
+        }
+        if (repeatRemoval)
+            weighted.DespawnWithRespawn(victim);
+        _world.SpawnManager.DespawnObject(victim);
+        var deadline = victim.DeadTime.AddHours(1);
+        await Assert.That(victim.Respawn).IsEqualTo(deadline);
+        await Assert.That(_world.SpawnManager.GetRespawnsReady(deadline.AddTicks(-1))).IsEmpty();
+        weighted.Update();
+        await Assert.That(weighted.CurrentSpawnCount).IsZero();
+
+        var due = _world.SpawnManager.GetRespawnsReady(deadline).Single();
+        await Assert.That(due).IsSameReferenceAs(victim);
+        _world.SpawnManager.RespawnObject(due);
+        weighted.Update();
+        var replacement = weighted.SpawnedNpcs[14399].Single();
+        weighted.Update();
+        await Assert.That(_world.SpawnManager.GetRespawnsReady(deadline.AddHours(1))).IsEmpty();
+        await Assert.That(weighted.SpawnedNpcs[14399].Single()).IsSameReferenceAs(replacement);
+        await Assert.That(replacement).IsNotSameReferenceAs(victim);
+        await Assert.That(replacement.Spawner).IsSameReferenceAs(weighted);
+        await Assert.That(timed.SpawnedNpcs[15025].Single()).IsSameReferenceAs(timedGiant);
+        await Assert.That(permanent.SpawnedNpcs[14354].Single()).IsSameReferenceAs(permanentGiant);
+
+        // The replacement also owns a full delay. Close its window before that delay expires.
+        replacement.Hp = 0;
+        replacement.DeadTime = deadline.AddMinutes(1);
+        weighted.DoDespawn(replacement);
+        await Assert.That(replacement.Respawn).IsEqualTo(replacement.DeadTime.AddHours(1));
+        _world.SpawnManager.DespawnObject(replacement);
+        clock.Advance(TimeSpan.FromHours(10));
+        await Assert.That(timed.CanDespawnNpcs()).IsTrue();
+        weighted.Update();
+        timed.Update();
+        _world.SpawnManager.DespawnObject(timedGiant);
+        var late = _world.SpawnManager.GetRespawnsReady(replacement.Respawn).Single();
+        await Assert.That(late).IsSameReferenceAs(replacement);
+        _world.SpawnManager.RespawnObject(late);
+        weighted.Update();
+        timed.Update();
+        await Assert.That(weighted.CurrentSpawnCount).IsZero();
+        await Assert.That(timed.CurrentSpawnCount).IsZero();
+        await Assert.That(permanent.SpawnedNpcs[14354].Single()).IsSameReferenceAs(permanentGiant);
+    }
+
+    private static void RegisterVyravaTemplate(uint id, int delay, bool daylight, bool weighted)
+    {
+        var giant = new ProbeDefinition { NpcSpawnerTemplateId = id, MemberId = 12926, MemberType = "Npc", Weight = weighted ? .5f : 1f };
+        var template = new NpcSpawnerTemplate
+        {
+            Id = id, MaxPopulation = 1, ActivationState = true, Npcs = [giant],
+            StartTime = daylight ? 7 : 0, EndTime = daylight ? 16.6f : 0,
+            TestRadiusPc = daylight ? 25 : 0, TestRadiusNpc = daylight ? 20 : 3,
+            SuspendSpawnCount = daylight ? 1u : 0u, SpawnDelayMin = delay, SpawnDelayMax = delay
+        };
+        if (weighted)
+            template.Npcs.Add(new ProbeDefinition { NpcSpawnerTemplateId = id, MemberId = 4334, MemberType = "Npc", Weight = .5f });
+        NpcGameData.Instance.AddNpcSpawner(template);
+        foreach (var member in template.Npcs)
+            NpcGameData.Instance.AddMemberAndSpawnerTemplateIds(member);
+    }
+
+    [Test]
     public async Task ExplicitGroupPlacement_LoadsAuthoredMembersAndKeepsRuntimeActivationRules()
     {
         var source = new NpcSpawnerTemplate
@@ -719,7 +840,7 @@ public sealed class NpcGroupSpawnTests
                 return null;
             var npc = new ProbeNpc
             {
-                ObjId = (uint)Positions.Count, TemplateId = templateId, Spawner = spawner, OwnerId = ownerId,
+                ObjId = ObjectIdManager.Instance.GetNextId(), TemplateId = templateId, Spawner = spawner, OwnerId = ownerId,
                 Hp = 100, ParentWorld = spawner.ParentWorld,
                 TowerDefenseSpawnToken = spawner.PendingTowerDefenseSpawnToken ?? EventToken
             };
