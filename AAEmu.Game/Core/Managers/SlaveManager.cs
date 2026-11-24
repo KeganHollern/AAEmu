@@ -284,13 +284,13 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         if (support == null || seat != AttachPointKind.Driver || character.Transform.StickyParent != null)
             return null;
 
-        // The stock Harpoon Cannon is a child with its own Driver seat. Its operator can already stand on the parent deck.
+        // The operator can stand on the deck or on the installed cannon before taking its Driver seat.
         if (wheel == null)
         {
             const uint harpoonCannonTemplate = 48;
             if (slave.TemplateId != harpoonCannonTemplate || slave.ParentObj is not Slave hull ||
-                !ReferenceEquals(support, hull.Transform) ||
-                !ReferenceEquals(slave.Transform.Parent, support) || hull.Template?.IsABoat() != true ||
+                (!ReferenceEquals(support, hull.Transform) && !ReferenceEquals(support, slave.Transform)) ||
+                !ReferenceEquals(slave.Transform.Parent, hull.Transform) || hull.Template?.IsABoat() != true ||
                 hull.IsDead || hull.AttachmentsRetired || !hull.AttachedSlaves.Contains(slave))
                 return null;
 

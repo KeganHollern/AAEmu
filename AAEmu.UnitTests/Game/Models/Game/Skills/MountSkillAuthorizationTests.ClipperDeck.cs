@@ -15,13 +15,16 @@ public partial class MountSkillAuthorizationTests
 {
     [Test]
     [Arguments(14u, 128u, "deck", true)]
+    [Arguments(14u, 128u, "cannon", true)]
     [Arguments(14u, 128u, "dock", true)]
     [Arguments(110u, 1360u, "deck", true)]
     [Arguments(113u, 1383u, "deck", true)]
     [Arguments(114u, 1384u, "deck", true)]
     [Arguments(120u, 1385u, "deck", false)]
+    [Arguments(120u, 1385u, "cannon", false)]
     [Arguments(120u, 1385u, "dock", true)]
     [Arguments(14u, 128u, "another deck", false)]
+    [Arguments(14u, 128u, "another child", false)]
     [Arguments(14u, 128u, "occupied", false)]
     [Arguments(14u, 128u, "too far", false)]
     [Arguments(14u, 128u, "missing binding", false)]
@@ -68,6 +71,16 @@ public partial class MountSkillAuthorizationTests
         var worldPosition = _actor.Transform.World.Position;
         switch (start)
         {
+            case "cannon":
+                _actor.Transform.Parent = cannon.Transform;
+                break;
+            case "another child":
+                var sibling = new Slave { ObjId = 85, TlId = 85, Hp = 100, Scale = 1, ParentObj = ship };
+                SetWorld(sibling, _world);
+                sibling.Transform.Parent = ship.Transform;
+                ship.AttachedSlaves.Add(sibling);
+                _actor.Transform.Parent = sibling.Transform;
+                break;
             case "dock":
                 _actor.Transform.Parent = null;
                 break;
