@@ -6,11 +6,16 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.AI.v2.Framework;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.NpcGroup;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Effects;
+using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
@@ -18,6 +23,7 @@ using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Utils.DB;
+using AAEmu.UnitTests.Utils.Mocks;
 
 using Microsoft.Data.Sqlite;
 
@@ -35,10 +41,14 @@ public sealed class NpcAggroLinkTests
     private QuietNpc _helper;
     private Character _abuser;
     private ProbeBehavior _behavior;
+    private WorldConfig _previousWorldConfig;
 
     [Before(Test)]
     public void SetUp()
     {
+        _previousWorldConfig = AppConfiguration.Instance.World;
+        AppConfiguration.Instance.World = new WorldConfig { PvPDurabilityLossRate = 0, PvEDurabilityLossRate = 0 };
+        ReplaceSingleton(new TeamManager(null, null, null));
         var worlds = new WorldManager(null, null, null, null, null);
         ReplaceSingleton(worlds);
         ReplaceSingleton(new DuelManager());
@@ -94,12 +104,68 @@ public sealed class NpcAggroLinkTests
     [After(Test)]
     public void TearDown()
     {
+        AppConfiguration.Instance.World = _previousWorldConfig;
         _connection?.Dispose();
         if (_world != null)
             GC.SuppressFinalize(_world);
         foreach (var (field, previous) in _singletons)
             field.SetValue(null, previous);
         _singletons.Clear();
+    }
+
+    [Test]
+    [Arguments("sight", true)]
+    [Arguments("distance", true)]
+    [Arguments("beyond help distance", false)]
+    [Arguments("beyond scan", false)]
+    [Arguments("hidden victim", false)]
+    [Arguments("unprotected faction", false)]
+    [Arguments("ordinary NPC", false)]
+    [Arguments("disabled help", false)]
+    [Arguments("wrong faction", false)]
+    [Arguments("cannot attack", false)]
+    [Arguments("duel", false)]
+    public async Task PlayerDamage_OnlyAnEligibleGuardAttacksTheAggressor(string trial, bool expected)
+    {
+        var victim = new GuardTestPlayer { Id = 55, ObjId = 55, Hp = 100, ParentWorld = _world, Region = _region,
+            IsVisible = trial != "hidden victim", Faction = new SystemFaction { Id = (FactionsEnum)1000, GuardHelp = trial != "unprotected faction" } };
+        var attacker = new GuardTestPlayer { Id = 56, ObjId = 56, Hp = 100, ParentWorld = _world, Region = _region,
+            IsVisible = true, Faction = new SystemFaction { Id = (FactionsEnum)1002 } };
+        attacker.Faction.Relations[victim.Faction.Id] = new FactionRelation { State = RelationState.Hostile };
+        _world.AddObject(victim);
+        _world.AddObject(attacker);
+        _region.AddObject(victim);
+        _region.AddObject(attacker);
+
+        _helper.Template.AggroLinkSpecialGuard = trial != "ordinary NPC";
+        _helper.Template.AcceptAggroLink = trial != "disabled help";
+        _helper.Template.AggroLinkSpecialRuleId = AggroLinkSpecialRuleKind.FactionHelp;
+        _helper.Template.AggroLinkSightCheck = trial is not ("distance" or "beyond help distance");
+        _helper.Template.AggroLinkHelpDist = 6;
+        if (trial == "wrong faction")
+            _helper.Faction.Id = (FactionsEnum)1001;
+        _helper.Faction.Relations[attacker.Faction.Id] = new FactionRelation
+            { State = trial == "cannot attack" ? RelationState.Friendly : RelationState.Hostile };
+        _helper.Transform.Local.SetPosition(trial switch { "distance" => 6, "beyond scan" => 51, _ => 10 }, 0, 0);
+        if (trial == "duel")
+        {
+            var online = typeof(Character).GetField("<IsOnline>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            online.SetValue(victim, true);
+            online.SetValue(attacker, true);
+            await Assert.That(DuelManager.Instance.TryCreateDuel(attacker, victim, 30, out var duel)).IsTrue();
+            duel.Active = true;
+        }
+
+        var damage = new DamageEffect { DamageType = DamageType.Siege, UseFixedDamage = true, FixedMin = 10, FixedMax = 10 };
+        for (var i = 0; i < 2; i++)
+            damage.Apply(attacker, new SkillCasterUnit(attacker.ObjId), victim, new SkillCastUnitTarget(victim.ObjId),
+                new CastSkill(10135, 0), new EffectSource(), null, DateTime.UtcNow);
+
+        await Assert.That(victim.Hp).IsEqualTo(80);
+        await Assert.That(_helper.AggroTable.ContainsKey(attacker.ObjId)).IsEqualTo(expected);
+        await Assert.That(_helper.AggroTable.ContainsKey(victim.ObjId)).IsFalse();
+        if (expected)
+            await Assert.That(_helper.AggroTable[attacker.ObjId].TotalAggro).IsEqualTo(1);
     }
 
     [Test]
@@ -495,6 +561,13 @@ public sealed class NpcAggroLinkTests
 
     private static void SetField<T>(T value, string field, object setting) =>
         typeof(T).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(value, setting);
+
+    private sealed class GuardTestPlayer : CharacterMock
+    {
+        public override int Flexibility => 0;
+        public override int BattleResist => 0;
+        public override float IncomingDamageMul => 1;
+    }
 
     private sealed class QuietNpc : Npc
     {

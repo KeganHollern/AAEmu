@@ -446,6 +446,8 @@ public class DamageEffect : EffectTemplate
             //trgCharacter.IsInBattle |= trg.Hp > 0;
             //trgCharacter.LastCombatActivity = DateTime.UtcNow;
             trgCharacter.SetHostileActivity(caster);
+            if (value > 0 && caster is Character aggressor && !duelEffect.IsDuelEffect)
+                NpcAggroLink.RequestGuardHelp(trgCharacter, aggressor);
         }
 
         if (attacker != null && (trg.Hp > 0 || attacker.IsInBattle))
