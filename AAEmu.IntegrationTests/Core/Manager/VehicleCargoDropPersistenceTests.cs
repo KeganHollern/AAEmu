@@ -38,7 +38,7 @@ public sealed partial class PlayerMailSendPersistenceTests
 {
     [Collection(nameof(CargoWreckMySql))]
     [Trait("Category", "GameMySql")]
-    public sealed class VehicleCargoDropPersistenceTests
+    public sealed partial class VehicleCargoDropPersistenceTests
     {
         [Theory]
         [InlineData(AttachPointKind.Box1, 1205, true, true)]
