@@ -157,15 +157,30 @@ public partial class Skill
     public SkillResult Use(BaseUnit caster, SkillCaster casterCaster, SkillCastTarget targetCaster, SkillObject skillObject,
         bool bypassGcd, out ushort skillResultValueUShort, out uint skillResultValueUInt)
     {
+        if (_interactionStage == InteractionStage.Finished)
+            _interactionStage = InteractionStage.None;
         skillResultValueUShort = 0;
         if (!TryEnterExecution(caster as Character, out var execution))
         {
+            ReleaseDoodadCast();
             Cancelled = true;
             skillResultValueUInt = 0;
             return SkillResult.ItemLocked;
         }
         using (execution)
-            return UseCore(caster, casterCaster, targetCaster, skillObject, bypassGcd, out skillResultValueUShort, out skillResultValueUInt);
+        {
+            var result = SkillResult.Failure;
+            try
+            {
+                result = UseCore(caster, casterCaster, targetCaster, skillObject, bypassGcd, out skillResultValueUShort, out skillResultValueUInt);
+                return result;
+            }
+            finally
+            {
+                if (result != SkillResult.Success)
+                    ReleaseDoodadCast();
+            }
+        }
     }
 
     private SkillResult UseCore(BaseUnit caster, SkillCaster casterCaster, SkillCastTarget targetCaster, SkillObject skillObject,
@@ -371,6 +386,13 @@ public partial class Skill
             }
         }
 
+        if (!TryStartDoodadCast(character, target))
+        {
+            Cancelled = true;
+            SkillTlIdManager.ReleaseId(TlId);
+            TlId = 0;
+            return SkillResult.Failure;
+        }
         if (!SkillCooldowns.TryStartGlobalCooldown(unit, Template, _bypassGcd, DateTime.UtcNow))
         {
             SkillTlIdManager.ReleaseId(TlId);
@@ -419,11 +441,7 @@ public partial class Skill
         }
 
         // Calculate casting time if needed
-        var castTime = 0;
-        var baseCastTime = BaseCastingTime ?? Template.CastingTime;
-        if (baseCastTime > 0)
-            castTime = (int)(unit.CastTimeMul * unit.SkillModifiersCache.ApplyModifiers(this, SkillAttribute.CastTime, baseCastTime));
-        castTime = (int)Math.Round(castTime * CastTimeMultiplier);
+        var castTime = GetCastTime(unit);
 
         /*
         // TODO: Replace Old code
@@ -456,7 +474,13 @@ public partial class Skill
             };
             if (!IsItemProc)
                 unit.SkillTask = castTask;
-            TaskManager.Instance.Schedule(castTask, TimeSpan.FromMilliseconds(castTime));
+            if (_interactionDoodad != null)
+                _interactionStage = InteractionStage.Casting;
+            if (!TaskManager.Instance.Schedule(castTask, TimeSpan.FromMilliseconds(castTime)) && _interactionDoodad != null)
+            {
+                Stop(unit);
+                return SkillResult.Failure;
+            }
         }
         else
         {
@@ -789,6 +813,30 @@ public partial class Skill
 
     public void Cast(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject)
     {
+        if (_interactionStage != InteractionStage.None)
+        {
+            lock (SaveManager.PersistenceSyncRoot)
+            {
+                if (_interactionStage == InteractionStage.Finished)
+                    return;
+                if (!CanFinishDoodadCast())
+                {
+                    Stop(caster);
+                    return;
+                }
+                _interactionStage = InteractionStage.Firing;
+                try
+                {
+                    CastCore(caster, casterCaster, target, targetCaster, skillObject);
+                }
+                finally
+                {
+                    if (_interactionStage != InteractionStage.WaitingForEffects)
+                        ReleaseDoodadCast();
+                }
+                return;
+            }
+        }
         // Socket casts can finish after the initial entry lease ends. Exclude trades
         // through validation, mana use, and immediate effect/source consumption.
         if (!ItemSocketing.IsSocketingSkill(this))
@@ -1083,7 +1131,14 @@ public partial class Skill
         if (totalDelay > 0)
         {
             var thisSkillTask = new ApplySkillTask(this, caster, casterCaster, target, targetCaster, skillObject);
-            TaskManager.Instance.Schedule(thisSkillTask, TimeSpan.FromMilliseconds(totalDelay));
+            var scheduled = TaskManager.Instance.Schedule(thisSkillTask, TimeSpan.FromMilliseconds(totalDelay));
+            if (_interactionDoodad != null)
+            {
+                if (scheduled)
+                    _interactionStage = InteractionStage.WaitingForEffects;
+                else
+                    Stop(caster);
+            }
         }
         else
         {
@@ -1810,6 +1865,7 @@ public partial class Skill
             SkillTlIdManager.ReleaseId(TlId);
             TlId = 0;
         }
+        ReleaseDoodadCast();
     }
 
     /// <summary>
@@ -1819,6 +1875,28 @@ public partial class Skill
     /// <param name="channelDoodad"></param>
     public void Stop(BaseUnit caster, Doodad channelDoodad = null, SkillCaster casterCaster = null,
         [CallerMemberName] string stoppedBy = null)
+    {
+        if (_interactionStage == InteractionStage.None)
+        {
+            StopCore(caster, channelDoodad, casterCaster, stoppedBy);
+            return;
+        }
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (_interactionStage == InteractionStage.Finished)
+                return;
+            try
+            {
+                StopCore(caster, channelDoodad, casterCaster, stoppedBy);
+            }
+            finally
+            {
+                ReleaseDoodadCast();
+            }
+        }
+    }
+
+    private void StopCore(BaseUnit caster, Doodad channelDoodad, SkillCaster casterCaster, string stoppedBy)
     {
         if (caster is not Unit unit) { return; }
         if (Interlocked.Exchange(ref _stopRequested, 1) != 0)

@@ -3,7 +3,6 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units;
-using AAEmu.Game.Models.Tasks.Skills;
 
 namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
 
@@ -78,12 +77,13 @@ public class DoodadFuncUse : DoodadFuncTemplate
                 return;
             }
             var useSkill = new Skill(skillTemplate);
-            void StartChildSkill() => TaskManager.Instance.Schedule(new UseSkillTask(useSkill, caster,
-                new SkillCasterUnit(caster.ObjId), owner, new SkillCastDoodadTarget { ObjId = owner.ObjId }, null), TimeSpan.Zero);
-            if (SkillLaborBatch.Current is { } batch)
-                batch.AfterCommit(StartChildSkill);
-            else
-                StartChildSkill();
+            if (!useSkill.ScheduleDoodadUse(caster, owner))
+            {
+                if (caster is Character user)
+                    user.SkillCancelled = true;
+                owner.ToNextPhase = false;
+                return;
+            }
         }
 
         owner.ToNextPhase = skillId > 0;

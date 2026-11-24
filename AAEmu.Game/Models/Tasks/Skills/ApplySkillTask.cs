@@ -14,7 +14,6 @@ public class ApplySkillTask(
 {
     public override void Execute()
     {
-        skill.ApplyEffects(caster, casterCaster, target, targetCaster, skillObject);
-        skill.EndSkill(caster);
+        skill.ApplyScheduledEffects(caster, casterCaster, target, targetCaster, skillObject);
     }
 }
