@@ -181,6 +181,13 @@ public class TransferManager
             doodad.AttachPoint = doodadBinding.AttachPointId;
             switch (doodadBinding.AttachPointId)
             {
+                // Model 314, transfers_floatship02.cgf: the front and rear benches face each other.
+                case AttachPointKind.Passenger0 when transfer.ModelId == 314:
+                    doodad.Transform.Local.SetPosition(0.02091537f, 5.013110f, 1.463596f, 0, 0, MathF.PI);
+                    break;
+                case AttachPointKind.Passenger1 when transfer.ModelId == 314:
+                    doodad.Transform.Local.SetPosition(0.02785782f, -2.598603f, 1.463596f, 0, 0, 0);
+                    break;
                 case AttachPointKind.Passenger0:
                     doodad.Transform.Local.SetPosition(0.00537476f, 5.7852f, 1.36648f, 0, 0, MathF.PI * 2f);
                     break;

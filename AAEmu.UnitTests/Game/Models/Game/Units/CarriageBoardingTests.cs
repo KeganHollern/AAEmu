@@ -145,7 +145,7 @@ public sealed class CarriageBoardingTests
         template.TransferAllPaths.Add(new TransferPaths { Id = pathId, OwnerId = id, PathName = path,
             WaitTimeStart = id == 123 ? 30 : 0, WaitTimeEnd = 150 });
         template.TransferRoads.Add(new TransferRoads { Name = path, Pos = [first, next] });
-        ConfigureSpawn(template);
+        ConfigureSpawn(template, cabinModelId: 1459, seatId: 7156, phaseId: 19351, rear: (7959, 21906));
         world.TransferManager = new TransferManager();
         var file = Path.Combine(AppContext.BaseDirectory, "Data", "Worlds", "main_world", "transfer_spawns.json");
         var spawner = JsonHelper.DeserializeObject<List<TransferSpawner>>(await File.ReadAllTextAsync(file)).Single(s => s.UnitId == id);
@@ -206,6 +206,41 @@ public sealed class CarriageBoardingTests
         await Assert.That(Motor(modelId, point, childId).UsesCarriageSocket).IsFalse();
     }
 
+    [Test]
+    public async Task MarianopleTram_BothBenchesUseTheCabinModelSockets()
+    {
+        var world = SetUpStation();
+        var motorTemplate = Motor(606, AttachPointKind.Trailed0, 4).Template;
+        motorTemplate.Id = 3;
+        var start = new WorldSpawnPosition { X = 10936.2905f, Y = 12044.841f, Z = 130.25333f, ZoneId = 183 };
+        var next = new WorldSpawnPosition { X = 10933.959f, Y = 12024.92f, Z = 131.47528f, ZoneId = 183 };
+        motorTemplate.TransferRoads.Add(new TransferRoads { Name = "mari_tram_01", Pos = [start, next] });
+        ConfigureSpawn(motorTemplate, cabinModelId: 314, seatId: 5921, phaseId: 15276);
+        world.TransferManager = new TransferManager();
+        var motor = new TransferSpawner { ParentWorld = world, Position = start, UnitId = 3 }.Spawn(0);
+        var cabin = motor.Bounded;
+        await Assert.That(cabin.BondingObjId).IsEqualTo(motor.ObjId);
+        await Assert.That(cabin.AttachedDoodads.Count).IsEqualTo(2);
+        var passenger = new CharacterMock { Id = 10, ObjId = 100, ParentWorld = world };
+
+        var front = cabin.AttachedDoodads.Single(d => d.AttachPoint == AttachPointKind.Passenger0);
+        var rear = cabin.AttachedDoodads.Single(d => d.AttachPoint == AttachPointKind.Passenger1);
+        // Compiled nodes $passenger0 and $passenger1 on transfers_floatship02.cgf.
+        await CheckTramBench(front, cabin, new Vector3(0.02091537f, 5.013110f, 1.463596f), -Vector3.UnitY);
+        await CheckTramBench(rear, cabin, new Vector3(0.02785782f, -2.598603f, 1.463596f), Vector3.UnitY);
+        await BoardAndLeave(passenger, front);
+        await BoardAndLeave(passenger, rear);
+    }
+
+    private static async Task CheckTramBench(Doodad bench, Transfer cabin, Vector3 local, Vector3 forward)
+    {
+        await Assert.That(bench.ParentObjId).IsEqualTo(cabin.ObjId);
+        await Assert.That(bench.Transform.Parent).IsSameReferenceAs(cabin.Transform);
+        await CheckPoint(bench.Transform.Local.Position, local);
+        await CheckPoint(bench.Transform.World.Position, cabin.Transform.TransformPoint(local));
+        await CheckPoint(Vector3.Transform(Vector3.UnitY, bench.Transform.Local.ToQuaternion()), forward);
+    }
+
     private static Transfer Motor(uint modelId, AttachPointKind point, uint childId)
     {
         var template = new TransferTemplate { Id = 6, ModelId = modelId, WaitTime = 20, Cyclic = true, PathSmoothing = 8 };
@@ -260,12 +295,13 @@ public sealed class CarriageBoardingTests
         return new WorldInstance(template, 0, true, 0) { Regions = new Region[regions, regions] };
     }
 
-    private void ConfigureSpawn(TransferTemplate motor)
+    private void ConfigureSpawn(TransferTemplate motor, uint cabinModelId = 653, uint seatId = 5890, uint phaseId = 15181,
+        (uint Id, uint Phase)? rear = null)
     {
-        var safari = motor.ModelId == 1463;
-        var cabin = new TransferTemplate { Id = safari ? 122u : 46u, ModelId = safari ? 1459u : 653u };
-        cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = safari ? 7156u : 5890u, AttachPointId = AttachPointKind.Passenger0 });
-        cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = safari ? 7959u : 5890u, AttachPointId = AttachPointKind.Passenger1 });
+        var (rearId, rearPhase) = rear ?? (seatId, phaseId);
+        var cabin = new TransferTemplate { Id = motor.TransferBindings[0].TransferId, ModelId = cabinModelId };
+        cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = seatId, AttachPointId = AttachPointKind.Passenger0 });
+        cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = rearId, AttachPointId = AttachPointKind.Passenger1 });
         var data = new TransferGameData();
         SetField(data, "_templates", new Dictionary<uint, TransferTemplate> { [motor.Id] = motor, [cabin.Id] = cabin });
         SetSingleton(data);
@@ -296,11 +332,11 @@ public sealed class CarriageBoardingTests
         var doodads = new DoodadManager(objects, null, null, null, null);
         SetEmptyDictionaries(doodads);
         var doodadTemplates = new Dictionary<uint, DoodadTemplate>();
-        foreach (var (templateId, phase) in new[] { (5890u, 15181u), (7156u, 19351u), (7959u, 21906u) })
+        foreach (var (id, phase) in new[] { (seatId, phaseId), (rearId, rearPhase) }.Distinct())
         {
-            var doodad = new DoodadTemplate { Id = templateId };
+            var doodad = new DoodadTemplate { Id = id };
             doodad.FuncGroups.Add(new DoodadFuncGroups { Id = phase, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Start });
-            doodadTemplates.Add(doodad.Id, doodad);
+            doodadTemplates.Add(id, doodad);
         }
         SetField(doodads, "_templates", doodadTemplates);
         SetSingleton(doodads);
@@ -323,7 +359,7 @@ public sealed class CarriageBoardingTests
     private static async Task BoardAndLeave(CharacterMock passenger, Doodad seat, uint skillId = 15857,
         AttachPointKind attachPoint = AttachPointKind.Passenger0)
     {
-        // Stock seat 5890 uses attachment 167. Safari chair 7156 uses attachment 193. Both give a two-place chair.
+        // Both bench types use stock skill 15857. The safari chair uses 23464 with attachment 193.
         var action = new DoodadFuncAttachment { AttachPointId = attachPoint, Space = 2, BondKindId = BondKind.BondChairDouble };
         passenger.Transform.Local.SetPosition(seat.Transform.World.Position);
         action.Use(passenger, seat, skillId);
