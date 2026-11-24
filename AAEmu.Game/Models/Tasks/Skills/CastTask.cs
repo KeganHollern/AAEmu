@@ -15,6 +15,8 @@ public class CastTask(
 {
     internal ShipRepairCast Repair { get; } = ShipRepairCast.Start(skill, caster, target);
 
+    internal ShipCargoPickupCast CargoPickup { get; } = ShipCargoPickupCast.Start(skill, caster, target);
+
     public override void Execute()
     {
         if (Cancelled || Skill.Cancelled || caster is not Unit unit || !Skill.IsItemProc && !ReferenceEquals(unit.SkillTask, this))
@@ -32,7 +34,7 @@ public class CastTask(
             return;
         }
 
-        if (Repair != null && !Repair.CanContinue(unit))
+        if ((Repair != null && !Repair.CanContinue(unit)) || (CargoPickup != null && !CargoPickup.CanContinue(unit)))
         {
             Skill.Stop(unit);
             return;
