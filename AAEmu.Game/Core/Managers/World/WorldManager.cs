@@ -906,7 +906,7 @@ public class WorldManager(
         if (TryGetGroundSurface(zoneId, x, y, z, out finalHeight, out var source))
         {
             if (source != GroundSurfaceSource.Terrain)
-                return AnchorNavigationSourcedHeight(ai, finalHeight);
+                finalHeight = AnchorNavigationSourcedHeight(ai, finalHeight);
 
             if (previousPosition is { } from && finalHeight < from.Z &&
                 GetWorldTemplateByZoneKey(zoneId) is { Name: "main_world", GeoData: { } geoData } &&

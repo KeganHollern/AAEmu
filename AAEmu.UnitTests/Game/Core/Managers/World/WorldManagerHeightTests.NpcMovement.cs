@@ -145,6 +145,75 @@ public sealed partial class WorldManagerHeightTests
         await Assert.That(npc.Movements.Single().Z).IsEqualTo(DeckZ);
     }
 
+    [Test]
+    [Arguments(true, DeckZ)]
+    [Arguments(false, DeckZ - 2f)]
+    public async Task MoveTowards_LowerWaypoint_PreservesFloorOnlyWithSolidSupport(bool hasDeck, float expected)
+    {
+        var npc = CreateDeckWalker(hasDeck);
+        var world = npc.ParentWorld.Template;
+        var nav = world.ZoneBaiLoader[1];
+        nav.VertexMissionReaders.Clear();
+        var net = nav.NetMissionReaders.Single();
+        net.NodeDescriptorList.Clear();
+        net.NodeDescriptorList[1] = new NodeDescriptor(net)
+        {
+            Id = 1, NavigationType = BaiNavigationType.WaypointHuman, Pos = new(111.5f, 100f, DeckZ - 2f)
+        };
+        await Assert.That(world.GeoData.TryGetGroundSurface(new Vector3(111.5f, 100f, DeckZ), out var sample)).IsTrue();
+        await Assert.That(sample.Source).IsEqualTo(GroundSurfaceSource.NavigationNode);
+        await Assert.That(sample.Height).IsEqualTo(DeckZ - 2f);
+
+        npc.MoveTowards(new Vector3(109f, 100f, DeckZ), Step, rangeTolerance: 0f);
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(expected);
+    }
+
+    [Test]
+    [Arguments(0, 1)]
+    [Arguments(0, -1)]
+    [Arguments(1, 1)]
+    [Arguments(1, -1)]
+    public async Task MoveTowards_DeckAcrossCellBoundary_KeepsFloorUntilItsEdge(int ownerCellX, int direction)
+    {
+        var npc = CreateDeckWalker();
+        var world = npc.ParentWorld.Template;
+        world.ZoneBaiLoader.Clear();
+        var west = world.Cells[0, 0];
+        var east = new WorldCell(1, 0, world);
+        SetPrivateMember(east, nameof(WorldCell.HeightMap), west.HeightMap);
+        SetPrivateMember(east, nameof(WorldCell.Loaded), true);
+        world.CellX = 2;
+        world.Cells = new WorldCell[,] { { west }, { east } };
+
+        // Move this single placement across the cell boundary. Only its owner has the brush record.
+        var objects = west.LoadedObjectDat;
+        west.LoadedObjectDat = null;
+        world.Cells[ownerCellX, 0].LoadedObjectDat = objects;
+        var brush = (ObjectDataType1Brush)objects.PrefabsList.Single();
+        var localOffset = WorldManager.CELL_SIZE - 111f - ownerCellX * WorldManager.CELL_SIZE;
+        brush.StartPos += Vector3.UnitX * localOffset;
+        brush.EndPos += Vector3.UnitX * localOffset;
+        brush.Matrix3X4 = new Matrix3x4 { M11 = 1f, M22 = 1f, M33 = 1f, M14 = localOffset };
+
+        var start = new Vector3(WorldManager.CELL_SIZE - direction * 0.25f, 100f, DeckZ);
+        var destination = start + Vector3.UnitX * (direction * 2f);
+        var next = start + Vector3.UnitX * (Step * direction);
+        await Assert.That(world.GeoData.TryGetGroundSurface(next, out var ground)).IsTrue();
+        await Assert.That(ground.Source).IsEqualTo(GroundSurfaceSource.Terrain);
+        await Assert.That(ground.Height).IsEqualTo(0f);
+        npc.Transform.Local.SetPosition(start);
+        for (var step = 1; step <= 3; step++)
+        {
+            npc.MoveTowards(destination, Step, rangeTolerance: 0f);
+            await Assert.That(npc.Transform.Local.Position).IsEqualTo(start + Vector3.UnitX * (step * Step * direction));
+            await Assert.That(npc.Movements[^1].Z).IsEqualTo(DeckZ);
+        }
+
+        var edge = npc.Transform.Local.Position - Vector3.UnitY;
+        npc.MoveTowards(edge, 1f, rangeTolerance: 0f);
+        await Assert.That(npc.Transform.Local.Position).IsEqualTo(new Vector3(edge.X, edge.Y, 0f));
+    }
+
     private MovementProbeNpc CreateDeckWalker(bool hasDeck = true, bool hasGap = false, List<string> overlappingModelReads = null)
     {
         AppConfiguration.Instance.World.GeoDataMode = true;
