@@ -7,6 +7,7 @@ using AAEmu.Game.Models.CryEngine.Entities;
 using AAEmu.Game.Models.CryEngine.Loaders;
 using AAEmu.Game.Models.CryEngine.Readers;
 using AAEmu.Game.Models.Game.Models;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
 
@@ -579,6 +580,93 @@ public class WorldTemplateTests
         var position = new PositionAndRotation(10, 10, -4, 0, 0, 0);
         SlaveManager.ApplyPortalBoatWaterline(position, null);
         await Assert.That(position.Position.Z).IsEqualTo(-4f);
+    }
+
+    [Test]
+    [Arguments(71, 71f)]
+    [Arguments(70, 100f)]
+    [Arguments(57, 100f)]
+    public async Task CargoDropDepthUsesTheMeasuredFloorAtTheDropPoint(int floor, float expected)
+    {
+        // A coastal navigation node can say 84 m while the seabed is below 70 m in a 100 m ocean.
+        var template = CreateWorldTemplate(CreateHeightMap((ushort)floor));
+        var point = new Vector3(0.5f, 0.5f, 100);
+        AddNetMissionBai(template, new Vector3(point.X, point.Y, 84), BaiNavigationType.Triangular);
+        var vehicle = CreateDropVehicle(template, 100);
+
+        await Assert.That(template.GeoData.GetHeight(point)).IsEqualTo(84f);
+        await Assert.That(vehicle.GetCargoDropHeight(point)).IsEqualTo(expected);
+        // Stock wreck chest 1327 goes to the floor. Floating debris 1330 uses the water.
+        await Assert.That(vehicle.GetDebrisDropHeight(point, false)).IsEqualTo((float)floor);
+        await Assert.That(vehicle.GetDebrisDropHeight(point, true)).IsEqualTo(100f);
+    }
+
+    [Test]
+    [Arguments(0f, 0f)]
+    [Arguments(29f, 0f)]
+    [Arguments(30f, 30f)]
+    public async Task CargoDropDepthAcceptsARealZeroSeabed(float water, float expected)
+    {
+        var template = CreateWorldTemplate(CreateHeightMap());
+        var point = new Vector3(0.5f, 0.5f, water);
+        AddNetMissionBai(template, new Vector3(point.X, point.Y, 5), BaiNavigationType.Triangular);
+        var vehicle = CreateDropVehicle(template, water);
+
+        await Assert.That(template.TryGetHeight(point.X, point.Y, out var floor)).IsTrue();
+        await Assert.That(floor).IsEqualTo(0f);
+        await Assert.That(vehicle.GetCargoDropHeight(point)).IsEqualTo(expected);
+        await Assert.That(vehicle.GetDebrisDropHeight(point, false)).IsEqualTo(0f);
+        await Assert.That(vehicle.GetDebrisDropHeight(point, true)).IsEqualTo(water);
+    }
+
+    [Test]
+    public async Task CargoDropOnAnElevatedWalkableFloorKeepsItsLayer()
+    {
+        var template = CreateWorldTemplate(CreateHeightMap(20));
+        var point = new Vector3(0.5f, 0.5f, 90);
+        AddNetMissionBai(template, point, BaiNavigationType.WaypointHuman);
+        var vehicle = CreateDropVehicle(template, 70);
+
+        await Assert.That(vehicle.GetCargoDropHeight(point)).IsEqualTo(90f);
+        await Assert.That(vehicle.GetDebrisDropHeight(point, false)).IsEqualTo(90f);
+    }
+
+    [Test]
+    public async Task CargoDropUsesWaterAtItsOwnPosition()
+    {
+        var template = CreateWorldTemplate(CreateHeightMap(70));
+        var vehicle = CreateDropVehicle(template, 90);
+        var point = new Vector3(10, 10, 105);
+        vehicle.ParentWorld.Water.AddSquareArea("raised water", point, 4, 45);
+
+        await Assert.That(vehicle.GetCargoDropHeight(point)).IsEqualTo(105f);
+        await Assert.That(vehicle.GetDebrisDropHeight(point, true)).IsEqualTo(105f);
+        await Assert.That(vehicle.GetCargoDropHeight(new Vector3(25, 25, 105))).IsEqualTo(70f);
+    }
+
+    [Test]
+    [Arguments(20f, 0f)]
+    [Arguments(90f, 90f)]
+    public async Task CargoDropWithoutAnyFloorKeepsThePreviousPlacement(float water, float expected)
+    {
+        var template = CreateWorldTemplate(1, 1);
+        var vehicle = CreateDropVehicle(template, water);
+        var point = new Vector3(12, 12, 40);
+
+        await Assert.That(template.GeoData.TryGetGroundSurface(point, out _)).IsFalse();
+        await Assert.That(vehicle.GetCargoDropHeight(point)).IsEqualTo(expected);
+        await Assert.That(vehicle.GetDebrisDropHeight(point, false)).IsEqualTo(0f);
+        await Assert.That(vehicle.GetDebrisDropHeight(point, true)).IsEqualTo(water);
+    }
+
+    private static Slave CreateDropVehicle(WorldTemplate template, float water)
+    {
+        template.GeoData = new AiGeoDataManager(template);
+        var vehicle = new Slave();
+        var world = new WorldInstance(template, 0, true, vehicle.Transform.InstanceId);
+        world.Water.OceanLevel = water;
+        vehicle.ParentWorld = world;
+        return vehicle;
     }
 
     // The r208022 compact binds Harpoon Clipper 14 to model 128 and ship model 3.

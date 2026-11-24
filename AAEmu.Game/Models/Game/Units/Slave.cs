@@ -735,7 +735,7 @@ public class Slave : Unit
     /// <summary>
     /// Destroys (de-spawns) any child doodads and slaves and drops trade packs if present in a random 1m range to the center of the vehicle
     /// </summary>
-    private void DestroyAttachedItems()
+    internal void DestroyAttachedItems()
     {
         // Destroy Doodads
         foreach (var doodad in AttachedDoodads)
@@ -778,13 +778,7 @@ public class Slave : Unit
                         newDoodad.PlantTime = DateTime.UtcNow;
                         newDoodad.Faction = FactionManager.Instance.GetFaction(FactionsEnum.Friendly);
 
-                        var floor = ParentWorld.Template.GeoData.GetHeight(newDoodad.Transform.World.Position); // WorldManager.Instance.GetHeight(newDoodad.Transform);
-                        var surface = WorldManager.Instance.GetWorld(doodad.Transform.InstanceId)?.Water?.GetWaterSurface(newDoodad.Transform.World.Position, out _) ?? 0f;
-                        var depth = surface - floor;
-
-                        // It seems that when the water is deep, drops to the water surface, otherwise, it sinks to the floor
-                        // Requires more testing, possibly a server setting?
-                        newDoodad.Transform.Local.SetHeight(depth < 30f ? floor : Math.Max(floor, surface));
+                        newDoodad.Transform.Local.SetHeight(GetCargoDropHeight(newDoodad.Transform.World.Position));
 
                         // Save new doodad
                         newDoodad.InitDoodad();
@@ -841,19 +835,33 @@ public class Slave : Unit
                 rng *= Random.Shared.NextSingle() * dropDoodad.Radius;
                 pos += rng;
                 doodad.Transform.Local.SetPosition(pos);
-                if (dropDoodad.OnWater == false)
-                {
-                    doodad.Transform.Local.SetHeight(doodad.ParentWorld.Template.GeoData.GetHeight(doodad.Transform.World.Position)); //WorldManager.Instance.GetHeight(doodad.Transform.ZoneId, pos.X, pos.Y, pos.Z));
-                }
-                else
-                {
-                    doodad.Transform.Local.SetHeight(WorldManager.Instance.GetWorld(doodad.Transform.InstanceId).Water.GetWaterSurface(pos, out _));
-                }
+                doodad.Transform.Local.SetHeight(GetDebrisDropHeight(pos, dropDoodad.OnWater));
                 doodad.Transform.Local.Rotate(0, 0, (float)(Random.Shared.NextDouble() * Math.PI * 2f));
                 doodad.InitDoodad();
                 doodad.Spawn();
             }
         }
+    }
+
+    internal float GetCargoDropHeight(Vector3 position)
+    {
+        var floor = GetDropFloor(position);
+        var surface = ParentWorld.Water?.GetWaterSurface(position, out _) ?? 0f;
+        return surface - floor < 30f ? floor : surface;
+    }
+
+    internal float GetDebrisDropHeight(Vector3 position, bool onWater)
+    {
+        return onWater ? ParentWorld.Water.GetWaterSurface(position, out _) : GetDropFloor(position);
+    }
+
+    private float GetDropFloor(Vector3 position)
+    {
+        if (ParentWorld.Template.GeoData.TryGetGroundSurface(position, out var ground))
+            return ground.Height;
+
+        // Preserve the previous placement when neither terrain nor navigation supplies a floor.
+        return 0f;
     }
 
     /// <summary>
