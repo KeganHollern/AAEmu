@@ -638,13 +638,9 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
 
                 spawnPos.Local.Position += spawnOffsetPos;
             }
-            else
+            else if (World.Template.GeoData?.TryGetGroundSurface(spawnPos.World.Position, out var ground) == true)
             {
-                // If a land vehicle, put it a the ground level of it's target spawn location
-                // TODO: check for maximum height difference for summoning
-                var h = World.Template.GeoData.GetHeight(spawnPos.World.Position);// WorldManager.Instance.GetHeight(spawnPos);
-                if (h > 0f)
-                    spawnPos.Local.SetHeight(h);
+                spawnPos.Local.SetHeight(ground.Height);
             }
 
             // Always spawn horizontal(level) and 90° CCW of the player
