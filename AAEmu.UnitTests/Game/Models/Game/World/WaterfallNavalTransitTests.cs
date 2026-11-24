@@ -533,11 +533,32 @@ public class WaterfallNavalTransitTests
     }
 
     [Test]
-    public async Task WaterfallUpdate_ObliqueHullClearsBothBrushesBeforeCapture()
+    [Arguments("wet")]
+    [Arguments("latched")]
+    [Arguments("dry")]
+    [Arguments("dry-latched")]
+    [Arguments("shore-latch")]
+    [Arguments("finite-pool")]
+    [Arguments("dry-below")]
+    [Arguments("shallow-below")]
+    public async Task WaterfallUpdate_ObliqueHullClearsBothBrushesBeforeCapture(string condition)
     {
         using var physics = new Jitter2.World();
         var ship = ShipAtWaterfall(physics, 300, 88f);
-        var water = ship.ParentWorld.Water = new WaterBodies { OceanLevel = 100 };
+        var water = ship.ParentWorld.Water = new WaterBodies { OceanLevel = condition == "finite-pool" ? 70f : 100f };
+        if (condition == "finite-pool")
+            water.AddSquareArea("lower pool on the course", new(317, 67, 100), 27, 25);
+        var heights = ship.ParentWorld.Template.Cells[0, 0].HeightMap;
+        if (condition is "dry" or "dry-latched")
+            heights[150, 25] = 116 * HeightUnitsPerMeter;
+        if (condition == "shore-latch")
+            for (var ix = 149; ix <= 151; ix++)
+            for (var iy = 24; iy <= 28; iy++)
+                heights[ix, iy] = 116 * HeightUnitsPerMeter;
+        if (condition is "dry-below" or "shallow-below")
+            for (var ix = 154; ix < 220; ix++)
+            for (var iy = 27; iy < 90; iy++)
+                heights[ix, iy] = (ushort)((condition == "dry-below" ? 115f : 99.875f) * HeightUnitsPerMeter);
         water.AddFromCellData(new WorldCell(0, 0, ship.ParentWorld.Template)
         {
             LoadedObjectDat = new ObjectsFile("crossing falls")
@@ -559,9 +580,40 @@ public class WaterfallNavalTransitTests
         body.Position = new JVector(300, 112, 50);
         ship.Transform.Local.SetPosition(300, 50, 112);
         ship.CreateWaterAndLandSurfaceCache();
+        ship.GroundContactLatched = condition is "latched" or "dry-latched";
+        if (condition == "shore-latch")
+        {
+            new ShipShoreInteraction().ResolveTerrainContacts(ship, step, physics);
+            await Assert.That(ship.GroundContactLatched).IsTrue();
+        }
+        if (condition is not ("wet" or "finite-pool"))
+        {
+            await Assert.That(update.Update(ship, step)).IsFalse();
+            await Assert.That(ship.GroundContactLatched).IsEqualTo(condition is "latched" or "dry-latched" or "shore-latch");
+            return;
+        }
         await Assert.That(update.Update(ship, step)).IsTrue();
 
-        // Lower water lies below the whole area. After a turn, the stern still
+        if (condition == "finite-pool")
+        {
+            for (var tick = 0; tick < 100 && ship.WaterfallTransitActive; tick++)
+            {
+                physics.Step((float)step.TotalSeconds, false);
+                update.Update(ship, step);
+            }
+            await Assert.That(ship.WaterfallTransitActive).IsFalse();
+            await Assert.That(ship.CachedWaterSurface).IsEqualTo(100f);
+            var bounds = body.Shapes[0].WorldBoundingBox;
+            foreach (var x in new[] { bounds.Min.X, bounds.Max.X })
+            foreach (var y in new[] { bounds.Min.Z, bounds.Max.Z })
+            {
+                await Assert.That(water.GetWaterSurface(new(x, y, body.Position.Y), out _)).IsEqualTo(100f);
+                await Assert.That(ship.ParentWorld.GetHeight(x, y)).IsEqualTo(88f);
+            }
+            return;
+        }
+
+        // At lower-water height, after a turn, the stern still
         // overlaps the second brush even though the hull cleared the first.
         body.Orientation = JQuaternion.CreateRotationY(MathF.PI / 2f);
         body.Position = new JVector(309.5f, 100, 63);
