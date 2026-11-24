@@ -40,7 +40,7 @@ public class HoldPositionBehavior : BaseCombatBehavior
         Ai.Owner.CurrentGameStance = GameStanceType.Relaxed;
         Ai.Owner.CurrentAlertness = MoveTypeAlertness.Idle;
 
-        Ai.Owner.InterruptSkills();
+        Ai.Owner.InterruptSkillsOnIdle();
         Ai.Owner.StopMovement();
         Ai.Owner.CurrentTarget = Ai.Owner;
 

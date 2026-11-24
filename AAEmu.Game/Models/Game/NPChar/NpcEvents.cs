@@ -227,6 +227,18 @@ public partial class Npc
         }
     }
 
+    internal void InterruptSkillsOnIdle()
+    {
+        // Rift controllers enter idle and hold position before their delayed on-spawn summons land.
+        if (TowerDefenseSpawnToken != null && SkillTask == null &&
+            ActivePlotState?.ActiveSkill is { Template.PlotOnly: true } skill &&
+            Template.Skills.TryGetValue(SkillUseConditionKind.OnSpawn, out var spawnSkills) &&
+            spawnSkills.Any(entry => entry.SkillId == skill.Id))
+            return;
+
+        InterruptSkills();
+    }
+
     private void OnSpawn(object sender, OnSpawnArgs args)
     {
         if (args.Npc is not Npc npc) { return; }
