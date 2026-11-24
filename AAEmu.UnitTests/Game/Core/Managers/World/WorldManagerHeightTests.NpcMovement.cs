@@ -80,6 +80,85 @@ public sealed partial class WorldManagerHeightTests
     }
 
     [Test]
+    [Arguments(true, DeckZ)]
+    [Arguments(false, 18f)]
+    public async Task MoveTowards_CaveBelowTerrain_ChecksTheFloorUnderBothFeet(bool hasFloor, float expectedHeight)
+    {
+        var npc = CreateDeckWalker(hasDeck: hasFloor);
+        var world = npc.ParentWorld.Template;
+        world.ZoneBaiLoader.Clear();
+        SetTerrainHeight(world, 18);
+
+        var destination = new Vector3(109f, 100f, DeckZ);
+        await Assert.That(world.GeoData.TryGetGroundSurface(destination, out var surface)).IsTrue();
+        await Assert.That(surface.Source).IsEqualTo(GroundSurfaceSource.Terrain);
+        await Assert.That(surface.Height).IsEqualTo(18f);
+
+        npc.MoveTowards(destination, Step, rangeTolerance: 0f);
+        await Assert.That(npc.Transform.Local.Position).IsEqualTo(new Vector3(111.5f, 100f, expectedHeight));
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(expectedHeight);
+    }
+
+    [Test]
+    public async Task MoveTowards_CaveFloorBelowTerrain_LeavesOnAnAuthoredAscent()
+    {
+        var npc = CreateDeckWalker();
+        npc.ParentWorld.Template.ZoneBaiLoader.Clear();
+        SetTerrainHeight(npc.ParentWorld.Template, 18);
+        var destination = new Vector3(111.5f, 100f, 18f);
+
+        npc.MoveTowards(destination, 13f, rangeTolerance: 0f, authoredPathZ: true);
+        await Assert.That(npc.Transform.Local.Position).IsEqualTo(destination);
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(18f);
+    }
+
+    [Test]
+    public async Task MoveTowards_TerrainAboveCaveFloor_StaysOnTheSurface()
+    {
+        var npc = CreateDeckWalker();
+        var world = npc.ParentWorld.Template;
+        world.ZoneBaiLoader.Clear();
+        SetTerrainHeight(world, 18);
+        npc.Transform.Local.SetPosition(112f, 100f, 18f);
+
+        npc.MoveTowards(new Vector3(109f, 100f, 18f), Step, rangeTolerance: 0f);
+        await Assert.That(npc.Transform.Local.Position).IsEqualTo(new Vector3(111.5f, 100f, 18f));
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(18f);
+    }
+
+    private static void SetTerrainHeight(WorldTemplate world, ushort height)
+    {
+        var samples = world.Cells[0, 0].HeightMap;
+        for (var x = 0; x < samples.GetLength(0); x++)
+        for (var y = 0; y < samples.GetLength(1); y++)
+            samples[x, y] = height;
+    }
+
+    [Test]
+    [Arguments(10, 2, DeckZ, DeckZ)]
+    [Arguments(2, 10, DeckZ, DeckZ)]
+    [Arguments(10, 2, 5f, 7f)]
+    public async Task MoveTowards_AtCaveMouth_StaysOnItsStartingSurface(int west, int east, float footZ, float expectedZ)
+    {
+        var reads = new List<string>();
+        var npc = CreateDeckWalker(overlappingModelReads: reads);
+        var world = npc.ParentWorld.Template;
+        world.ZoneBaiLoader.Clear();
+        var samples = world.Cells[0, 0].HeightMap;
+        for (var y = 0; y < samples.GetLength(1); y++)
+        {
+            samples[55, y] = (ushort)west;
+            samples[56, y] = (ushort)east;
+        }
+        // Terrain crosses the flat floor at X 111. The two feet lie 0.25 m on either side.
+        npc.Transform.Local.SetPosition(111.25f, 100f, footZ);
+        npc.MoveTowards(new Vector3(109.25f, 100f, footZ), Step, rangeTolerance: 0f);
+        await Assert.That(npc.Transform.Local.Position).IsEqualTo(new Vector3(110.75f, 100f, expectedZ));
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(expectedZ);
+        await Assert.That(reads.Count > 0).IsEqualTo(footZ == DeckZ);
+    }
+
+    [Test]
     public async Task MoveTowards_TerrainBelowDeck_StaysOnTerrain()
     {
         var npc = CreateDeckWalker();
