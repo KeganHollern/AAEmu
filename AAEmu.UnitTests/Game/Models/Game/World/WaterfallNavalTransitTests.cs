@@ -201,15 +201,7 @@ public class WaterfallNavalTransitTests
         var ship = ShipAtWaterfall(physics, lip, 99f);
         var water = ship.ParentWorld.Water;
         water.OceanLevel = 90;
-        var pool = new WaterBodyArea("receiving pool", WaterBodyAreaType.Polygon)
-        {
-            Id = (uint)water.Areas.Count,
-            Points = [new(lip, 0, 100), new(lip + 12, 0, 100), new(lip + 12, 20, 100), new(lip, 20, 100)],
-            Depth = 12
-        };
-        pool.UpdateBounds();
-        water.Areas.Add(pool);
-        water.RebuildSpatialIndex();
+        water.AddSquareArea("receiving pool", new(lip + 6, 10, 100), 12, 12);
         await Assert.That(water.GetWaterSurface(new(lip + 4, 10, 90), out _)).IsEqualTo(100f);
         await Assert.That(water.GetWaterSurface(new(lip + 16, 10, 100), out _)).IsEqualTo(90f);
         var update = new ShipWaterfallInteraction();
@@ -222,6 +214,81 @@ public class WaterfallNavalTransitTests
         await Assert.That(update.Update(ship, elapsed)).IsTrue();
         await Assert.That(ship.WaterfallTransitActive).IsTrue();
         await Assert.That(ship.CachedWaterSurface).IsEqualTo(112f);
+    }
+
+    [Test]
+    [Arguments(100f, 0f)]
+    [Arguments(103f, -2f)]
+    [Arguments(108f, 2f)]
+    public async Task WaterfallUpdate_CapturesAtActualWaterlineWithLocalFlow(float surface, float flow)
+    {
+        using var physics = new Jitter2.World();
+        const int lip = WorldManager.CELL_SIZE - 12;
+        var ship = ShipAtWaterfall(physics, lip, 88f);
+        var water = ship.ParentWorld.Water;
+        AddFlowingPool(water, "projected pool", lip + 6, 105, 3);
+        if (flow != 0)
+            AddFlowingPool(water, "arrival pool", lip + 16, surface, flow);
+        var update = new ShipWaterfallInteraction();
+        var elapsed = TimeSpan.FromMilliseconds(16);
+        await Assert.That(update.Update(ship, elapsed)).IsTrue();
+        ship.RigidBody.Velocity = new JVector(5, -3, 0);
+
+        if (surface < 105f)
+        {
+            ship.RigidBody.Position = new JVector(lip + 16, 105, 10);
+            await Assert.That(update.Update(ship, elapsed)).IsTrue();
+        }
+        ship.RigidBody.Position = new JVector(lip + 16, surface - 0.5f, 10);
+        await Assert.That(update.Update(ship, elapsed)).IsFalse();
+        await Assert.That(ship.WaterfallTransitActive).IsFalse();
+        await Assert.That(ship.CachedWaterSurface).IsEqualTo(surface);
+        await Assert.That(ship.CachedWaterFlow).IsEqualTo(new Vector3(flow, 0, 0));
+        await Assert.That(ship.RigidBody.Position.Y).IsEqualTo(surface - 0.35f).Within(0.001f);
+        await Assert.That(ship.RigidBody.Velocity.X).IsEqualTo(flow + (5 - flow) * 0.65f).Within(0.001f);
+    }
+
+    [Test]
+    [Arguments(112f, true)]
+    [Arguments(84f, false)]
+    public async Task WaterfallUpdate_RefusesLocalSurfaceOutsideTheOriginalDrop(float surface, bool waitForTimeout)
+    {
+        using var physics = new Jitter2.World();
+        const int lip = WorldManager.CELL_SIZE - 12;
+        var ship = ShipAtWaterfall(physics, lip, 60f);
+        var water = ship.ParentWorld.Water;
+        AddFlowingPool(water, "projected pool", lip + 6, 105, 3);
+        AddFlowingPool(water, "arrival pool", lip + 16, surface, -2);
+        var update = new ShipWaterfallInteraction();
+        var elapsed = TimeSpan.FromMilliseconds(16);
+        await Assert.That(update.Update(ship, elapsed)).IsTrue();
+        ship.RigidBody.Position = new JVector(lip + 16, 105, 10);
+        ship.RigidBody.Velocity = new JVector(5, -3, 0);
+        await Assert.That(update.Update(ship, elapsed)).IsTrue();
+        if (waitForTimeout)
+        {
+            // The stationary hull stays above the depth guard until the original flight deadline.
+            for (var tick = 0; tick < 15; tick++)
+                await Assert.That(update.Update(ship, TimeSpan.FromSeconds(0.25))).IsTrue();
+            for (var tick = 0; tick < 24 && ship.WaterfallTransitActive; tick++)
+                update.Update(ship, TimeSpan.FromSeconds(0.25));
+        }
+        else
+        {
+            ship.RigidBody.Position = ship.RigidBody.Position with { Y = 80 };
+            await Assert.That(update.Update(ship, elapsed)).IsFalse();
+        }
+        await Assert.That(ship.WaterfallTransitActive).IsFalse();
+        await Assert.That(ship.CachedWaterSurface).IsEqualTo(112f);
+        await Assert.That(ship.RigidBody.Position.X).IsLessThan(lip);
+    }
+
+    private static void AddFlowingPool(WaterBodies water, string name, float x, float surface, float flow)
+    {
+        var pool = water.AddSquareArea(name, new(x, 10, surface), 12, 32);
+        pool.FlowAxis = Vector2.UnitX;
+        pool.FlowSpeedAbs = MathF.Abs(flow);
+        pool.FlowSpeedSigned = flow;
     }
 
     [Test]
