@@ -181,13 +181,79 @@ public sealed class CarriageBoardingTests
     }
 
     [Test]
+    [Arguments(5u, 28u, "tiger01", 19u)]
+    [Arguments(26u, 42u, "tiger03", 129u)]
+    [Arguments(27u, 43u, "tiger04", 141u)]
+    public async Task TigerCart_TrailerUsesTheStockSocketInBothDirections(uint motorId, uint trailerId, string routeName, uint routeId)
+    {
+        // These are the first three signed stock points. The short fixture reverses at the third point.
+        Vector3[] samples = motorId switch
+        {
+            5 => [new(22085.93469f, 8411.0393f, 433.98453f), new(22087.02539f, 8412.5343f, 433.98389f), new(22089.51367f, 8416.0248f, 433.98154f)],
+            26 => [new(22207.93158f, 8578.9711f, 525.12854f), new(22211.52545f, 8584.0393f, 525.14624f), new(22212.45691f, 8585.1235f, 525.57666f)],
+            27 => [new(22295.90173f, 8700.0212f, 620.07593f), new(22297.39502f, 8702.079f, 620.08459f), new(22298.620f, 8703.7202f, 620.51428f)],
+            _ => throw new ArgumentOutOfRangeException(nameof(motorId))
+        };
+        var world = SetUpStation(cells: 23, modelId: 565, vehicleModelId: 17);
+        var template = Motor(565, AttachPointKind.Trailed0, trailerId).Template;
+        template.Id = motorId;
+        template.Cyclic = false;
+        template.WaitTime = 10;
+        var path = samples.Select(p => new WorldSpawnPosition { X = p.X, Y = p.Y, Z = p.Z, ZoneId = 258 }).ToList();
+        template.TransferAllPaths.Add(new TransferPaths { Id = routeId, OwnerId = motorId, PathName = routeName,
+            WaitTimeStart = 10, WaitTimeEnd = 10 });
+        template.TransferRoads.Add(new TransferRoads { Name = routeName, Pos = path });
+        var trailerTemplate = ConfigureSpawn(template, cabinModelId: 565);
+        trailerTemplate.TransferBindingDoodads.Clear();
+
+        world.TransferManager = new TransferManager();
+        var file = Path.Combine(AppContext.BaseDirectory, "Data", "Worlds", "main_world", "transfer_spawns.json");
+        var spawner = JsonHelper.DeserializeObject<List<TransferSpawner>>(await File.ReadAllTextAsync(file)).Single(s => s.UnitId == motorId);
+        spawner.ParentWorld = world;
+        var motor = spawner.Spawn(0);
+        var trailer = motor.Bounded;
+        await Assert.That(trailer.TemplateId).IsEqualTo(trailerId);
+        await Assert.That(trailer.BondingObjId).IsEqualTo(motor.ObjId);
+        await Assert.That(trailer.AttachPointId).IsEqualTo(AttachPointKind.Trailed0);
+        await Assert.That(trailer.AttachedDoodads.Count).IsEqualTo(0);
+
+        // On these straight segments the first and second cart keep their facing when their direction of travel changes.
+        var direction = samples[1] - samples[0];
+        var forward = Vector2.Normalize(new Vector2(direction.X, direction.Y));
+        var offset = new Vector3(-7.629541f * forward, 0);
+        await CheckPoint(motor.Transform.World.Position, samples[0]);
+        var parkedError = trailer.Transform.World.Position - (motor.Transform.World.Position + offset);
+        Console.WriteLine($"Rail cart {motorId}: initial trailer XY error {new Vector2(parkedError.X, parkedError.Y).Length():F3} m.");
+        await CheckPoint(trailer.Transform.World.Position, motor.Transform.World.Position + offset);
+        var sawForward = false;
+        var sawReverse = false;
+        for (var step = 0; step < 120 && !sawReverse; step++)
+        {
+            var before = motor.Transform.World.Position;
+            motor.WaitTime = DateTime.MinValue;
+            motor.MoveTo(motor);
+            var after = motor.Transform.World.Position;
+            var facing = Vector3.Transform(Vector3.UnitY, motor.Transform.World.ToQuaternion());
+            await Assert.That(Vector3.Dot(facing, new Vector3(forward, 0))).IsGreaterThan(0.95f);
+            await CheckPoint(trailer.Transform.World.Position, after - 7.629541f * facing);
+            if (Vector3.Distance(after, before) < 0.005f)
+                continue;
+            var travel = Vector2.Dot(new Vector2(after.X - before.X, after.Y - before.Y), forward);
+            sawForward |= travel > 0;
+            sawReverse |= motor.Reverse && travel < 0;
+        }
+        await Assert.That(sawForward).IsTrue();
+        await Assert.That(sawReverse).IsTrue();
+    }
+
+    [Test]
     public async Task CarriageWithoutRoute_UsesThePlacedMotorPoseIncludingRollAndPitch()
     {
         var motor = Motor(654, AttachPointKind.Trailed0, 46);
         var spawn = new WorldSpawnPosition { X = 150, Y = 160, Z = 0, Roll = 0.2f, Pitch = -0.1f, Yaw = 0.8f };
         var cabin = new Transfer { ModelId = 653 };
-        motor.InitializeCarriageMotor(spawn);
-        motor.PlaceCarriageCabin(cabin, false);
+        motor.InitializeRoutePose(spawn);
+        motor.PlaceTrailer(cabin, motor.TrailerSocket.Value, moving: false);
         var rotation = motor.Transform.Local.ToQuaternion();
         var socket = Vector3.Transform(new Vector3(0, -9.24417f, 1.2507583f), rotation);
         await CheckPoint(cabin.Transform.World.Position, new Vector3(150, 160, 0) + socket);
@@ -203,7 +269,20 @@ public sealed class CarriageBoardingTests
     [Arguments(604u, AttachPointKind.System, 30u)]
     public async Task OtherBindingsKeepTheirPlacement(uint modelId, AttachPointKind point, uint childId)
     {
-        await Assert.That(Motor(modelId, point, childId).UsesCarriageSocket).IsFalse();
+        await Assert.That(Motor(modelId, point, childId).TrailerSocket).IsNull();
+    }
+
+    [Test]
+    [Arguments(25u, 0u)]
+    [Arguments(40u, 28u)]
+    [Arguments(5u, 43u)]
+    public async Task OtherRailCartRoutesKeepTheirPlacement(uint motorId, uint trailerId)
+    {
+        var motor = Motor(565, AttachPointKind.Trailed0, trailerId);
+        motor.Template.Id = motorId;
+        if (trailerId == 0)
+            motor.Template.TransferBindings.Clear();
+        await Assert.That(motor.TrailerSocket).IsNull();
     }
 
     [Test]
@@ -308,7 +387,7 @@ public sealed class CarriageBoardingTests
         return new WorldInstance(template, 0, true, 0) { Regions = new Region[regions, regions] };
     }
 
-    private void ConfigureSpawn(TransferTemplate motor, uint cabinModelId = 653, uint seatId = 5890, uint phaseId = 15181,
+    private TransferTemplate ConfigureSpawn(TransferTemplate motor, uint cabinModelId = 653, uint seatId = 5890, uint phaseId = 15181,
         (uint Id, uint Phase)? rear = null)
     {
         var (rearId, rearPhase) = rear ?? (seatId, phaseId);
@@ -353,6 +432,7 @@ public sealed class CarriageBoardingTests
         }
         SetField(doodads, "_templates", doodadTemplates);
         SetSingleton(doodads);
+        return cabin;
     }
 
     private static void SetEmptyDictionaries<T>(T manager)

@@ -107,8 +107,9 @@ public class TransferManager
         owner.Hp = owner.MaxHp;
         owner.Mp = owner.MaxMp;
         owner.Bounded = null;
-        if (owner.UsesCarriageSocket)
-            owner.InitializeCarriageMotor(spawner.Position);
+        var trailerSocket = owner.TrailerSocket;
+        if (trailerSocket.HasValue)
+            owner.InitializeRoutePose(spawner.Position);
         else
             owner.Transform.ApplyWorldSpawnPosition(spawner.Position);
         owner.Transform.ResetFinalizeTransform();
@@ -145,8 +146,8 @@ public class TransferManager
         transfer.Hp = transfer.MaxHp;
         transfer.Mp = transfer.MaxMp;
         transfer.Transform.ApplyWorldSpawnPosition(spawner.Position);
-        if (owner.UsesCarriageSocket)
-            owner.PlaceCarriageCabin(transfer, moving: false);
+        if (trailerSocket is { } socket)
+            owner.PlaceTrailer(transfer, socket, moving: false);
         else
         {
             transfer.Transform.Local.AddDistanceToFront(Transfer.BoundedChildAlongFrontOffsetMeters);

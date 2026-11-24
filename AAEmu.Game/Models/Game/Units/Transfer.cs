@@ -24,11 +24,26 @@ public class Transfer : Unit
     // The stock carriage and ghost safari heads have the same model-local $trailed0 socket.
     private static readonly Vector3 CarriageSocket = new(0, BoundedChildAlongFrontOffsetMeters, 1.2507583f);
 
-    internal bool UsesCarriageSocket =>
-        Template?.TransferBindings.FirstOrDefault() is { AttachPointId: AttachPointKind.Trailed0 } binding &&
-        (ModelId, binding.TransferId) is (654, 46) or (1463, 122);
+    // transfers_cart01.cgf, model 565, places the second rail cart at this socket.
+    private static readonly Vector3 RailCartSocket = new(0, -7.629541f, 0);
 
-    internal void InitializeCarriageMotor(WorldSpawnPosition spawn)
+    internal Vector3? TrailerSocket
+    {
+        get
+        {
+            if (Template?.TransferBindings.FirstOrDefault() is not { AttachPointId: AttachPointKind.Trailed0 } binding)
+                return null;
+
+            return (ModelId, Template.Id, binding.TransferId) switch
+            {
+                (654, _, 46) or (1463, _, 122) => CarriageSocket,
+                (565, 5, 28) or (565, 26, 42) or (565, 27, 43) => RailCartSocket,
+                _ => null
+            };
+        }
+    }
+
+    internal void InitializeRoutePose(WorldSpawnPosition spawn)
     {
         var route = Template.TransferRoads.FirstOrDefault()?.Pos;
         if (route is { Count: >= 2 })
@@ -45,9 +60,9 @@ public class Transfer : Unit
         Rot = Transform.Local.ToQuaternion();
     }
 
-    internal void PlaceCarriageCabin(Transfer cabin, bool moving)
+    internal void PlaceTrailer(Transfer cabin, Vector3 socket, bool moving)
     {
-        var point = Transform.TransformPoint(CarriageSocket);
+        var point = Transform.TransformPoint(socket);
         var rotation = Transform.World.Rotation;
         cabin.Rot = Rot;
         if (moving)
@@ -522,8 +537,8 @@ public class Transfer : Unit
         {
             transfer.AngVel = new Vector3(-MaxVelocityForward, 0, 0);
         }
-        var carriage = transfer.UsesCarriageSocket;
-        if (carriage)
+        var trailerSocket = transfer.TrailerSocket;
+        if (trailerSocket.HasValue)
         {
             // The mesh faces +Y. The route angle is measured from +X.
             var modelYaw = (float)transfer.Angle - MathF.PI / 2;
@@ -549,7 +564,7 @@ public class Transfer : Unit
 
         // Added so whatever riding this, doesn't clip out of existence when moving
         transfer.Transform.FinalizeTransform();
-        if (!carriage)
+        if (!trailerSocket.HasValue)
         {
             transfer.SetPosition(transfer.vPosition.X, transfer.vPosition.Y, transfer.vPosition.Z, 0, 0, (float)transfer.Angle);
             transfer.Transform.World.SetPosition(transfer.vPosition, new Vector3(0, 0, (float)transfer.Angle));
@@ -561,8 +576,8 @@ public class Transfer : Unit
         if (transfer.Bounded is not null)
         {
             var child = transfer.Bounded;
-            if (carriage)
-                transfer.PlaceCarriageCabin(child, moving: true);
+            if (trailerSocket is { } socket)
+                transfer.PlaceTrailer(child, socket, moving: true);
             else
             {
                 var (cx, cy) = MathUtil.AddDistanceToFront(BoundedChildAlongFrontOffsetMeters,

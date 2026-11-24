@@ -46,7 +46,8 @@ public class TransferSpawner : Spawner<Transfer>
         }
 
         transfer.Spawner = this;
-        if (!transfer.UsesCarriageSocket)
+        var usesRoutePose = transfer.TrailerSocket.HasValue;
+        if (!usesRoutePose)
             transfer.Transform.ApplyWorldSpawnPosition(Position, transfer.Transform.InstanceId, true);
         if (transfer.Transform == null)
         {
@@ -87,7 +88,7 @@ public class TransferSpawner : Spawner<Transfer>
 
                     //transfer.Position.RotationZ = MathUtil.ConvertDegreeToDirection(MathUtil.RadianToDegree(transfer.Angle));
                     //var quat = Quaternion.CreateFromYawPitchRoll((float)transfer.Angle, 0.0f, 0.0f);
-                    if (!transfer.UsesCarriageSocket)
+                    if (!usesRoutePose)
                     {
                         var quat = MathUtil.ConvertRadianToDirectionShort(transfer.Angle);
                         transfer.Rot = new Quaternion(quat.X, quat.Z, quat.Y, quat.W);
