@@ -19,7 +19,7 @@ public partial class AiGeoDataManager
 
     // A horizontal NPC step can leave a waypoint's region of influence while still on its solid deck.
     // Only a continuous piece of the same placed mesh can supersede the terrain result for this step.
-    internal bool TryFollowStaticFloor(Vector3 from, Vector3 to, out float floor, NpcStepSurfaceTrace trace = null)
+    internal bool TryFollowStaticFloor(Vector3 from, Vector3 to, GroundSurfaceSource selectedSource, out float floor, NpcStepSurfaceTrace trace = null)
     {
         floor = default;
         var (cellX, cellY) = from.ToCellIndex();
@@ -34,9 +34,17 @@ public partial class AiGeoDataManager
             trace?.Skip("StartTerrainUnavailable");
             return false;
         }
-        if (from.Z <= terrain + StaticFloorPrecision)
+        // At a cave mouth, terrain can cross the solid floor between the two feet.
+        // A walker already on the terrain needs no brush lookup.
+        var separation = from.Z - terrain;
+        if (MathF.Abs(separation) <= StaticFloorPrecision)
         {
-            trace?.Skip("StartFootOnOrBelowTerrain");
+            trace?.Skip("StartFootOnTerrain");
+            return false;
+        }
+        if (separation < 0f && selectedSource != GroundSurfaceSource.Terrain)
+        {
+            trace?.Skip("StartFootBelowTerrainWithNavigation");
             return false;
         }
         trace?.Skip("NoLoadedBrushData");

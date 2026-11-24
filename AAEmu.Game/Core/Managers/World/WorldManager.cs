@@ -913,11 +913,12 @@ public class WorldManager(
             if (source != GroundSurfaceSource.Terrain)
                 finalHeight = AnchorNavigationSourcedHeight(ai, finalHeight, trace);
 
-            if (previousPosition is { } from && finalHeight < from.Z)
+            if (previousPosition is { } from && (finalHeight < from.Z ||
+                source == GroundSurfaceSource.Terrain && finalHeight - from.Z > AiGeoDataManager.StaticFloorPrecision))
             {
                 if (GetWorldTemplateByZoneKey(zoneId) is { Name: "main_world", GeoData: { } geoData })
                 {
-                    if (geoData.TryFollowStaticFloor(from, new Vector3(x, y, from.Z), out var floor, trace))
+                    if (geoData.TryFollowStaticFloor(from, new Vector3(x, y, from.Z), source, out var floor, trace))
                     {
                         trace?.Select("StaticFloor");
                         return floor;
