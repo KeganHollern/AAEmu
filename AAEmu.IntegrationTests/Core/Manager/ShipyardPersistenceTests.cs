@@ -466,7 +466,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             });
         }
 
-        private void Replace<T>(T manager) where T : class
+        public void Replace<T>(T manager) where T : class
         {
             var previous = SwapSingleton(manager);
             _restore.Add(() => SwapSingleton(previous));

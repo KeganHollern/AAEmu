@@ -45,12 +45,12 @@ public sealed partial class CarriageBoardingTests
         var (world, template) = CreateAirship(id);
         // Route 111 faces southwest. Route 119 starts with a waypoint inside the 1.5 m arrival radius.
         var points = id == 111
-            ? AddAirshipLeg(template, 572, "air_hell_long_1", 245, 90, 0,
+            ? AddTransferLeg(template, 572, "air_hell_long_1", 245, 90, 0,
                 new(10728.4072f, 9374.8196f, 188.75999f), new(10684.3547f, 9343.0369f, 202.70792f))
-            : AddAirshipLeg(template, 595, "air_loka_hasla_1", 138, 90, 0,
+            : AddTransferLeg(template, 595, "air_loka_hasla_1", 138, 90, 0,
                 new(25367.3768f, 9749.2046f, 774.56689f), new(25367.7612f, 9748.9351f, 774.57239f),
                 new(25372.8812f, 9738.27f, 774.50543f));
-        var (ship, observer, session) = await SpawnAtAirshipStop(world, template);
+        var (ship, observer, session) = await SpawnUnboundTransfer(world, template);
         var start = points[0];
         var target = points[^1];
         var direction = target.AsPositionVector() - start.AsPositionVector();
@@ -73,11 +73,11 @@ public sealed partial class CarriageBoardingTests
     {
         var (world, template) = CreateAirship(114);
         // The final two points of leg 6 and the first two of leg 7 meet at the real Karkasse dock.
-        var arrival = AddAirshipLeg(template, 629, "air_mari_carcass_6", 145, 0, 90,
+        var arrival = AddTransferLeg(template, 629, "air_mari_carcass_6", 145, 0, 90,
             new(10447.2886f, 17331.3718f, 257.89609f), new(10522.9448f, 17317.6331f, 257.79001f));
-        var departure = AddAirshipLeg(template, 630, "air_mari_carcass_7", 145, 0, 0,
+        var departure = AddTransferLeg(template, 630, "air_mari_carcass_7", 145, 0, 0,
             new(10522.9451f, 17317.6331f, 257.79001f), new(10572.9763f, 17308.4037f, 257.47656f));
-        var (airship, observer, session) = await SpawnAtAirshipStop(world, template);
+        var (airship, observer, session) = await SpawnUnboundTransfer(world, template);
         var approach = arrival[0];
         var stop = arrival[1];
         await CheckPoint(airship.Transform.World.Position, approach.AsPositionVector());
@@ -131,7 +131,7 @@ public sealed partial class CarriageBoardingTests
         return (world, template);
     }
 
-    private static List<WorldSpawnPosition> AddAirshipLeg(TransferTemplate template, uint pathId, string name, uint zone,
+    private static List<WorldSpawnPosition> AddTransferLeg(TransferTemplate template, uint pathId, string name, uint zone,
         int startWait, int endWait, params Vector3[] points)
     {
         var route = points.Select(p => new WorldSpawnPosition { X = p.X, Y = p.Y, Z = p.Z, ZoneId = zone }).ToList();
@@ -142,7 +142,7 @@ public sealed partial class CarriageBoardingTests
     }
 
     private static async Task<(Transfer Ship, CharacterMock Observer, TransferVisibilityTests.RecordingSession Session)>
-        SpawnAtAirshipStop(WorldInstance world, TransferTemplate template)
+        SpawnUnboundTransfer(WorldInstance world, TransferTemplate template)
     {
         var file = Path.Combine(AppContext.BaseDirectory, "Data", "Worlds", "main_world", "transfer_spawns.json");
         var spawner = JsonHelper.DeserializeObject<List<TransferSpawner>>(await File.ReadAllTextAsync(file)).Single(s => s.UnitId == template.Id);
