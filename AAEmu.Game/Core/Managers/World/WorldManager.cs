@@ -874,13 +874,15 @@ public class WorldManager(
     public float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId)
         => GetReferenceHeight(ai, x, y, z, zoneId, null);
 
-    internal float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId, Vector3? previousPosition)
+    internal float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId, Vector3? previousPosition,
+        NpcStepSurfaceTrace trace = null)
     {
         float finalHeight;
 
         // 0. Just in case.
         if (ai == null)
         {
+            trace?.Select("ZoneHeight");
             finalHeight = GetHeight(zoneId, x, y, z);
             return finalHeight;
         }
@@ -888,6 +890,7 @@ public class WorldManager(
         // 1. If an NPC can fly, preserve its runtime home height.
         if (ai.Owner.CanFly)
         {
+            trace?.Select("FlyingHome");
             finalHeight = ai.HomePosition.Z;
             return finalHeight;
         }
@@ -897,6 +900,7 @@ public class WorldManager(
         {
             case HoldPositionBehavior:
             case IdleBehavior:
+                trace?.Select("BehaviorHome");
                 finalHeight = ai.HomePosition.Z;
                 return finalHeight;
         }
@@ -905,17 +909,30 @@ public class WorldManager(
         //    navigation-sourced heights are only a coarse hint and get re-anchored to ground truth.
         if (TryGetGroundSurface(zoneId, x, y, z, out finalHeight, out var source))
         {
+            trace?.Select(source.ToString());
             if (source != GroundSurfaceSource.Terrain)
-                finalHeight = AnchorNavigationSourcedHeight(ai, finalHeight);
+                finalHeight = AnchorNavigationSourcedHeight(ai, finalHeight, trace);
 
-            if (previousPosition is { } from && finalHeight < from.Z &&
-                GetWorldTemplateByZoneKey(zoneId) is { Name: "main_world", GeoData: { } geoData } &&
-                geoData.TryFollowStaticFloor(from, new Vector3(x, y, from.Z), out var floor))
-                return floor;
+            if (previousPosition is { } from && finalHeight < from.Z)
+            {
+                if (GetWorldTemplateByZoneKey(zoneId) is { Name: "main_world", GeoData: { } geoData })
+                {
+                    if (geoData.TryFollowStaticFloor(from, new Vector3(x, y, from.Z), out var floor, trace))
+                    {
+                        trace?.Select("StaticFloor");
+                        return floor;
+                    }
+                }
+                else
+                    trace?.Skip("MainWorldGeometryUnavailable");
+            }
+            else if (previousPosition.HasValue)
+                trace?.Skip("GroundNotBelowPreviousFoot");
 
             return finalHeight;
         }
 
+        trace?.Select("HomeWithoutGround");
         // 4. Take the default height
         return ai.HomePosition.Z;
     }
@@ -929,18 +946,24 @@ public class WorldManager(
     /// answer is within <see cref="NavigationAnchorTolerance"/> of an anchor it is the same floor measured
     /// badly, so the anchor wins; otherwise the NPC really is on another level and nav Z stands.
     /// </summary>
-    private static float AnchorNavigationSourcedHeight(NpcAi ai, float navigationHeight)
+    private static float AnchorNavigationSourcedHeight(NpcAi ai, float navigationHeight, NpcStepSurfaceTrace trace)
     {
         if (ai.Owner.CurrentTarget is { } target && !ReferenceEquals(target, ai.Owner))
         {
             var targetZ = target.Transform.World.Position.Z;
             if (Math.Abs(navigationHeight - targetZ) <= NavigationAnchorTolerance)
+            {
+                trace?.Select("TargetAnchor");
                 return targetZ;
+            }
         }
 
         var homeZ = ai.HomePosition.Z;
         if (Math.Abs(navigationHeight - homeZ) <= NavigationAnchorTolerance)
+        {
+            trace?.Select("HomeAnchor");
             return homeZ;
+        }
 
         return navigationHeight;
     }

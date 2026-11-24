@@ -6,6 +6,7 @@ using AAEmu.Game.Models.CryEngine.Objects;
 using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Utils;
+using static AAEmu.Game.Core.Managers.NpcStepSurfaceTrace.FloorSearch;
 
 namespace AAEmu.Game.Core.Managers;
 
@@ -18,16 +19,29 @@ public partial class AiGeoDataManager
 
     // A horizontal NPC step can leave a waypoint's region of influence while still on its solid deck.
     // Only a continuous piece of the same placed mesh can supersede the terrain result for this step.
-    internal bool TryFollowStaticFloor(Vector3 from, Vector3 to, out float floor)
+    internal bool TryFollowStaticFloor(Vector3 from, Vector3 to, out float floor, NpcStepSurfaceTrace trace = null)
     {
         floor = default;
         var (cellX, cellY) = from.ToCellIndex();
         var (nextX, nextY) = to.ToCellIndex();
-        if (Math.Abs(cellX - nextX) > 1 || Math.Abs(cellY - nextY) > 1 ||
-            !worldTemplate.TryGetHeight(from.X, from.Y, out var terrain) || from.Z <= terrain + StaticFloorPrecision)
+        if (Math.Abs(cellX - nextX) > 1 || Math.Abs(cellY - nextY) > 1)
+        {
+            trace?.Skip("StepOutsideNeighborCells");
             return false;
+        }
+        if (!worldTemplate.TryGetHeight(from.X, from.Y, out var terrain))
+        {
+            trace?.Skip("StartTerrainUnavailable");
+            return false;
+        }
+        if (from.Z <= terrain + StaticFloorPrecision)
+        {
+            trace?.Skip("StartFootOnOrBelowTerrain");
+            return false;
+        }
+        trace?.Skip("NoLoadedBrushData");
 
-        if (TryFollowFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, out floor))
+        if (TryFollowFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, out floor, trace))
             return true;
 
         // A brush belongs to one cell even where its floor extends into the next cell.
@@ -36,13 +50,13 @@ public partial class AiGeoDataManager
         for (var x = cellX - 1; x <= cellX + 1; x++)
         {
             if ((x != cellX || y != cellY) &&
-                TryFollowFloorInCell(worldTemplate.GetCell(x, y), from, to, out floor))
+                TryFollowFloorInCell(worldTemplate.GetCell(x, y), from, to, out floor, trace))
                 return true;
         }
         return false;
     }
 
-    private bool TryFollowFloorInCell(WorldCell cell, Vector3 from, Vector3 to, out float floor)
+    private bool TryFollowFloorInCell(WorldCell cell, Vector3 from, Vector3 to, out float floor, NpcStepSurfaceTrace trace)
     {
         floor = default;
         if (cell?.LoadedObjectDat is not { HasUnparsedObjects: false } objects)
@@ -52,28 +66,47 @@ public partial class AiGeoDataManager
         {
             var brushes = _groundBrushes.GetValue(objects, data => new CryWorldObjectIndex(
                 CryWorldObjectIndex.ReadBrushInstances(data, cell.CellX, cell.CellY)));
+            trace?.Observe(NoSharedBrush, cell);
             // Both feet must fit the same placement. Query only the previous foot's bucket.
             foreach (var brush in brushes.Query(from - Vector3.UnitZ * StaticFloorPrecision, from + Vector3.UnitZ * StaticFloorPrecision))
             {
-                if (to.X < brush.Min.X || to.X > brush.Max.X || to.Y < brush.Min.Y || to.Y > brush.Max.Y ||
-                    !brush.ModelUri.EndsWith(".cgf", StringComparison.OrdinalIgnoreCase))
+                if (!brush.ModelUri.EndsWith(".cgf", StringComparison.OrdinalIgnoreCase))
                     continue;
+                if (to.X < brush.Min.X || to.X > brush.Max.X || to.Y < brush.Min.Y || to.Y > brush.Max.Y)
+                {
+                    trace?.Observe(DestinationOutsideBrush, cell, brush);
+                    continue;
+                }
 
                 var asset = TryReadBrush(brush);
-                if (asset == null || asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
+                if (asset == null)
+                {
+                    trace?.Observe(GeometryUnavailable, cell, brush);
+                    continue;
+                }
+                trace?.Observe(NoStaticSolidMesh, cell, brush);
+                if (asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
                     continue;
 
-                foreach (var part in asset.Parts)
+                for (var index = 0; index < asset.Parts.Count; index++)
                 {
-                    if (part.PhysicsType != 0x1000 || part.Shape is not CryTriangleMesh mesh ||
-                        !TryFloorHit(part, brush.Transform, from, out var first) ||
-                        !TryFloorHit(part, brush.Transform, to, out var last))
+                    var part = asset.Parts[index];
+                    if (part.PhysicsType != 0x1000 || part.Shape is not CryTriangleMesh mesh)
+                        continue;
+                    trace?.Observe(NoStartFace, cell, brush, index);
+                    if (!TryFloorHit(part, brush.Transform, from, out var first))
+                        continue;
+                    trace?.Observe(NoEndFace, cell, brush, index, first.TriangleIndex);
+                    if (!TryFloorHit(part, brush.Transform, to, out var last))
                         continue;
 
                     if (!CanFollowFloorFaces(mesh,
                             part.Transform * brush.Transform, first.TriangleIndex, last.TriangleIndex, from, to))
+                    {
+                        trace?.Observe(FacesDisconnectedAlongStep, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
                         continue;
-
+                    }
+                    trace?.Observe(ContinuousStaticFloor, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
                     floor = last.Position.Z;
                     return true;
                 }
@@ -81,6 +114,7 @@ public partial class AiGeoDataManager
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException or OverflowException)
         {
+            trace?.Observe(GeometryUnavailable, cell);
             Logger.Debug(ex, "Could not read static floor geometry at {0} in {1}", from, worldTemplate.Name);
         }
         return false;
