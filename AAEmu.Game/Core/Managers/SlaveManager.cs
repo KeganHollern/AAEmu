@@ -1007,10 +1007,10 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         {
             if (attachPoints.TryGetValue(attachPoint, out var value))
             {
-                baseUnit.Transform = slave.Transform.CloneAttached(baseUnit);
-                baseUnit.Transform.Parent = slave.Transform;
-                baseUnit.Transform.Local.Translate(value.AsPositionVector());
-                baseUnit.Transform.Local.SetRotation(value.Roll, value.Pitch, value.Yaw);
+                // A hull updates the same child transform that it registered at spawn.
+                if (!ReferenceEquals(baseUnit.Transform.Parent, slave.Transform))
+                    baseUnit.Transform = slave.Transform.CloneAttached(baseUnit);
+                baseUnit.Transform.Local.SetPosition(value.X, value.Y, value.Z, value.Roll, value.Pitch, value.Yaw);
                 Logger.Debug($"Model id: {slave.ModelId} attachment {attachPoint} => pos {value} = {baseUnit.Transform}");
                 return;
             }

@@ -35,7 +35,7 @@ public sealed partial class SlaveRemovalTests
         const uint cart = 73;
         var position = new Vector3(100, 105, requestedZ);
         SetCartGround(route, terrainZ, position);
-        SetCartSpawnServices(cart);
+        SetVehicleSpawnServices(new SlaveTemplate { Id = cart, SlaveKind = SlaveKind.Machine, Name = "Cotton Wagon" });
         // This summon uses an in-memory character and no saved vehicle.
         _owner.Id = 0;
         _owner.Transform.Local.SetPosition(100, 100, requestedZ);
@@ -90,7 +90,7 @@ public sealed partial class SlaveRemovalTests
         template.ZoneBaiLoader.Add(0, bai);
     }
 
-    private void SetCartSpawnServices(uint cart)
+    private void SetVehicleSpawnServices(params SlaveTemplate[] templates)
     {
         foreach (var ids in new IdManager[] { new TlIdManager(), new ObjectIdManager() })
         {
@@ -99,9 +99,7 @@ public sealed partial class SlaveRemovalTests
             ids.Initialize();
             field.SetValue(null, ids);
         }
-        var vehicles = new Dictionary<uint, SlaveTemplate>
-            { [cart] = new() { Id = cart, SlaveKind = SlaveKind.Machine, Name = "Cotton Wagon" } };
-        SetField(SlaveGameData.Instance, "_slaveTemplates", vehicles);
+        SetField(SlaveGameData.Instance, "_slaveTemplates", templates.ToDictionary(template => template.Id));
         var formulas = new FormulaManager();
         var constant = new UnitFormula();
         typeof(Formula).GetProperty("Expression", BindingFlags.Instance | BindingFlags.NonPublic)!
