@@ -1,17 +1,22 @@
 using System.Collections.Concurrent;
 using System.Reflection;
+using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.TowerDefense;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.TowerDefs;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
+using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.Tasks.TowerDefense;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -75,6 +80,68 @@ public sealed class TowerDefenseProgressSnapshotTests : IDisposable
                 return true;
             });
         _tasks.Setup(tasks => tasks.Cancel(It.IsAny<GameTask>())).Returns((GameTask task) => task.Cancelled = true);
+    }
+
+    [Theory]
+    [InlineData("cr-ynystere-2-initial", true)]
+    [InlineData("cr-ynystere-2-step-1", false)]
+    [InlineData(null, true)]
+    public void StartManual_ChecksTheBoundTargetBeforeSavingOrAnnouncing(string initialPlacement, bool valid)
+    {
+        var definition = TowerDefGameData.Instance.Get(DefinitionId);
+        definition.Progs.Clear();
+        definition.Progs.Add(new TowerDefProg { Id = 14, CondToNextTime = 120 });
+        definition.TargetNpcSpawnerId = initialPlacement == null ? 12272u : 8939u;
+        var manifest = JObject.Parse(File.ReadAllText(_manifest));
+        var bindings = new JObject();
+        if (initialPlacement != null)
+            bindings["initial"] = new JArray(initialPlacement);
+        manifest["events"][0]["sites"] = new JArray(new JObject
+        {
+            ["key"] = "ynystere-2", ["spotId"] = 2, ["bindings"] = bindings
+        });
+        File.WriteAllText(_manifest, manifest.ToString());
+
+        using var manager = CreateManager();
+        var world = Assert.Single(_worlds.Values);
+        // The Ynystere portal and first wave controller belong to the same shipped site.
+        foreach (var (placement, template, unit) in new[]
+                 { ("cr-ynystere-2-initial", 8939u, 8051u), ("cr-ynystere-2-step-1", 8940u, 8052u) })
+            world.SpawnManager.AddNpcSpawner(new FixtureSpawner
+            {
+                EventPlacementId = placement, EventSiteKey = "ynystere-2", StartInactive = true,
+                UnitId = unit, NpcSpawnerIds = [template]
+            });
+
+        var packets = new List<byte[]>();
+        var session = new Mock<ISession>();
+        session.Setup(value => value.SendPacket(It.IsAny<byte[]>())).Callback<byte[]>(packets.Add);
+        var observer = new Character(new()) { Id = 900, ObjId = 900, ParentWorld = world };
+        observer.Transform = new Transform(null) { ZoneId = 7 };
+        observer.Connection = new GameConnection(session.Object);
+        world.AddObject(observer);
+
+        Assert.Equal(valid, manager.StartManual(EventKey, "ynystere-2", out var message));
+        if (!valid)
+        {
+            Assert.Contains("8939", message);
+            Assert.Contains("8940", message);
+            Assert.Empty(manager.GetActiveOccurrences());
+            Assert.Empty(world.GetAllNpcs());
+            Assert.Empty(packets);
+            Assert.Equal(0, Convert.ToInt32(ExecuteSql("SELECT COUNT(*) FROM tower_def_occurrences WHERE event_key='test.progress'")));
+            return;
+        }
+
+        var occurrence = Assert.Single(manager.GetActiveOccurrences());
+        if (initialPlacement == null)
+            Assert.Equal(0u, occurrence.TargetObjId);
+        else
+            Assert.Equal(Assert.Single(Units(occurrence, 8051)).ObjId, occurrence.TargetObjId);
+        Assert.True(manager.EndManual(EventKey, "test_complete", out message), message);
+        Assert.Empty(world.GetAllNpcs());
+        Assert.Equal(new[] { SCOffsets.SCTowerDefStartPacket, SCOffsets.SCTowerDefWaveStartPacket, SCOffsets.SCTowerDefEndPacket },
+            packets.Select(packet => BitConverter.ToUInt16(packet, 6)));
     }
 
     [Fact]
