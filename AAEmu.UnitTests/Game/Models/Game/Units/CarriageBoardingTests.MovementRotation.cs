@@ -46,9 +46,9 @@ public sealed partial class CarriageBoardingTests
         var next = new WorldSpawnPosition { X = nextX, Y = nextY, Z = nextZ, ZoneId = zone };
         template.TransferAllPaths.Add(new TransferPaths { Id = legId, OwnerId = id, PathName = legName });
         template.TransferRoads.Add(new TransferRoads { Name = legName, Pos = [start, next] });
-        ConfigureSpawn(template, cabinModelId: trailerModelId);
         if (id == 25)
-            template.TransferBindings.Clear();
+            template.TransferBindings.Clear(); // The stock tiger02 cart has no trailer.
+        ConfigureSpawn(template, cabinModelId: trailerModelId);
         SetSingleton(new NameManager());
         world.TransferManager = new TransferManager();
         var file = Path.Combine(AppContext.BaseDirectory, "Data", "Worlds", "main_world", "transfer_spawns.json");
@@ -68,15 +68,10 @@ public sealed partial class CarriageBoardingTests
         }
         var direction = motor.Transform.World.Position - initial;
         await Assert.That(direction.Length()).IsGreaterThan(0.1f);
-        var packet = session.Packets.Single(p => BitConverter.ToUInt16(p, 6) == SCOffsets.SCOneUnitMovementPacket
-            && new PacketStream(p, 8, p.Length - 8).ReadBc() == motor.ObjId);
-        var stream = new PacketStream(packet, 8, packet.Length - 8);
-        await Assert.That(stream.ReadBc()).IsEqualTo(motor.ObjId);
-        await Assert.That(stream.ReadByte()).IsEqualTo((byte)MoveTypeEnum.Transfer);
-        var movement = new TransferData();
-        movement.Read(stream);
-        await CheckObserverHeading(motor, viewer, session, direction);
-        await CheckHeading(direction, Vector3.Transform(Vector3.UnitY, movement.Rot));
+        // A bound trailer can also receive a movement update on this tick.
+        session.Packets.RemoveAll(p => BitConverter.ToUInt16(p, 6) != SCOffsets.SCOneUnitMovementPacket
+            || new PacketStream(p, 8, p.Length - 8).ReadBc() != motor.ObjId);
+        await CheckMovementAndObserver(motor, viewer, session, direction);
     }
 
     [Test]
