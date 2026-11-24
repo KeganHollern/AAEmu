@@ -45,6 +45,7 @@ namespace AAEmu.Game.Models.Game.Skills;
 
 public partial class Skill
 {
+    private const uint CharacterSlotScroll = 8000002;
     internal bool IsItemProc { get; init; }
     private static readonly Dictionary<Character, int> s_executingCharacters = [];
 
@@ -220,6 +221,13 @@ public partial class Skill
         {
             Cancelled = true;
             return SkillResult.InvalidSource;
+        }
+        // Origins includes all six character slots. Refuse before the item skill spends its scroll.
+        if (sourceItem?.TemplateId == CharacterSlotScroll && caster is Character slotOwner)
+        {
+            Cancelled = true;
+            slotOwner.SendErrorMessage(ErrorMessageType.AddCharacterSlotFail);
+            return SkillResult.Failure;
         }
         // Save and rename share this payload, including when a plot runs SavePortal.
         // Reject the name before GCD, buff removal, or any skill cost.

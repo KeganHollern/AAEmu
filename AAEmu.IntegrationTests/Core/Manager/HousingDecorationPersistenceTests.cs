@@ -94,7 +94,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             var player = graph.Sender;
             player.InitializeLaborCache(20, DateTime.UtcNow);
             Execute($"INSERT INTO accounts(account_id,labor) VALUES({player.AccountId},20) ON DUPLICATE KEY UPDATE labor=20");
-            Item AddItem(byte slot) => recovery != null ? graph.AddFurniture(slot, recovery.Item) :
+            Item AddItem(byte slot) => recovery != null ? graph.AddItem(slot, recovery.Item) :
                 stackable ? graph.AddItem(slot) : graph.AddEquipment(slot);
             var designId = recovery?.Design ?? 1u;
             var templateId = recovery?.Template ?? 1u;
