@@ -1,7 +1,9 @@
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Utils;
 
@@ -9,7 +11,28 @@ namespace AAEmu.Game.Models.Game.Char;
 
 internal static class ServiceInteraction
 {
-    internal static bool CanReach(Character character, BaseUnit target, float range = 5f)
+    private const float MerchantRange = 3f;
+
+    internal static bool CanReach(Character character, BaseUnit target, float range = 5f) =>
+        IsLiveServiceTarget(character, target) && CenterDistance(character, target) <= range;
+
+    internal static bool CanReachMerchant(Character character, Npc npc)
+    {
+        if (npc?.Template?.Merchant != true || !IsLiveServiceTarget(character, npc))
+            return false;
+
+        if (character.ModelId != 0 && npc.ModelId != 0 &&
+            ModelManager.Instance.GetActorModel(character.ModelId) is { } characterModel &&
+            ModelManager.Instance.GetActorModel(npc.ModelId) is { } merchantModel)
+            return QuestInteraction.GetActorEdgeDistance(character, characterModel, npc, merchantModel) <= MerchantRange;
+
+        return CenterDistance(character, npc) <= MerchantRange;
+    }
+
+    private static float CenterDistance(Character character, BaseUnit target) =>
+        MathUtil.CalculateDistance(character.Transform.World.Position, target.Transform.World.Position, true);
+
+    private static bool IsLiveServiceTarget(Character character, BaseUnit target)
     {
         var world = character?.ParentWorld;
         if (world == null || target?.Transform == null || character.Transform == null || target.ObjId == 0 ||
@@ -23,8 +46,7 @@ internal static class ServiceInteraction
             Doodad => (BaseUnit)world.GetDoodad(target.ObjId),
             _ => null
         };
-        return ReferenceEquals(current, target) &&
-            MathUtil.CalculateDistance(character.Transform.World.Position, target.Transform.World.Position, true) <= range;
+        return ReferenceEquals(current, target);
     }
 
     internal static bool CanUseNpc(Character character, Npc npc, Func<NpcTemplate, bool> supports, float range = 5f) =>

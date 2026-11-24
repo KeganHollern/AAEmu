@@ -8,9 +8,7 @@ using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Merchant;
-using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.StaticValues;
-using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -61,8 +59,13 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
             if (npcObjId != 0)
             {
                 if (doodadObjId != 0 || npc == null || !npc.Template.Merchant ||
-                    npc.Template.MerchantPackIds.Count == 0 || !IsNear(character, npc))
+                    npc.Template.MerchantPackIds.Count == 0)
                     return;
+                if (!ServiceInteraction.CanReachMerchant(character, npc))
+                {
+                    character.SendErrorMessage(ErrorMessageType.TooFarAway);
+                    return;
+                }
                 pack = NpcManager.Instance.GetNpcGoods(npc.Template);
             }
             else if (doodadObjId != 0)
@@ -128,17 +131,6 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
                 remotePurchase,
                 npc != null);
         }
-    }
-
-    private static bool IsNear(Character character, BaseUnit target)
-    {
-        var distance = MathUtil.CalculateDistance(
-            character.Transform.World.Position,
-            target.Transform.World.Position);
-        if (distance <= 3f)
-            return true;
-        character.SendErrorMessage(ErrorMessageType.TooFarAway);
-        return false;
     }
 
     private void SendPurchaseError(StorePurchaseError error)
