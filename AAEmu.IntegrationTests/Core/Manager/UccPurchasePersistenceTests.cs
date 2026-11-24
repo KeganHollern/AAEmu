@@ -85,6 +85,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         {
             Assert.Equal(player.Id, Scalar($"SELECT uploader_id FROM uccs WHERE id={uccId}"));
             Assert.Equal(custom ? 144 : 0, Scalar($"SELECT COALESCE(OCTET_LENGTH(data),0) FROM uccs WHERE id={uccId}"));
+            Assert.Empty(ReadItemErrors(() => Assert.True(graph.Save.DoSave())));
             var reloaded = graph.ReloadLifecycle();
             var output = reloaded.Items.GetItemByItemId(player.Id + 90);
             Assert.NotNull(output);
