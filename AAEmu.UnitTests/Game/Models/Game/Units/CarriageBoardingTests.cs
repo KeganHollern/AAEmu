@@ -301,22 +301,28 @@ public sealed partial class CarriageBoardingTests
             if (travel.LengthSquared() < 0.0001f)
                 continue;
             var direction = motor.Reverse ? -travel : travel;
-            var packet = session.Packets.Single();
-            await Assert.That(BitConverter.ToUInt16(packet, 6)).IsEqualTo(SCOffsets.SCOneUnitMovementPacket);
-            var stream = new PacketStream(packet, 8, packet.Length - 8);
-            await Assert.That(stream.ReadBc()).IsEqualTo(motor.ObjId);
-            await Assert.That(stream.ReadByte()).IsEqualTo((byte)MoveTypeEnum.Transfer);
-            var movement = new TransferData();
-            movement.Read(stream);
-            await Assert.That(movement.Reverse).IsEqualTo(motor.Reverse);
-            await Assert.That(Vector3.Distance(new Vector3(movement.X, movement.Y, movement.Z), motor.Transform.World.Position)).IsLessThan(0.02f);
-            var facing = Vector3.Transform(Vector3.UnitY, movement.Rot);
-            await CheckHeading(direction, facing);
-            await CheckObserverHeading(motor, viewer, session, direction);
+            await CheckMovementAndObserver(motor, viewer, session, direction);
             sawForward |= !motor.Reverse;
             sawReverse |= motor.Reverse;
         }
         await Assert.That(sawForward && sawReverse).IsTrue();
+    }
+
+    private static async Task CheckMovementAndObserver(Transfer motor, CharacterMock viewer,
+        TransferVisibilityTests.RecordingSession session, Vector3 direction)
+    {
+        var packet = session.Packets.Single();
+        await Assert.That(BitConverter.ToUInt16(packet, 6)).IsEqualTo(SCOffsets.SCOneUnitMovementPacket);
+        var stream = new PacketStream(packet, 8, packet.Length - 8);
+        await Assert.That(stream.ReadBc()).IsEqualTo(motor.ObjId);
+        await Assert.That(stream.ReadByte()).IsEqualTo((byte)MoveTypeEnum.Transfer);
+        var movement = new TransferData();
+        movement.Read(stream);
+        await Assert.That(movement.Reverse).IsEqualTo(motor.Reverse);
+        await Assert.That(Vector3.Distance(new Vector3(movement.X, movement.Y, movement.Z), motor.Transform.World.Position)).IsLessThan(0.02f);
+        var facing = Vector3.Transform(Vector3.UnitY, movement.Rot);
+        await CheckHeading(direction, facing);
+        await CheckObserverHeading(motor, viewer, session, direction);
     }
 
     private static async Task CheckObserverHeading(Transfer motor, CharacterMock viewer,
@@ -512,11 +518,17 @@ public sealed partial class CarriageBoardingTests
         (uint Id, uint Phase)? rear = null)
     {
         var (rearId, rearPhase) = rear ?? (seatId, phaseId);
-        var cabin = new TransferTemplate { Id = motor.TransferBindings[0].TransferId, ModelId = cabinModelId };
-        cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = seatId, AttachPointId = AttachPointKind.Passenger0 });
-        cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = rearId, AttachPointId = AttachPointKind.Passenger1 });
         var data = new TransferGameData();
-        SetField(data, "_templates", new Dictionary<uint, TransferTemplate> { [motor.Id] = motor, [cabin.Id] = cabin });
+        var templates = new Dictionary<uint, TransferTemplate> { [motor.Id] = motor };
+        TransferTemplate cabin = null;
+        if (motor.TransferBindings.Count > 0)
+        {
+            cabin = new TransferTemplate { Id = motor.TransferBindings[0].TransferId, ModelId = cabinModelId };
+            cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = seatId, AttachPointId = AttachPointKind.Passenger0 });
+            cabin.TransferBindingDoodads.Add(new TransferBindingDoodads { DoodadId = rearId, AttachPointId = AttachPointKind.Passenger1 });
+            templates.Add(cabin.Id, cabin);
+        }
+        SetField(data, "_templates", templates);
         SetSingleton(data);
         var buffs = new BuffGameData();
         SetEmptyDictionaries(buffs);
