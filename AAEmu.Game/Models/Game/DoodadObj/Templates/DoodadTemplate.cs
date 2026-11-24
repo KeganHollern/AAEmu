@@ -37,6 +37,7 @@ public class DoodadTemplate
     public uint RestrictZoneId { get; set; }
 
     public List<DoodadFuncGroups> FuncGroups { get; set; } = [];
+    internal uint[] InsertCounterSkills { get; set; } = [];
 
     // Helper Properties
     public int TotalDoodadGrowthTime { get; set; }
