@@ -3,13 +3,17 @@ using System.Reflection;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
+using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
@@ -24,6 +28,7 @@ using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Effects.Enums;
+using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Team;
@@ -86,6 +91,71 @@ public sealed class NpcHonorTests
         _teams.Clear();
         SingletonContainer.ServiceProvider = _previousServices;
         _services.Dispose();
+    }
+
+    [Test]
+    [Arguments(6402u)]
+    [Arguments(6403u)]
+    public async Task DoDie_SuspiciousGuardSummonsOneSpellbookAtItsDeathPosition(uint guardTemplateId)
+    {
+        // r208022 np_skills 7879 and 7880 use effect 23551 to summon the Guard's Spellbook.
+        const uint skillId = 19315;
+        const uint bookId = 5529;
+        var template = new SkillTemplate
+        {
+            Id = skillId, DefaultGcd = true, SourceAlive = false, SourceDead = true,
+            TargetType = SkillTargetType.Self, TargetAlive = true, MaxRange = 4,
+            Effects =
+            [
+                new SkillEffect
+                {
+                    EffectId = 23551, ApplicationMethod = SkillEffectApplicationMethod.Source,
+                    StartLevel = 1, EndLevel = 99, Friendly = true, NonFriendly = true, Chance = 100,
+                    Template = new InteractionEffect { WorldInteraction = WorldInteractionType.SummonDoodad, DoodadId = bookId }
+                }
+            ]
+        };
+        var skills = new SkillManager(null, null);
+        SetField(skills, "_skills", new Dictionary<uint, SkillTemplate> { [skillId] = template });
+        SetField(skills, "_skillReagents", new Dictionary<uint, SkillReagent>());
+        SetField(skills, "_skillProducts", new Dictionary<uint, SkillProduct>());
+        ReplaceSingleton(skills);
+        ReplaceSingleton(new DuelManager());
+        ReplaceSingleton(new ZoneManager(null, null));
+        ReplaceSingleton(new UnitRequirementsGameData());
+        ReplaceSingleton(new SkillRequirementsGameData());
+        var npcs = new NpcGameData();
+        SetField(npcs, "<SkillsForNpc>k__BackingField", new Dictionary<uint, List<NpcSkill>>
+        {
+            [guardTemplateId] = [new() { SkillId = skillId, SkillUseCondition = SkillUseConditionKind.OnDeath }]
+        });
+        ReplaceSingleton(npcs);
+        var ids = new ObjectIdManager();
+        ids.Initialize();
+        var doodads = new DoodadManager(ids, null, null, null, null);
+        SetField(doodads, "_templates", new Dictionary<uint, DoodadTemplate> { [bookId] = new() { Id = bookId } });
+        ReplaceSingleton(doodads);
+        var world = CreateWorld(1);
+        var guard = new QuietNpc
+        {
+            ObjId = 100, TemplateId = guardTemplateId, Level = 30, Hp = 100,
+            Template = new NpcTemplate(), ParentWorld = world
+        };
+        world.AddObject(guard);
+        guard.Transform.Local.SetPosition(42, 55, 23);
+        guard.RegisterNpcEvents();
+        var player = CreatePlayer(world, 1);
+
+        guard.ReduceCurrentHp(player, 100);
+        await Assert.That(world.GetAllDoodads().Count).IsEqualTo(1);
+
+        // The AI also sends the death event when it enters its dead behavior.
+        guard.Events.OnDeath(guard, new OnDeathArgs { Victim = guard, Killer = guard });
+
+        var book = world.GetAllDoodads().Single();
+        await Assert.That(book.TemplateId).IsEqualTo(bookId);
+        await Assert.That(book.OwnerObjId).IsEqualTo(guard.ObjId);
+        await Assert.That(book.Transform.World.Position).IsEqualTo(guard.Transform.World.Position);
     }
 
     [Test]

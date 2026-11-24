@@ -87,7 +87,7 @@ public class ReturnStateBehavior : BaseCombatBehavior
         var distanceToIdle = MathUtil.CalculateDistance(Ai.IdlePosition, Ai.Owner.Transform.World.Position);
         if (distanceToIdle > 2 * 2)
         {
-            Ai.Owner.MoveTowards(Ai.IdlePosition, 1000000.0f);
+            Ai.Owner.MoveTowards(Ai.IdlePosition, 1000000.0f * Ai.Owner.MoveSpeedMul);
             Ai.Owner.StopMovement();
         }
 

@@ -1098,7 +1098,7 @@ public partial class Npc : Unit
     /// Moves towards the target position
     /// </summary>
     /// <param name="other">Target position</param>
-    /// <param name="distance">Maximum distance to move (before multipliers)</param>
+    /// <param name="distance">Maximum distance to move this step, including speed modifiers</param>
     /// <param name="actorFlags">ActorFlags to use for the movement packet</param>
     /// <param name="rangeTolerance">Makes the function return true if target distance is less than or equil to this value</param>
     /// <param name="authoredPathZ">
@@ -1119,7 +1119,6 @@ public partial class Npc : Unit
         if (DisplacedUntil.HasValue && DisplacedUntil.Value > DateTime.UtcNow)
             return false;
 
-        distance *= Ai.Owner.MoveSpeedMul; // Apply speed modifier
         if (distance < 0.01f)
             return false;
 

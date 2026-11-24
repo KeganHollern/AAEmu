@@ -170,6 +170,24 @@ public sealed class PlayerSkillAuthorizationTests
     }
 
     [Test]
+    [Arguments(10013u, true)] // Orphe's Son offers quest 3515.
+    [Arguments(201u, false)] // Quest report.
+    [Arguments(202u, false)] // Explicit skill overrides the default.
+    [Arguments(203u, false)] // No quest.
+    [Arguments(200u, false)] // Timer.
+    public async Task DoodadQuestStart_RequiresTheActiveQuestOfferFunction(uint phase, bool offersQuest)
+    {
+        var doodad = new Doodad { ObjId = 80 };
+        AddToWorld(doodad);
+        var target = new SkillCastDoodadTarget { ObjId = doodad.ObjId };
+        var skill = new SkillTemplate { Id = 11006, TargetType = SkillTargetType.Doodad };
+        SetField(doodad, "_funcGroupId", phase);
+        await Assert.That(CanUse(skill, target)).IsEqualTo(offersQuest);
+        await Assert.That(CanUse(new SkillTemplate { Id = 11008 }, target)).IsFalse();
+        await Assert.That(CanUse(skill, new SkillCastUnitTarget(_character.ObjId))).IsFalse();
+    }
+
+    [Test]
     public async Task NpcGrant_RequiresTheAuthoredInteractionSet()
     {
         var npc = new Npc { ObjId = 81, Template = new NpcTemplate { NpcInteractionSetId = 5 } };
@@ -420,6 +438,8 @@ public sealed class PlayerSkillAuthorizationTests
         }.ToString());
         connection.Open();
         _grants.Load(connection);
+        await Assert.That(_grants.HasDoodadGrant(10013, 11006)).IsTrue();
+        await Assert.That(_grants.HasDoodadGrant(10013, 11008)).IsFalse();
         var effects = GetEffects(_character.Buffs);
         effects.Add(new Buff(_character, _character, new SkillCasterUnit(70),
             new BuffTemplate { Id = 1463 }, null, DateTime.UtcNow) { InUse = true });
@@ -484,11 +504,16 @@ public sealed class PlayerSkillAuthorizationTests
             CREATE TABLE doodad_funcs(doodad_func_group_id INTEGER, func_skill_id INTEGER, actual_func_type TEXT, actual_func_id INTEGER);
             CREATE TABLE doodad_func_fake_uses(id INTEGER, fake_skill_id INTEGER);
             CREATE TABLE doodad_func_uses(id INTEGER, skill_id INTEGER);
+            CREATE TABLE doodad_func_quests(id INTEGER, quest_kind_id INTEGER, quest_id INTEGER);
             INSERT INTO buff_skills VALUES(1463,17663),(2098,17663),(1463,17663);
             INSERT INTO npc_interactions VALUES(5,21521);
             INSERT INTO doodad_funcs VALUES(100,11111,'DoodadFuncUse',1),(100,0,'DoodadFuncFakeUse',2),(200,NULL,'DoodadFuncTimer',1);
             INSERT INTO doodad_func_fake_uses VALUES(2,13822);
             INSERT INTO doodad_func_uses VALUES(1,11301);
+            INSERT INTO doodad_funcs VALUES
+              (10013,NULL,'DoodadFuncQuest',177),(201,0,'DoodadFuncQuest',178),
+              (202,13380,'DoodadFuncQuest',177),(203,0,'DoodadFuncQuest',179);
+            INSERT INTO doodad_func_quests VALUES(177,1,3515),(178,2,3515),(179,1,0);
             """;
         command.ExecuteNonQuery();
         return connection;

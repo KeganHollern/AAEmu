@@ -6,7 +6,9 @@ using AAEmu.Commons.Network.Core;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.C2G;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Quests;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Core.Packets;
@@ -32,6 +34,60 @@ public sealed class GameUiDataLimitsTests
         await Assert.That(player.HasPendingUiData).IsTrue();
         await Assert.That(connection.IsClosed).IsFalse();
         await Assert.That(stream.LeftBytes).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments((byte)0x80)]
+    [Arguments((byte)0xff)]
+    public async Task SaveUiData_QuotedNativeTrackerMarkerAndChoicesRoundTrip(byte marker)
+    {
+        const string options = "\"\r\nquest_context_state_values\r\n    checkBoxStates ( 3094 false, 1313 true )\r\nversion 1\r\n";
+        byte[] document = [(byte)'"', marker, .. Encoding.UTF8.GetBytes(options)];
+        var player = new CharacterMock { Id = 37, AccountId = 10 };
+        var connection = new GameConnection(new RecordingSession());
+        connection.TryAuthenticate(10);
+        connection.ActiveChar = player;
+        connection.State = GameState.World;
+        new CSSaveUIDataPacket { Connection = connection }.Read(Body(5, player.Id, document));
+        await Assert.That(player.HasPendingUiData).IsTrue();
+
+        var response = new SCResponseUIDataPacket(player.Id, 5, player.GetOptionForClient(5)).Write(new PacketStream());
+        response.Rollback();
+        await Assert.That(response.ReadUInt32()).IsEqualTo(player.Id);
+        await Assert.That(response.ReadUInt16()).IsEqualTo((ushort)5);
+        await Assert.That(response.ReadBytes().SequenceEqual(document)).IsTrue();
+        await Assert.That(response.ReadInt32()).IsEqualTo(document.Length + 1);
+        await Assert.That(response.LeftBytes).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task RequestUiData_FullTrackerPreservesStoredChoiceWhenAnotherDefaultWillNotFit()
+    {
+        var player = new CharacterMock();
+        player.Quests = new CharacterQuests(player);
+        player.Quests.ActiveQuests[1313] = new Quest(null, player, null, null, null, null, null, initializeQuestActs: false);
+        const string prefix = "quest_context_state_values\r\n    checkBoxStates ( 3094 false )\r\n";
+        var value = prefix.PadRight(CharacterUiData.MaximumBytes, ' ');
+        player.SetOption(5, value);
+        await Assert.That(player.GetOptionForClient(5)).IsEqualTo(value);
+    }
+
+    [Test]
+    public async Task SaveUiData_NativeMarkerOnlyAppliesToTrackerHeader()
+    {
+        byte[] header = [0x22, 0x80, 0x22, 13, 10];
+        await Assert.That(CSSaveUIDataPacket.TryReadData(Body(1, 20, header), out _, out _, out _)).IsFalse();
+        await Assert.That(CSSaveUIDataPacket.TryReadData(Body(5, 20, [.. header, 0xff]), out _, out _, out _)).IsFalse();
+        await Assert.That(CSSaveUIDataPacket.TryReadData(Body(5, 20, [.. header, 0]), out _, out _, out _)).IsFalse();
+        const string unicode = "\"é\"\r\nversion 1\r\n";
+        var bytes = Encoding.UTF8.GetBytes(unicode);
+        await Assert.That(CSSaveUIDataPacket.TryReadData(Body(5, 20, bytes), out _, out _, out var stored)).IsTrue();
+        await Assert.That(stored).IsEqualTo(unicode);
+        var response = new SCResponseUIDataPacket(20, 5, stored).Write(new PacketStream());
+        response.Pos = sizeof(uint) + sizeof(ushort);
+        await Assert.That(response.ReadBytes().SequenceEqual(bytes)).IsTrue();
+        await Assert.That(response.ReadInt32()).IsEqualTo(bytes.Length + 1);
+        await Assert.That(response.LeftBytes).IsEqualTo(0);
     }
 
     [Test]

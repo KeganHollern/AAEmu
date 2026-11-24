@@ -12,6 +12,9 @@ using AAEmu.Game.Models.Game.AI.v2.Controls;
 using AAEmu.Game.Models.Game.AI.v2.Framework;
 using AAEmu.Game.Models.Game.AI.v2.Params;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.UnitTests.Utils.Mocks;
@@ -132,6 +135,31 @@ public sealed class AuthoredPathRouteTests
         // Descends towards the recorded floor instead of being pinned to the navigation node above it
         await Assert.That(npc.Transform.World.Position.Z).IsLessThan(NavigationZ);
         await Assert.That(npc.Transform.World.Position.Z).IsGreaterThanOrEqualTo(Route.Min(p => p.Position.Z));
+    }
+
+    [Test]
+    [Arguments(UnitModifierType.Value, -300)]
+    [Arguments(UnitModifierType.Percent, -30)]
+    public async Task RunCurrentPath_ThirtyPercentSlow_UsesSeventyPercentSpeedForTravelAndGait(UnitModifierType type, int value)
+    {
+        var (npc, ai) = CreateWalker();
+        npc.AddBonus(1, new Bonus
+        {
+            Template = new BonusTemplate { Attribute = UnitAttribute.MoveSpeedMul, ModifierType = type },
+            Value = value
+        });
+        var start = npc.Transform.World.Position;
+        ai.PathHandler.TargetPosition = start + new Vector3(10f, 0f, 0f);
+        ai.PathHandler.AiPathSpeed = 2.5f;
+
+        ai.PathHandler.RunCurrentPath(TimeSpan.FromMilliseconds(400));
+
+        const float expectedSpeed = 1.75f;
+        await Assert.That(npc.Transform.World.Position.X - start.X).IsEqualTo(expectedSpeed * 0.4f).Within(0.001f);
+        var movement = npc.Movements.Single();
+        await Assert.That(movement.ActorFlags).IsEqualTo((byte)5);
+        var velocity = new Vector2(movement.VelX, movement.VelY).Length();
+        await Assert.That(velocity).IsEqualTo(2048f * expectedSpeed).Within(2f);
     }
 
     [Test]

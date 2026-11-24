@@ -221,6 +221,7 @@ public sealed class NpcInteractionGrantTests
             CREATE TABLE doodad_funcs(doodad_func_group_id INTEGER, func_skill_id INTEGER, actual_func_type TEXT, actual_func_id INTEGER);
             CREATE TABLE doodad_func_fake_uses(id INTEGER, fake_skill_id INTEGER);
             CREATE TABLE doodad_func_uses(id INTEGER, skill_id INTEGER);
+            CREATE TABLE doodad_func_quests(id INTEGER, quest_kind_id INTEGER, quest_id INTEGER);
             INSERT INTO npc_interactions VALUES(55,12,22780),(14,1,21366),(10,5,21521),(2,2,21335),(54,11,23146);
             """;
         command.ExecuteNonQuery();

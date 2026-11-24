@@ -219,13 +219,11 @@ public partial class Npc
 
             if (npc.Cooldowns.CheckCooldown(skill.Id)) { continue; }
 
-            if (skill.Template.CooldownTime == 0)
-            {
-                npc.Cooldowns.AddCooldown(skill.Id, uint.MaxValue); // выполняем один раз
-            }
-
             Logger.Trace($"Npc={npc.ObjId}:{npc.TemplateId} using skill={skill.Id}");
-            skill.Use(npc, skillCaster, skillTarget, null, true, out _);
+            var result = skill.Use(npc, skillCaster, skillTarget, null, true, out _);
+            // DeadBehavior can deliver a second death event. Mark the first accepted cast after admission.
+            if (result == SkillResult.Success && skill.Template.CooldownTime == 0)
+                npc.Cooldowns.AddCooldown(skill.Id, uint.MaxValue);
         }
     }
 

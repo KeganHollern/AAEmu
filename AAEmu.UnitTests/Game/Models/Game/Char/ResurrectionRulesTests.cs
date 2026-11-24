@@ -7,6 +7,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.C2G;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
@@ -15,6 +16,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
@@ -40,6 +42,7 @@ public sealed class ResurrectionRulesTests
             character.ComputeDeathWaitTime(now, KillReason.Damage, data);
             await Assert.That(character.RezWaitDuration).IsEqualTo(waits[index]);
             await Assert.That(character.RezPenaltyDuration).IsEqualTo(600000);
+            await Assert.That(character.GetRemainingResurrectionWait(now.AddMilliseconds(waits[index]).AddTicks(-1))).IsEqualTo(1);
             await Assert.That(character.CanResurrect(now.AddMilliseconds(waits[index] - 1))).IsFalse();
             await Assert.That(character.CanResurrect(now.AddMilliseconds(waits[index]))).IsTrue();
             // These are the persisted fields used by both character load paths.
@@ -53,6 +56,43 @@ public sealed class ResurrectionRulesTests
         character.ComputeDeathWaitTime(character.DeadTime.AddSeconds(600), KillReason.Damage, data);
         await Assert.That(character.RezWaitDuration).IsEqualTo(0);
         await Assert.That(character.DeadCount).IsEqualTo((short)1);
+    }
+
+    [Test]
+    [Arguments(0, 83, 97_000)]
+    [Arguments(0, 181, 0)]
+    [Arguments(1, 83, 0)]
+    public async Task Reconnect_CharacterStateWritesOnlyTheOutstandingManualWait(int hp, int secondsSinceDeath, int expected)
+    {
+        var character = new Character(new UnitCustomModelParams())
+        {
+            Id = 7, Name = "Temple", Faction = new(), FactionName = "Nuia", Hp = hp,
+            DeadCount = 5, RezWaitDuration = 180_000, RezPenaltyDuration = 600_000
+        };
+        character.Mails = new CharacterMails(character, null);
+        var items = new ItemManager(null, null, null, null, null, null);
+        var instance = typeof(Singleton<ItemManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previous = instance.GetValue(null);
+        try
+        {
+            instance.SetValue(null, items);
+            CreateInventory(character, items);
+            character.Equipment.ContainerSize = 28;
+            var start = DateTime.UtcNow;
+            character.DeadTime = start.AddSeconds(-secondsSinceDeath);
+            var stream = new SCCharacterStatePacket(character).Write(new PacketStream());
+            var elapsed = (int)(DateTime.UtcNow - start).TotalMilliseconds;
+
+            await Assert.That(stream.ReadUInt32()).IsEqualTo(character.Transform.InstanceId);
+            await Assert.That(new Guid(stream.ReadBytes())).IsEqualTo(character.Guid);
+            await Assert.That(stream.ReadInt32()).IsBetween(Math.Max(0, expected - elapsed), expected);
+            var persistedCharacter = character.Write(new PacketStream()).GetBytes();
+            await Assert.That(stream.ReadBytes(persistedCharacter.Length).SequenceEqual(persistedCharacter)).IsTrue();
+        }
+        finally
+        {
+            instance.SetValue(null, previous);
+        }
     }
 
     [Test]
@@ -165,12 +205,8 @@ public sealed class ResurrectionRulesTests
             Install(skills);
             var items = new ItemManager(null, null, null, null, null, null);
             SetField(items, "_config", new ItemConfig { DeathDurabilityLossRatio = 7 });
-            var containers = Enum.GetValues<SlotType>().Where(type => type != SlotType.EquipmentMate)
-                .Select((type, index) => new ItemContainer(character.Id, type, false, character) { ContainerId = (ulong)index + 1 })
-                .ToDictionary(container => container.ContainerId);
-            SetField(items, "_allPersistentContainers", containers);
             Install(items);
-            character.Inventory = new Inventory(character);
+            CreateInventory(character, items);
             character.Equipment.Items.Add(gear);
             var npc = new DeathTestNpc
             {
@@ -224,6 +260,15 @@ public sealed class ResurrectionRulesTests
 
     private static void SetField<T>(T target, string field, object value) =>
         typeof(T).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(target, value);
+
+    private static void CreateInventory(Character character, ItemManager items)
+    {
+        var containers = Enum.GetValues<SlotType>().Where(type => type != SlotType.EquipmentMate)
+            .Select((type, index) => new ItemContainer(character.Id, type, false, character) { ContainerId = (ulong)index + 1 })
+            .ToDictionary(container => container.ContainerId);
+        SetField(items, "_allPersistentContainers", containers);
+        character.Inventory = new Inventory(character);
+    }
 
     private sealed class DeathTestGear : EquipItem
     {

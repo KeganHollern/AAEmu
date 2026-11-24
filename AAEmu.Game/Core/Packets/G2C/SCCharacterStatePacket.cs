@@ -12,7 +12,7 @@ public class SCCharacterStatePacket(Character character) : GamePacket(SCOffsets.
     {
         stream.Write(character.Transform.InstanceId); // instanceId
         stream.Write(character.Guid); // guid
-        stream.Write(0); // rwd
+        stream.Write(character.GetRemainingResurrectionWait(DateTime.UtcNow)); // rwd, milliseconds from character selection
 
         character.Write(stream);
 

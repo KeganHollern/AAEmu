@@ -74,7 +74,8 @@ public static class MerchantSaleExecutor
             character.Transform.WorldId != npc.Transform.WorldId)
             return MerchantSaleResult.InvalidMerchant;
 
-        if (!ServiceInteraction.CanUseNpc(character, npc, template => template.Merchant, 3f))
+        if (!ReferenceEquals(character.CurrentInteractionObject, npc) ||
+            !ServiceInteraction.CanReachMerchant(character, npc))
             return MerchantSaleResult.TooFarAway;
 
         var buyback = character.BuyBackItems;

@@ -268,6 +268,25 @@ public sealed class CSBuyItemsPacketTests
     }
 
     [Test]
+    public async Task NpcPurchase_MeasuresThreeMetresFromScaledActorEdges()
+    {
+        using var models = new QuestInteractionTestModels();
+        var npc = AddNpc([145]);
+        npc.ModelId = _character.ModelId = 1;
+        npc.Template.Scale = 6f;
+        // Align the sphere centers vertically. The two radii sum to 3.5 m.
+        npc.Transform.Local.SetPosition(6.51f, 0, -5);
+        SendPurchase(npcId: npc.ObjId, doodadId: 0);
+        await AssertUnchanged(ErrorMessageType.TooFarAway);
+
+        _session.Packets.Clear();
+        npc.Transform.Local.SetPosition(6.5f, 0, -5);
+        SendPurchase(npcId: npc.ObjId, doodadId: 0);
+        await Assert.That(_character.Inventory.Bag.Items.Single().Count).IsEqualTo(2);
+        await Assert.That(_character.Money).IsEqualTo(980L);
+    }
+
+    [Test]
     public async Task NpcPurchase_DistantMultiPackMerchantDoesNotGrantItems()
     {
         var npc = AddNpc([145, 999]);

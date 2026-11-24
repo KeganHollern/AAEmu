@@ -39,7 +39,7 @@ The earlier ticket count uses an older snapshot and a broader selection.
 | Character Unit | The caster object is the authenticated character. The skill is a default, basic attack, or exact learned skill. |
 | Buff | An active, unexpired buff grants the exact skill through `buff_skills`. Ended and inactive buffs do not grant skills. |
 | Item | The owned item grants its exact use skill. The established portal-book exceptions keep their exact item, target, and object checks. |
-| Doodad interaction | The target exists in the same world and instance. Its current phase explicitly names the skill or the applicable fake/use skill. |
+| Doodad interaction | The target exists in the same world and instance. Its current phase names the skill, defines a fake/use skill, or offers a quest with the native start skill. |
 | NPC interaction | The target exists in the same world and instance. Its authored interaction set names the skill. |
 | Priest prayer | The exact native Unit/self action for skill `17063` passes the nearby priest checks. |
 | Mount or vehicle | The separate mount authorization checks the real unit, owner or operator, seat, and authored mount-skill pair. |
@@ -49,6 +49,10 @@ The doodad rule does not use `GetFunc` as proof of authorization.
 That resolver deliberately has a zero-skill fallback for server function dispatch.
 A zero-skill function must not grant every client-selected skill.
 Quest item actions keep their item grants, and ordinary quest doodad actions keep their phase grants.
+
+For quest kind 1, the r208022 client selects GiveQuest skill 11006 at `393b7efd`.
+The server uses this grant when the current phase has a `DoodadFuncQuest` with a quest ID and an empty skill field.
+Orphe’s Son uses this rule in phase 10013 to offer quest 3515. The normal quest source and acceptance checks still apply.
 Quest component skills remain server actions and do not become client grants.
 
 The old ability-level variant shortcut also disappears.

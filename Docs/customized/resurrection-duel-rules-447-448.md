@@ -71,6 +71,13 @@ The audit wording does not mean that every death must apply all 3 debuffs.
 
 The server loads the authored waits instead of the hard-coded 15–240 second table.
 It uses the current persisted `DeadCount`, `DeadTime`, `RezWaitDuration`, `RezTime`, and `RezPenaltyDuration` fields.
+
+On character selection, the server sends the outstanding manual wait in the `rwd` field of `SCCharacterState`.
+The r208022 reader at `0x397ae9c0` reads this 32-bit field after the GUID and before the character record.
+`OnCharacterState` passes it from offset `0xe388` to the character setup function at `0x391b9640`.
+For a dead character, that function starts the local clock and puts the wait at player-state offset `0xaf8`.
+`GetResurrectionCountdown` subtracts elapsed milliseconds from that wait.
+An expired wait or a living character gets zero. [Reconnect defect #847](https://github.com/KeganHollern/aaemu-cluster/issues/847)
 The next death resets escalation when the authored penalty duration elapsed since the previous death.
 This interpretation follows the issue's death-window rule. The client does not expose the retail server's counter algorithm.
 No schema or compact update is needed.
