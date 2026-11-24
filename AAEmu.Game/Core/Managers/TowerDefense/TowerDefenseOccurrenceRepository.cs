@@ -63,16 +63,22 @@ internal sealed class TowerDefenseOccurrenceRepository
         return records;
     }
 
-    public bool Contains(string occurrenceKey)
+    public bool TryCreate(TowerDefenseOccurrence occurrence)
     {
-        using var connection = MySQL.CreateConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT 1 FROM tower_def_occurrences WHERE occurrence_key = @occurrence_key LIMIT 1";
-        Add(command, "@occurrence_key", occurrenceKey);
-        return command.ExecuteScalar() != null;
+        try
+        {
+            Write(occurrence, createOnly: true);
+            return true;
+        }
+        catch (MySqlException exception) when (exception.Number == 1062)
+        {
+            return false;
+        }
     }
 
-    public void Save(TowerDefenseOccurrence occurrence)
+    public void Save(TowerDefenseOccurrence occurrence) => Write(occurrence, createOnly: false);
+
+    private static void Write(TowerDefenseOccurrence occurrence, bool createOnly)
     {
         using var connection = MySQL.CreateConnection();
         using var command = connection.CreateCommand();
@@ -87,6 +93,10 @@ internal sealed class TowerDefenseOccurrenceRepository
                  @zone_group_id, @site_key, @status, @state_generation, @current_step,
                  @scheduled_at, @started_at, @step_entered_at, @hard_deadline, @definition_hash,
                  @objective_progress, @terminal_reason, UTC_TIMESTAMP())
+            """;
+        if (!createOnly)
+            command.CommandText += """
+
             ON DUPLICATE KEY UPDATE
                 status = VALUES(status),
                 state_generation = VALUES(state_generation),
