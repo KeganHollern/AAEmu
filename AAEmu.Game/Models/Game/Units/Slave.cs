@@ -120,6 +120,7 @@ public class Slave : Unit
     public Vector3 CachedWaterFlow { get; set; }
     public float CachedWaterSurface { get; set; }
     public float CachedFloorLevel { get; set; }
+    internal Vector3? MeasuredWaterAndLandPosition { get; set; }
 
     public Slave()
     {
@@ -1002,8 +1003,11 @@ public class Slave : Unit
     public void CreateWaterAndLandSurfaceCache()
     {
         // Get Floor and WaterSurface at given location
-        CachedFloorLevel = ParentWorld.GetHeight(Transform.World.Position.X, Transform.World.Position.Y);
-        CachedWaterSurface = ParentWorld.Water.GetWaterSurface(Transform.World.Position, out var cachedWaterFlow);
+        var position = Transform.World.Position;
+        var measured = ParentWorld.TryGetHeight(position.X, position.Y, out var floor);
+        CachedFloorLevel = measured ? floor : 0f;
+        MeasuredWaterAndLandPosition = measured ? position : null;
+        CachedWaterSurface = ParentWorld.Water.GetWaterSurface(position, out var cachedWaterFlow);
         CachedWaterFlow = cachedWaterFlow;
     }
 
