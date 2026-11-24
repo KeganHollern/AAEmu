@@ -55,6 +55,47 @@ public sealed class CharacterSubZoneTests
     }
 
     [Test]
+    [Arguments("cross")]
+    [Arguments("new-notice")]
+    [Arguments("teleport")]
+    [Arguments("world-change")]
+    public async Task FootstepAfterDistrictNotice_UsesOnlyTheCurrentLocalCrossing(string path)
+    {
+        using var scope = new SubZoneScope();
+        var owner = scope.Owner;
+        // A smaller camp overlaps its surrounding district, as at Harpa's Camp.
+        scope.World.Template.SubZones[1].Add(new Area
+        {
+            Id = 20, Points = [new(7, 0, 0), new(10, 0, 0), new(10, 10, 0), new(7, 10, 0)]
+        });
+        owner.Portals.NotifySubZone(10);
+        owner.Portals.NotifySubZone(20);
+        void Step(float x)
+        {
+            owner.Transform.Local.SetPosition(x, 5, 10);
+            owner.Portals.CheckPendingBoundary(owner.Transform.World.Position);
+        }
+        Step(6);
+        await Assert.That(owner.SubZoneId).IsEqualTo(10u);
+        await Assert.That(owner.Portals.DistrictPortals.ContainsKey(200)).IsFalse();
+        switch (path)
+        {
+            case "new-notice": owner.Portals.NotifySubZone(10); break;
+            case "teleport": Step(1000); break;
+            case "world-change":
+                scope.SetWorld(new WorldInstance(scope.World.Template, 0, true, 43));
+                Step(8);
+                scope.SetWorld(scope.World);
+                break;
+        }
+        Step(8);
+        Step(9);
+        await Assert.That(owner.SubZoneId).IsEqualTo(path == "cross" ? 20u : 10u);
+        await Assert.That(owner.Portals.DistrictPortals.ContainsKey(200)).IsEqualTo(path == "cross");
+        scope.Session.SendPacket(Any<byte[]>()).WasCalled(Times.Exactly(path == "cross" ? 2 : 1));
+    }
+
+    [Test]
     [Arguments("outside")]
     [Arguments("other-world")]
     [Arguments("missing-world")]
