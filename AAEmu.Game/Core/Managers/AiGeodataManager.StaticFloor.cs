@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models.CryEngine.Objects;
 using AAEmu.Game.Models.CryEngine.Physics;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Utils;
 using static AAEmu.Game.Core.Managers.NpcStepSurfaceTrace.FloorSearch;
@@ -18,8 +19,8 @@ public partial class AiGeoDataManager
         new CryWorldGeometryResolver(new CryGeometryResolver(ClientFileManager.GetFileStream).Load).Load;
 
     // A horizontal NPC step can leave a waypoint's region of influence while still on its solid deck.
-    // Only a continuous piece of the same placed mesh can supersede the terrain result for this step.
-    internal bool TryFollowStaticFloor(Vector3 from, Vector3 to, GroundSurfaceSource selectedSource, out float floor, NpcStepSurfaceTrace trace = null)
+    // Require continuous static collision between the two feet before replacing the selected ground.
+    internal bool TryFollowStaticFloor(Npc npc, Vector3 from, Vector3 to, GroundSurfaceSource selectedSource, out float floor, NpcStepSurfaceTrace trace = null)
     {
         floor = default;
         var (cellX, cellY) = from.ToCellIndex();
@@ -50,7 +51,8 @@ public partial class AiGeoDataManager
         trace?.Skip("NoLoadedBrushData");
 
         var belowTerrain = separation < 0f;
-        if (TryFollowFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, belowTerrain, out floor, trace))
+        var mayLeaveBrush = false;
+        if (TryFollowFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace))
             return true;
 
         // A brush belongs to one cell even where its floor extends into the next cell.
@@ -59,14 +61,18 @@ public partial class AiGeoDataManager
         for (var x = cellX - 1; x <= cellX + 1; x++)
         {
             if ((x != cellX || y != cellY) &&
-                TryFollowFloorInCell(worldTemplate.GetCell(x, y), from, to, belowTerrain, out floor, trace))
+                TryFollowFloorInCell(worldTemplate.GetCell(x, y), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace))
                 return true;
         }
-        return false;
+        return !belowTerrain && mayLeaveBrush && TryCrossPlacedFloorFaces(npc, cellX, cellY, from, to, out floor, trace);
     }
 
+    private CryWorldObjectIndex GetGroundBrushIndex(WorldCell cell, ObjectsFile objects) =>
+        _groundBrushes.GetValue(objects, data => new CryWorldObjectIndex(
+            CryWorldObjectIndex.ReadBrushInstances(data, cell.CellX, cell.CellY)));
+
     private bool TryFollowFloorInCell(WorldCell cell, Vector3 from, Vector3 to, bool belowTerrain,
-        out float floor, NpcStepSurfaceTrace trace)
+        ref bool mayLeaveBrush, out float floor, NpcStepSurfaceTrace trace)
     {
         floor = default;
         if (cell?.LoadedObjectDat is not { HasUnparsedObjects: false } objects)
@@ -74,8 +80,7 @@ public partial class AiGeoDataManager
 
         try
         {
-            var brushes = _groundBrushes.GetValue(objects, data => new CryWorldObjectIndex(
-                CryWorldObjectIndex.ReadBrushInstances(data, cell.CellX, cell.CellY)));
+            var brushes = GetGroundBrushIndex(cell, objects);
             trace?.Observe(NoSharedBrush, cell);
             // Both feet must fit the same placement. Query only the previous foot's bucket.
             foreach (var brush in brushes.Query(from - Vector3.UnitZ * StaticFloorPrecision, from + Vector3.UnitZ * StaticFloorPrecision))
@@ -84,6 +89,7 @@ public partial class AiGeoDataManager
                     continue;
                 if (to.X < brush.Min.X || to.X > brush.Max.X || to.Y < brush.Min.Y || to.Y > brush.Max.Y)
                 {
+                    mayLeaveBrush = true;
                     trace?.Observe(DestinationOutsideBrush, cell, brush);
                     continue;
                 }
@@ -106,6 +112,7 @@ public partial class AiGeoDataManager
                     trace?.Observe(NoStartFace, cell, brush, index);
                     if (!TryFloorHit(part, brush.Transform, from, belowTerrain, out var first))
                         continue;
+                    mayLeaveBrush = true;
                     trace?.Observe(NoEndFace, cell, brush, index, first.TriangleIndex);
                     if (!TryFloorHit(part, brush.Transform, to, belowTerrain, out var last))
                         continue;
