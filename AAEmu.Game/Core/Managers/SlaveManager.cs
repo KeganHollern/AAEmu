@@ -244,7 +244,23 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         Doodad interaction, out Vector3 position) =>
         TryGetSeatPosition(slave, seat, interaction, out position) &&
         !slave.AttachedCharacters.ContainsKey(seat) &&
-        MountSeatAuthorization.CanEnter(character, slave, position, MountSeatAuthorization.SlaveRange);
+        MountSeatAuthorization.CanEnter(character, slave, position, MountSeatAuthorization.SlaveRange,
+            GetWheelDeckSupport(character, slave, seat, interaction));
+
+    private static Transform GetWheelDeckSupport(Character character, Slave slave, AttachPointKind seat, Doodad wheel)
+    {
+        // Standing on a deck or its wheel sets Parent without assigning a seat.
+        var support = character.Transform.Parent;
+        if (support == null || seat != AttachPointKind.Driver || wheel?.AttachPoint != AttachPointKind.Helms ||
+            character.Transform.StickyParent != null || !ReferenceEquals(wheel.Transform.Parent, slave.Transform) ||
+            (!ReferenceEquals(support, slave.Transform) && !ReferenceEquals(support, wheel.Transform)))
+            return null;
+
+        var points = SlaveGameData.Instance.GetAttachPointsForSlave(slave.ModelId);
+        if (points == null || !points.ContainsKey(AttachPointKind.Driver) || !points.TryGetValue(AttachPointKind.Helms, out var socket))
+            return null;
+        return wheel.Transform.Local.Position == socket.AsPositionVector() ? support : null;
+    }
 
     internal static bool TryGetSeatPosition(Slave slave, AttachPointKind seat, Doodad interaction, out Vector3 position)
     {

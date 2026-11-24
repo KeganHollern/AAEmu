@@ -15,10 +15,12 @@ public class NpcSurfaceSubCommand : SubCommandBase
     public NpcSurfaceSubCommand()
     {
         Title = "[Npc Surface]";
-        Description = "Compare an NPC's runtime height with its authored, home, terrain, and legacy geodata heights";
+        Description = "Compare an NPC's runtime height with its authored, home, terrain, and legacy geodata heights. Add to=x,y,z and optional step=metres for a prospective ad-hoc step (default 0.5 m)";
         CallPrefix = $"{CommandManager.CommandPrefix}npc surface";
         AddParameter(new StringSubCommandParameter("target", "target", true, "target", "id"));
         AddParameter(new NumericSubCommandParameter<uint>("ObjId", "object id", false));
+        AddParameter(new StringSubCommandParameter("to", "x,y,z", false, "to"));
+        AddParameter(new NumericSubCommandParameter<float>("step", "metres", false, "step", 0.01f, float.MaxValue));
     }
 
     public override void Execute(ICharacter character, string triggerArgument, IDictionary<string, ParameterValue> parameters, IMessageOutput messageOutput)
@@ -43,6 +45,26 @@ public class NpcSurfaceSubCommand : SubCommandBase
             }
         }
 
+        if (parameters.TryGetValue("to", out var position))
+        {
+            var values = position.As<string>().Split(',');
+            if (values.Length != 3 || !TryCoordinate(values[0], out var x) ||
+                !TryCoordinate(values[1], out var y) || !TryCoordinate(values[2], out var z))
+            {
+                SendColorMessage(messageOutput, Color.Red, "Supply three finite world coordinates as to=x,y,z.");
+                return;
+            }
+            var distance = GetOptionalParameterValue(parameters, "step", 0.5f);
+            foreach (var line in NpcStepSurfaceTrace.DescribeStep(npc, new Vector3(x, y, z), distance))
+                SendMessage(messageOutput, line);
+            return;
+        }
+        if (parameters.ContainsKey("step"))
+        {
+            SendColorMessage(messageOutput, Color.Red, "Supply the destination as to=x,y,z with step=metres.");
+            return;
+        }
+
         var localPosition = npc.Transform.Local.Position;
         var worldPosition = npc.Transform.World.Position;
         var instanceId = npc.Transform.InstanceId;
@@ -65,6 +87,9 @@ public class NpcSurfaceSubCommand : SubCommandBase
                      groundSurface))
             SendMessage(messageOutput, line);
     }
+
+    private static bool TryCoordinate(string input, out float value) =>
+        float.TryParse(input, NumberStyles.Float, CultureInfo.InvariantCulture, out value) && float.IsFinite(value);
 
     internal static string[] BuildReport(Npc npc, Vector3 localPosition, Vector3 worldPosition, uint instanceId, uint zoneId,
         float? terrainZ, float? geoDataZ, GroundSurfaceResult? groundSurface)
