@@ -39,7 +39,7 @@ public class IdleBehavior : BaseCombatBehavior
         // Stop all actions and reset state
         Ai.Owner.CurrentGameStance = GameStanceType.Relaxed;
         Ai.Owner.CurrentAlertness = MoveTypeAlertness.Idle;
-        Ai.Owner.InterruptSkills();
+        Ai.Owner.InterruptSkillsOnIdle();
         Ai.Owner.StopMovement();
         Ai.Owner.SetTarget(null);
 

@@ -1,8 +1,12 @@
+using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Models.Game.AI.v2.AiCharacters;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Plots;
 using AAEmu.Game.Models.Game.Skills.Plots.Tree;
+using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.TowerDefs;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.World;
@@ -26,6 +30,34 @@ public sealed class RiftPlotTests
 
     [After(Test)]
     public void TearDown() => WorldInstanceField.SetValue(null, _previousWorldManager);
+
+    [Test]
+    [Arguments(true, 15298u, true)]
+    [Arguments(false, 15298u, false)]
+    [Arguments(true, 15373u, false)]
+    public async Task FlytrapIdleTransitions_KeepOnlyTheOwnedOnSpawnPlot(bool eventOwned, uint skillId, bool keepPlot)
+    {
+        var npc = new WaveController { ObjId = 100, TemplateId = 8052, Template = new NpcTemplate() };
+        npc.Template.BindSkills([new NpcSkill { SkillId = 15298, SkillUseCondition = SkillUseConditionKind.OnSpawn }]);
+        var ai = new FlytrapAiCharacter { Owner = npc };
+        npc.Ai = ai;
+        ai.Start();
+        if (eventOwned)
+            npc.TowerDefenseSpawnToken = new("occurrence", "rift.crimson.ynystere", "ynystere-1", 1, 1, "wave");
+        var skill = new Skill(new SkillTemplate { Id = skillId, PlotOnly = true });
+
+        // The controller enters idle after its empty command set, then holds position.
+        // Give each transition its own active plot so a cancellation in either one fails the test.
+        var idle = Plot.PrepareRun(npc, null, npc, null, null, skill);
+        ai.GoToIdle();
+        await Assert.That(idle.CancellationRequested()).IsEqualTo(!keepPlot);
+        var hold = Plot.PrepareRun(npc, null, npc, null, null, skill);
+        ai.GoToDefaultBehavior();
+        await Assert.That(hold.CancellationRequested()).IsEqualTo(!keepPlot);
+
+        npc.InterruptSkills();
+        await Assert.That(hold.CancellationRequested()).IsTrue();
+    }
 
     [Test]
     public async Task UpdateTargetInfo_RetailCrimsonLaunchImpactSummon_PreservesSkyfallAndLanding()
@@ -68,6 +100,11 @@ public sealed class RiftPlotTests
     public async Task ResolvePlotLandHeight_UnrelatedLargeOffset_IsNotAnImpact(int parameter, float expected)
     {
         await Assert.That(PlotTargetInfo.ResolvePlotLandHeight(300f, parameter, 100f)).IsEqualTo(expected);
+    }
+
+    private sealed class WaveController : Npc
+    {
+        public override void BroadcastPacket(GamePacket packet, bool self) { }
     }
 
     private static PlotTargetInfo Node(BaseUnit source, BaseUnit target) => new(source, target, _ => 223f);
