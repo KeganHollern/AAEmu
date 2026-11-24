@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models.CryEngine.Objects;
 using AAEmu.Game.Models.CryEngine.Physics;
+using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Core.Managers;
@@ -20,12 +21,30 @@ public partial class AiGeoDataManager
     internal bool TryFollowStaticFloor(Vector3 from, Vector3 to, out float floor)
     {
         floor = default;
-        var cellIndex = from.ToCellIndex();
-        if (cellIndex != to.ToCellIndex() || !worldTemplate.TryGetHeight(from.X, from.Y, out var terrain) ||
-            from.Z <= terrain + StaticFloorPrecision)
+        var (cellX, cellY) = from.ToCellIndex();
+        var (nextX, nextY) = to.ToCellIndex();
+        if (Math.Abs(cellX - nextX) > 1 || Math.Abs(cellY - nextY) > 1 ||
+            !worldTemplate.TryGetHeight(from.X, from.Y, out var terrain) || from.Z <= terrain + StaticFloorPrecision)
             return false;
 
-        var cell = worldTemplate.GetCell(cellIndex.Item1, cellIndex.Item2);
+        if (TryFollowFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, out floor))
+            return true;
+
+        // A brush belongs to one cell even where its floor extends into the next cell.
+        // Use only loaded object data. The same solid part must support both feet.
+        for (var y = cellY - 1; y <= cellY + 1; y++)
+        for (var x = cellX - 1; x <= cellX + 1; x++)
+        {
+            if ((x != cellX || y != cellY) &&
+                TryFollowFloorInCell(worldTemplate.GetCell(x, y), from, to, out floor))
+                return true;
+        }
+        return false;
+    }
+
+    private bool TryFollowFloorInCell(WorldCell cell, Vector3 from, Vector3 to, out float floor)
+    {
+        floor = default;
         if (cell?.LoadedObjectDat is not { HasUnparsedObjects: false } objects)
             return false;
 
