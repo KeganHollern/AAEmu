@@ -179,6 +179,39 @@ public sealed class SlavePlacementRulesTests
     }
 
     [Test]
+    [Arguments(100.075165f)]
+    [Arguments(99.66314f)]
+    public async Task Boat_UsesTheSubmittedEznaWavePositionForBothClearanceChecks(float height)
+    {
+        var owner = new Vector3(15174, 13604, 103.9254f);
+        var request = new SlavePlacementRequest(new(15172.903f, 13567.961f, height), 4.093965f);
+        var hull = new CryBounds(new(-3, -6, -2), new(3, 6, 2));
+        CryBox? checkedHull = null;
+        Vector3? rayEnd = null;
+        var result = SlavePlacementRules.CheckGeometry(owner, request, hull, true, 79.457306f, 100,
+            (box, _) => { checkedHull = box; return CryIntersection.Clear; },
+            (_, end) => { rayEnd = end; return CryIntersection.Clear; }, 0.75f);
+
+        await Assert.That(result).IsEqualTo(ErrorMessageType.NoErrorMessage);
+        await Assert.That(rayEnd).IsEqualTo(request.Position);
+        await Assert.That(checkedHull!.Center).IsEqualTo(request.Position);
+        await Assert.That(checkedHull.Orientation).IsEqualTo(Matrix4x4.CreateRotationZ(request.Yaw));
+    }
+
+    [Test]
+    [Arguments(true, 0.75f, 0.70f)]
+    [Arguments(true, 0.75f, -0.70f)]
+    [Arguments(true, 0f, 0.075165f)]
+    [Arguments(false, 0.75f, 0.075165f)]
+    public async Task Geometry_RejectsOffsetsOutsideTheSelectedSurface(bool boat, float waveSize, float height)
+    {
+        var request = Request with { Position = Request.Position + Vector3.UnitZ * height };
+        var result = SlavePlacementRules.CheckGeometry(Owner, request, LandModel, boat, 0, 0,
+            (_, _) => CryIntersection.Clear, (_, _) => CryIntersection.Clear, waveSize);
+        await Assert.That(result).IsEqualTo(ErrorMessageType.SlaveSpawnErrorInvalidArea);
+    }
+
+    [Test]
     public async Task Boat_RejectsShallowHullContactAndAllowsZeroSeaLevel()
     {
         var hull = new CryBounds(new(-2, -3, -2), new(2, 3, 4));

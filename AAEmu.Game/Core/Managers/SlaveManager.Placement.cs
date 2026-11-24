@@ -94,9 +94,10 @@ public partial class SlaveManager
                 owner.Transform.StickyParent?.GameObject?.ObjId ?? 0;
             var terrain = scene.SampleElevation(request.Position.X, request.Position.Y);
             var boat = modelType == "ShipModel";
+            var oceanWaveSize = 0f;
             var surface = boat
                 ? PlacementAssets.GetWater(World.Template).GetWaterLevel(request.Position, World.Water.OceanLevel,
-                    PlacementAssets.GetPrefabWater(World, houses, visibleDoodads))
+                    PlacementAssets.GetPrefabWater(World, houses, visibleDoodads), out oceanWaveSize)
                 : terrain;
             // An authored hole is not an available land surface. Raised floors and transfer
             // attachments need their own policy; this skill path uses the native terrain elevation.
@@ -110,7 +111,7 @@ public partial class SlaveManager
                     return result == CryIntersection.Intersects &&
                         hit.Hit.Distance >= Vector3.Distance(origin, end) - SlavePlacementRules.SurfaceTolerance
                         ? CryIntersection.Clear : result;
-                });
+                }, oceanWaveSize);
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or
                                           ArgumentException or OverflowException)

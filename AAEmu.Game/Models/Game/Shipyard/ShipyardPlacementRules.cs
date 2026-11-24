@@ -1,6 +1,7 @@
 using System.Numerics;
 
 using AAEmu.Game.Models.CryEngine.Physics;
+using AAEmu.Game.Models.Game.Housing;
 
 namespace AAEmu.Game.Models.Game.Shipyard;
 
@@ -23,14 +24,8 @@ public static class ShipyardPlacementRules
     public static bool IsWithinRange(Vector3 owner, Vector3 position) => IsFinite(owner) && IsFinite(position) &&
         Vector3.DistanceSquared(owner, position) <= MaximumDistance * MaximumDistance;
 
-    public static bool IsOnWater(Vector3 position, float surface, float oceanWaveSize = 0)
-    {
-        // The cursor hits moving ocean water. The analytic ocean wave sums two sets of
-        // weights (1, .5, .25, .5) times .2, giving .9 * WavesSize at most.
-        var heightTolerance = 0.01f + 0.9f * oceanWaveSize;
-        return IsFinite(position) && float.IsFinite(surface) &&
-            MathF.Abs(position.Z - (surface + PreviewHeight)) <= heightTolerance;
-    }
+    public static bool IsOnWater(Vector3 position, float surface, float oceanWaveSize = 0) =>
+        IsFinite(position) && HousingWaterGeometry.MatchesSurfaceHeight(position.Z, surface + PreviewHeight, oceanWaveSize);
 
     public static CryBox ShipyardBox(CryBounds model, Vector3 position, float yaw, float buildRadius)
         => Box(model, position, yaw, new(buildRadius, ForwardClearance, 0));

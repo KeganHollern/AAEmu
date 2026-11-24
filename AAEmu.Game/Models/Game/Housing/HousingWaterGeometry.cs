@@ -10,7 +10,7 @@ using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.Game.Models.Game.Housing;
 
-/// <summary>Authored physics water used only by housing placement, without movement ingest filters.</summary>
+/// <summary>Authored physics water for placement queries.</summary>
 public sealed class HousingWaterGeometry
 {
     private readonly List<Volume> _volumes = [];
@@ -18,6 +18,15 @@ public sealed class HousingWaterGeometry
 
     public int Count => _volumes.Count;
     private float _oceanWaveSize;
+
+    internal static bool MatchesSurfaceHeight(float requestedHeight, float expectedHeight, float oceanWaveSize)
+    {
+        // The two sets of analytic ocean wave weights (1, .5, .25, .5), scaled by .2,
+        // allow at most .9 * WavesSize of displacement. Local water planes have no waves.
+        return float.IsFinite(requestedHeight) && float.IsFinite(expectedHeight) &&
+            float.IsFinite(oceanWaveSize) && oceanWaveSize >= 0 &&
+            MathF.Abs(requestedHeight - expectedHeight) <= 0.01f + 0.9f * oceanWaveSize;
+    }
 
     /// <summary>Registers records in native load order. A repeated VolumeId cannot add another physics contour.</summary>
     public void Add(ObjectDataType11Water water, Vector3 cellOffset)
