@@ -823,6 +823,7 @@ public partial class MailManager(IMailIdManager mailIdManager, INameManager name
             }
 
             var questName = localizationManager.Get("quest_contexts", "name", quest.TemplateId, quest.TemplateId.ToString());
+            var now = DateTime.UtcNow;
             foreach (var attachments in rewardItems.Chunk(10))
             {
                 // Attachments already belong to the mail container; no inventory notifications or second move.
@@ -832,7 +833,7 @@ public partial class MailManager(IMailIdManager mailIdManager, INameManager name
                     ReceiverName = character.Name,
                     MailType = MailType.SysExpress,
                     Title = questName,
-                    Body = { Text = $"Reward for quest {questName}." }
+                    Body = { Text = $"Reward for quest {questName}.", SendDate = now, RecvDate = now }
                 };
                 mail.Body.Attachments.AddRange(attachments.Select(attachment => attachment.Item));
                 mails.Add(new QuestRewardMail(mail, attachments.Select(attachment => (attachment.Reward, attachment.Item.Count)).ToArray()));
