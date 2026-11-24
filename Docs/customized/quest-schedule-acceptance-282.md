@@ -61,7 +61,9 @@ That consumer sends `QUEST_ERROR_INFO` to X2UI.
 The X2UI handler at source lines 258–260 indexes `locale.questContext.errors` with that reason.
 The error table in `baselib/locale_helper.alb`, source lines 187–224, ends at reason `36`, `player_trade`.
 The server enum also names reason `37`, `GameSchedule`, but this client has no corresponding error text.
-The new check uses the established system-chat path instead of that unsupported reason.
+For NPC and doodad offers, Game sends reason 9 (`unit_requirement_check`) to close the matching dialog.
+The stock English text for this reason is “Does not meet the requirements.”
+Game then sends the schedule notice to System chat in the normal HUD.
 
 ## Scope and confidence
 

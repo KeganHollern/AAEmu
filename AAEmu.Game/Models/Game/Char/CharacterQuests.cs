@@ -215,7 +215,7 @@ public partial class CharacterQuests(Character owner, IGameScheduleManager sched
         if (!forcibly && !IsValidQuestAcceptor(template, questAcceptorType, acceptorId))
             return RejectQuestAcceptor(questId, questAcceptorType, 0, acceptorId, "template_mismatch");
 
-        if (!forcibly && !CanStartInSchedule(questId))
+        if (!forcibly && !CanStartInSchedule(questId, questAcceptorType))
             return false;
 
         if (!forcibly && !CanAcceptSupplyItems(template))
@@ -296,12 +296,14 @@ public partial class CharacterQuests(Character owner, IGameScheduleManager sched
         return true;
     }
 
-    private bool CanStartInSchedule(uint questId)
+    private bool CanStartInSchedule(uint questId, QuestAcceptorType source = QuestAcceptorType.Unknown)
     {
         if ((schedules ?? GameScheduleManager.Instance).CanAcceptQuest(questId))
             return true;
 
-        // r208022 has no quest error 37. Use the established system-chat packet.
+        // r208022 closes the matching dialog on QUEST_ERROR_INFO. Its locale has no schedule reason (37).
+        if (source is QuestAcceptorType.Npc or QuestAcceptorType.Doodad)
+            Owner.SendPacket(new SCQuestContextFailedPacket(questId, QuestStatusFailed.UnitRequirementCheck));
         Owner.SendMessage("This quest is not available at this time.");
         return false;
     }
