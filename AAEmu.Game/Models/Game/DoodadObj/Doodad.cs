@@ -416,6 +416,20 @@ public class Doodad : BaseUnit
         _data = data;
     }
 
+    internal DoodadFuncAttachment GetBondedSeatAction(uint skillId)
+    {
+        if (Template?.OnceOneMan != true)
+            return null;
+
+        var manager = DoodadManager.Instance;
+        var action = manager.GetFunc(FuncGroupId, skillId);
+        if (action?.FuncType != nameof(DoodadFuncAttachment) || action.SkillId != skillId)
+            return null;
+
+        return manager.GetFuncTemplate(action.FuncId, action.FuncType) is DoodadFuncAttachment
+            { BondKindId: > BondKind.BondInvalid } seat ? seat : null;
+    }
+
     /// <summary>
     /// "Executes/Uses" the Doodad's current phase
     /// </summary>
