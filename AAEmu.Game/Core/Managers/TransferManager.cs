@@ -107,8 +107,7 @@ public class TransferManager
         owner.Hp = owner.MaxHp;
         owner.Mp = owner.MaxMp;
         owner.Bounded = null;
-        var trailerSocket = owner.TrailerSocket;
-        if (trailerSocket.HasValue)
+        if (owner.UsesRoutePose)
             owner.InitializeRoutePose(spawner.Position);
         else
             owner.Transform.ApplyWorldSpawnPosition(spawner.Position);
@@ -146,7 +145,7 @@ public class TransferManager
         transfer.Hp = transfer.MaxHp;
         transfer.Mp = transfer.MaxMp;
         transfer.Transform.ApplyWorldSpawnPosition(spawner.Position);
-        if (trailerSocket is { } socket)
+        if (owner.TrailerSocket is { } socket)
             owner.PlaceTrailer(transfer, socket, moving: false);
         else
         {
