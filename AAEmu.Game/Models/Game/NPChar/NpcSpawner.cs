@@ -62,6 +62,7 @@ public partial class NpcSpawner : Spawner<Npc>
     [JsonIgnore]
     internal TowerDefenseSpawnToken PendingTowerDefenseSpawnToken { get; private set; }
     public NpcSpawnerTemplate Template { get; set; }
+    internal bool SelectSingleNpcByWeight { get; set; }
     public List<NpcSpawnerNpc> SpawnableNpcs { get; set; } = []; // List of NPCs that can be spawned
     public ConcurrentDictionary<uint, List<Npc>> SpawnedNpcs { get; set; } = new(); // <SpawnerId, List of spawned NPCs>
     private readonly DateTime _lastSpawnTime = DateTime.MinValue;
@@ -1091,8 +1092,11 @@ public partial class NpcSpawner : Spawner<Npc>
         // List to store spawned NPCs
         var spawnedNpcs = new List<Npc>();
 
-        // Iterates through all NPC templates
-        foreach (var npcTemplate in SpawnableNpcs)
+        var definitions = SpawnableNpcs;
+        if (SelectSingleNpcByWeight)
+            definitions = [SpawnableNpcs.Where(n => n.Weight > 0).RandomElementByWeight(n => n.Weight)];
+
+        foreach (var npcTemplate in definitions)
         {
             try
             {
@@ -1106,7 +1110,7 @@ public partial class NpcSpawner : Spawner<Npc>
 
                 lock (_spawnLock)
                 {
-                    if (npcTemplate.MemberType == "NpcGroup" && CurrentSpawnCount >= Template.MaxPopulation)
+                    if ((SelectSingleNpcByWeight || npcTemplate.MemberType == "NpcGroup") && CurrentSpawnCount >= Template.MaxPopulation)
                         break;
                     // Спавним NPC по шаблону
                     var spawned = SpawnNpcDefinition(npcTemplate);

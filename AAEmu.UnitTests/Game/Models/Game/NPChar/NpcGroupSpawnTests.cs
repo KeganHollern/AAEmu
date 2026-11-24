@@ -314,6 +314,38 @@ public sealed class NpcGroupSpawnTests
     }
 
     [Test]
+    [Arguments(0.5f, 0.5f)]
+    [Arguments(0f, 1f)]
+    [Arguments(1f, 0f)]
+    public async Task MainWorldSinglePopulationPlacement_SelectsOneWeightedNpcAtItsAnchor(float vyravaWeight, float golemWeight)
+    {
+        var vyrava = new ProbeDefinition { Id = 1, NpcSpawnerTemplateId = 14399, MemberId = 12926, MemberType = "Npc", Weight = vyravaWeight };
+        var golem = new ProbeDefinition { Id = 2, NpcSpawnerTemplateId = 14399, MemberId = 4334, MemberType = "Npc", Weight = golemWeight };
+        var template = new NpcSpawnerTemplate { Id = 14399, MaxPopulation = 1, ActivationState = true, Npcs = [vyrava, golem] };
+        NpcGameData.Instance.AddNpcSpawner(template);
+        foreach (var member in template.Npcs)
+            NpcGameData.Instance.AddMemberAndSpawnerTemplateIds(member);
+        var anchor = new WorldSpawnPosition { X = 29943.201f, Y = 7065.4463f, Z = 408.3656f, Yaw = 1f };
+        _world.SpawnManager.AddNpcSpawner(new NpcSpawner { UnitId = 12926, Position = anchor });
+        var spawner = _world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(14399).Single();
+
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            spawner.DoSpawn();
+            spawner.DoSpawn();
+            await Assert.That(spawner.SpawnedNpcs[14399]).HasSingleItem();
+            var npc = spawner.SpawnedNpcs[14399].Single();
+            var chosen = npc.TemplateId == 12926 ? vyrava : golem;
+            await Assert.That(chosen.Weight).IsGreaterThan(0f);
+            await Assert.That(npc.TemplateId).IsEqualTo(chosen.MemberId);
+            await Assert.That(npc.Transform.World.Position).IsEqualTo(anchor.AsPositionVector());
+            await Assert.That(npc.Transform.World.Rotation.Z).IsEqualTo(anchor.Yaw);
+            spawner.Despawn(npc);
+        }
+        await Assert.That(vyrava.Positions.Count + golem.Positions.Count).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task ExplicitGroupPlacement_LoadsAuthoredMembersAndKeepsRuntimeActivationRules()
     {
         var source = new NpcSpawnerTemplate

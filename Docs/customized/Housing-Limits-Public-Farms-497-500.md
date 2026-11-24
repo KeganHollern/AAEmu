@@ -35,7 +35,7 @@ The exact native rules refine the static audit in #497:
 
 | Rule | Confirmed native evidence | Server result |
 | --- | --- | --- |
-| `absolute_deco_limit` counts all house doodads, including bound objects. | `39327c50`, descriptor loader `39677360` | Error 124 when full |
+| `absolute_deco_limit` counts the children that the client attaches to the house, including bound objects. | `39327c50`, descriptor loader `39677360` | Error 124 when full |
 | `deco_limit` counts only furniture whose source item has `Restore=true`. | `39327c50`, item lookup `396a6e00` | Error 200 for another restorable item when full |
 | Category limits use `housing_deco_limit_id` and `deco_actability_group_id`. | `39327bc0` | Error 629 when full or absent |
 | Category 5 counts each storage coffer. Other categories count distinct source item types. | `39897400`, `398977e0`, special group constant `39acb6e8=5` | Duplicate coffers consume capacity |
@@ -46,6 +46,16 @@ of a type already present. Native `39327bc0` checks the current category count
 before placement. It does not subtract duplicates from that check.
 Native `394796b0` subtracts bound objects from the total and absolute limit
 for the displayed furniture count.
+
+On a doodad create, native `390382d0` reads the parent object ID. A house
+parent adds the doodad to the placement map through `3935fc10` and to
+the displayed count through `39330270`. Neither insertion checks the
+source item. The client uses the parent's transform for this object.
+Game sends furniture and bound doors and windows with the house parent.
+It sends free-standing crops and dropped packs at their world position
+and rotation. Game keeps their house owner, permissions and saved local
+transform. Some placement items share a doodad template with furniture.
+The saved source item distinguishes them. [Issue 774](https://github.com/KeganHollern/aaemu-cluster/issues/774)
 
 The server uses the source item ID for category and bonus counts. For old
 doodads without that ID, it uses the loaded decoration design relation.
