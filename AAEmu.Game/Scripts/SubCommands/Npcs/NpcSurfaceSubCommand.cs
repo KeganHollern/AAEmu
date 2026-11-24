@@ -5,7 +5,6 @@ using System.Numerics;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.NPChar;
-using AAEmu.Game.Utils;
 using AAEmu.Game.Utils.Scripts;
 using AAEmu.Game.Utils.Scripts.SubCommands;
 
@@ -56,7 +55,7 @@ public class NpcSurfaceSubCommand : SubCommandBase
                 return;
             }
             var distance = GetOptionalParameterValue(parameters, "step", 0.5f);
-            foreach (var line in DescribeStep(npc, new Vector3(x, y, z), distance))
+            foreach (var line in NpcStepSurfaceTrace.DescribeStep(npc, new Vector3(x, y, z), distance))
                 SendMessage(messageOutput, line);
             return;
         }
@@ -91,39 +90,6 @@ public class NpcSurfaceSubCommand : SubCommandBase
 
     private static bool TryCoordinate(string input, out float value) =>
         float.TryParse(input, NumberStyles.Float, CultureInfo.InvariantCulture, out value) && float.IsFinite(value);
-
-    private static IEnumerable<string> DescribeStep(Npc npc, Vector3 target, float distance)
-    {
-        if (npc.Ai == null || npc.Transform.Parent != null || npc.Transform.StickyParent != null)
-        {
-            yield return "A prospective world-space step needs an unparented NPC with AI.";
-            yield break;
-        }
-        var from = npc.Transform.Local.Position;
-        var range = MathUtil.CalculateDistance(from, target, true);
-        if (!float.IsFinite(range) || range == 0f)
-        {
-            yield return "The destination must have a finite, nonzero distance from the NPC.";
-            yield break;
-        }
-        var next = Npc.GetRequestedStep(from, target, distance, range);
-        var trace = new NpcStepSurfaceTrace();
-        var height = npc.ResolveStepHeight(from, target, next, trace);
-        yield return $"Prospective ad-hoc step height for obj={npc.ObjId} from={FormatStepPosition(from)} target={FormatStepPosition(target)} requested={FormatStepPosition(next)}";
-        yield return $"selected={trace.Selection} z={Format(height)} staticCheck={trace.StaticCheck}";
-        if (trace.Brush != null)
-        {
-            yield return $"ownerCell=({trace.Cell.X},{trace.Cell.Y}) placement={trace.Brush.Source}";
-            yield return $"model={trace.Brush.ModelUri}";
-            if (trace.Part >= 0)
-                yield return $"solidPart={trace.Part} startFace={FormatIndex(trace.StartFace)} endFace={FormatIndex(trace.EndFace)}";
-        }
-    }
-
-    private static string FormatStepPosition(Vector3 value) =>
-        string.Create(CultureInfo.InvariantCulture, $"({value.X:R},{value.Y:R},{value.Z:R})");
-
-    private static string FormatIndex(int value) => value >= 0 ? value.ToString(CultureInfo.InvariantCulture) : "n/a";
 
     internal static string[] BuildReport(Npc npc, Vector3 localPosition, Vector3 worldPosition, uint instanceId, uint zoneId,
         float? terrainZ, float? geoDataZ, GroundSurfaceResult? groundSurface)
