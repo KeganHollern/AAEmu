@@ -470,6 +470,162 @@ public class WaterfallNavalTransitTests
             await Assert.That(body.Velocity).IsEqualTo(before);
     }
 
+    [Test]
+    [Arguments("navigable")]
+    [Arguments("ground-contact")]
+    [Arguments("dry-approach")]
+    [Arguments("wrong-water")]
+    [Arguments("shallow-receiving")]
+    [Arguments("missing-receiving")]
+    [Arguments("too-far")]
+    public async Task WaterfallUpdate_AdvancesOnlyOnAWetApproachToAnInRangeTakeoff(string condition)
+    {
+        const int lip = WorldManager.CELL_SIZE;
+        using var physics = new Jitter2.World();
+        float? lowerBed = condition switch { "missing-receiving" => null, "shallow-receiving" => 99.875f, _ => 88f };
+        var ship = ShipAtWaterfall(physics, lip, lowerBed);
+        var world = ship.ParentWorld;
+        var water = world.Water;
+        AddFlowingPool(water, "saved upper water", lip - 55, 112, 2);
+        AddFlowingPool(water, "approach upper water", lip - 25, 112, 2);
+        if (condition == "wrong-water")
+        {
+            // Leave only a narrow upper pool at the hull. The projected upstream
+            // approach immediately crosses a strip of the lower water plane.
+            water.Areas.RemoveAll(area => area.Name == "approach upper water");
+            water.RebuildSpatialIndex();
+            water.AddSquareArea("source under hull", new(lip - 23, 10, 112), 1, 20);
+        }
+        if (condition == "dry-approach")
+            world.Template.Cells[0, 0].HeightMap[(lip - 22) / 2, 5] = 140 * HeightUnitsPerMeter;
+        if (condition == "too-far")
+        {
+            // This second long brush overlaps the first. Clearing only the first
+            // could appear safe, but the full hull still needs excessive speed.
+            water.AddFromCellData(new WorldCell(0, 0, world.Template)
+            {
+                LoadedObjectDat = new ObjectsFile("long fall")
+                {
+                    AssetPathsList = [new AssetPath { Name = "waterfall_size_15.cgf" }],
+                    PrefabsList = [new ObjectDataType1Brush { PathId = 0,
+                        StartPos = new(lip - 20, 0, 90), EndPos = new(lip + 70, 20, 112) }]
+                }
+            });
+        }
+        var saved = new JVector(lip - 55, 112, 10);
+        var approach = new JVector(lip - 23, 112, 10);
+        var update = new ShipWaterfallInteraction();
+        var elapsed = TimeSpan.FromMilliseconds(40);
+        void Sample(JVector position)
+        {
+            ship.RigidBody.Position = position;
+            ship.Transform.Local.SetPosition(position.X, position.Z, position.Y);
+            ship.CreateWaterAndLandSurfaceCache();
+        }
+
+        Sample(saved);
+        await Assert.That(update.Update(ship, elapsed)).IsFalse();
+        Sample(approach);
+        ship.GroundContactLatched = condition == "ground-contact";
+        await Assert.That(update.Update(ship, elapsed)).IsFalse();
+        await Assert.That(ship.RigidBody.Position).IsEqualTo(condition == "navigable" ? approach : saved);
+        await Assert.That(ship.WaterfallTransitActive).IsFalse();
+    }
+
+    [Test]
+    [Arguments("wet")]
+    [Arguments("latched")]
+    [Arguments("dry")]
+    [Arguments("dry-latched")]
+    [Arguments("shore-latch")]
+    [Arguments("finite-pool")]
+    [Arguments("dry-below")]
+    [Arguments("shallow-below")]
+    public async Task WaterfallUpdate_ObliqueHullClearsBothBrushesBeforeCapture(string condition)
+    {
+        using var physics = new Jitter2.World();
+        var ship = ShipAtWaterfall(physics, 300, 88f);
+        var water = ship.ParentWorld.Water = new WaterBodies { OceanLevel = condition == "finite-pool" ? 70f : 100f };
+        if (condition == "finite-pool")
+            water.AddSquareArea("lower pool on the course", new(317, 67, 100), 27, 25);
+        var heights = ship.ParentWorld.Template.Cells[0, 0].HeightMap;
+        if (condition is "dry" or "dry-latched")
+            heights[150, 25] = 116 * HeightUnitsPerMeter;
+        if (condition == "shore-latch")
+            for (var ix = 149; ix <= 151; ix++)
+            for (var iy = 24; iy <= 28; iy++)
+                heights[ix, iy] = 116 * HeightUnitsPerMeter;
+        if (condition is "dry-below" or "shallow-below")
+            for (var ix = 154; ix < 220; ix++)
+            for (var iy = 27; iy < 90; iy++)
+                heights[ix, iy] = (ushort)((condition == "dry-below" ? 115f : 99.875f) * HeightUnitsPerMeter);
+        water.AddFromCellData(new WorldCell(0, 0, ship.ParentWorld.Template)
+        {
+            LoadedObjectDat = new ObjectsFile("crossing falls")
+            {
+                AssetPathsList = [new AssetPath { Name = "waterfall_size_15.cgf" }],
+                PrefabsList =
+                [
+                    new ObjectDataType1Brush { PathId = 0, StartPos = new(295, 45, 90), EndPos = new(350, 54, 112) },
+                    new ObjectDataType1Brush { PathId = 0, StartPos = new(295, 45, 90), EndPos = new(308, 100, 112) }
+                ]
+            }
+        });
+        var source = water.AddSquareArea("upper water", new(300, 50, 112), 5, 30);
+        source.FlowAxis = Vector2.Normalize(new Vector2(1, 1));
+        source.FlowSpeedSigned = source.FlowSpeedAbs = 2f;
+        var update = new ShipWaterfallInteraction();
+        var step = TimeSpan.FromMilliseconds(40);
+        var body = ship.RigidBody;
+        body.Position = new JVector(300, 112, 50);
+        ship.Transform.Local.SetPosition(300, 50, 112);
+        ship.CreateWaterAndLandSurfaceCache();
+        ship.GroundContactLatched = condition is "latched" or "dry-latched";
+        if (condition == "shore-latch")
+        {
+            new ShipShoreInteraction().ResolveTerrainContacts(ship, step, physics);
+            await Assert.That(ship.GroundContactLatched).IsTrue();
+        }
+        if (condition is not ("wet" or "finite-pool"))
+        {
+            await Assert.That(update.Update(ship, step)).IsFalse();
+            await Assert.That(ship.GroundContactLatched).IsEqualTo(condition is "latched" or "dry-latched" or "shore-latch");
+            return;
+        }
+        await Assert.That(update.Update(ship, step)).IsTrue();
+
+        if (condition == "finite-pool")
+        {
+            for (var tick = 0; tick < 100 && ship.WaterfallTransitActive; tick++)
+            {
+                physics.Step((float)step.TotalSeconds, false);
+                update.Update(ship, step);
+            }
+            await Assert.That(ship.WaterfallTransitActive).IsFalse();
+            await Assert.That(ship.CachedWaterSurface).IsEqualTo(100f);
+            var bounds = body.Shapes[0].WorldBoundingBox;
+            foreach (var x in new[] { bounds.Min.X, bounds.Max.X })
+            foreach (var y in new[] { bounds.Min.Z, bounds.Max.Z })
+            {
+                await Assert.That(water.GetWaterSurface(new(x, y, body.Position.Y), out _)).IsEqualTo(100f);
+                await Assert.That(ship.ParentWorld.GetHeight(x, y)).IsEqualTo(88f);
+            }
+            return;
+        }
+
+        // At lower-water height, after a turn, the stern still
+        // overlaps the second brush even though the hull cleared the first.
+        body.Orientation = JQuaternion.CreateRotationY(MathF.PI / 2f);
+        body.Position = new JVector(309.5f, 100, 63);
+        body.Velocity = new JVector(7, -3, 7);
+        await Assert.That(body.Shapes[0].WorldBoundingBox.Min.X).IsLessThan(308f);
+        await Assert.That(update.Update(ship, step)).IsTrue();
+        body.Position = new JVector(313, 100, 63);
+        await Assert.That(update.Update(ship, step)).IsFalse();
+        await Assert.That(ship.CachedWaterSurface).IsEqualTo(100f);
+        await Assert.That(ship.CachedFloorLevel).IsEqualTo(88f);
+    }
+
     private static void AddFlowingPool(WaterBodies water, string name, float x, float surface, float flow)
     {
         var pool = water.AddSquareArea(name, new(x, 10, surface), 12, 32);
