@@ -1,12 +1,16 @@
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
+using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Housing;
+using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Templates;
@@ -32,11 +36,18 @@ public sealed partial class PlayerMailSendPersistenceTests
         {
             [row.FuncType] = new() { [57] = new DoodadFuncInsertCounter { Id = 57, Count = 10, ItemId = 27301, ItemCount = 1 } }
         });
+        var itemData = new ItemGameData();
+        SetField(itemData, "_itemGradeBuffs", new Dictionary<uint, Dictionary<byte, uint>>());
+        var previousData = SwapSingleton(itemData);
         var previous = SwapSingleton(manager);
         try
         {
             player.InitializeLaborCache(50, DateTime.UtcNow);
             Execute($"INSERT INTO accounts(account_id,labor) VALUES({player.AccountId},50) ON DUPLICATE KEY UPDATE labor=50");
+            var equipmentId = player.Equipment.ContainerId;
+            HousingField<Dictionary<ulong, ItemContainer>>(graph.Items, "_allPersistentContainers")[equipmentId] =
+                new EquipmentContainer(player.Id, SlotType.Equipment, false, player) { ContainerId = equipmentId, Owner = player };
+            player.Inventory = new Inventory(player);
             var pack = graph.AddWornStatuePack();
             var statue = new Doodad { DbId = player.Id, TemplateId = 7234, FuncGroupId = row.GroupId,
                 PlantTime = DateTime.UtcNow, GrowthTime = DateTime.UtcNow.AddDays(15), IsPersistent = true };
@@ -57,10 +68,19 @@ public sealed partial class PlayerMailSendPersistenceTests
             Assert.Equal(19827, Scalar($"SELECT current_phase_id FROM doodads WHERE id={statue.DbId}"));
             Assert.Equal(success ? 25 : 50, Scalar($"SELECT labor FROM accounts WHERE account_id={player.AccountId}"));
             Assert.Equal(success ? 0 : 1, Scalar($"SELECT COUNT(*) FROM items WHERE id={pack.Id}"));
+            var errors = ReadItemErrors(() => Assert.True(graph.Save.DoSave()));
+            Assert.Equal(success ? 0 : 1, Scalar($"SELECT COUNT(*) FROM items WHERE id={pack.Id}"));
+            var restored = graph.ReloadLifecycle().Items.GetItemByItemId(pack.Id);
+            if (success)
+                Assert.Null(restored);
+            else
+                Assert.Equal(pack.Id, restored?._holdingContainer?.GetItemBySlot((int)EquipmentItemSlot.Backpack)?.Id);
+            Assert.Empty(errors);
         }
         finally
         {
             SwapSingleton(previous);
+            SwapSingleton(previousData);
         }
     }
 

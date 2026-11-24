@@ -360,7 +360,7 @@ public sealed class InventoryMutation : IDisposable
         // Once accepted, a throwing observer must never restore assets already observed by others.
         _finished = true;
         foreach (var item in _removed)
-            ItemManager.Instance.ReleaseId(item.Id);
+            ItemManager.Instance.ReleaseConsumedItem(item);
         foreach (var (owner, tasks) in _tasks)
         {
             if (publishItemTasks && _taskType != ItemTaskType.Invalid)
