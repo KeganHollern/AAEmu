@@ -120,6 +120,9 @@ public class SpawnManager(WorldInstance parentWorld)
                         var template = NpcGameData.Instance.GetNpcSpawnerTemplate(id);
                         spawner.ParentWorld = World;
                         spawner.InitializeSpawnableNpcs(template);
+                        // These outdoor capture points have one population slot and weighted alternatives.
+                        spawner.SelectSingleNpcByWeight = World.Id == WorldManager.DefaultInstanceId &&
+                            template is { MaxPopulation: 1, Npcs.Count: > 1 } && template.Npcs.All(n => n.MemberType == "Npc");
                         // Own list per clone: Clone() is a MemberwiseClone, so Add() on the shared
                         // list would make every sibling clone match every sibling's template id in
                         // spawner lookups. (aaemu-cluster#92 review)
