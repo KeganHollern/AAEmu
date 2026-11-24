@@ -33,6 +33,60 @@ public sealed partial class PlayerMailSendPersistenceTests
 {
     private static int _nextId = 1100000;
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ClaimAttachment_SaveAndReloadKeepsOnlyTheDeliveredStack(bool merge)
+    {
+        using var graph = new SendGraph();
+        var attachment = graph.AddItem(0);
+        attachment.Count = 3;
+        var destination = merge ? graph.AddItem(1) : attachment;
+        if (merge)
+            destination.Count = 7;
+        Assert.Equal(MailResult.Success, graph.Send(MailType.Express, 0, merge ? [0, 1] : [0]));
+        var letter = Assert.Single(graph.Mails._allPlayerMails.Values);
+        // Keep the delivered letter due after MySQL rounds its timestamps to seconds.
+        letter.Body.SendDate = letter.Body.RecvDate = DateTime.UtcNow.AddMinutes(-1);
+        var receiver = graph.Receiver;
+        if (merge)
+            Assert.True(receiver.Mails.GetAttached(letter.Id, false, true, false, destination.Id));
+        var acquired = new List<int>();
+        receiver.Events.OnItemGather += (_, args) => acquired.Add(args.Count);
+
+        Assert.True(receiver.Mails.GetAttached(letter.Id, false, true, false, attachment.Id));
+        Assert.True(receiver.Mails.GetAttached(letter.Id, false, true, false, attachment.Id));
+
+        var expectedCount = merge ? 10 : 3;
+        Assert.Equal(new[] { 3 }, acquired);
+        Assert.Same(destination, Assert.Single(receiver.Inventory.Bag.Items));
+        Assert.Equal(expectedCount, destination.Count);
+        Assert.Empty(receiver.Inventory.MailAttachments.Items);
+        Assert.Empty(letter.Body.Attachments);
+        Assert.Equal(0, letter.Header.Attachments);
+        Assert.True(graph.Save.DoSave());
+
+        var (items, mails) = graph.ReloadLifecycle();
+        SwapSingleton(items);
+        SwapSingleton(mails);
+        receiver.Inventory = new Inventory(receiver);
+        receiver.Mails = new CharacterMails(receiver);
+        Assert.True(receiver.Mails.GetAttached(letter.Id, false, true, false, attachment.Id));
+        Assert.Equal(new[] { 3 }, acquired);
+        var delivered = Assert.Single(receiver.Inventory.Bag.Items);
+        Assert.Equal(destination.Id, delivered.Id);
+        Assert.Equal(expectedCount, delivered.Count);
+        Assert.Equal(receiver.Id, delivered.OwnerId);
+        Assert.Equal(SlotType.Inventory, delivered.SlotType);
+        Assert.Empty(receiver.Inventory.MailAttachments.Items);
+        Assert.Empty(mails.GetMailById(letter.Id).Body.Attachments);
+        if (merge)
+        {
+            Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM items WHERE id={attachment.Id}"));
+            Assert.Null(items.GetItemByItemId(attachment.Id));
+        }
+    }
+
     [Fact]
     public void ReturnMail_OwningRecipient_ReturnsMailThroughRealCheckpoint()
     {
