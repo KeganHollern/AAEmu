@@ -1,4 +1,7 @@
+using System.Globalization;
 using System.Numerics;
+using System.Xml;
+using System.Xml.Linq;
 
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.CryEngine.Objects;
@@ -14,6 +17,7 @@ public sealed class HousingWaterGeometry
     private readonly HashSet<ulong> _registeredIds = [];
 
     public int Count => _volumes.Count;
+    private float _oceanWaveSize;
 
     /// <summary>Registers records in native load order. A repeated VolumeId cannot add another physics contour.</summary>
     public void Add(ObjectDataType11Water water, Vector3 cellOffset)
@@ -79,12 +83,17 @@ public sealed class HousingWaterGeometry
     /// Both sources share the native four-result limit. Dynamic records never change the static cache.
     /// </summary>
     public float GetWaterLevel(Vector3 point, float oceanLevel, IReadOnlyList<CryWaterVolumeInstance> dynamicInstances)
+        => GetWaterLevel(point, oceanLevel, dynamicInstances, out _);
+
+    public float GetWaterLevel(Vector3 point, float oceanLevel, IReadOnlyList<CryWaterVolumeInstance> dynamicInstances,
+        out float oceanWaveSize)
     {
+        oceanWaveSize = 0;
         if (!Finite(point) || !float.IsFinite(oceanLevel))
             return float.NaN;
         // Native35053450 prepends same-medium areas. The first local match replaces global
         // buoyancy and clears its medium marker. Later matches append, up to 4 result slots.
-        var level = oceanLevel;
+        var highestLocalSurface = float.NegativeInfinity;
         var count = 0;
         for (var instanceIndex = dynamicInstances.Count - 1; instanceIndex >= 0 && count < 4; instanceIndex--)
         {
@@ -109,7 +118,7 @@ public sealed class HousingWaterGeometry
                 var volume = new Volume(points, normal, MathF.Min(0, -water.Depth - instance.HeightOffset), false);
                 if (volume.TryGetSurface(point, out var surface))
                 {
-                    level = MathF.Max(level, surface);
+                    highestLocalSurface = MathF.Max(highestLocalSurface, surface);
                     count++;
                 }
             }
@@ -117,15 +126,18 @@ public sealed class HousingWaterGeometry
         for (var i = _volumes.Count - 1; i >= 0 && count < 4; i--)
             if (_volumes[i].TryGetSurface(point, out var surface))
             {
-                level = MathF.Max(level, surface);
+                highestLocalSurface = MathF.Max(highestLocalSurface, surface);
                 count++;
             }
-        return level;
+        if (oceanLevel > highestLocalSurface)
+            oceanWaveSize = _oceanWaveSize;
+        return MathF.Max(oceanLevel, highestLocalSurface);
     }
 
     public static HousingWaterGeometry Load(WorldTemplate world, Func<string, System.IO.Stream> openFile)
     {
-        var result = new HousingWaterGeometry();
+        using var environment = openFile($"game/worlds/{world.Name}/env.xml");
+        var result = new HousingWaterGeometry { _oceanWaveSize = ReadOceanWaveSize(environment) };
         for (var y = 0; y < world.Cells.GetLength(1); y++)
         for (var x = 0; x < world.Cells.GetLength(0); x++)
         {
@@ -152,6 +164,23 @@ public sealed class HousingWaterGeometry
                     result.Add(water, offset);
         }
         return result;
+    }
+
+    private static float ReadOceanWaveSize(System.IO.Stream environment)
+    {
+        if (environment == null)
+            return 0;
+        try
+        {
+            var value = (string)XElement.Load(environment).Element("OceanAnimation")?.Attribute("WavesSize");
+            return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var size) && float.IsFinite(size)
+                ? Math.Clamp(size, 0f, 3f) : 0;
+        }
+        catch (XmlException)
+        {
+            // A missing wave setting keeps the flat-water check. Static water geometry is independent.
+            return 0;
+        }
     }
 
     private static Vector3 Project(Vector3 point, Vector3 normal, float d) =>
