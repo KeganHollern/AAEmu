@@ -17,9 +17,49 @@ namespace AAEmu.Game.Models.Game.Units;
 public class Transfer : Unit
 {
     /// <summary>
-    /// Signed offset along the motor's forward axis for the bounded child (not in client DB; tuned for default carriage pair).
+    /// Signed distance along the default carriage motor's forward axis.
     /// </summary>
     public const float BoundedChildAlongFrontOffsetMeters = -9.24417f;
+
+    // Model 654, transfers_carriageb01.cgf: $trailed0 in model-local metres.
+    private static readonly Vector3 CarriageSocket = new(0, BoundedChildAlongFrontOffsetMeters, 1.2507583f);
+
+    internal bool UsesCarriageSocket => ModelId == 654 &&
+        Template?.TransferBindings.FirstOrDefault() is { TransferId: 46, AttachPointId: AttachPointKind.Trailed0 };
+
+    internal void InitializeCarriageMotor(WorldSpawnPosition spawn)
+    {
+        var route = Template.TransferRoads.FirstOrDefault()?.Pos;
+        if (route is { Count: >= 2 })
+        {
+            var start = route[0];
+            var next = route[1];
+            Angle = MathUtil.CalculateDirection(start.AsPositionVector(), next.AsPositionVector());
+            Transform.ApplyWorldSpawnPosition(start);
+            Transform.Local.SetZRotation((float)Angle - MathF.PI / 2);
+        }
+        else
+            Transform.ApplyWorldSpawnPosition(spawn);
+
+        Rot = Transform.Local.ToQuaternion();
+    }
+
+    internal void PlaceCarriageCabin(Transfer cabin, bool moving)
+    {
+        var point = Transform.TransformPoint(CarriageSocket);
+        var rotation = Transform.World.Rotation;
+        cabin.Rot = Rot;
+        if (moving)
+        {
+            cabin.SetPosition(point.X, point.Y, point.Z, rotation.X, rotation.Y, rotation.Z);
+            cabin.Transform.FinalizeTransform();
+        }
+        else
+        {
+            cabin.Transform.ZoneId = Transform.ZoneId;
+            cabin.Transform.Local.SetPosition(point, rotation);
+        }
+    }
 
     public override UnitTypeFlag TypeFlag { get => UnitTypeFlag.Transfer; }
     public override BaseUnitType BaseUnitType => BaseUnitType.Transfer;
@@ -481,9 +521,20 @@ public class Transfer : Unit
         {
             transfer.AngVel = new Vector3(-MaxVelocityForward, 0, 0);
         }
-        var rot = MathUtil.ConvertRadianToDirectionShort(transfer.Angle);
-        transfer.Transform.World.SetZRotation((float)Angle);
-        transfer.Rot = new Quaternion(rot.X, rot.Z, rot.Y, rot.W);
+        var carriage = transfer.UsesCarriageSocket;
+        if (carriage)
+        {
+            // The mesh faces +Y. The route angle is measured from +X.
+            var modelYaw = (float)transfer.Angle - MathF.PI / 2;
+            transfer.SetPosition(transfer.vPosition.X, transfer.vPosition.Y, transfer.vPosition.Z, 0, 0, modelYaw);
+            transfer.Rot = transfer.Transform.Local.ToQuaternion();
+        }
+        else
+        {
+            var rot = MathUtil.ConvertRadianToDirectionShort(transfer.Angle);
+            transfer.Transform.World.SetZRotation((float)Angle);
+            transfer.Rot = new Quaternion(rot.X, rot.Z, rot.Y, rot.W);
+        }
 
         // update TransfersPath variable
         var moveTypeTr = (TransferData)MoveType.GetType(MoveTypeEnum.Transfer);
@@ -497,8 +548,11 @@ public class Transfer : Unit
 
         // Added so whatever riding this, doesn't clip out of existence when moving
         transfer.Transform.FinalizeTransform();
-        transfer.SetPosition(transfer.vPosition.X, transfer.vPosition.Y, transfer.vPosition.Z, 0, 0, (float)transfer.Angle);
-        transfer.Transform.World.SetPosition(transfer.vPosition, new Vector3(0, 0, (float)transfer.Angle));
+        if (!carriage)
+        {
+            transfer.SetPosition(transfer.vPosition.X, transfer.vPosition.Y, transfer.vPosition.Z, 0, 0, (float)transfer.Angle);
+            transfer.Transform.World.SetPosition(transfer.vPosition, new Vector3(0, 0, (float)transfer.Angle));
+        }
 
         // Keep bound carriage parts in sync server-side.
         // The client may initially render them attached at the station, but without server-side position updates
@@ -506,15 +560,20 @@ public class Transfer : Unit
         if (transfer.Bounded is not null)
         {
             var child = transfer.Bounded;
-            var (cx, cy) = MathUtil.AddDistanceToFront(BoundedChildAlongFrontOffsetMeters,
-                transfer.vPosition.X,
-                transfer.vPosition.Y,
-                (float)transfer.Angle);
-            var cz = transfer.vPosition.Z;
+            if (carriage)
+                transfer.PlaceCarriageCabin(child, moving: true);
+            else
+            {
+                var (cx, cy) = MathUtil.AddDistanceToFront(BoundedChildAlongFrontOffsetMeters,
+                    transfer.vPosition.X,
+                    transfer.vPosition.Y,
+                    (float)transfer.Angle);
+                var cz = transfer.vPosition.Z;
 
-            child.SetPosition(cx, cy, cz, 0, 0, (float)transfer.Angle);
-            child.Transform.World.SetPosition(new Vector3(cx, cy, cz), new Vector3(0, 0, (float)transfer.Angle));
-            child.Rot = transfer.Rot;
+                child.SetPosition(cx, cy, cz, 0, 0, (float)transfer.Angle);
+                child.Transform.World.SetPosition(new Vector3(cx, cy, cz), new Vector3(0, 0, (float)transfer.Angle));
+                child.Rot = transfer.Rot;
+            }
 
             var childMove = (TransferData)MoveType.GetType(MoveTypeEnum.Transfer);
             childMove.UseTransferBase(child);
