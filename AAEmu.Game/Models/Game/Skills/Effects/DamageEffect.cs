@@ -5,6 +5,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Formulas;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Static;
@@ -82,6 +83,17 @@ public class DamageEffect : EffectTemplate
         {
             Logger.Warn($"No caster defined for DamageEffect {Id}, with targetObjId {target.ObjId} ({target})");
             return;
+        }
+
+        var houseDecay = false;
+        if (trg is House house && ReferenceEquals(caster, house) && castObj is CastBuff tick &&
+            ReferenceEquals(tick.Buff.Owner, house) && ReferenceEquals(tick.Buff.Caster, house) &&
+            ReferenceEquals(tick.Buff.Template, source?.Buff) &&
+            (tick.Buff.Template.Id, Id) is ((uint)BuffConstants.BurningHouse, 106) or ((uint)BuffConstants.RemovalDebuff, 1876))
+        {
+            if (!house.DemolitionReturnsCommitted || house.OwnerId != 0 || house.AccountId != 0)
+                return;
+            houseDecay = true;
         }
 
         using var duelEffect = DuelManager.Instance.EnterEffect(caster, target, source);
@@ -358,14 +370,9 @@ public class DamageEffect : EffectTemplate
         var healthStolen = (int)(value * (HealthStealRatio / 100.0f));
         var manaStolen = (int)(value * (ManaStealRatio / 100.0f));
 
-        // ID=6151, Test Drive Restriction, 8m
-        if (castObj is CastBuff buff && buff.Buff.Template.Id == 6151)
-        {
-            // TODO I don’t know how to correctly check for the destruction buff of a test car
-            // skip the check CanAttack()
-        }
-        // Safeguard to prevent accidental flagging
-        else if (!caster.CanAttack(trg))
+        // The test vehicle and a settled, abandoned house take damage from their own authored buffs.
+        var testDrive = castObj is CastBuff { Buff.Template.Id: 6151 };
+        if (!houseDecay && !testDrive && !caster.CanAttack(trg))
             return;
 
         if (target.Buffs.CheckDamageImmune(DamageType, value))
@@ -410,7 +417,7 @@ public class DamageEffect : EffectTemplate
         var trgCharacter = trg as Character;
         var attacker = caster as Unit;
         
-        if (CheckCrime && caster.GetRelationStateTo(trg) == RelationState.Friendly)
+        if (CheckCrime && !houseDecay && caster.GetRelationStateTo(trg) == RelationState.Friendly)
         {
             // Set Purple state
             if (!trg.Buffs.CheckBuff((uint)BuffConstants.Retribution))

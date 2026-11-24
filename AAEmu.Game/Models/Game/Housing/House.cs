@@ -46,6 +46,15 @@ public sealed class House : Unit
     /// after it's initial addition to the table, like position/rotation. Therefore it's ok to only set the dirty marker on the other properties
     /// </summary>
     public bool IsDirty { get => _isDirty; set => _isDirty = value; }
+    internal bool DemolitionReturnsCommitted { get; private set; }
+
+    // Call only after the return mail, attachments and ownership change commit together.
+    internal void AcknowledgeDemolitionReturns()
+    {
+        if (OwnerId == 0 && AccountId == 0 && ProtectionEndDate <= DateTime.UtcNow)
+            DemolitionReturnsCommitted = true;
+    }
+
     /// <summary>
     /// When true, suppresses bound doodad spawning in the CurrentStep setter so they can be loaded from the database instead.
     /// </summary>

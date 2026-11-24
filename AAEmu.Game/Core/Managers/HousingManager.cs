@@ -353,37 +353,24 @@ public partial class HousingManager(
         }
     }
 
-    /// <summary>
-    /// Sets or removes the removal debuff for demolishing houses
-    /// </summary>
-    /// <param name="house"></param>
-    /// <param name="isDeteriorating"></param>
-    private void SetRemovalDebuff(House house, bool isDeteriorating)
+    private void SetDemolitionBuff(House house, BuffConstants kind, bool enabled)
     {
-        if (isDeteriorating)
+        var id = (uint)kind;
+        if (!enabled)
         {
-            if (!house.Buffs.CheckBuff((uint)BuffConstants.RemovalDebuff))
-            {
-                // Permanent Untouchable buff, should only be removed when failed tax payment, or demolishing by hand
-                var protectionBuffTemplate = skillManager.GetBuffTemplate((uint)BuffConstants.RemovalDebuff);
-                if (protectionBuffTemplate != null)
-                {
-                    var casterObj = new SkillCasterUnit(house.ObjId);
-                    house.Buffs.AddBuff(new Buff(house, house, casterObj,
-                        protectionBuffTemplate, null, DateTime.UtcNow));
-                }
-                else
-                {
-                    Logger.Error("Unable to find Removal Debuff template");
-                }
-            }
+            if (house.Buffs.CheckBuff(id))
+                house.Buffs.RemoveBuff(id);
+            return;
         }
-        else
+        if (house.Buffs.CheckBuff(id))
+            return;
+        var template = skillManager.GetBuffTemplate(id);
+        if (template == null)
         {
-            // Remove Untouchable if it's enabled
-            if (house.Buffs.CheckBuff((uint)BuffConstants.RemovalDebuff))
-                house.Buffs.RemoveBuff((uint)BuffConstants.RemovalDebuff);
+            Logger.Error($"Unable to find house buff {kind} ({id})");
+            return;
         }
+        house.Buffs.AddBuff(new Buff(house, house, new SkillCasterUnit(house.ObjId), template, null, DateTime.UtcNow));
     }
 
     /// <summary>
@@ -883,7 +870,9 @@ public partial class HousingManager(
 
             // Update Buffs (if needed)
             SetUntouchable(house, !isDemolished);
-            SetRemovalDebuff(house, isDemolished);
+            SetDemolitionBuff(house, BuffConstants.RemovalDebuff, isDemolished);
+            if (house.DemolitionReturnsCommitted && house.OwnerId == 0 && house.AccountId == 0 && isDemolished)
+                SetDemolitionBuff(house, BuffConstants.BurningHouse, true);
 
             var allMails = mailManager.GetMyHouseMails(house.Id);
 
