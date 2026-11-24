@@ -948,6 +948,7 @@ public class SpawnManager(WorldInstance parentWorld)
 
                     if (ownerTypeToSpawn == DoodadOwnerType.Slave && useParentObject is Slave parentSlave)
                     {
+                        SlaveManager.RestoreSchoonerRackPosition(parentSlave, doodad);
                         parentSlave.AttachedDoodads.Add(doodad);
                     }
 
