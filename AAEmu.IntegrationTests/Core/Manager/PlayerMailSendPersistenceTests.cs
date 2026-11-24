@@ -46,6 +46,8 @@ public sealed partial class PlayerMailSendPersistenceTests
             destination.Count = 7;
         Assert.Equal(MailResult.Success, graph.Send(MailType.Express, 0, merge ? [0, 1] : [0]));
         var letter = Assert.Single(graph.Mails._allPlayerMails.Values);
+        // Keep the delivered letter due after MySQL rounds its timestamps to seconds.
+        letter.Body.SendDate = letter.Body.RecvDate = DateTime.UtcNow.AddMinutes(-1);
         var receiver = graph.Receiver;
         if (merge)
             Assert.True(receiver.Mails.GetAttached(letter.Id, false, true, false, destination.Id));
