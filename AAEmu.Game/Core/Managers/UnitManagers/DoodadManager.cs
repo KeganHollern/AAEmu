@@ -24,6 +24,7 @@ using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Utils.DB;
 
+using Microsoft.Data.Sqlite;
 using MySql.Data.MySqlClient;
 
 using NLog;
@@ -170,37 +171,7 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
                 }
             }
 
-            // doodad_phase_funcs
-            using (var command = connection.CreateCommand())
-            {
-                command.CommandText = "SELECT * FROM doodad_phase_funcs ORDER BY doodad_func_group_id, actual_func_id";
-                command.Prepare();
-                using (var sqliteDataReader = command.ExecuteReader())
-                using (var reader = new SQLiteWrapperReader(sqliteDataReader))
-                {
-                    while (reader.Read())
-                    {
-                        var func = new DoodadPhaseFunc
-                        {
-                            GroupId = reader.GetUInt32("doodad_func_group_id"),
-                            FuncId = reader.GetUInt32("actual_func_id"),
-                            FuncType = reader.GetString("actual_func_type")
-                        };
-                        List<DoodadPhaseFunc> list;
-                        if (_phaseFuncs.TryGetValue(func.GroupId, out var phaseFunc))
-                        {
-                            list = phaseFunc;
-                        }
-                        else
-                        {
-                            list = [];
-                            _phaseFuncs.Add(func.GroupId, list);
-                        }
-
-                        list.Add(func);
-                    }
-                }
-            }
+            LoadPhaseFunctions(connection);
 
             // doodad_func_animates
             using (var command = connection.CreateCommand())
@@ -2903,6 +2874,30 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
     public List<DoodadFunc> GetFuncsForGroup(uint funcGroupId)
     {
         return _funcsByGroups.TryGetValue(funcGroupId, out var group) ? group : [];
+    }
+
+    internal void LoadPhaseFunctions(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        // The Webbed Cocoon's timeout precedes both ratio choices in compact row order.
+        // A successful choice of the current phase stops the walk and must keep that timer.
+        command.CommandText = """
+            SELECT doodad_func_group_id, actual_func_id, actual_func_type FROM doodad_phase_funcs
+            ORDER BY doodad_func_group_id, CASE WHEN doodad_func_group_id = 7079 THEN id ELSE actual_func_id END
+            """;
+        using var reader = new SQLiteWrapperReader(command.ExecuteReader());
+        while (reader.Read())
+        {
+            var func = new DoodadPhaseFunc
+            {
+                GroupId = reader.GetUInt32("doodad_func_group_id"),
+                FuncId = reader.GetUInt32("actual_func_id"),
+                FuncType = reader.GetString("actual_func_type")
+            };
+            if (!_phaseFuncs.TryGetValue(func.GroupId, out var list))
+                _phaseFuncs.Add(func.GroupId, list = []);
+            list.Add(func);
+        }
     }
 
     public List<DoodadPhaseFunc> GetPhaseFunc(uint funcGroupId)

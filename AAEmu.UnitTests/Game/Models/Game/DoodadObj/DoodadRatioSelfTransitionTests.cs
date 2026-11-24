@@ -8,7 +8,10 @@ using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Tasks.Doodads;
 using AAEmu.UnitTests.Utils.Mocks;
+
+using Microsoft.Data.Sqlite;
 
 namespace AAEmu.UnitTests.Game.Models.Game.DoodadObj;
 
@@ -30,18 +33,24 @@ public sealed class DoodadRatioSelfTransitionTests
             new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>().Object),
             Mock.Of<ISusManager>().Object);
 
-        // r208022 cocoon 3094 has two ordered 50% choices. Row 170 selects
-        // the current phase, then interaction 6385 must still open phase 7080.
-        SetField(manager, "_phaseFuncs", new Dictionary<uint, List<DoodadPhaseFunc>>
-        {
-            [InitialPhase] =
-            [
-                new() { GroupId = InitialPhase, FuncId = 169, FuncType = nameof(DoodadFuncRatioChange) },
-                new() { GroupId = InitialPhase, FuncId = 170, FuncType = nameof(DoodadFuncRatioChange) }
-            ]
-        });
+        // Use the production loader. Type-specific IDs and phase row IDs put the timer in different places.
+        SetField(manager, "_phaseFuncs", new Dictionary<uint, List<DoodadPhaseFunc>>());
+        using var compact = new SqliteConnection("Data Source=:memory:");
+        compact.Open();
+        using var insert = compact.CreateCommand();
+        insert.CommandText = """
+            CREATE TABLE doodad_phase_funcs(id INTEGER PRIMARY KEY, doodad_func_group_id INT, actual_func_id INT, actual_func_type TEXT);
+            INSERT INTO doodad_phase_funcs VALUES
+                (7223,7080,1388,'DoodadFuncFinal'), (7224,7079,1648,'DoodadFuncTimer'),
+                (7283,7079,169,'DoodadFuncRatioChange'), (7284,7079,170,'DoodadFuncRatioChange'),
+                (1,555,50,'DoodadFuncTimer'), (2,555,10,'DoodadFuncRatioChange');
+            """;
+        insert.ExecuteNonQuery();
+        manager.LoadPhaseFunctions(compact);
         SetField(manager, "_phaseFuncTemplates", new Dictionary<string, Dictionary<uint, DoodadPhaseFuncTemplate>>
         {
+            [nameof(DoodadFuncTimer)] = new() { [1648] = new DoodadFuncTimer { Id = 1648, Delay = 15000, NextPhase = (int)OpenPhase } },
+            [nameof(DoodadFuncFinal)] = new() { [1388] = new DoodadFuncFinal { Id = 1388, After = 1000 } },
             [nameof(DoodadFuncRatioChange)] = new()
             {
                 [169] = new DoodadFuncRatioChange { Id = 169, Ratio = 5000, NextPhase = (int)OpenPhase },
@@ -67,6 +76,7 @@ public sealed class DoodadRatioSelfTransitionTests
             }
         });
         Install(manager);
+        Install(new TaskManager(null));
         var skills = new SkillManager(null, null);
         SetField(skills, "_skills", new Dictionary<uint, SkillTemplate>
         {
@@ -83,9 +93,10 @@ public sealed class DoodadRatioSelfTransitionTests
     }
 
     [Test]
-    [Arguments(5000)]
-    [Arguments(9999)]
-    public async Task SelfSelection_NextNormalUseFollowsAuthoredInteraction(int roll)
+    [Arguments(5000, true)]
+    [Arguments(9999, false)]
+    [Arguments(4999, false)]
+    public async Task Cocoon_CompletesOnceAfterTimeoutInteractionOrImmediateRatio(int roll, bool interact)
     {
         var doodad = new FixedRollDoodad(roll)
         {
@@ -95,15 +106,39 @@ public sealed class DoodadRatioSelfTransitionTests
         };
         var player = new CharacterMock { Id = 7, ObjId = 8 };
 
-        var stopped = doodad.DoChangePhase(null, (int)InitialPhase);
-        var settledPhase = doodad.FuncGroupId;
-        doodad.Use(player, InteractionSkill);
-
-        await Assert.That(stopped).IsTrue();
-        await Assert.That(settledPhase).IsEqualTo(InitialPhase);
+        var started = DateTime.UtcNow;
+        doodad.DoChangePhase(null, (int)InitialPhase);
+        if (roll >= 5000)
+        {
+            await Assert.That(doodad.FuncGroupId).IsEqualTo(InitialPhase);
+            var timer = doodad.FuncTask;
+            await Assert.That(timer).IsTypeOf<DoodadFuncTimerTask>();
+            await Assert.That(timer.TriggerTime >= started.AddSeconds(15) && timer.TriggerTime <= DateTime.UtcNow.AddSeconds(15)).IsTrue();
+            if (interact)
+                doodad.Use(player, InteractionSkill);
+            else
+                timer.Execute();
+            var finalAfterTransition = doodad.FuncTask;
+            timer.Execute(); // A previously dispatched timer cannot repeat the transition.
+            await Assert.That(doodad.FuncTask).IsSameReferenceAs(finalAfterTransition);
+        }
         await Assert.That(doodad.FuncGroupId).IsEqualTo(OpenPhase);
         await Assert.That(doodad.OverridePhase).IsEqualTo(0);
-        await Assert.That(doodad.RollCount).IsEqualTo(1);
+        await Assert.That(doodad.RollCount).IsEqualTo(2);
+        var final = doodad.FuncTask;
+        await Assert.That(final).IsTypeOf<DoodadFuncFinalTask>();
+        await Assert.That(final.TriggerTime >= started.AddSeconds(1) && final.TriggerTime <= DateTime.UtcNow.AddSeconds(1)).IsTrue();
+        final.Execute();
+        final.Execute();
+        await Assert.That(doodad.DeleteCount).IsEqualTo(1);
+        await Assert.That(doodad.FuncTask).IsNull();
+    }
+
+    [Test]
+    public async Task OtherGroups_KeepTheirFunctionOrder()
+    {
+        var other = DoodadManager.Instance.GetPhaseFunc(555);
+        await Assert.That(other.Select(function => function.FuncId).SequenceEqual([10u, 50u])).IsTrue();
     }
 
     private void Install<T>(T instance) where T : class
@@ -119,6 +154,9 @@ public sealed class DoodadRatioSelfTransitionTests
     private sealed class FixedRollDoodad(int roll) : Doodad
     {
         public int RollCount { get; private set; }
+        public int DeleteCount { get; private set; }
+
+        public override void Delete() => DeleteCount++;
 
         protected override int RollPhaseRatio()
         {

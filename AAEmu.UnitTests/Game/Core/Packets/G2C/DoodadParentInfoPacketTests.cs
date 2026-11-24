@@ -2,16 +2,83 @@
 using System.Reflection;
 
 using AAEmu.Commons.Network;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.UnitTests.Game.Core.Packets.G2C;
 
 public sealed class DoodadParentInfoPacketTests
 {
+    [Test, NotInParallel]
+    public async Task HouseChildren_KeepFurnitureAndBindingsLocalAndSendGardenItemsInWorldSpace()
+    {
+        var data = new HousingGameData();
+        var original = typeof(Singleton<HousingGameData>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previous = original.GetValue(null);
+        const BindingFlags fields = BindingFlags.Instance | BindingFlags.NonPublic;
+        typeof(HousingGameData).GetField("_housingDecorations", fields)!.SetValue(data,
+            new Dictionary<uint, HousingDecoration> { [104] = new() { Id = 104, DoodadId = 2142 } });
+        typeof(HousingGameData).GetField("_housingItemHousingDecorations", fields)!.SetValue(data,
+            new List<ItemHousingDecoration> { new() { ItemId = 15243, DesignId = 104 } });
+        original.SetValue(null, data);
+        try
+        {
+            var house = new House { Id = 3, ObjId = 172 };
+            house.Transform.Local.Position = new Vector3(1000, 2000, 30);
+            house.Transform.Local.SetZRotation(MathF.PI / 2);
+            var children = new (uint Template, uint Item, AttachPointKind Socket, bool Local)[]
+            {
+                (2142, 15243, AttachPointKind.None, true),  // Furniture item for this model.
+                (2142, 0, AttachPointKind.None, true),      // Older furniture without a saved source.
+                (2142, 15182, AttachPointKind.None, false), // Normal placement item with the same model.
+                (2261, 15661, AttachPointKind.None, false), // Carrot seed.
+                (3054, 17683, AttachPointKind.None, false), // Dropped Lumber Pack.
+                (4278, 0, AttachPointKind.HealPoint0, true), // Cottage door at socket 36.
+                (4322, 0, AttachPointKind.HealPoint1, true)  // Cottage window at socket 37.
+            };
+            foreach (var (template, item, socket, local) in children)
+            {
+                var child = new Doodad { ObjId = 9, TemplateId = template, ItemTemplateId = item, AttachPoint = socket,
+                    ParentObj = house, ParentObjId = house.ObjId, OwnerType = DoodadOwnerType.Housing, OwnerDbId = house.Id };
+                child.Transform.Parent = house.Transform;
+                child.Transform.Local.Position = new Vector3(2, 3, 1);
+                child.Transform.Local.SetZRotation(0.1f);
+                var expected = local ? child.Transform.Local : child.Transform.World;
+                foreach (var batch in new[] { false, true })
+                {
+                    var bytes = batch ? new SCDoodadsCreatedPacket([child]).Write(new PacketStream()).GetBytes()
+                        : new SCDoodadCreatedPacket(child).Write(new PacketStream()).GetBytes();
+                    var body = new PacketStream(bytes);
+                    if (batch)
+                        await Assert.That(body.ReadByte()).IsEqualTo((byte)1);
+                    body.ReadBc();
+                    body.ReadUInt32();
+                    body.ReadBc();
+                    await Assert.That(body.ReadBc()).IsEqualTo(local ? house.ObjId : 0u);
+                    await Assert.That(body.ReadByte()).IsEqualTo((byte)socket);
+                    var (x, y, z) = body.ReadPosition();
+                    await Assert.That(Vector3.Distance(new(x, y, z), expected.Position)).IsLessThan(0.01f);
+                    var rotation = (body.ReadInt16(), body.ReadInt16(), body.ReadInt16());
+                    await Assert.That(rotation).IsEqualTo(expected.ToRollPitchYawShorts());
+                    await Assert.That(BitConverter.ToUInt32(bytes, bytes.Length - 8)).IsEqualTo(house.Id);
+                }
+                await Assert.That(child.ParentObjId).IsEqualTo(house.ObjId);
+                await Assert.That(child.Transform.Parent).IsSameReferenceAs(house.Transform);
+                await Assert.That(child.Transform.Local.Position).IsEqualTo(new Vector3(2, 3, 1));
+            }
+        }
+        finally
+        {
+            original.SetValue(null, previous);
+        }
+    }
+
     [Test]
     [Arguments(false, true)]
     [Arguments(true, true)]

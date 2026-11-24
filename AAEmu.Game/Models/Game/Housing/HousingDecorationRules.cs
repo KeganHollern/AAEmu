@@ -40,20 +40,29 @@ public static class HousingDecorationRules
         var result = new List<PlacedHousingDecoration>();
         foreach (var doodad in doodads.OrderBy(doodad => doodad.DbId).ThenBy(doodad => doodad.ObjId))
         {
-            if (doodad.AttachPoint != AttachPointKind.None)
-                continue;
-            var item = data.GetItemHousingDecorationByItem(doodad.ItemTemplateId);
-            var design = item == null
-                ? data.GetDecorationDesignFromDoodadId(doodad.TemplateId)
-                : data.GetDecorationDesignFromId(item.DesignId);
-            if (design == null)
-                continue;
-            item ??= data.GetItemHousingDecorations(design.Id);
-            if (item != null)
-                result.Add(new PlacedHousingDecoration(doodad.ItemTemplateId != 0 ? doodad.ItemTemplateId : item.ItemId,
-                    design, item.Restore));
+            if (GetDecoration(doodad, data) is { } decoration)
+                result.Add(decoration);
         }
         return result;
+    }
+
+    internal static PlacedHousingDecoration? GetDecoration(Doodad doodad, HousingGameData data)
+    {
+        if (doodad.AttachPoint != AttachPointKind.None)
+            return null;
+        // Older furniture can lack its source item. A known seed or pack can share a furniture model.
+        ItemHousingDecoration item;
+        if (doodad.ItemTemplateId != 0)
+            item = data.GetItemHousingDecorationByItem(doodad.ItemTemplateId);
+        else
+        {
+            var legacyDesign = data.GetDecorationDesignFromDoodadId(doodad.TemplateId);
+            item = legacyDesign == null ? null : data.GetItemHousingDecorations(legacyDesign.Id);
+        }
+        var design = item == null ? null : data.GetDecorationDesignFromId(item.DesignId);
+        if (design == null || design.DoodadId != doodad.TemplateId)
+            return null;
+        return new PlacedHousingDecoration(item.ItemId, design, item.Restore);
     }
 
     public static uint GetActAbilityBonus(uint actabilityGroupId, HousingTemplate house,
