@@ -283,6 +283,193 @@ public class WaterfallNavalTransitTests
         await Assert.That(ship.RigidBody.Position.X).IsLessThan(lip);
     }
 
+    [Test]
+    [Arguments("missing", false)]
+    [Arguments("shallow", false)]
+    [Arguments("lower-water", false)]
+    [Arguments("stale-transform", false)]
+    [Arguments("missing", true)]
+    public async Task WaterfallUpdate_FailedCorridorOrFlightKeepsMeasuredUpperApproach(string later, bool flight)
+    {
+        using var physics = new Jitter2.World();
+        var lip = WorldManager.CELL_SIZE - (flight ? 12 : 0);
+        var ship = ShipAtWaterfall(physics, lip, later == "missing" ? null : 112f);
+        var world = ship.ParentWorld;
+        var first = new JVector(lip - 40, 112, 10);
+        AddFlowingPool(world.Water, "upper approach", first.X, 112, 2);
+        var second = new JVector(WorldManager.CELL_SIZE + 50, 112, 10);
+        if (later != "lower-water")
+            AddFlowingPool(world.Water, "second approach", second.X, 112, 1);
+        var firstCell = world.Template.Cells[0, 0].HeightMap;
+        firstCell[(int)first.X / 2, 5] = 0; // A measured floor at zero remains valid.
+        var update = new ShipWaterfallInteraction();
+        var elapsed = TimeSpan.FromMilliseconds(16);
+
+        async Task SampleAndStep(JVector sample, JVector body)
+        {
+            ship.Transform.Local.SetPosition(sample.X, sample.Z, sample.Y);
+            ship.CreateWaterAndLandSurfaceCache();
+            ship.RigidBody.Position = body;
+            await Assert.That(update.Update(ship, elapsed)).IsFalse();
+        }
+
+        await SampleAndStep(first, first);
+        // The normal physics loop samples the previous Transform before syncing the new body.
+        if (later == "stale-transform")
+            await SampleAndStep(first, second);
+        else
+            await SampleAndStep(second, second);
+
+        var source = new JVector(lip - 4, 112, 10);
+        ship.RigidBody.Position = source;
+        ship.Transform.Local.SetPosition(source.X, source.Z, source.Y);
+        ship.CreateWaterAndLandSurfaceCache();
+        await Assert.That(update.Update(ship, elapsed)).IsEqualTo(flight);
+        if (flight)
+        {
+            ship.RigidBody.Position = new JVector(lip + 12, 76, 10);
+            await Assert.That(update.Update(ship, elapsed)).IsFalse();
+        }
+        await Assert.That(ship.RigidBody.Position).IsEqualTo(first);
+        await Assert.That(ship.CachedFloorLevel).IsEqualTo(0f);
+        await Assert.That(ship.CachedWaterSurface).IsEqualTo(112f);
+        await Assert.That(ship.CachedWaterFlow).IsEqualTo(new Vector3(2, 0, 0));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task WaterfallUpdate_FailedFlightDoesNotReturnToAnUnmeasuredUpstreamOffset(bool badWater)
+    {
+        using var physics = new Jitter2.World();
+        const int lip = WorldManager.CELL_SIZE - 12;
+        var ship = ShipAtWaterfall(physics, lip, 88f);
+        var source = ship.RigidBody.Position;
+        var halfHull = ship.RigidBody.Shapes[0].WorldBoundingBox;
+        var upstreamX = source.X - (halfHull.Max.X - halfHull.Min.X) / 2 - 2;
+        if (badWater)
+            ship.ParentWorld.Water.AddSquareArea("lower water at offset", new(upstreamX, 10, 100), 2, 2);
+        else
+        {
+            var floor = ship.ParentWorld.Template.Cells[0, 0].HeightMap;
+            for (int x = (int)upstreamX / 2; x <= (int)MathF.Ceiling(upstreamX / 2); x++)
+                floor[x, 5] = 112 * HeightUnitsPerMeter;
+        }
+        var update = new ShipWaterfallInteraction();
+        var elapsed = TimeSpan.FromMilliseconds(16);
+        await Assert.That(update.Update(ship, elapsed)).IsTrue();
+        ship.RigidBody.Position = new JVector(lip + 12, 76, 10);
+        await Assert.That(update.Update(ship, elapsed)).IsFalse();
+        await Assert.That(ship.RigidBody.Position).IsEqualTo(source);
+        await Assert.That(ship.CachedFloorLevel).IsEqualTo(88f);
+        await Assert.That(ship.CachedWaterSurface).IsEqualTo(112f);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task WaterfallUpdate_UsesOnlyMeasuredUpperRecoveryWater(bool alternative, bool priorApproach)
+    {
+        using var physics = new Jitter2.World();
+        const int lip = WorldManager.CELL_SIZE - 12;
+        var ship = ShipAtWaterfall(physics, lip, 88f);
+        var source = ship.RigidBody.Position;
+        var floor = ship.ParentWorld.Template.Cells[0, 0].HeightMap;
+        // The ordinary source and the four upstream positions lie on a dry ridge.
+        for (int x = (int)source.X / 2 - 10; x <= (int)source.X / 2 + 1; x++)
+            floor[x, 5] = 112 * HeightUnitsPerMeter;
+        var update = new ShipWaterfallInteraction();
+        var elapsed = TimeSpan.FromMilliseconds(16);
+        if (priorApproach)
+        {
+            var old = new JVector(lip - 45, 112, 10);
+            AddFlowingPool(ship.ParentWorld.Water, "prior upper flow", old.X, 112, 3);
+            ship.RigidBody.Position = old;
+            // The sample still belongs to another position. A later normal cache confirms this body.
+            await Assert.That(update.Update(ship, elapsed)).IsFalse();
+            ship.Transform.Local.SetPosition(old.X, old.Z, old.Y);
+            ship.CreateWaterAndLandSurfaceCache();
+            ship.RigidBody.Position = old with { X = old.X + .5f };
+            await Assert.That(update.Update(ship, elapsed)).IsFalse();
+        }
+        var lastOffset = source.X - 13f;
+        if (alternative)
+        {
+            // Only the furthest bounded fallback has a bed. Its current differs from the launch.
+            var sample = (int)lastOffset / 2;
+            floor[sample, 5] = floor[sample + 1, 5] = 0;
+            var water = ship.ParentWorld.Water.AddSquareArea("upper recovery current", new(lastOffset, 10, 111.5f), 2, 4);
+            water.FlowAxis = Vector2.UnitX;
+            water.FlowSpeedAbs = 2;
+            water.FlowSpeedSigned = -2;
+        }
+        ship.RigidBody.Position = source;
+        ship.Transform.Local.SetPosition(source.X, source.Z, source.Y);
+        ship.CreateWaterAndLandSurfaceCache();
+        var velocity = ship.RigidBody.Velocity;
+        await Assert.That(update.Update(ship, elapsed)).IsEqualTo(alternative || priorApproach);
+        if (!alternative && !priorApproach)
+        {
+            await Assert.That(ship.WaterfallTransitActive).IsFalse();
+            await Assert.That(ship.RigidBody.Position).IsEqualTo(source);
+            await Assert.That(ship.RigidBody.Velocity).IsEqualTo(velocity);
+            return;
+        }
+
+        ship.RigidBody.Position = new JVector(lip + 16, 76, 10);
+        await Assert.That(update.Update(ship, elapsed)).IsFalse();
+        var expected = priorApproach ? new JVector(lip - 45, 112, 10) : new JVector(lastOffset, 111.5f, 10);
+        await Assert.That(ship.RigidBody.Position).IsEqualTo(expected);
+        await Assert.That(ship.CachedFloorLevel).IsEqualTo(priorApproach ? 88f : 0f);
+        await Assert.That(ship.CachedWaterFlow).IsEqualTo(new Vector3(priorApproach ? 3f : -2f, 0, 0));
+    }
+
+    [Test]
+    [Arguments(100f, 88f)]
+    [Arguments(100f, 112f)]
+    [Arguments(112f, 88f)]
+    public async Task WaterfallUpdate_UsesWaterAndFlowAtTheCurrentLip(float currentSurface, float lowerBed)
+    {
+        using var physics = new Jitter2.World();
+        var lip = WorldManager.CELL_SIZE - (lowerBed < 100f ? 12 : 0);
+        var ship = ShipAtWaterfall(physics, lip, lowerBed);
+        var world = ship.ParentWorld;
+        var body = ship.RigidBody;
+        var current = body.Position;
+        var safe = new JVector(lip - 42, 112, 10);
+        var previous = current with { X = current.X - .5f };
+        var currentPool = world.Water.AddSquareArea("water at moving hull", new(current.X, 10, currentSurface), .6f, 4);
+        currentPool.FlowAxis = Vector2.UnitX;
+        currentPool.FlowSpeedAbs = currentPool.FlowSpeedSigned = 2;
+        // When the planes match, only the actual current points at the receiving water.
+        AddFlowingPool(world.Water, "previous water", previous.X, 112, currentSurface == 112f ? -2 : 2);
+        AddFlowingPool(world.Water, "safe before approach", safe.X, 112, 2);
+        body.Position = safe;
+        ship.Transform.Local.SetPosition(safe.X, safe.Z, safe.Y);
+        ship.CreateWaterAndLandSurfaceCache();
+        var update = new ShipWaterfallInteraction();
+        var elapsed = TimeSpan.FromMilliseconds(16);
+        await Assert.That(update.Update(ship, elapsed)).IsFalse();
+
+        // The new body crosses the boundary half a metre beyond the ordinary cached Transform.
+        ship.Transform.Local.SetPosition(previous.X, previous.Z, previous.Y);
+        ship.CreateWaterAndLandSurfaceCache();
+        body.Position = current;
+        await Assert.That(ship.CachedWaterSurface).IsEqualTo(112f);
+        await Assert.That(world.Water.GetWaterSurface(new Vector3(current.X, current.Z, current.Y), out var flow))
+            .IsEqualTo(currentSurface);
+        await Assert.That(flow.X).IsEqualTo(2f);
+        var before = body.Velocity;
+        var shouldLaunch = currentSurface == 112f;
+        await Assert.That(update.Update(ship, elapsed)).IsEqualTo(shouldLaunch);
+        await Assert.That(body.Position).IsEqualTo(current);
+        if (shouldLaunch)
+            await Assert.That(body.Velocity.X).IsGreaterThan(0f);
+        else
+            await Assert.That(body.Velocity).IsEqualTo(before);
+    }
+
     private static void AddFlowingPool(WaterBodies water, string name, float x, float surface, float flow)
     {
         var pool = water.AddSquareArea(name, new(x, 10, surface), 12, 32);
