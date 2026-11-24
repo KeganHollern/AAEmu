@@ -73,6 +73,12 @@ public sealed class NpcStepSurfaceTrace
         _endFace = endFace;
     }
 
+    internal void ObserveCrossing(CryWorldObjectInstance from, CryWorldObjectInstance to)
+    {
+        _staticCheck = $"ContinuousPlacedFloorFaces from={from.Source} to={to.Source}";
+        _brush = null;
+    }
+
     internal enum FloorSearch
     {
         None, NoSharedBrush, DestinationOutsideBrush, GeometryUnavailable, NoStaticSolidMesh, NoStartFace, NoEndFace,

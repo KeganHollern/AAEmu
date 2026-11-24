@@ -918,7 +918,7 @@ public class WorldManager(
             {
                 if (GetWorldTemplateByZoneKey(zoneId) is { Name: "main_world", GeoData: { } geoData })
                 {
-                    if (geoData.TryFollowStaticFloor(from, new Vector3(x, y, from.Z), source, out var floor, trace))
+                    if (geoData.TryFollowStaticFloor(ai.Owner, from, new Vector3(x, y, from.Z), source, out var floor, trace))
                     {
                         trace?.Select("StaticFloor");
                         return floor;
