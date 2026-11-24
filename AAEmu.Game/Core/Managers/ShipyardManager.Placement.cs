@@ -55,27 +55,31 @@ public partial class ShipyardManager
             !_designShipyards.TryGetValue(design.TemplateId, out var mappedTemplate) || mappedTemplate != template.Id)
             return ErrorMessageType.NotEnoughItem;
         if (!ShipyardPlacementRules.IsWithinRange(owner.Transform.World.Position, request.Position))
-            return ErrorMessageType.TooFarAway;
+            return ReportPlacement(owner, request, "range", ErrorMessageType.TooFarAway);
         var world = owner.ParentWorld;
-        if (world.Template.Id != WorldManager.DefaultWorldTemplateId || world.Id != WorldManager.DefaultInstanceId ||
-            request.Position.X >= world.Template.CellX * WorldManager.CELL_SIZE ||
+        if (world.Template.Id != WorldManager.DefaultWorldTemplateId || world.Id != WorldManager.DefaultInstanceId)
+            return ReportPlacement(owner, request, "world_instance", ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater);
+        if (request.Position.X >= world.Template.CellX * WorldManager.CELL_SIZE ||
             request.Position.Y >= world.Template.CellY * WorldManager.CELL_SIZE)
-            return ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater;
+            return ReportPlacement(owner, request, "world_bounds", ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater);
         var zone = ZoneManager.Instance.GetZoneByKey(worldManager.GetZoneId(world.Template, request.Position.X, request.Position.Y));
         if (zone == null || zone.Closed)
-            return ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater;
+            return ReportPlacement(owner, request, zone == null ? "unknown_zone" : "closed_zone",
+                ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater);
         return ZoneSkillRestrictions.GetItemBan(owner, design, request.Position) == null
-            ? ErrorMessageType.NoErrorMessage : ErrorMessageType.ItemCannotUseHere;
+            ? ErrorMessageType.NoErrorMessage : ReportPlacement(owner, request, "zone_skill_ban", ErrorMessageType.ItemCannotUseHere);
     }
 
     private ErrorMessageType CheckPlacementGeometry(Character owner, ShipyardsTemplate template, ShipyardPlacementRequest request)
     {
+        float? surface = null;
+        float? terrain = null;
         try
         {
             var world = owner.ParentWorld;
             var model = PlacementAssets.LoadModel(template.ShipyardSteps[0].ModelId);
             if (!model.HasModelBounds)
-                return ErrorMessageType.CraftLocatingUnitIsNotExist;
+                return ReportPlacement(owner, request, "model_bounds", ErrorMessageType.CraftLocatingUnitIsNotExist);
             var utcNow = DateTime.UtcNow;
             var houses = world.GetAllUnits().OfType<House>().ToArray();
             foreach (var house in houses)
@@ -89,20 +93,35 @@ public partial class ShipyardManager
             var surfacePoint = request.Position - Vector3.UnitZ * ShipyardPlacementRules.PreviewHeight;
             var water = PlacementAssets.GetWater(world.Template).GetWaterLevel(surfacePoint, world.Water.OceanLevel,
                 PlacementAssets.GetPrefabWater(world, houses));
+            surface = water;
             var ground = scene.SampleHeight(request.Position.X, request.Position.Y);
+            terrain = ground;
             if (!float.IsFinite(ground) || !float.IsFinite(water) || ground >= water)
-                return ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater;
+                return ReportPlacement(owner, request, "water_depth", ErrorMessageType.CraftLocatingUnitIsNotOnTheWaterOrDeepWater,
+                    water, ground);
             // The request's box never supplies collision authority. Read the preview model from server assets.
             var neighbors = _shipyard.Values.Where(other => ReferenceEquals(other.ParentWorld, world))
                 .Select(NeighborBox);
-            return ShipyardPlacementRules.CheckGeometry(model.Bounds, request.Position, request.Yaw,
+            var check = ShipyardPlacementRules.EvaluateGeometry(model.Bounds, request.Position, request.Yaw,
                 template.BuildRadius, water, neighbors, scene.IntersectBox);
+            return ReportPlacement(owner, request, check.Stage, check.Error, water, ground, check.Intersection);
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or ArgumentException or OverflowException)
         {
             Logger.Warn(exception, "Cannot resolve placement geometry for shipyard {0}", template.Id);
-            return ErrorMessageType.CraftLocatingUnitIsNotExist;
+            return ReportPlacement(owner, request, "geometry_unavailable", ErrorMessageType.CraftLocatingUnitIsNotExist, surface, terrain);
         }
+    }
+
+    private static ErrorMessageType ReportPlacement(Character owner, ShipyardPlacementRequest request, string stage,
+        ErrorMessageType error, float? surface = null, float? terrain = null, CryIntersection? intersection = null)
+    {
+        Logger.Info("{EventName} character={CharacterId} template={ShipyardTemplateId} world={WorldTemplateId} instance={WorldId} " +
+            "x={X} y={Y} z={Z} yaw={YawRadians} stage={Stage} water={WaterSurface} terrain={TerrainHeight} " +
+            "intersection={Intersection} error={PlacementError}",
+            "shipyard.placement.checked", owner.Id, request.TemplateId, owner.ParentWorld.Template.Id, owner.ParentWorld.Id,
+            request.Position.X, request.Position.Y, request.Position.Z, request.Yaw, stage, surface, terrain, intersection, error);
+        return error;
     }
 
     private CryBox NeighborBox(Shipyard other)
