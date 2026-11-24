@@ -336,8 +336,7 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
         string requestedSiteKey,
         out string message)
     {
-        if (_seenOccurrenceKeys.Contains(occurrenceKey) || _occurrences.ContainsKey(occurrenceKey) ||
-            _repository.Contains(occurrenceKey))
+        if (_seenOccurrenceKeys.Contains(occurrenceKey) || _occurrences.ContainsKey(occurrenceKey))
         {
             message = "Occurrence was already handled.";
             return false;
@@ -409,9 +408,22 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
             DefinitionHash = ComputeDefinitionHash(manifest, definition)
         };
         occurrence.TerminalObjective = CreateTerminalObjective(manifest, definition);
+        try
+        {
+            if (!_repository.TryCreate(occurrence))
+            {
+                message = "Occurrence was already handled.";
+                return false;
+            }
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(exception, "Could not save the initial state for tower-defense occurrence {0}.", occurrenceKey);
+            message = "Could not save the new tower-defense occurrence.";
+            return false;
+        }
         _occurrences.Add(occurrenceKey, occurrence);
         _seenOccurrenceKeys.Add(occurrenceKey);
-        _repository.Save(occurrence);
 
         try
         {
