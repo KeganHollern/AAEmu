@@ -77,6 +77,13 @@ public class TransferGameData : Singleton<TransferGameData>, IGameDataLoader
                     };
                     if (_templates.TryGetValue(template.OwnerId, out var value))
                     {
+                        // The Cradle uses the same motor and cabin as the other carriages.
+                        // Its motor has only a trailer hitch. Both passenger sockets belong to the cabin.
+                        if (value is { Id: 24, ModelId: 654 } &&
+                            template is { OwnerType: "Transfer", TransferId: 46, AttachPointId: AttachPointKind.Passenger0 } &&
+                            _templates.TryGetValue(template.TransferId, out var cabin) && cabin.ModelId == 653)
+                            template.AttachPointId = AttachPointKind.Trailed0;
+
                         value.TransferBindings.Add(template);
                     }
                 }
