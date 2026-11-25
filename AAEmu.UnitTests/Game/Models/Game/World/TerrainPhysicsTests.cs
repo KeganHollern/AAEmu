@@ -3,6 +3,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Physics.HeightMaps;
 using Jitter2.Collision.Shapes;
 using Jitter2.Dynamics;
@@ -62,9 +63,10 @@ public sealed class TerrainPhysicsTests
             Physics = manager._physWorld;
         }
 
-        public float Drop(float x, float height, float z)
+        public float Drop(float x, float height, float z, Slave ship = null)
         {
             var body = Physics.CreateRigidBody();
+            body.Tag = ship;
             body.AddShape(new BoxShape(.8f, .8f, .8f));
             body.Position = new JVector(x, height + 1.5f, z);
             for (var i = 0; i < 120; i++)
@@ -105,6 +107,18 @@ public sealed class TerrainPhysicsTests
         await Assert.That(scene.GroundRay(x, z, out var ground)).IsTrue();
         await Assert.That(Math.Abs(ground - floor)).IsLessThan(.002f);
         await Assert.That(Math.Abs(scene.Drop(x, floor, z) - floor - .39f)).IsLessThan(.1f);
+    }
+
+    [Test]
+    public async Task WaterfallTransitSkipsTheOverheadTerrainUntilNormalContactsResume()
+    {
+        using var scene = new Scene(1, 1);
+        scene.Publish(0, 0, (_, _) => 30);
+        scene.Start();
+        var ship = new Slave { WaterfallTransitActive = true };
+        await Assert.That(scene.Drop(800.3f, 30, 900.3f, ship)).IsLessThan(25);
+        ship.WaterfallTransitActive = false;
+        await Assert.That(Math.Abs(scene.Drop(800.3f, 30, 900.3f, ship) - 30.39f)).IsLessThan(.1f);
     }
 
     [Test]

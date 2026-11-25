@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Numerics;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
@@ -73,10 +73,6 @@ public class PhysicsManager
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
     private readonly object _worldLock = new();
     private readonly List<RigidBody> _bodies = [];
-
-    /// <summary>
-    /// Used heightmap tester, saved so it can be edited later
-    /// </summary>
 
     /// <summary>
     /// Initialize the Physics engine and creates the ocean water body
