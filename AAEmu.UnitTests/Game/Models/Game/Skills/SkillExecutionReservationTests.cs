@@ -4,14 +4,17 @@ using System.Numerics;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Crafts;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Effects.Enums;
@@ -24,6 +27,7 @@ using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
+using AAEmu.Game.Models.StaticValues;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Skills;
@@ -481,6 +485,91 @@ public sealed class SkillExecutionReservationTests
     }
 
     private static Skill NewSkill(uint id = 50) => new(new SkillTemplate { Id = id, TargetType = SkillTargetType.Self });
+
+    [Test]
+    public async Task RedDragonEgg_RequiresTheCarriedBowAndPaysOnceForBothEffects()
+    {
+        var manager = new DoodadManager(null, null, null, null, null);
+        SetInstance(manager);
+        SetField(manager, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>>());
+        SetField(manager, "_phaseFuncs", new Dictionary<uint, List<DoodadPhaseFunc>>());
+        ConfigureDestinationRule();
+        var world = _owner.ParentWorld;
+        SetInstance(new NpcGameData());
+        world.SpawnManager = new SpawnManager(world);
+        world.SpawnManager.AddNpcSpawner(new NpcSpawner { UnitId = 12411, NpcSpawnerIds = [120194], StartInactive = true });
+        var egg = new Doodad { ObjId = 71, TemplateId = 7056, ParentWorld = world, FuncGroupId = 18936 };
+        world.AddObject(egg);
+        var skill = new Skill(new SkillTemplate { Id = SkillsEnum.ThreatenRedDragonEgg, TargetType = SkillTargetType.Doodad });
+        var spawn = new RecordingDragonSpawn();
+        skill.Template.Effects.Add(new SkillEffect
+        {
+            EffectId = 32770, Template = new CloseEgg(), EndLevel = 99, Chance = 100,
+            ApplicationMethod = SkillEffectApplicationMethod.Target, ConsumeItemId = 29301, ConsumeItemCount = 1
+        });
+        skill.Template.Effects.Add(new SkillEffect
+        {
+            EffectId = 33231, Template = spawn, EndLevel = 99, Chance = 100, ApplicationMethod = SkillEffectApplicationMethod.Target
+        });
+
+        void Complete(Skill cast) => cast.ApplyEffects(_owner, new SkillCasterUnit(_owner.ObjId), egg,
+            new SkillCastDoodadTarget { ObjId = egg.ObjId }, null);
+
+        var start = new Skill(skill.Template).Use(_owner, new SkillCasterUnit(_owner.ObjId),
+            new SkillCastDoodadTarget { ObjId = egg.ObjId }, null, true, out var requiredItem);
+        await Assert.That(start).IsEqualTo(SkillResult.NeedReagent);
+        await Assert.That(requiredItem).IsEqualTo(29301u);
+        Complete(skill);
+        await Assert.That(skill.Cancelled).IsTrue();
+        await Assert.That(egg.FuncGroupId).IsEqualTo(18936u);
+        await Assert.That(spawn.Count).IsZero();
+
+        _material.TemplateId = 29301;
+        _material.Template = new ItemTemplate { Id = 29301, MaxCount = 1 };
+        _material.Count = 1;
+        var success = new Skill(skill.Template);
+        Complete(success);
+        await Assert.That(success.Cancelled).IsFalse();
+        await Assert.That(spawn.Count).IsEqualTo(1);
+        await Assert.That(egg.FuncGroupId).IsEqualTo(18937u);
+        await Assert.That(_owner.Inventory.Bag.Items.Contains(_material)).IsFalse();
+        var secondBow = new Item
+        {
+            Id = 2, Template = _material.Template, TemplateId = 29301, Count = 1, OwnerId = _owner.Id,
+            Slot = 0, SlotType = SlotType.Inventory, _holdingContainer = _owner.Inventory.Bag
+        };
+        _owner.Inventory.Bag.Items.Add(secondBow);
+        var staleCast = new Skill(skill.Template);
+        Complete(staleCast);
+        await Assert.That(staleCast.Cancelled).IsTrue();
+        await Assert.That(spawn.Count).IsEqualTo(1);
+        await Assert.That(_owner.Inventory.Bag.Items.Contains(secondBow)).IsTrue();
+
+        egg.FuncGroupId = 18936;
+        var placement = world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(120194).Single();
+        placement.SpawnedNpcs[placement.SpawnerId] = [new Npc { TemplateId = 12411, Hp = 100 }];
+        var occupied = new Skill(skill.Template);
+        Complete(occupied);
+        await Assert.That(occupied.Cancelled).IsTrue();
+        await Assert.That(egg.FuncGroupId).IsEqualTo(18936u);
+        await Assert.That(spawn.Count).IsEqualTo(1);
+        await Assert.That(_owner.Inventory.Bag.Items.Contains(secondBow)).IsTrue();
+    }
+
+    private sealed class CloseEgg : InteractionEffect
+    {
+        public override void Apply(BaseUnit caster, SkillCaster casterObj, BaseUnit target, SkillCastTarget targetObj,
+            CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time, CompressedGamePackets packetBuilder = null)
+            => ((Doodad)target).FuncGroupId = 18937;
+    }
+
+    private sealed class RecordingDragonSpawn : NpcSpawnerSpawnEffect
+    {
+        public int Count { get; private set; }
+        public override void Apply(BaseUnit caster, SkillCaster casterObj, BaseUnit target, SkillCastTarget targetObj,
+            CastAction castObj, EffectSource source, SkillObject skillObject, DateTime time, CompressedGamePackets packetBuilder = null)
+            => Count++;
+    }
 
     private void Apply(Skill skill) => skill.ApplyEffects(_owner, new SkillCasterUnit(70), _owner, new SkillCastUnitTarget(70), null);
 

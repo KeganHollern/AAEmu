@@ -20,5 +20,6 @@ public enum TowerDefenseTimerKind
 {
     FirstWave,
     StepTimer,
-    HardDeadline
+    HardDeadline,
+    ProgressSnapshot
 }

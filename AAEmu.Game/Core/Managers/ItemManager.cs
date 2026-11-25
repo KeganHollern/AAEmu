@@ -1465,6 +1465,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         var containerUpdateCount = 0;
         // Logger.Info("Saving items data ...");
 
+        HashSet<ulong> queuedDeletes = null;
         // Remove deleted items from DB
         using (var command = connection.CreateCommand())
         {
@@ -1474,11 +1475,11 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
             {
                 if (_removedItems.Count > 0)
                 {
-                    var removedItems = _removedItems.ToArray();
+                    queuedDeletes = _removedItems.ToHashSet();
                     using (var deleteCommand = connection.CreateCommand())
                     {
                         deleteCommand.Transaction = transaction;
-                        var removedItemList = string.Join(",", removedItems);
+                        var removedItemList = string.Join(",", queuedDeletes);
                         deleteCommand.CommandText = $"DELETE FROM items WHERE `id` IN({removedItemList})";
                         deleteCommand.Prepare();
                         deleteCount += deleteCommand.ExecuteNonQuery();
@@ -1489,7 +1490,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                     void AcknowledgeDeletedItems()
                     {
                         lock (_removedItems)
-                            foreach (var id in removedItems)
+                            foreach (var id in queuedDeletes)
                                 _removedItems.Remove(id);
                     }
                     if (context == null)
@@ -1570,12 +1571,18 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                     {
                         command.CommandText = "DELETE FROM items WHERE id = @id";
                         command.Parameters.AddWithValue("@id", item.Id);
-                        deleteCount += command.ExecuteNonQuery();
+                        var deleted = command.ExecuteNonQuery();
+                        deleteCount += deleted;
                         command.Parameters.Clear();
                         if (context == null)
                             item.IsDirty = false;
                         else
-                            context.AfterCommit(() => item.IsDirty = false);
+                            context.AfterCommit(() =>
+                            {
+                                item.IsDirty = false;
+                                // The bulk delete already reports any missing queued rows.
+                                item.DatabaseDeletionAcknowledged = item.Count <= 0 && (deleted > 0 || queuedDeletes?.Contains(item.Id) == true);
+                            });
                         continue;
                     }
 
@@ -2036,6 +2043,20 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         }
         // This should be the only place where ItemId ReleaseId should be called directly
         itemIdManager.ReleaseId((uint)itemId);
+    }
+
+    internal void ReleaseConsumedItem(Item item)
+    {
+        if (item.DatabaseDeletionAcknowledged)
+        {
+            // The checkpoint handled the database deletion. Release the live object and its ID.
+            ForgetCommittedItem(item.Id);
+            ReleaseReservedItemId(item.Id);
+        }
+        else
+        {
+            ReleaseId(item.Id);
+        }
     }
 
     public void ForgetDeletedCharacterAssets(uint characterId)

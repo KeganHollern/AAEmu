@@ -12,6 +12,7 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Shipyard;
@@ -184,6 +185,47 @@ public sealed class PlayerSkillAuthorizationTests
         SetField(doodad, "_funcGroupId", phase);
         await Assert.That(CanUse(skill, target)).IsEqualTo(offersQuest);
         await Assert.That(CanUse(new SkillTemplate { Id = 11008 }, target)).IsFalse();
+        await Assert.That(CanUse(skill, new SkillCastUnitTarget(_character.ObjId))).IsFalse();
+    }
+
+    [Test]
+    [Arguments("music-idle", true)]
+    [Arguments("music-playing", true)]
+    [Arguments("book", true)]
+    [Arguments("other-owner", false)]
+    [Arguments("no-backing-item", false)]
+    [Arguments("no-source-template", false)]
+    [Arguments("wrong-design", false)]
+    [Arguments("world-object", false)]
+    [Arguments("crate-skill", false)]
+    [Arguments("no-recovery", false)]
+    public async Task Collect_DefaultRecoveryRequiresTheOwnersPlacedFurniture(string state, bool allowed)
+    {
+        var book = state == "book";
+        var phaseId = book ? 17397u : state == "music-playing" ? 21491u : 21490u;
+        var itemId = book ? 27656u : 31878u;
+        var templateId = book ? 6573u : 7821u;
+        var designId = book ? 335u : 520u;
+        var housing = new HousingGameData();
+        SetField(housing, "_housingItemHousingDecorations", new List<ItemHousingDecoration>
+            { new() { DesignId = designId, ItemId = itemId, Restore = !book } });
+        SetField(housing, "_housingDecorations", new Dictionary<uint, HousingDecoration>
+            { [designId] = new() { Id = designId, DoodadId = templateId } });
+        SetInstance(housing);
+        var furniture = new Doodad
+        {
+            ObjId = 80, TemplateId = state == "wrong-design" ? 1u : templateId, AttachPoint = AttachPointKind.None,
+            OwnerType = state == "world-object" ? DoodadOwnerType.System : DoodadOwnerType.Housing,
+            OwnerId = state == "other-owner" ? _character.Id + 1 : _character.Id,
+            ItemId = state == "no-backing-item" ? 0ul : 100ul,
+            ItemTemplateId = state == "no-source-template" ? 0u : itemId
+        };
+        AddToWorld(furniture);
+        SetField(furniture, "_funcGroupId", phaseId);
+        furniture.CurrentFuncs.Add(new DoodadFunc { FuncType = state == "no-recovery" ? "DoodadFuncUse" : "DoodadFuncRecoverItem",
+            FuncId = book ? 750u : phaseId == 21490 ? 1155u : 1156u, SkillId = state == "crate-skill" ? 15309u : 0u });
+        var skill = new SkillTemplate { Id = 11361, TargetType = SkillTargetType.Doodad };
+        await Assert.That(CanUse(skill, new SkillCastDoodadTarget { ObjId = furniture.ObjId })).IsEqualTo(allowed);
         await Assert.That(CanUse(skill, new SkillCastUnitTarget(_character.ObjId))).IsFalse();
     }
 

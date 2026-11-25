@@ -129,6 +129,8 @@ public class GimmickManager(WorldInstance parentWorld)
         TickManager.Instance.OnTick.Subscribe(GimmickTick, TimeSpan.FromMilliseconds(Delay), true);
     }
 
+    internal void Stop() => TickManager.Instance.OnTick.UnSubscribe(GimmickTick);
+
     /// <summary>
     /// Callback function for global gimmick ticks
     /// </summary>

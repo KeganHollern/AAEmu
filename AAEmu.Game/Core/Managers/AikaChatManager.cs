@@ -79,11 +79,12 @@ public class AikaChatManager : Singleton<AikaChatManager>, IAikaChatManager
         if (channel.ChatType != ChatType.Ally)
             return; // NullChannel fallback for factions without an ally channel.
 
+        var historyText = AikaItemLinks.ForHistory(message, config.MaxContextLineLength);
         var state = _channels.GetOrAdd(channel.Faction, _ => new ChannelState());
         bool startReply;
         lock (state.Sync)
         {
-            AppendHistoryLocked(state, new ChatLine(sender.Name, message, false), config);
+            AppendHistoryLocked(state, new ChatLine(sender.Name, historyText, false), config);
             state.LatestSeq++;
             startReply = _trigger.IsMatch(message);
             if (startReply)

@@ -2,9 +2,11 @@
 using System.Reflection;
 
 using AAEmu.Commons.Network;
+using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
@@ -26,7 +28,7 @@ using Microsoft.Data.Sqlite;
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
 
 [NotInParallel]
-public sealed class ResurrectionRulesTests
+public sealed partial class ResurrectionRulesTests
 {
     private static readonly DateTime Now = new(2026, 9, 26, 12, 0, 0, DateTimeKind.Utc);
 
@@ -161,17 +163,22 @@ public sealed class ResurrectionRulesTests
     }
 
     [Test]
-    [Arguments(true, (byte)2, 0, (byte)0, false)]
-    [Arguments(false, (byte)2, 25, (byte)7, false)]
-    [Arguments(true, (byte)1, 0, (byte)0, true)]
+    [Arguments(true, (byte)2, 0, (byte)0, false, 0)]
+    [Arguments(false, (byte)2, 25, (byte)7, false, 5)]
+    [Arguments(true, (byte)1, 0, (byte)0, true, 0)]
     public async Task DoDie_NpcDeathPenaltyFlagControlsLossesAndPreservesResurrectionRules(
-        bool noPenalty, byte level, int expectedExpLoss, byte expectedDurabilityLoss, bool expectedFreeOffer)
+        bool noPenalty, byte level, int expectedExpLoss, byte expectedDurabilityLoss, bool expectedFreeOffer, int victimRegionX)
     {
         var previousSingletons = new List<(FieldInfo Field, object Value)>();
         var configuration = AppConfiguration.Instance;
         var previousWorldConfig = configuration.World;
         var previousDebugInfo = configuration.DebugInfo;
-        var world = new WorldInstance(new WorldTemplate { Name = "death-test" }, 0, true, WorldManager.DefaultInstanceId);
+        var world = new WorldInstance(new WorldTemplate
+        {
+            Name = "death-test", CellX = 1, CellY = 1, ZoneKeyByRegions = new uint[16, 16]
+        }, 0, true, WorldManager.DefaultInstanceId) { Regions = new Region[16, 16] };
+        var killerRegion = world.Regions[0, 0] = new Region(world, 0, 0, 0);
+        var victimRegion = world.Regions[victimRegionX, 0] ??= new Region(world, victimRegionX, 0, 0);
         GC.SuppressFinalize(world);
         try
         {
@@ -213,12 +220,24 @@ public sealed class ResurrectionRulesTests
             Install(items);
             CreateInventory(character, items);
             character.Equipment.Items.Add(gear);
-            var npc = new DeathTestNpc
+            var session = Mock.Of<ISession>();
+            character.Connection = new GameConnection(session.Object) { ActiveChar = character };
+            character.Region = victimRegion;
+            character.Transform.Local.SetPosition(victimRegionX * WorldManager.REGION_SIZE, 0, 0);
+            victimRegion.AddObject(character);
+            var observerSession = Mock.Of<ISession>();
+            var observer = new CharacterMock { Id = 3, ObjId = 3, ParentWorld = world, Region = killerRegion };
+            observer.Connection = new GameConnection(observerSession.Object) { ActiveChar = observer };
+            killerRegion.AddObject(observer);
+            var npc = new Npc
             {
-                ObjId = 2, ParentWorld = world, Template = new NpcTemplate { NoPenalty = noPenalty, NoExp = true }
+                ObjId = 2, Name = "Guard", Region = killerRegion, ParentWorld = world, Template = new NpcTemplate { NoPenalty = noPenalty, NoExp = true }
             };
 
             character.DoDie(npc, KillReason.Damage);
+
+            session.SendPacket(Is<byte[]>(IsDeathPacket)).WasCalled(Times.Once);
+            observerSession.SendPacket(Is<byte[]>(IsDeathPacket)).WasCalled(Times.Once);
 
             await Assert.That(character.Experience).IsEqualTo(startingExperience - expectedExpLoss);
             await Assert.That(character.LastExpLoss).IsEqualTo(expectedExpLoss);
@@ -280,10 +299,8 @@ public sealed class ResurrectionRulesTests
         public override byte MaxDurability => 100;
     }
 
-    private sealed class DeathTestNpc : Npc
-    {
-        public override void BroadcastPacket(GamePacket packet, bool self) { }
-    }
+    private static bool IsDeathPacket(byte[] bytes) =>
+        bytes.Length >= 8 && BitConverter.ToUInt16(bytes, 6) == SCOffsets.SCUnitDeathPacket;
 
     private static ResurrectionGameData LoadData()
     {

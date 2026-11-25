@@ -18,7 +18,7 @@ using Microsoft.Extensions.Options;
 namespace AAEmu.UnitTests.Game.Core.Managers.World;
 
 [NotInParallel]
-public sealed class WorldManagerHeightTests
+public sealed partial class WorldManagerHeightTests
 {
     private IServiceProvider _previousServiceProvider;
     private ServiceProvider _testServiceProvider;
@@ -194,7 +194,7 @@ public sealed class WorldManagerHeightTests
         template.GeoData = new AiGeoDataManager(template);
     }
 
-    private static WorldManager CreateManagerWithFlatHeightTemplate(bool hasTerrainData = true)
+    private static WorldManager CreateManagerWithFlatHeightTemplate(bool hasTerrainData = true, string worldName = null)
     {
         var manager = new WorldManager(
             Mock.Of<ITickManager>().Object,
@@ -203,6 +203,8 @@ public sealed class WorldManagerHeightTests
             new Lazy<IIndunManager>(() => Mock.Of<IIndunManager>().Object),
             new Lazy<IFamilyManager>(() => Mock.Of<IFamilyManager>().Object));
         var template = CreateFlatHeightTemplate(hasTerrainData);
+        if (worldName != null)
+            template.Name = worldName;
         manager.WorldTemplates = new Dictionary<string, WorldTemplate> { { template.Name, template } };
         SetPrivateMember(manager, "_worldIdByZoneKey", new Dictionary<uint, uint> { { 100, template.Id } });
         SetPrivateMember(manager, "WorldNames", new List<string> { string.Empty, template.Name });

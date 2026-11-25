@@ -33,6 +33,8 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
         TickManager.Instance.OnTick.Subscribe(Tick, TimeSpan.FromMilliseconds(500), true);
     }
 
+    internal void Stop() => TickManager.Instance.OnTick.UnSubscribe(Tick);
+
     public void Load()
     {
         var sphereQuests = LoadQuestSpheres(parent.Template);

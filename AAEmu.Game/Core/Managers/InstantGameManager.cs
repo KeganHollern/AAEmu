@@ -120,15 +120,23 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
                     if (game.RemovePlayer(character))
                     {
                         _log.Trace("[Matchmaking] " + character.Name + " declined arena invitation.");
-                        if (!_queueList.Contains(game))
-                        {
-                            _queueList.Add(game);
-                            _log.Trace("[Matchmaking] Adding game to queue list.");
-                        }
+                        OnInvitationRemoved(game);
                         return;
                     }
                 }
             }
+        }
+    }
+
+    // Called under the persistence lock after the player has left the roster.
+    internal void OnInvitationRemoved(InstantGame game)
+    {
+        lock (_lock)
+        {
+            if (game.IsFinished || !_instantGames.Contains(game) || game.TryAbandonBeforeEntry())
+                return;
+            if (!_queueList.Contains(game))
+                _queueList.Add(game);
         }
     }
 
@@ -141,20 +149,17 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
             return;
         }
 
-        // Remove offline players in the queue list
-        var offlinePlayers = applicants.Where(a => !PrisonerAccess.CanEnter(a.CharObj, true)).ToList();
-        if (offlinePlayers.Count > 0)
-        {
-            foreach (var players in offlinePlayers)
-            {
-                applicants.Remove(players);
-            }
-        }
+        var world = WorldManager.Instance;
+        applicants.RemoveAll(applicant =>
+            world.GetCharacterByObjId(applicant.CharObj.ObjId) != applicant.CharObj ||
+            !PrisonerAccess.CanEnter(applicant.CharObj, true));
 
         _log.Trace("[Matchmaking] Running matchmaking for battlefield " + bfId + "... Queue: " + applicants.Count);
-        // Check if there are enough players to matchmake a game.
-        if (MissingPlayersToStart(bfId, games.Count))
+        var battlefield = BattlefieldGameData.Instance.GetBattlefield(bfId);
+        var playersNeeded = games.Count == 0 ? battlefield.RuleSet.CorpsSize * 2 : 1;
+        if (applicants.Count < playersNeeded)
         {
+            _log.Trace("[Matchmaking] {0} more players needed for battlefield {1}", playersNeeded - applicants.Count, bfId);
             return;
         }
 
@@ -165,7 +170,7 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
             game = games[0];
         }
         else // Create a new game if there is no current one to matchmake for.
-            game = new InstantGame(BattlefieldGameData.Instance.GetBattlefield(bfId));
+            game = new InstantGame(battlefield);
 
         // Loop through the matchmaking list to fill current and new games.
         var queueCount = applicants.Count;
@@ -182,18 +187,14 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
             }
 
             // Obtain character of player matchmaking and remove them from queue to add them into a game.
-            var playerCharacter = WorldManager.Instance.GetCharacterById(applicants[0].CharObj.Id);
-            applicants.Remove(applicants[0]);
+            var playerCharacter = applicants[0].CharObj;
+            applicants.RemoveAt(0);
 
             // Add player and invite to instant game
-            if (playerCharacter != null)
+            if (world.GetCharacterByObjId(playerCharacter.ObjId) == playerCharacter)
             {
                 game.AddPlayer(playerCharacter, game.GetCorps());
                 _log.Trace("[Matchmaking] Adding player to game: " + playerCharacter.Name);
-            }
-            else
-            {
-                // playerCharacter is null.
             }
         }
         // Add new arena with paired players if there are no queued games to fill up.
@@ -219,23 +220,6 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
                 _queueList.Add(game);
             }
         }
-    }
-
-    private bool MissingPlayersToStart(uint bfId, int queueCount)
-    {
-        var bf = BattlefieldGameData.Instance.GetBattlefield(bfId);
-        var minimumToStart = queueCount > 0 ? 1 : bf.RuleSet.CorpsSize * 2;
-        // Temporary exception to Drill Camp for debugging purposes.
-        if (bf.Id == (uint)InstantGameType.DrillCamp)
-            return false;
-
-        // There is insufficient players available if queue is not > half of CorpsSize.
-        if (_matchmakingQueue[bfId].Count < minimumToStart)
-        {
-            _log.Trace("[Matchmaking] " + (minimumToStart - _matchmakingQueue[bfId].Count) + " player(s) are missing to allow matchmaking for battlefield " + bfId);
-            return true;
-        }
-        return false;
     }
 
     public bool PlayerCanEnter(Character character)
@@ -277,8 +261,11 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
         }
     }
 
+    internal void StopRefill(InstantGame game) => _queueList.Remove(game);
+
     public void RemoveGame(InstantGame game)
     {
+        StopRefill(game);
         _instantGames.Remove(game);
     }
 }

@@ -363,6 +363,10 @@ public sealed partial class PlayerMailSendPersistenceTests
             return Register(new Item(Sender.Id + 10UL + slot, template, 5), slot);
         }
 
+        public Item AddItem(byte slot, uint templateId) =>
+            Register(new Item(Sender.Id + 10UL + slot,
+                new ItemTemplate { Id = templateId, MaxCount = 1, FixedGrade = -1 }, 1), slot);
+
         public EquipItem AddEquipment(byte slot)
         {
             var template = new EquipItemTemplate { Id = Sender.Id + 3, MaxCount = 1,
@@ -375,17 +379,24 @@ public sealed partial class PlayerMailSendPersistenceTests
             }, slot);
         }
 
-        private Item Register(Item item, byte slot)
+        public Item AddWornStatuePack()
         {
+            var template = new BackpackTemplate { Id = 27301, MaxCount = 1 };
+            return Register(new Backpack(Sender.Id + 40UL, template, 1), (byte)EquipmentItemSlot.Backpack, Sender.Inventory.Equipment);
+        }
+
+        private Item Register(Item item, byte slot, ItemContainer container = null)
+        {
+            container ??= Sender.Inventory.Bag;
             item.OwnerId = Sender.Id;
-            item.SlotType = SlotType.Inventory;
+            item.SlotType = container.ContainerType;
             item.Slot = slot;
             item.CreateTime = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
-            item._holdingContainer = Sender.Inventory.Bag;
+            item._holdingContainer = container;
             _templates[item.TemplateId] = item.Template;
             _allItems.Add(item.Id, item);
-            Sender.Inventory.Bag.Items.Add(item);
-            Sender.Inventory.Bag.UpdateFreeSlotCount();
+            container.Items.Add(item);
+            container.UpdateFreeSlotCount();
             return item;
         }
 

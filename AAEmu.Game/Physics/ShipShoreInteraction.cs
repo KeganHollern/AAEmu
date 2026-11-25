@@ -136,26 +136,13 @@ public sealed class ShipShoreInteraction
     public void UpdateVisualGroundPitch(Slave slave, RigidBody rigidBody, TimeSpan deltaTime)
     {
         var dt = Math.Max(0.0001f, (float)deltaTime.TotalSeconds);
-        var rpy = PhysicsUtil.GetYawPitchRollFromMatrix(JMatrix.CreateFromQuaternion(rigidBody.Orientation));
-
         var groundPitchMaxDeg = ShorePhysicsDefaults.VisualGroundPitchMaxDeg;
         var groundPitchProbeDistance = ShorePhysicsDefaults.VisualGroundPitchProbeDistance;
         var groundPitchResponse = ShorePhysicsDefaults.VisualGroundPitchResponse;
         var targetGroundPitch = 0f;
-        if (slave.ParentWorld != null && (slave.CachedFloorLevel > slave.CachedWaterSurface || slave.GroundContactLatched))
+        if ((slave.CachedFloorLevel > slave.CachedWaterSurface || slave.GroundContactLatched) &&
+            TryGetPitchFloors(slave, rigidBody, groundPitchProbeDistance, out var frontH, out var backH))
         {
-            var yaw = rpy.Item1 + MathUtil.HalfPi;
-            var cosYaw = MathF.Cos(yaw);
-            var sinYaw = MathF.Sin(yaw);
-            var cx = rigidBody.Position.X;
-            var cy = rigidBody.Position.Z;
-            var frontX = cx + cosYaw * groundPitchProbeDistance;
-            var frontY = cy + sinYaw * groundPitchProbeDistance;
-            var backX = cx - cosYaw * groundPitchProbeDistance;
-            var backY = cy - sinYaw * groundPitchProbeDistance;
-            var frontH = slave.ParentWorld.GetHeight(frontX, frontY);
-            var backH = slave.ParentWorld.GetHeight(backX, backY);
-
             var pitchFloorSmoothResponse = ShorePhysicsDefaults.VisualPitchFloorSmoothResponse;
             var floorA = 1f - MathF.Exp(-pitchFloorSmoothResponse * dt);
             if (!slave.GroundPitchFloorSmoothingSeeded)
@@ -181,6 +168,20 @@ public sealed class ShipShoreInteraction
 
         var pitchA = 1f - MathF.Exp(-groundPitchResponse * dt);
         slave.GroundPitchAngle += (targetGroundPitch - slave.GroundPitchAngle) * pitchA;
+    }
+
+    private static bool TryGetPitchFloors(Slave ship, RigidBody body, float distance, out float front, out float back)
+    {
+        front = back = 0f;
+        var world = ship.ParentWorld;
+        if (world is null)
+            return false;
+        var rpy = PhysicsUtil.GetYawPitchRollFromMatrix(JMatrix.CreateFromQuaternion(body.Orientation));
+        var heading = rpy.Item1 + MathUtil.HalfPi;
+        var dx = MathF.Cos(heading) * distance;
+        var dy = MathF.Sin(heading) * distance;
+        return world.TryGetHeight(body.Position.X + dx, body.Position.Z + dy, out front) &&
+               world.TryGetHeight(body.Position.X - dx, body.Position.Z - dy, out back);
     }
 
     private static void ResolveLandCollisions(Slave slave, TimeSpan deltaTime, Jitter2.World physWorld)
@@ -219,7 +220,13 @@ public sealed class ShipShoreInteraction
         var probeDist = distFromCenterToFace;
         var probeX = slave.RigidBody.Position.X + dirX * probeDist * probeSign;
         var probeY = slave.RigidBody.Position.Z + dirZ * probeDist * probeSign;
-        var contactFloor = slave.ParentWorld.GetHeight(probeX, probeY);
+        if (!slave.ParentWorld.TryGetHeight(probeX, probeY, out var contactFloor))
+        {
+            slave.GroundContactFloorSmoothingSeeded = false;
+            if (slave.GroundContactLatched)
+                SetGroundContactLatch(slave, false);
+            return;
+        }
         var rb = slave.RigidBody;
         var waterAtProbe = slave.ParentWorld.Water.GetWaterSurface(
             new Vector3(probeX, probeY, rb.Position.Y),

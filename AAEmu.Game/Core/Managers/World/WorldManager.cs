@@ -472,11 +472,10 @@ public class WorldManager(
     {
         // Check if it's a Persistent single Instance like main_world
         // If it's marked as an instance or if it only has 1 zone defined, then it's a "dungeon"
-        var canBeInstanced = worldTemplate.XmlWorld.IsInstance > 0 || worldTemplate.XmlWorld.Zones.Count <= 1;
         // TODO: Add code that if indun_zones.select_channel is set, that it is also a static instance 
 
         // If only one instance is allowed, check if it already exists, if it does, return that instead
-        if (!canBeInstanced)
+        if (!worldTemplate.AllowsMultipleInstances)
         {
             var previousWorld = _worlds.FirstOrDefault(w => w.Value.Template.Id == worldTemplate.Id).Value;
             if (previousWorld != null)
@@ -872,12 +871,17 @@ public class WorldManager(
     public const float NavigationAnchorTolerance = 1.5f;
 
     public float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId)
+        => GetReferenceHeight(ai, x, y, z, zoneId, null);
+
+    internal float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId, Vector3? previousPosition,
+        NpcStepSurfaceTrace trace = null, Vector3? inclinedTarget = null)
     {
         float finalHeight;
 
         // 0. Just in case.
         if (ai == null)
         {
+            trace?.Select("ZoneHeight");
             finalHeight = GetHeight(zoneId, x, y, z);
             return finalHeight;
         }
@@ -885,6 +889,7 @@ public class WorldManager(
         // 1. If an NPC can fly, preserve its runtime home height.
         if (ai.Owner.CanFly)
         {
+            trace?.Select("FlyingHome");
             finalHeight = ai.HomePosition.Z;
             return finalHeight;
         }
@@ -894,6 +899,7 @@ public class WorldManager(
         {
             case HoldPositionBehavior:
             case IdleBehavior:
+                trace?.Select("BehaviorHome");
                 finalHeight = ai.HomePosition.Z;
                 return finalHeight;
         }
@@ -902,11 +908,38 @@ public class WorldManager(
         //    navigation-sourced heights are only a coarse hint and get re-anchored to ground truth.
         if (TryGetGroundSurface(zoneId, x, y, z, out finalHeight, out var source))
         {
-            return source == GroundSurfaceSource.Terrain
-                ? finalHeight
-                : AnchorNavigationSourcedHeight(ai, finalHeight);
+            trace?.Select(source.ToString());
+            if (source != GroundSurfaceSource.Terrain)
+                finalHeight = AnchorNavigationSourcedHeight(ai, finalHeight, trace);
+
+            if (inclinedTarget.HasValue && (source != GroundSurfaceSource.Terrain || finalHeight - z <= AiGeoDataManager.StaticFloorPrecision))
+            {
+                trace?.Skip("InclinedStepOutsideCave");
+                return finalHeight;
+            }
+
+            if (previousPosition is { } from && (finalHeight < from.Z ||
+                source == GroundSurfaceSource.Terrain && finalHeight - from.Z > AiGeoDataManager.StaticFloorPrecision))
+            {
+                if (GetWorldTemplateByZoneKey(zoneId) is { Name: "main_world", GeoData: { } geoData })
+                {
+                    if (geoData.TryFollowStaticFloor(ai.Owner, from, new Vector3(x, y, inclinedTarget.HasValue ? z : from.Z),
+                            source, out var floor, trace, inclinedTarget))
+                    {
+                        trace?.Select("StaticFloor");
+                        return floor;
+                    }
+                }
+                else
+                    trace?.Skip("MainWorldGeometryUnavailable");
+            }
+            else if (previousPosition.HasValue)
+                trace?.Skip("GroundNotBelowPreviousFoot");
+
+            return finalHeight;
         }
 
+        trace?.Select("HomeWithoutGround");
         // 4. Take the default height
         return ai.HomePosition.Z;
     }
@@ -920,18 +953,24 @@ public class WorldManager(
     /// answer is within <see cref="NavigationAnchorTolerance"/> of an anchor it is the same floor measured
     /// badly, so the anchor wins; otherwise the NPC really is on another level and nav Z stands.
     /// </summary>
-    private static float AnchorNavigationSourcedHeight(NpcAi ai, float navigationHeight)
+    private static float AnchorNavigationSourcedHeight(NpcAi ai, float navigationHeight, NpcStepSurfaceTrace trace)
     {
         if (ai.Owner.CurrentTarget is { } target && !ReferenceEquals(target, ai.Owner))
         {
             var targetZ = target.Transform.World.Position.Z;
             if (Math.Abs(navigationHeight - targetZ) <= NavigationAnchorTolerance)
+            {
+                trace?.Select("TargetAnchor");
                 return targetZ;
+            }
         }
 
         var homeZ = ai.HomePosition.Z;
         if (Math.Abs(navigationHeight - homeZ) <= NavigationAnchorTolerance)
+        {
+            trace?.Select("HomeAnchor");
             return homeZ;
+        }
 
         return navigationHeight;
     }
@@ -1402,6 +1441,16 @@ public class WorldManager(
         }
     }
 
+    internal void RemoveArenaWorld(WorldInstance world)
+    {
+        // The allocator can return a shared map. Only the match's dedicated instance belongs to it.
+        if (world.IsFixedInstanceId || !world.Template.AllowsMultipleInstances)
+            return;
+
+        world.StopArenaRuntime();
+        _worlds.TryRemove(new KeyValuePair<uint, WorldInstance>(world.Id, world));
+    }
+
     /// <summary>
     /// Adds a Character to the server list if it isn't already
     /// </summary>
@@ -1419,7 +1468,10 @@ public class WorldManager(
     /// <returns></returns>
     public bool TryRemoveCharacter(uint playerObjId)
     {
-        return _characters.TryRemove(playerObjId, out _);
+        if (!_characters.TryRemove(playerObjId, out var character))
+            return false;
+        character.CurrentInstantGame?.CancelPendingInvitation(character);
+        return true;
     }
 
     /// <summary>

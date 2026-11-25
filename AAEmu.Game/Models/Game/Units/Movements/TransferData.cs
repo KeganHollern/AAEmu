@@ -67,7 +67,8 @@ public class TransferData : MoveType
         stream.WritePosition(X, Y, Z);
         //stream.WriteVector3Short(new Vector3(Velocity.X / 50f, Velocity.Y / 50f, Velocity.Z / 50f));
         stream.WriteVector3Short(new Vector3(Velocity.X * 0.02f, Velocity.Y * 0.02f, Velocity.Z * 0.02f));
-        stream.WriteQuaternionShort(Rot);
+        // The r208022 transfer reader reconstructs the omitted W as a nonnegative value.
+        stream.WriteQuaternionShort(Rot.W < 0 ? Quaternion.Negate(Rot) : Rot);
         stream.WriteVector3Single(AngVel);
         stream.Write(Steering);
         stream.Write(PathPointIndex);

@@ -187,10 +187,10 @@ public class TestAI : ICommand
                     return;
                 }
 
-                if (!npc.Ai.DoFollowNearestNpc(npcId, 100f))
+                if (npc.Ai.DoFollowNearestNpc(npcId, 100f))
                 {
                     CommandManager.SendNormalText(this, messageOutput,
-                        $"{npc.ObjId} is now following {npc.Ai.AiFollowUnitObj?.ToString() ?? "nothing"} @NPC_NAME({npcId}) ({npcId}) to follow.");
+                        $"NPC {npc.ObjId} found a @NPC_NAME({npcId}) ({npcId}) to follow.");
                 }
                 else
                 {

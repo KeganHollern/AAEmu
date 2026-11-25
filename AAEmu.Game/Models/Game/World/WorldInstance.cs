@@ -29,7 +29,7 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
     /// <summary>
     /// Keeps track if we need to release the Id or not
     /// </summary>
-    private bool IsFixedInstanceId { get; } = dontFreeInstanceId;
+    internal bool IsFixedInstanceId { get; } = dontFreeInstanceId;
 
     /// <summary>
     /// Instance Id for this world
@@ -741,7 +741,19 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
 
     #region events
 
-    public void CleanupInstance()
+    internal void StopArenaRuntime()
+    {
+        // Signal the workers here. An in-flight callback can still need the match's persistence lock.
+        Physics?.Stop();
+        SpawnManager?.Stop();
+        SphereQuestManager?.Stop();
+        GimmickManager?.Stop();
+        TransferManager?.Stop();
+        SlaveManager?.Stop();
+        DetachWorldHooks();
+    }
+
+    private void DetachWorldHooks()
     {
         // Detach world-script hooks first so no rule fires against a world
         // that is tearing down (aaemu-cluster#92)
@@ -753,6 +765,11 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
         // DoodadFuncTimerTask firing after teardown re-arm a sensor and re-subscribe a TickManager
         // tick that pins this dead instance forever. (aaemu-cluster#95 + review)
         _doodadAreaTriggers?.Dispose();
+    }
+
+    public void CleanupInstance()
+    {
+        DetachWorldHooks();
         EventSpawnOwnership.Clear();
 
         // Stop respawn system (check for null as SpawnManager may not be initialized in tests)

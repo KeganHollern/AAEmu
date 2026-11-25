@@ -95,9 +95,17 @@ Loader `3982c0f0` reads `zones.closed` from SQL column 1 and stores its Boolean 
 The loader confirms this check independently of the existing server field name.
 
 The server checks the water surface at the requested XY and the height of the ground below that point.
-The requested Z must match water plus 9.9 metres within 0.01 metre.
-This is a server check derived from the native preview path, with a float tolerance at world coordinates.
-It prevents a forged Z from moving the clearance box above land or other objects.
+The client adds 9.9 metres to the cursor hit on water. An inland water plane allows 0.01 metre for float precision.
+An open ocean hit can also include wave displacement. The server reads `OceanAnimation.WavesSize` from the world's `env.xml`.
+The main world sets this value to 0.75. In r208022, `cry3dengine.dll` reads it at `30143054` and stores it at offset `+0x30c`.
+The analytic wave path at `300e376d` scales four pairs of sine and cosine terms by weights of 1, 0.5, 0.25, and 0.5.
+The final factor at `300e39f3` is 0.2. The largest possible displacement on this path is 0.9 times the wave size.
+The server uses this bound plus the float margin for an ocean hit. The separate FFT path reads a displacement grid at runtime.
+The grid bound and the rendered wave phases during the 2 field checks are unknown.
+
+On November 24, 2026, 2 untinted Eznan Cutter previews in Dewstone sent Z values of 109.87585 and 109.55605.
+Both failed the earlier 0.01-metre comparison with the still-water origin at 109.9. Both fit the analytic wave band.
+Every overlap check uses the submitted pose, including its Z and yaw. A height outside the band still rejects placement.
 Zero is a valid ocean level.
 Missing water, terrain, or model data rejects placement.
 

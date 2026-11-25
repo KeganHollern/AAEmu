@@ -12,6 +12,7 @@ using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Faction;
@@ -38,6 +39,93 @@ public sealed class HousingSalePersistenceTests
 {
     private static int _nextId = 980000;
     private static int _nextPurchaseId = 1300000;
+
+    [Theory]
+    [InlineData(1218u, 1877u, 300_000)]
+    [InlineData(1219u, 1878u, 600_000)]
+    [InlineData(1219u, 2056u, 600_000)]
+    [InlineData(1658u, 3045u, 600_000)]
+    public void TemporaryNaviDoodad_RestoresItsDeadlineWithoutChangingOtherHouseObjects(
+        uint templateId, uint phaseId, int after)
+    {
+        using var graph = new PurchaseGraph((uint)Interlocked.Add(ref _nextPurchaseId, 100));
+        var world = graph.House.ParentWorld;
+        var manager = DoodadManager.Instance;
+        var startPhase = templateId == 1219 ? 1878u : phaseId;
+        var template = new DoodadTemplate { Id = templateId, FuncGroups =
+            [new DoodadFuncGroups { Id = startPhase, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Start }] };
+        var phases = new Dictionary<uint, List<DoodadPhaseFunc>>
+        {
+            [startPhase] = [new DoodadPhaseFunc { GroupId = startPhase, FuncId = 1, FuncType = nameof(DoodadFuncNaviRemoveTimer) }]
+        };
+        var functions = new Dictionary<string, Dictionary<uint, DoodadPhaseFuncTemplate>>
+        {
+            [nameof(DoodadFuncNaviRemoveTimer)] = new() { [1] = new DoodadFuncNaviRemoveTimer { Id = 1, After = after } }
+        };
+        if (phaseId != startPhase)
+        {
+            // Reload the open gate, close the portal, then return to the idle phase.
+            var timers = functions[nameof(DoodadFuncTimer)] = [];
+            foreach (var (group, id, delay, next) in new[] { (2056u, 215u, 600_000, 2057), (2057u, 216u, 2_000, 1878) })
+            {
+                template.FuncGroups.Add(new DoodadFuncGroups { Id = group, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Normal });
+                phases[group] = [new DoodadPhaseFunc { GroupId = group, FuncId = id, FuncType = nameof(DoodadFuncTimer) }];
+                timers[id] = new DoodadFuncTimer { Id = id, Delay = delay, NextPhase = next };
+            }
+        }
+        SetField(manager, "_templates", new Dictionary<uint, DoodadTemplate> { [templateId] = template });
+        SetField(manager, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>>());
+        SetField(manager, "_phaseFuncs", phases);
+        SetField(manager, "_phaseFuncTemplates", functions);
+
+        var oldTasks = ReplaceSingleton(new TaskManager(Mock.Of<ITickManager>()));
+        try
+        {
+            var original = manager.Create(world, 0, templateId, null, true);
+            original.DbId = graph.House.Id + 73;
+            original.OwnerId = graph.Guest.Id;
+            original.OwnerType = DoodadOwnerType.Character;
+            original.OwnerDbId = graph.House.Id;
+            original.FuncGroupId = phaseId;
+            original.SetData(731);
+            var now = DateTime.UtcNow;
+            // MySQL stores the phase timestamp to whole seconds.
+            original.PlantTime = original.GrowthTime = original.PhaseTime =
+                now.AddTicks(-(now.Ticks % TimeSpan.TicksPerSecond)).AddMilliseconds(30_000 - after);
+            original.IsPersistent = true;
+            original.Save();
+            // Catch an intermediate save of an incomplete row, even if a later settle repairs it.
+            Execute($"CREATE TRIGGER guard_navi_{original.DbId} BEFORE INSERT ON doodads FOR EACH ROW BEGIN " +
+                $"IF NEW.id={original.DbId} AND (NEW.owner_id<>{original.OwnerId} OR NEW.house_id<>{original.OwnerDbId} OR NEW.data<>731) " +
+                "THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Incomplete restored doodad'; END IF; END");
+
+            Assert.Equal(1, world.SpawnManager.SpawnPersistentDoodads(DoodadOwnerType.Character, (int)graph.House.Id));
+            var restored = Assert.Single(world.SpawnManager.GetPlayerDoodads(graph.Guest.Id),
+                d => d.DbId == original.DbId);
+            Assert.Equal(original.PhaseTime, restored.PhaseTime);
+            Assert.Equal(original.OwnerId, restored.OwnerId);
+            Assert.Equal(original.Data, restored.Data);
+            var deadline = original.PhaseTime.AddMilliseconds(after);
+            Assert.InRange(restored.FuncTask.TriggerTime, deadline, deadline.AddSeconds(1));
+            Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM doodads WHERE id={restored.DbId} AND owner_id={original.OwnerId} AND house_id={original.OwnerDbId} AND data=731 AND current_phase_id={phaseId}"));
+            if (phaseId != startPhase)
+            {
+                restored.FuncTask.Execute();
+                Assert.Equal(2057u, restored.FuncGroupId);
+                restored.FuncTask.Execute();
+                Assert.Equal(startPhase, restored.FuncGroupId);
+                Assert.True(restored.FuncTask.TriggerTime > deadline);
+            }
+            restored.FuncTask.Execute();
+            Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM doodads WHERE id={restored.DbId}"));
+            Assert.DoesNotContain(restored, world.SpawnManager.GetAllPlayerDoodads());
+            Assert.Equal(2, Scalar($"SELECT COUNT(*) FROM doodads WHERE id IN ({graph.Retained.DbId},{graph.Returned.DbId})"));
+        }
+        finally
+        {
+            SingletonField<TaskManager>().SetValue(null, oldTasks);
+        }
+    }
 
     [Theory]
     [InlineData("none")]

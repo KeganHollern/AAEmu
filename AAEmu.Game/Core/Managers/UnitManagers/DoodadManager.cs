@@ -2686,6 +2686,12 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
         // For all doodad templates
         foreach (var template in _templates.Values)
         {
+            template.HasMultipleSeats = template.OnceOneMan && template.FuncGroups.SelectMany(group => GetFuncsForGroup(group.Id))
+                .Any(func => func.FuncType == nameof(DoodadFuncAttachment) &&
+                    GetFuncTemplate(func.FuncId, func.FuncType) is DoodadFuncAttachment { Space: > 1 });
+            template.InsertCounterSkills = template.FuncGroups.SelectMany(group => GetFuncsForGroup(group.Id))
+                .Where(func => func.FuncType == nameof(DoodadFuncInsertCounter))
+                .Select(func => func.SkillId).Distinct().ToArray();
             // Cache Total Growth Times for doodads that have them
             template.TotalDoodadGrowthTime = 0;
             foreach (var funcGroup in template.FuncGroups)
@@ -3153,6 +3159,10 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
         {
             return false;
         }
+
+        // Statue progress comes only from paid pack contributions.
+        if (doodad.Template?.InsertCounterSkills.Length > 0)
+            return false;
 
         // For Coffers validate if select option is applicable
         if (doodad is DoodadCoffer)

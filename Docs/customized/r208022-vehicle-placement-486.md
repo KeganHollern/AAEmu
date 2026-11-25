@@ -146,8 +146,8 @@ A vehicle restoration system is outside this change.
 These checks are server decisions, not extra native gameplay limits:
 
 - The server rejects nonfinite values, relative targets, unavailable geometry, and a missing land surface.
-- Surface comparison allows `0.01` metre for floating-point and packed-coordinate differences.
-- A terrain hit within that same tolerance of the line endpoint is the selected surface, not a preceding obstruction.
+- Land and local water surfaces allow `0.01` metre for coordinate precision. On open ocean, boat scrolls also allow the authored wave displacement of up to `0.9 × WavesSize`. The line and hull checks use the selected position and heading. [Ocean wave calculation](shipyard-placement-484.md)
+- A terrain hit within `0.01` metre of the line endpoint counts as the selected surface.
 - Dynamic geometry uses the owner's current visibility neighborhood, which supplies the objects sent to the client.
 - Static world geometry still uses its full spatial index.
 - Dynamic candidates use their actual model bounds, not `Unit.ModelSize`, which is zero for vehicles.
