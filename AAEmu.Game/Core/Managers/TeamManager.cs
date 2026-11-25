@@ -40,6 +40,7 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
     /// </summary>
     private static readonly TimeSpan OfflineTeamDisbandGrace = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan InvitationLifetime = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan RadiusInviteCooldown = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Per-(recipient,source) snapshot of the last values broadcast to that recipient.
@@ -106,22 +107,41 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
 
     public void InviteAreaToTeam(Character owner, uint teamId, bool isParty)
     {
-        var characters = WorldManager.GetAround<Character>(owner, 100.0f); // CHECK IF 100m
-        if (characters.Count <= 0) return;
+        var team = GetActiveTeamByUnit(owner.Id);
+        if (isParty || teamId != (team?.Id ?? 0u) ||
+            (team != null && (team.IsParty || team.OwnerId != owner.Id || team.MembersCount() >= team.Members.Length)))
+            return;
 
-        foreach (var character in characters)
+        lock (_activeInvitationsLock)
         {
-            // Skip hostile players (friendly and neutral can be invited, supports custom nations)
-            var relation = owner.GetRelationStateTo(character);
-            if (!character.InParty && relation is RelationState.Friendly or RelationState.Neutral)
-                AskToJoin(owner, "", teamId, false, character);
+            var now = DateTime.UtcNow;
+            if (owner.NextRadiusInvite > now)
+            {
+                var remaining = (uint)Math.Ceiling((owner.NextRadiusInvite - now).TotalMilliseconds);
+                owner.SendPacket(new SCTeamAreaInvitedPacket(remaining, false));
+                return;
+            }
+            owner.NextRadiusInvite = now + RadiusInviteCooldown;
+        }
+
+        RemoveExpiredInvitations();
+        owner.SendPacket(new SCTeamAreaInvitedPacket(0, true));
+        foreach (var character in WorldManager.GetAround<Character>(owner, 100f))
+        {
+            if (character.InParty || owner.GetRelationStateTo(character) is not (RelationState.Friendly or RelationState.Neutral))
+                continue;
+            OfferInvitation(owner, character.Name, teamId, false, character, true);
         }
     }
 
     public void AskToJoin(Character owner, string targetName, uint teamId, bool isParty, Character targetObj = null)
     {
         RemoveExpiredInvitations();
+        OfferInvitation(owner, targetName, teamId, isParty, targetObj, false);
+    }
 
+    private void OfferInvitation(Character owner, string targetName, uint teamId, bool isParty, Character targetObj, bool isArea)
+    {
         var target = targetObj ?? worldManager.GetCharacter(targetName);
         if (target == null) return;
         if (CharacterBlocked.IsBlockedBy(target, owner.Id))
@@ -172,6 +192,7 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
         {
             Owner = owner,
             Target = target,
+            IsArea = isArea,
             IsParty = activeTeam?.IsParty ?? isParty,
             Time = DateTime.UtcNow,
             TeamId = activeTeam?.Id ?? 0u,
@@ -185,7 +206,9 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
             }
         }
 
-        target.SendPacket(new SCAskToJoinTeamPacket(activeTeam?.Id ?? 0u, owner.Id, owner.Name, isParty));
+        target.SendPacket(isArea
+            ? new SCAskToJoinTeamAreaPacket(invitation.TeamId, owner.Id, owner.Name, false)
+            : new SCAskToJoinTeamPacket(invitation.TeamId, owner.Id, owner.Name, isParty));
     }
 
     public void ReplyToJoinTeam(Character target, uint teamId, bool isParty, uint ownerId, bool isReject, string charName, bool isArea)
@@ -205,17 +228,14 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
             return;
         }
 
+        if (activeInvitation.IsArea != isArea ||
+            (isArea && (teamId != activeInvitation.TeamId || ownerId != activeInvitation.Owner.Id)))
+            return;
+
         if (isReject || activeInvitation.Time + InvitationLifetime < DateTime.UtcNow ||
             CharacterBlocked.IsBlockedBy(target, activeInvitation.Owner.Id))
         {
             activeInvitation.Owner.SendPacket(new SCRejectedTeamPacket(activeInvitation.Target.Name, activeInvitation.IsParty));
-            _activeInvitations.TryRemove(new KeyValuePair<uint, InvitationTemplate>(target.Id, activeInvitation));
-            return;
-        }
-
-        if (isArea)
-        {
-            // TODO
             _activeInvitations.TryRemove(new KeyValuePair<uint, InvitationTemplate>(target.Id, activeInvitation));
             return;
         }
@@ -228,6 +248,13 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
         }
 
         var activeTeam = GetActiveTeamByUnit(activeInvitation.Owner.Id);
+        if (isArea && activeTeam != null && (activeTeam.IsParty || activeTeam.OwnerId != activeInvitation.Owner.Id ||
+            (activeInvitation.TeamId != 0 && activeInvitation.TeamId != activeTeam.Id)))
+        {
+            _activeInvitations.TryRemove(new KeyValuePair<uint, InvitationTemplate>(target.Id, activeInvitation));
+            return;
+        }
+
         if (activeTeam == null)
         {
             if (activeInvitation.TeamId == 0)
@@ -1148,5 +1175,6 @@ public class InvitationTemplate
     public Character Owner { get; set; }
     public Character Target { get; set; }
     public DateTime Time { get; set; }
+    public bool IsArea { get; set; }
     public bool IsParty { get; set; }
 }

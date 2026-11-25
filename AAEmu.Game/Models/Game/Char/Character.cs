@@ -330,6 +330,8 @@ public partial class Character : Unit, ICharacter
             Money += amount;
     }
 
+    internal DateTime NextRadiusInvite { get; set; }
+
     public bool InParty
     {
         get;
