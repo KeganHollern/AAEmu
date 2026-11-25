@@ -110,7 +110,8 @@ public class TransferGameData : Singleton<TransferGameData>, IGameDataLoader
 
         using (var command = connection.CreateCommand())
         {
-            command.CommandText = "SELECT * FROM transfer_paths";
+            // Path IDs give each route its client-authored sequence, including its station waits.
+            command.CommandText = "SELECT * FROM transfer_paths ORDER BY id";
             command.Prepare();
 
             using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
