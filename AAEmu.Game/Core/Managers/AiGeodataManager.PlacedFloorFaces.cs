@@ -125,6 +125,9 @@ public partial class AiGeoDataManager
         return true;
     }
 
+    private static double SideOfEdge(Vector3 a, Vector3 b, Vector3 p) =>
+        ((double)b.X - a.X) * ((double)p.Y - a.Y) - ((double)b.Y - a.Y) * ((double)p.X - a.X);
+
     private static bool TryGetFootFace(CryWorldObjectInstance brush, CryGeometryPart part, CryTriangleMesh mesh,
         Vector3 foot, Vector3 other, out FootFace face)
     {
@@ -147,8 +150,6 @@ public partial class AiGeoDataManager
         // Clip [foot, other] against the three closed half-planes of this triangle. Use the
         // relative vertices and double products. A real horizontal gap has no tolerance.
         var step = other - foot;
-        static double SideOfEdge(Vector3 a, Vector3 b, Vector3 p) =>
-            ((double)b.X - a.X) * ((double)p.Y - a.Y) - ((double)b.Y - a.Y) * ((double)p.X - a.X);
         var orientation = Math.Sign(SideOfEdge(vertices[0], vertices[1], vertices[2]));
         if (orientation == 0)
             return false;
