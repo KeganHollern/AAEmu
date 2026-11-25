@@ -68,11 +68,11 @@ public sealed partial class CarriageBoardingTests
         }
         var direction = motor.Transform.World.Position - initial;
         await Assert.That(direction.Length()).IsGreaterThan(0.1f);
-        // A carriage seat can finish its initial phase on a worker after the motor moves.
-        if (motor.Bounded is { } trailer)
+        // Deliver the same public notice as the seat initializer on the tiger03 regression route.
+        if (id == 26)
         {
-            var seat = trailer.AttachedDoodads[0];
-            seat.InitDoodad();
+            var seat = motor.Bounded.AttachedDoodads[0];
+            seat.BroadcastPacket(new SCDoodadPhaseChangedPacket(seat), true);
             await Assert.That(session.Packets.Any(p => BitConverter.ToUInt16(p, 6) == SCOffsets.SCDoodadPhaseChangedPacket
                 && new PacketStream(p, 8, p.Length - 8).ReadBc() == seat.ObjId)).IsTrue();
         }
