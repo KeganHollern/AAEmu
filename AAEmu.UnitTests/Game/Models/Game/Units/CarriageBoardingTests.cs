@@ -34,11 +34,17 @@ using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Models;
 using AAEmu.UnitTests.Utils.Mocks;
 
+using NLog;
+using NLog.Config;
+using NLog.Targets;
+
 namespace AAEmu.UnitTests.Game.Models.Game.Units;
 
 [NotInParallel]
 public sealed partial class CarriageBoardingTests
 {
+    private const uint FirstRiderObjectId = 100;
+    private const uint SecondRiderObjectId = 101;
     private static readonly WorldSpawnPosition Spawn = new() { X = 12609.46f, Y = 15359.16f, Z = 158.5336f };
     private static readonly WorldSpawnPosition Start = new() { X = 12738.3428f, Y = 15307.42065f, Z = 162.12067f, ZoneId = 195 };
     private static readonly WorldSpawnPosition Next = new() { X = 12744.7344f, Y = 15302.99268f, Z = 164.20215f, ZoneId = 195 };
@@ -51,6 +57,8 @@ public sealed partial class CarriageBoardingTests
     [After(Test)]
     public void RestoreManagers()
     {
+        MovementValidation.Reset(FirstRiderObjectId);
+        MovementValidation.Reset(SecondRiderObjectId);
         AppConfiguration.Instance.World = _originalConfig;
         foreach (var (field, value) in _singletons)
             field.SetValue(null, value);
@@ -84,7 +92,7 @@ public sealed partial class CarriageBoardingTests
         await CheckPoint(cabin.Transform.World.Position, new Vector3(12730.744f, 15312.685f, 163.37143f));
         await CheckSeats(motor, cabin, seat0, seat1);
 
-        var passenger = new CharacterMock { Id = 10, ObjId = 100, ParentWorld = world };
+        var passenger = new CharacterMock { Id = 10, ObjId = FirstRiderObjectId, ParentWorld = world };
         await BoardAndLeave(passenger, seat0);
         await BoardAndLeave(passenger, seat1);
 
@@ -134,7 +142,10 @@ public sealed partial class CarriageBoardingTests
         await Assert.That(cabin.AttachPointId).IsEqualTo(AttachPointKind.Trailed0);
         using var movement = new SusManager(WorldManager.Instance);
         SetSingleton(movement);
-        var passenger = new CharacterMock { Id = 10, ObjId = 100, ParentWorld = world };
+        var passenger = new CharacterMock { Id = 10, ObjId = FirstRiderObjectId, ParentWorld = world };
+        passenger.Transform.Local.SetPosition(front.Transform.World.Position);
+        world.AddObject(passenger);
+        ReportRiderPosition(passenger, front.Transform.World.Position);
         await BoardSeat(passenger, front, 15857, AttachPointKind.Passenger0);
 
         motor.WaitTime = DateTime.MinValue;
@@ -144,7 +155,13 @@ public sealed partial class CarriageBoardingTests
         await Assert.That(motor.Transform.World.Position.X).IsLessThan(start.X);
         await CheckSeats(motor, cabin, front, rear);
         await CheckPoint(passenger.Transform.World.Position, front.Transform.World.Position);
+        // Follow the stock road until the boarding point is more than 120 m behind the rider.
+        var boardedAt = front.Transform.World.Position;
+        for (var tick = 0; tick < 1000 && Vector3.Distance(front.Transform.World.Position, boardedAt) < 120f; tick++)
+            motor.MoveTo(motor);
+        await Assert.That(Vector3.Distance(front.Transform.World.Position, boardedAt)).IsGreaterThanOrEqualTo(120f);
         await LeaveSeat(passenger, front);
+        await CheckFirstStepAfterRide(passenger);
         await BoardAndLeave(passenger, rear);
     }
 
@@ -227,7 +244,7 @@ public sealed partial class CarriageBoardingTests
         Console.WriteLine($"Safari {id} initial cabin XY error {distance:F3} m. Motor {motor.Transform.World.Position}, cabin {cabin.Transform.World.Position}, expected {expected}.");
         await CheckPoint(cabin.Transform.World.Position, expected);
         await CheckSeats(motor, cabin, chair, telescope);
-        var passenger = new CharacterMock { Id = 10, ObjId = 100, ParentWorld = world };
+        var passenger = new CharacterMock { Id = 10, ObjId = FirstRiderObjectId, ParentWorld = world };
         await BoardAndLeave(passenger, chair, 23464, AttachPointKind.None);
         await Assert.That(motor.TimeLeft).IsGreaterThan(0u);
         motor.MoveTo(motor);
@@ -510,14 +527,19 @@ public sealed partial class CarriageBoardingTests
         });
         using var movement = new SusManager(WorldManager.Instance);
         SetSingleton(movement);
-        var firstRider = new CharacterMock { Id = 10, ObjId = 100, ParentWorld = world };
-        var secondRider = new CharacterMock { Id = 11, ObjId = 101, ParentWorld = world };
+        var firstRider = new CharacterMock { Id = 10, ObjId = FirstRiderObjectId, ParentWorld = world };
+        var secondRider = new CharacterMock { Id = 11, ObjId = SecondRiderObjectId, ParentWorld = world };
         foreach (var (rider, seat) in new[] { (firstRider, front), (secondRider, rear) })
         {
             rider.Transform.Local.SetPosition(seat.Transform.World.Position);
+            world.AddObject(rider);
             seat.Use(rider, 15857);
             await Assert.That(rider.Bonding.GetOwner()).IsSameReferenceAs(seat);
         }
+
+        // The client can report either world footing or cabin footing during a seated ride.
+        ReportRiderPosition(firstRider, front.Transform.World.Position);
+        ReportRiderPosition(secondRider, rear.Transform.Local.Position, cabin);
 
         var parked = cabin.Transform.World.Position;
         motor.WaitTime = DateTime.MinValue;
@@ -531,8 +553,53 @@ public sealed partial class CarriageBoardingTests
         foreach (var (rider, seat) in new[] { (firstRider, front), (secondRider, rear) })
         {
             await CheckPoint(rider.Transform.World.Position, seat.Transform.World.Position);
+            await Assert.That(rider.Transform.Parent).IsSameReferenceAs(seat.Transform);
+            await Assert.That(WorldManager.GetAround<CharacterMock>(seat, 0.5f)).Contains(rider);
             await LeaveSeat(rider, seat);
+            var step = rider.Transform.World.Position + Vector3.UnitX * 0.25f;
+            ReportRiderPosition(rider, step);
+            await CheckPoint(rider.Transform.World.Position, step);
         }
+    }
+
+    private static async Task CheckFirstStepAfterRide(CharacterMock rider)
+    {
+        using var warnings = new MemoryTarget { Layout = "${message}" };
+        var previous = LogManager.Configuration;
+        var logging = new LoggingConfiguration();
+        logging.AddRule(LogLevel.Warn, LogLevel.Fatal, warnings, typeof(MovementValidation).FullName);
+        try
+        {
+            LogManager.Configuration = logging;
+            var step = rider.Transform.World.Position + Vector3.UnitX * 0.25f;
+            ReportRiderPosition(rider, step);
+            await CheckPoint(rider.Transform.World.Position, step);
+            await Assert.That(warnings.Logs).IsEmpty();
+        }
+        finally
+        {
+            LogManager.Configuration = previous;
+        }
+    }
+
+    private static void ReportRiderPosition(CharacterMock rider, Vector3 position, Transfer standingOn = null)
+    {
+        var report = new UnitMoveType
+        {
+            X = position.X,
+            Y = position.Y,
+            Z = position.Z,
+            DeltaMovement = new sbyte[3],
+            Flags = standingOn == null ? MoveTypeFlags.None : MoveTypeFlags.StandingOnObject,
+            ActorFlags = standingOn == null ? (byte)0 : (byte)MoveTypeActorFlags.StandingOnObject,
+            GcId = standingOn?.ObjId ?? 0
+        };
+        var stream = new PacketStream().WriteBc(rider.ObjId).Write((byte)MoveTypeEnum.Unit);
+        report.Write(stream);
+        stream.Rollback();
+        var movement = new CSMoveUnitPacket { Connection = new GameConnection(null) { ActiveChar = rider } };
+        movement.Read(stream);
+        movement.Execute();
     }
 
     private static async Task CheckTramBench(Doodad bench, Transfer cabin, Vector3 local, Vector3 forward)
