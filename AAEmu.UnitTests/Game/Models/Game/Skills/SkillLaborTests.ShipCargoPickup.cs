@@ -315,6 +315,7 @@ public sealed partial class SkillLaborTests
     [Arguments("height", false)]
     [Arguments("without-solid-contact", false)]
     [Arguments("unreported-at-deadline", false)]
+    [Arguments("stale-at-deadline", false)]
     [Arguments("on-rack", false)]
     [Arguments("changed-pack", false)]
     public async Task LoadedShipRack_HandlesStandingContactOnTheSameHull(string action, bool completes)
@@ -348,6 +349,11 @@ public sealed partial class SkillLaborTests
         MoveAtContact(support, settled, action != "without-solid-contact", motion,
             groundContact: action == "different-contact" ? (byte)0 : (byte)1,
             heading: action == "turned" ? (sbyte)5 : (sbyte)0);
+        if (action == "stale-at-deadline")
+        {
+            MoveAtContact(ship, start, standingOnSolid: true);
+            _owner.Transform.Local.SetPosition(settled);
+        }
         if (action == "unreported-at-deadline")
             _owner.Transform.Local.SetPosition(settled + new Vector3(.001953125f, 0, 0));
         if (action == "repeat")

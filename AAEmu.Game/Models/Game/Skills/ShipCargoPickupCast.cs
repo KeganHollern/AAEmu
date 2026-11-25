@@ -59,7 +59,16 @@ internal sealed class ShipCargoPickupCast
     private bool UsesHullAxes(Transform support) => support == _ship.Transform ||
         support.Local.Rotation == Vector3.Zero && support.GameObject is Doodad rack && rack.Scale == _ship.Scale;
 
-    internal bool CanContinue(Unit player, bool observeRestingHull = false)
+    internal bool ContinuesAfterMovement(Unit player, Transform previousSupport, bool sameSupport, bool restingOnSupport)
+    {
+        // A later movement report replaces the previous resting sample, even on a return to the start.
+        _lastRestingHullPosition = null;
+        return IsSupport(previousSupport) && (!sameSupport || restingOnSupport) && CanContinue(player, sameSupport);
+    }
+
+    internal bool CanContinue(Unit player) => CanContinue(player, false);
+
+    private bool CanContinue(Unit player, bool observeRestingHull)
     {
         var support = player.Transform.Parent;
         if (observeRestingHull && (support != _ship.Transform || _startSupport != support))

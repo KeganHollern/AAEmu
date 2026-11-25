@@ -30,8 +30,8 @@ internal static class SkillCastReactions
         var task = unit.SkillTask;
         if (task is CastTask { Repair: { } repair } && moved && repair.CanContinue(unit))
             moved = false;
-        if (moved && (!sameParent || (restingOnSupport && !turned)) && task is CastTask { CargoPickup: { } pickup } &&
-            pickup.IsSupport(previousParent) && pickup.CanContinue(unit, sameParent && restingOnSupport))
+        if (moved && task is CastTask { CargoPickup: { } pickup } &&
+            pickup.ContinuesAfterMovement(unit, previousParent, sameParent, restingOnSupport && !turned))
             moved = false;
         if (task?.CastWindow == null || (!moved && !(turned && task.Skill.Template.StopCastingByTurn)) ||
             !task.CastWindow.TryCancel())
