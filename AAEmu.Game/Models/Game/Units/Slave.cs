@@ -556,7 +556,9 @@ public class Slave : Unit
         RecordOwnerVisibility(character, true, DateTime.UtcNow);
         character.SendPacket(new SCUnitStatePacket(this));
         character.SendPacket(new SCUnitPointsPacket(ObjId, Hp, Mp));
-        character.SendPacket(new SCSlaveStatePacket(ObjId, TlId, Summoner?.Name ?? string.Empty, Summoner?.ObjId ?? 0, Id));
+        // The client matches its saved character ID to restore the active vehicle from visibility.
+        var ownerCharacterId = OwnerType == BaseUnitType.Character ? OwnerId : 0u;
+        character.SendPacket(new SCSlaveStatePacket(ObjId, TlId, Summoner?.Name ?? string.Empty, ownerCharacterId, Id));
 
         base.AddVisibleObject(character);
 
