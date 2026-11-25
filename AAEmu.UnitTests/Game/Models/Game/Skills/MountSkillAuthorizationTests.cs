@@ -522,18 +522,7 @@ public partial class MountSkillAuthorizationTests
     [Arguments("eligibility")]
     public async Task InvalidOwnedEquipment_ReturnsFailureWithoutMovingTheItem(string invalid)
     {
-        var items = new ItemManager(null, null, null, null, null, null);
-        var containers = new Dictionary<ulong, ItemContainer>();
-        foreach (var type in Enum.GetValues<SlotType>().Where(type => type != SlotType.EquipmentMate))
-        {
-            var container = new ItemContainer(_actor.Id, type, false, _actor)
-            { ContainerId = (ulong)containers.Count + 1, Owner = _actor };
-            containers.Add(container.ContainerId, container);
-        }
-        Set(items, "_allPersistentContainers", containers);
-        SetInstance(items);
-        _actor.NumInventorySlots = 10;
-        _actor.Inventory = new Inventory(_actor);
+        SetUpActorInventory();
         Set(_data, "_equipmentSlots", new Dictionary<int, HashSet<EquipmentItemSlot>>
         { [1] = [EquipmentItemSlot.Head] });
         _mate.Template.MateEquipSlotPackId = 1;
@@ -577,6 +566,22 @@ public partial class MountSkillAuthorizationTests
             mate.Passengers[seat]._objId = _actor.ObjId;
         else if (unit is Slave slave)
             slave.AttachedCharacters[seat] = _actor;
+    }
+
+    private void SetUpActorInventory()
+    {
+        var items = new ItemManager(null, null, null, null, null, null);
+        var containers = new Dictionary<ulong, ItemContainer>();
+        foreach (var type in Enum.GetValues<SlotType>().Where(type => type != SlotType.EquipmentMate))
+        {
+            var container = new ItemContainer(_actor.Id, type, false, _actor)
+            { ContainerId = (ulong)containers.Count + 1, Owner = _actor };
+            containers.Add(container.ContainerId, container);
+        }
+        Set(items, "_allPersistentContainers", containers);
+        SetInstance(items);
+        _actor.NumInventorySlots = 10;
+        _actor.Inventory = new Inventory(_actor);
     }
 
     private static void SetWorld(GameObject unit, WorldInstance world) =>

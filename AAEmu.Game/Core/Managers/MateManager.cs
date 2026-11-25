@@ -246,6 +246,15 @@ public class MateManager(WorldInstance parentWorldInstance)
         UnMountMate(character, mateInfo, attachPoint, reason, checkRequest: true);
     }
 
+    internal bool TryDismountOwnedDriver(Character rider, Mate mate)
+    {
+        if (!rider.IsRiding || !IsOwnedMate(rider, mate) || !CanRequestUnmount(rider, mate, AttachPointKind.Driver))
+            return false;
+
+        UnMountMate(rider, mate, AttachPointKind.Driver, AttachUnitReason.None, checkRequest: true);
+        return true;
+    }
+
     internal bool CanRequestUnmount(Character actor, Mate mate, AttachPointKind seat)
     {
         if (actor == null || mate == null || !ReferenceEquals(actor.ParentWorld, mate.ParentWorld) ||

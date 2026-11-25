@@ -61,10 +61,14 @@ public class CSStartInteractionPacket() : GamePacket(CSOffsets.CSStartInteractio
                 pickId, mouseButton, modifierKeys, [option]));
         }
 
-        var slave = Connection.ActiveChar?.ParentWorld?.GetUnit(npcObjId);
-        if (slave is Mate mate)
+        var character = Connection.ActiveChar;
+        if (character?.ParentWorld?.GetUnit(npcObjId) is Mate mate)
         {
-            Connection.ActiveChar.SendPacket(new SCNpcInteractionSkillListPacket(npcObjId, objId, extraInfo, pickId, mouseButton, modifierKeys, [SkillsEnum.SlaveMounting]));
+            // r208022 sends mouse button 3 for a world right-click on the horse itself.
+            if (mouseButton == 3 && modifierKeys == 0 && character.ParentWorld.MateManager.TryDismountOwnedDriver(character, mate))
+                return;
+
+            character.SendPacket(new SCNpcInteractionSkillListPacket(npcObjId, objId, extraInfo, pickId, mouseButton, modifierKeys, [SkillsEnum.SlaveMounting]));
         }
     }
 }
