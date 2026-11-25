@@ -9,6 +9,7 @@ using AAEmu.Game.Models.Tasks;
 using AAEmu.Game.Models.Tasks.SaveTask;
 using AAEmu.Game.Services.Health;
 
+using Microsoft.Extensions.Hosting;
 using NLog;
 using MySql.Data.MySqlClient;
 
@@ -23,7 +24,8 @@ public class SaveManager(
     ICrimeManager crimeManager,
     IWorldManager worldManager,
     IZoneManager zoneManager,
-    IShipyardManager shipyardManager = null) : Singleton<SaveManager>, ISaveManager
+    IShipyardManager shipyardManager = null,
+    IHostApplicationLifetime hostLifetime = null) : Singleton<SaveManager>, ISaveManager
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
@@ -35,7 +37,45 @@ public class SaveManager(
     internal Action<string, Exception> StopForConsistencyFailure { get; set; } = Environment.FailFast;
     internal static object PersistenceSyncRoot { get; } = new();
     private SaveTickStartTask saveTask;
-    public ShutdownTask ShutdownTask { get; set; } = null;
+    private readonly Lock _countdownLock = new();
+    private ShutdownTask _countdown;
+
+    public ShutdownScheduleResult SetShutdownTime(DateTime? deadline)
+    {
+        lock (_countdownLock)
+        {
+            if (_countdown != null || deadline == null)
+                return UpdateCountdown(deadline);
+        }
+
+        // A database preflight can take time. Check the selected countdown again after it finishes.
+        if (!DoSave())
+            return ShutdownScheduleResult.SaveFailed;
+        lock (_countdownLock)
+        {
+            if (_countdown != null)
+                return UpdateCountdown(deadline);
+
+            var task = new ShutdownTask(deadline.Value.AddSeconds(5), worldManager, hostLifetime);
+            if (!taskManager.Schedule(task, null, TimeSpan.FromSeconds(1)))
+                return ShutdownScheduleResult.Stopping;
+            _countdown = task;
+            return ShutdownScheduleResult.Scheduled;
+        }
+    }
+
+    private ShutdownScheduleResult UpdateCountdown(DateTime? deadline)
+    {
+        if (_countdown == null)
+            return ShutdownScheduleResult.NoCountdown;
+        if (deadline.HasValue)
+            return _countdown.ChangeShutdownTime(deadline.Value.AddSeconds(1))
+                ? ShutdownScheduleResult.Rescheduled : ShutdownScheduleResult.Stopping;
+        if (!_countdown.CancelCountdown(taskManager))
+            return ShutdownScheduleResult.Stopping;
+        _countdown = null;
+        return ShutdownScheduleResult.Cancelled;
+    }
 
     internal void FailForConsistency(Exception exception)
     {

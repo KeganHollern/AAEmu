@@ -24,7 +24,6 @@ using AAEmu.Game.Models.StaticValues;
 using Moq;
 using Xunit;
 
-using ShutdownTask = AAEmu.Game.Models.Tasks.ShutdownTask;
 
 namespace AAEmu.IntegrationTests.Core.Manager;
 
@@ -515,7 +514,6 @@ public sealed class TradePersistenceTests
 
     private sealed class CountingSave(SaveManager save) : ISaveManager
     {
-        public ShutdownTask ShutdownTask { get; set; }
         public int Calls { get; private set; }
         public int Successes { get; private set; }
         public void Initialize() { }

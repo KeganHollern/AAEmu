@@ -94,44 +94,36 @@ public class Scripts : ICommand
 
                 var shutdownTimeRemaining = shutdownTime - DateTime.UtcNow;
 
-                if (SaveManager.Instance.ShutdownTask != null && doCancel)
+                var result = SaveManager.Instance.SetShutdownTime(doCancel ? null : shutdownTime);
+                switch (result)
                 {
-                    SaveManager.Instance.ShutdownTask.Cancel();
-                    CommandManager.SendNormalText(this, messageOutput, $"Shutdown cancelled.");
-                    WorldManager.Instance.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Aqua, 10000,
-                        "The server shutdown has been cancelled!"));
-                    SaveManager.Instance.ShutdownTask = null;
-                    return;
+                    case ShutdownScheduleResult.Scheduled:
+                        CommandManager.SendNormalText(this, messageOutput,
+                            $"Shutdown sequence started, shutting down in |nn;{shutdownTimeRemaining.TotalMinutes:F0}|r minutes");
+                        break;
+                    case ShutdownScheduleResult.Rescheduled:
+                        CommandManager.SendNormalText(this, messageOutput,
+                            $"Shutdown was already in progress, changed to {shutdownTimeRemaining.TotalMinutes:F0} minutes from now.");
+                        var minutes = (int)Math.Ceiling((shutdownTime.AddSeconds(1) - DateTime.UtcNow).TotalMinutes);
+                        WorldManager.Instance.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Red, 10000,
+                            $"Server shutdown has been rescheduled to {minutes} minutes from now!"));
+                        break;
+                    case ShutdownScheduleResult.Cancelled:
+                        CommandManager.SendNormalText(this, messageOutput, "Shutdown cancelled.");
+                        WorldManager.Instance.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Aqua, 10000,
+                            "The server shutdown has been cancelled!"));
+                        break;
+                    case ShutdownScheduleResult.NoCountdown:
+                        CommandManager.SendErrorText(this, messageOutput, "No shutdown to cancel");
+                        break;
+                    case ShutdownScheduleResult.SaveFailed:
+                        CommandManager.SendNormalText(this, messageOutput,
+                            "Shutdown cancelled because there were save errors, if you want to shutdown regardless without saving, use |nn;/scripts forcedshutdown|r instead.");
+                        break;
+                    case ShutdownScheduleResult.Stopping:
+                        CommandManager.SendErrorText(this, messageOutput, "The server is already stopping.");
+                        break;
                 }
-
-                if (doCancel)
-                {
-                    CommandManager.SendErrorText(this, messageOutput, $"No shutdown to cancel");
-                    return;
-                }
-
-                if (SaveManager.Instance.ShutdownTask != null)
-                {
-                    CommandManager.SendNormalText(this, messageOutput,
-                        $"Shutdown was already in progress, changed to {shutdownTimeRemaining.TotalMinutes:F0} minutes from now.");
-                    SaveManager.Instance.ShutdownTask.ChangeShutdownTime(shutdownTime.AddSeconds(1));
-                    return;
-                }
-
-                if (SaveManager.Instance.DoSave())
-                {
-                    SaveManager.Instance.ShutdownTask =
-                        new ShutdownTask(shutdownTime.AddSeconds(5), -1); // Manual Normal Shutdown (-1)
-                    TaskManager.Instance.Schedule(SaveManager.Instance.ShutdownTask, null, TimeSpan.FromSeconds(1));
-                    CommandManager.SendNormalText(this, messageOutput,
-                        $"Shutdown sequence started, shutting down in |nn;{shutdownTimeRemaining.TotalMinutes:F0}|r minutes");
-                }
-                else
-                {
-                    CommandManager.SendNormalText(this, messageOutput,
-                        "Shutdown cancelled because there were save errors, if you want to shutdown regardless without saving, use |nn;/scripts forcedshutdown|r instead.");
-                }
-
                 break;
             case "forcedshutdown":
                 WorldManager.Instance.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Magenta, 15000,
