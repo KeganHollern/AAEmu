@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using Microsoft.Extensions.Hosting;
 using NLog;
+using DotNetTask = System.Threading.Tasks.Task;
 
 namespace AAEmu.Game.Models.Tasks;
 
@@ -19,6 +20,7 @@ public enum ShutdownScheduleResult
 
 public class ShutdownTask : Task
 {
+    private const int FinalNoticeMilliseconds = 3000;
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private readonly IWorldManager _world;
     private readonly IHostApplicationLifetime _lifetime;
@@ -89,7 +91,9 @@ public class ShutdownTask : Task
             return !_alreadyShuttingDown && scheduler.Cancel(this);
     }
 
-    public override void Execute()
+    public override void Execute() => ExecuteAsync().GetAwaiter().GetResult();
+
+    public override async DotNetTask ExecuteAsync()
     {
         lock (_state)
         {
@@ -105,8 +109,28 @@ public class ShutdownTask : Task
 
         try
         {
+            var characters = _world.GetAllCharacters();
+            if (characters.Count != 0)
+            {
+                try
+                {
+                    // Type 1 displays immediately. Types 2 and 3 wait behind earlier countdown banners.
+                    _world.BroadcastPacketToServer(new SCNoticeMessagePacket(1, Color.Magenta, FinalNoticeMilliseconds,
+                        "The server is shutting down right now!"));
+                    await DotNetTask.Delay(FinalNoticeMilliseconds, _lifetime.ApplicationStopping).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (_lifetime.ApplicationStopping.IsCancellationRequested)
+                {
+                    // The host already received a separate stop request.
+                }
+                catch (Exception exception)
+                {
+                    Logger.Warn(exception, "Could not send the final shutdown notice.");
+                }
+                characters = _world.GetAllCharacters();
+            }
             // The normal host disconnect does not clear the merchant buyback container.
-            foreach (var character in _world.GetAllCharacters())
+            foreach (var character in characters)
             {
                 try
                 {
@@ -117,8 +141,6 @@ public class ShutdownTask : Task
                     Logger.Warn(exception, "Could not clear buyback items for character {CharacterId}.", character.Id);
                 }
             }
-            _world.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Magenta, 15000,
-                "The server is shutting down right now!"));
         }
         finally
         {
