@@ -12,8 +12,10 @@ using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Xml;
 using AAEmu.Game.Models.Game.World.Zones;
+using AAEmu.Game.Models.StaticValues;
 using AAEmu.UnitTests.Game.Models.Game.Units;
 using AAEmu.UnitTests.Utils.Mocks;
+using Microsoft.Extensions.Time.Testing;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
@@ -151,12 +153,11 @@ public sealed class ArenaMatchmakingTests
             _queue.WithdrawFromBattlefield(roster[^1]);
 
         var fresh = AddApplicant(teamTotal + 1);
-        var session = new TransferVisibilityTests.RecordingSession();
-        fresh.Connection = new GameConnection(session) { ActiveChar = fresh };
+        var session = Observe(fresh);
         _queue.ApplyToBattlefield((uint)mode, InstantCorps.Any, fresh);
         _queue.BattlefieldTick(tick);
-        await Assert.That(CountMessages(SCOffsets.SCAppliedToInstantGamePacket)).IsEqualTo(1);
-        await Assert.That(CountMessages(SCOffsets.SCInviteToInstantGamePacket)).IsEqualTo(0);
+        await Assert.That(Messages(session, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(1);
+        await Assert.That(Messages(session, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(0);
         await Assert.That(fresh.CurrentInstantGame).IsNull();
         await Assert.That(roster.All(player => player.CurrentInstantGame == null)).IsTrue();
         await Assert.That(_worlds.GetWorlds().Length).IsEqualTo(0);
@@ -170,17 +171,15 @@ public sealed class ArenaMatchmakingTests
             _queue.ApplyToBattlefield((uint)mode, InstantCorps.Any, roster[i]);
             _queue.BattlefieldTick(tick);
             if (i < teamTotal - 2)
-                await Assert.That(CountMessages(SCOffsets.SCInviteToInstantGamePacket)).IsEqualTo(0);
+                await Assert.That(Messages(session, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(0);
         }
         await Assert.That(fresh.CurrentInstantGame.IsFull).IsTrue();
         await Assert.That(fresh.CurrentInstantGame).IsNotSameReferenceAs(original);
-        await Assert.That(CountMessages(SCOffsets.SCInviteToInstantGamePacket)).IsEqualTo(1);
+        await Assert.That(Messages(session, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(1);
         await original.EndGame();
         await Assert.That(_worlds.GetWorlds().Single()).IsSameReferenceAs(next);
-        var invitation = session.Packets.Single(packet => BitConverter.ToUInt16(packet, 6) == SCOffsets.SCInviteToInstantGamePacket);
+        var invitation = Messages(session, SCOffsets.SCInviteToInstantGamePacket).Single();
         await Assert.That(BitConverter.ToUInt32(invitation, 12)).IsEqualTo(next.Id);
-
-        int CountMessages(ushort type) => session.Packets.Count(bytes => bytes.Length >= 8 && BitConverter.ToUInt16(bytes, 6) == type);
     }
 
     [Test]
@@ -213,6 +212,77 @@ public sealed class ArenaMatchmakingTests
         _queue.BattlefieldTick(tick);
         await Assert.That(substitute.CurrentInstantGame).IsNull();
     }
+
+    [Test]
+    [Arguments(InstantGameType.DrillCamp, 10, false)]
+    [Arguments(InstantGameType.DrillCamp, 10, true)]
+    [Arguments(InstantGameType.Gladiator, 2, false)]
+    [Arguments(InstantGameType.Gladiator, 2, true)]
+    public async Task MatchWithAResult_DoesNotRefillDuringItsEndingMinute(InstantGameType mode, int teamTotal, bool vacancyBeforeResult)
+    {
+        var roster = Enumerable.Range(1, teamTotal).Select(AddApplicant).ToArray();
+        var observers = roster.Select(Observe).ToArray();
+        var rules = BattlefieldGameData.Instance.GetBattlefield((uint)mode).RuleSet;
+        rules.TimeEnding = 1;
+        foreach (var player in roster)
+            _queue.ApplyToBattlefield((uint)mode, InstantCorps.Any, player);
+        var tick = TimeSpan.FromSeconds(15);
+        _queue.BattlefieldTick(tick);
+        var match = roster[0].CurrentInstantGame;
+        var clock = new FakeTimeProvider();
+        Set(match, "_clock", clock);
+        for (var i = 0; i < roster.Length; i++)
+        {
+            var invitation = Messages(observers[i], SCOffsets.SCInviteToInstantGamePacket).Single();
+            var faction = (InstantCorps)invitation[20] == InstantCorps.Corps1 ? rules.Corps1FactionId : rules.Corps2FactionId;
+            var player = roster[i];
+            player.Faction = new() { Id = (FactionsEnum)faction };
+            player.OriginFaction = player.Faction;
+            match.PlayerInviteResponse(player, true, 1);
+            match.OnEnterWorld(player, 1);
+        }
+        await Assert.That(Messages(observers[0], SCOffsets.SCInstantGameStartPacket).Count()).IsEqualTo(1);
+
+        _queue.WithdrawFromBattlefield(roster[0]);
+        var pending = AddApplicant(teamTotal + 1);
+        var pendingObserver = Observe(pending);
+        _queue.ApplyToBattlefield((uint)mode, InstantCorps.Any, pending);
+        _queue.BattlefieldTick(tick);
+        await Assert.That(pending.CurrentInstantGame).IsSameReferenceAs(match);
+        if (vacancyBeforeResult)
+            _queue.WithdrawFromBattlefield(roster[1]);
+
+        var teardown = match.EndGame();
+        await Assert.That(Messages(pendingObserver, SCOffsets.SCInstantGameEndPacket).Count()).IsEqualTo(1);
+        await Assert.That(teardown.IsCompleted).IsFalse();
+        var fresh = AddApplicant(teamTotal + 2);
+        var freshObserver = Observe(fresh);
+        _queue.ApplyToBattlefield((uint)mode, InstantCorps.Any, fresh);
+        if (vacancyBeforeResult)
+        {
+            _queue.BattlefieldTick(tick);
+            await Assert.That(Messages(freshObserver, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(0);
+        }
+        _worlds.TryRemoveCharacter(pending.ObjId);
+        _queue.BattlefieldTick(tick);
+        await Assert.That(Messages(freshObserver, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(0);
+        await Assert.That(fresh.CurrentInstantGame).IsNull();
+        await Assert.That(_worlds.GetWorlds().Single().Id).IsEqualTo(42u);
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await teardown;
+        await Assert.That(_worlds.GetWorlds().Length).IsEqualTo(0);
+    }
+
+    private static TransferVisibilityTests.RecordingSession Observe(CharacterMock character)
+    {
+        var session = new TransferVisibilityTests.RecordingSession();
+        character.Connection = new GameConnection(session) { ActiveChar = character };
+        return session;
+    }
+
+    private static IEnumerable<byte[]> Messages(TransferVisibilityTests.RecordingSession session, ushort type) =>
+        session.Packets.Where(bytes => bytes.Length >= 8 && BitConverter.ToUInt16(bytes, 6) == type);
 
     private CharacterMock AddApplicant(int id)
     {

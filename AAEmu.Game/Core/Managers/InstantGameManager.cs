@@ -133,7 +133,7 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
     {
         lock (_lock)
         {
-            if (!_instantGames.Contains(game) || game.TryAbandonBeforeEntry())
+            if (game.IsFinished || !_instantGames.Contains(game) || game.TryAbandonBeforeEntry())
                 return;
             if (!_queueList.Contains(game))
                 _queueList.Add(game);
@@ -261,9 +261,11 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
         }
     }
 
+    internal void StopRefill(InstantGame game) => _queueList.Remove(game);
+
     public void RemoveGame(InstantGame game)
     {
-        _queueList.Remove(game);
+        StopRefill(game);
         _instantGames.Remove(game);
     }
 }

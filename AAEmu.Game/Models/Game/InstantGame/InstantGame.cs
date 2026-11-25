@@ -139,6 +139,8 @@ public partial class InstantGame
         character.Events.OnKill -= OnKill;
     }
 
+    internal bool IsFinished => _finished;
+
     public bool IsFull => _players.Count == _battlefield.RuleSet.CorpsSize * 2;
 
     public uint BattlefieldId => _battlefield.Id;
@@ -292,6 +294,7 @@ public partial class InstantGame
             if (_finished)
                 return;
             _finished = true;
+            InstantGameManager.Instance.StopRefill(this);
             _endGameTokenSource.Cancel();
 
             (_corps1Result.State, _corps2Result.State) = _corps1Result.Score.CompareTo(_corps2Result.Score) switch
