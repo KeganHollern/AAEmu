@@ -1100,7 +1100,10 @@ public partial class Npc : Unit
         return new Vector3(x, y, z);
     }
 
-    internal float? ResolveStepHeight(Vector3 from, Vector3 destination, Vector3 next, NpcStepSurfaceTrace trace = null)
+    internal AiGeoDataManager.AcceptedFace AcceptedFloor { get; set; }
+
+    internal float? ResolveStepHeight(Vector3 from, Vector3 destination, Vector3 next,
+        out AiGeoDataManager.AcceptedFace accepted, NpcStepSurfaceTrace trace = null)
     {
         // A short first step toward another floor can appear level. Check the full destination.
         var unparented = Transform.Parent == null && Transform.StickyParent == null;
@@ -1109,7 +1112,7 @@ public partial class Npc : Unit
         if (!levelStep && !checkIncline)
             trace?.Skip("DestinationChangesLayer");
         var height = WorldManager.Instance.ResolveReferenceHeight(Ai, next.X, next.Y, next.Z, Transform.ZoneId,
-            levelStep || checkIncline ? from : null, trace, checkIncline ? destination : null);
+            levelStep || checkIncline ? from : null, out accepted, trace, destination, checkIncline);
         // In the main world an unresolved step keeps the last accepted foot.
         if (height.HasValue || unparented && ParentWorld?.Template?.Name == "main_world" &&
             (AppConfiguration.Instance.HeightMapsEnable || AppConfiguration.Instance.World?.GeoDataMode == true))
@@ -1186,12 +1189,19 @@ public partial class Npc : Unit
         var next = GetRequestedStep(oldPosition, other, distance, targetDist);
         // aaemu-cluster#92: on an authored route the recorded waypoint height is authoritative; only
         // ad-hoc movement re-grounds every step through the geodata resolver.
+        AiGeoDataManager.AcceptedFace accepted = null;
         var targetPositionZ = authoredPathZ
             ? AiUtils.ResolveAuthoredPathHeight(this, next.X, next.Y, next.Z)
-            : ResolveStepHeight(oldPosition, other, next) ?? missingGroundHeight;
+            : ResolveStepHeight(oldPosition, other, next, out accepted) ?? missingGroundHeight;
         if (!targetPositionZ.HasValue)
+        {
+            AcceptedFloor = null;
             return false;
+        }
         Transform.Local.SetPosition(next.X, next.Y, targetPositionZ.Value);
+        AcceptedFloor = accepted;
+        if (accepted != null)
+            accepted.Foot = Transform.Local.Position;
 
         var moveType = (UnitMoveType)MoveType.GetType(MoveTypeEnum.Unit);
         var angle = MathUtil.CalculateAngleFrom(Transform.Local.Position, other);
@@ -1415,6 +1425,7 @@ public partial class Npc : Unit
 
     public override void Delete()
     {
+        AcceptedFloor = null;
         lock (AggroTable)
             CombatRetired = true;
         // Every removal path reaches Delete, including direct script and lifetime removal.
