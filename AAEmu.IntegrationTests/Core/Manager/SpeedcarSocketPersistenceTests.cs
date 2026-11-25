@@ -27,6 +27,12 @@ public sealed partial class PlayerMailSendPersistenceTests
         [InlineData(106, 1323, 26874, 6445, true)]
         [InlineData(112, 1371, 27153, 6771, true)]
         [InlineData(116, 1406, 28204, 6772, true)]
+        [InlineData(126, 1460, 29871, 7242, false)]
+        [InlineData(127, 1461, 29869, 7246, false)]
+        [InlineData(128, 1462, 29870, 7247, false)]
+        [InlineData(126, 1460, 29871, 7242, true)]
+        [InlineData(127, 1461, 29869, 7246, true)]
+        [InlineData(128, 1462, 29870, 7247, true)]
         public void SpeedcarScroll_RestoresBothRacksWithTheSameCargo(uint vehicleId, uint modelId,
             uint scrollId, uint hoodId, bool fromOldCatalog)
         {
@@ -42,7 +48,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                 Level = 50, Mountable = true, HasPassengerSeat = true, Hp75DoodadCount = 1
             };
             car.DoodadBindings.Add(new() { OwnerType = "Slave", OwnerId = vehicleId, DoodadId = hoodId, AttachPointId = AttachPointKind.Sail0, Scale = 1 });
-            var rackScale = vehicleId == 106 ? 0.42f : 0.4f;
+            var rackScale = vehicleId is 106 or 126 ? 0.42f : 0.4f;
             foreach (var point in new[] { AttachPointKind.Box0, AttachPointKind.Box1 })
                 car.DoodadBindings.Add(new() { OwnerType = "Slave", OwnerId = vehicleId, DoodadId = 3446, AttachPointId = point, Scale = rackScale, Persist = true });
             car.HealingPointDoodads.Add(new() { OwnerType = "Slave", OwnerId = vehicleId, DoodadId = 6444, AttachPointId = AttachPointKind.HealPoint0 });
@@ -57,10 +63,18 @@ public sealed partial class PlayerMailSendPersistenceTests
                 { OwnerId = owner.Id, SlotType = SlotType.Inventory, Slot = 1, _holdingContainer = owner.Inventory.Bag };
             if (fromOldCatalog)
             {
-                // The previous catalog contained the passenger socket alone. Save the racks through that path.
-                var old = cars.GetAttachPointsForSlave(modelId);
-                foreach (var socket in old.Keys.Where(p => p != AttachPointKind.Passenger0).ToArray())
-                    old.Remove(socket);
+                if (vehicleId is 126 or 127 or 128)
+                {
+                    // The old catalog had no entry for the upgraded bodies.
+                    HousingField<Dictionary<uint, Dictionary<AttachPointKind, WorldSpawnPosition>>>(cars, "_attachPoints").Remove(modelId);
+                }
+                else
+                {
+                    // The original cars had a passenger socket alone.
+                    var old = cars.GetAttachPointsForSlave(modelId);
+                    foreach (var socket in old.Keys.Where(p => p != AttachPointKind.Passenger0).ToArray())
+                        old.Remove(socket);
+                }
             }
             using var pose = new Transform(null);
             pose.Local.SetPosition(100, 100, 40, 0, 0, 0.7f);

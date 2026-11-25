@@ -1034,8 +1034,9 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
             return;
 
         var local = rack.Transform.Local;
-        // These three speedcars originally saved both cargo sockets at the origin with no rotation.
-        if ((vehicle.TemplateId, vehicle.ModelId) is (106, 1323) or (112, 1371) or (116, 1406) &&
+        // Both generations originally saved their two cargo racks at the origin with no rotation.
+        if ((vehicle.TemplateId, vehicle.ModelId) is (106, 1323) or (112, 1371) or (116, 1406) or
+                (126, 1460) or (127, 1461) or (128, 1462) &&
             rack.AttachPoint is AttachPointKind.Box0 or AttachPointKind.Box1 &&
             local.Position == Vector3.Zero && local.Rotation == Vector3.Zero)
             local.SetPosition(socket.X, socket.Y, socket.Z, socket.Roll, socket.Pitch, socket.Yaw);
