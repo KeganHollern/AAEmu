@@ -364,6 +364,23 @@ public sealed class ArenaScoreTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task GladiatorDepartureAtCombatOpening_UsesTheActualRoster(bool cancelAdmission, bool atStart)
+    {
+        Start(11, false);
+        _clock.Advance(TimeSpan.FromSeconds(20) - (atStart ? TimeSpan.Zero : TimeSpan.FromTicks(1)));
+        if (cancelAdmission)
+            _game.CancelAdmission(_blue[0]);
+        else
+            _game.LeaveInstantGame(_blue[0]);
+        _clock.Advance(TimeSpan.FromMinutes(11));
+        await Assert.That(_game.IsFinished).IsTrue();
+        await Assert.That(_rankResults.Count).IsEqualTo(atStart ? 1 : 0);
+    }
+
+    [Test]
     public async Task BothPlayersLeaveBeforeTimeout_SavesNoRankResult()
     {
         Start(11);

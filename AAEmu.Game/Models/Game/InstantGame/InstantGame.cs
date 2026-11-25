@@ -37,6 +37,7 @@ public partial class InstantGame
     private long? _announcedAt;
     private bool _finished;
     private bool _entryStarted;
+    private bool _incompleteGladiatorStart;
     internal Func<GladiatorRankResult, Task> SaveRankResult { get; init; } = result => InstantGameManager.Instance.RecordRankResult(result);
 
     public InstantGame(Battlefield battlefield) : this(battlefield,
@@ -100,6 +101,9 @@ public partial class InstantGame
             if (!_players.Contains(character))
                 return false;
 
+            if (_battlefield.Id == (uint)InstantGameType.Gladiator && _members.ContainsKey(character) &&
+                _announcedAt is { } start && _clock.GetElapsedTime(start) < StartCountdown)
+                _incompleteGladiatorStart = true;
             _players.Remove(character);
 
             foreach (var members in _corps.Values)
@@ -374,7 +378,8 @@ public partial class InstantGame
 
     private GladiatorRankResult GetCompletedGladiatorResult()
     {
-        if (_battlefield.Id != (uint)InstantGameType.Gladiator || _announcedAt is not { } start ||
+        if (_battlefield.Id != (uint)InstantGameType.Gladiator || _incompleteGladiatorStart ||
+            _announcedAt is not { } start ||
             _clock.GetElapsedTime(start) < StartCountdown || _members.Count == 0 ||
             _corps1Result.Members.Count != 1 || _corps2Result.Members.Count != 1)
             return null;
