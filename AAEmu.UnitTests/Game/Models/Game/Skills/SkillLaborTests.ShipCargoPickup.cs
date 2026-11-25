@@ -316,6 +316,7 @@ public sealed partial class SkillLaborTests
     [Arguments("without-solid-contact", false)]
     [Arguments("unreported-at-deadline", false)]
     [Arguments("stale-at-deadline", false)]
+    [Arguments("unreported-start", false)]
     [Arguments("on-rack", false)]
     [Arguments("changed-pack", false)]
     public async Task LoadedShipRack_HandlesStandingContactOnTheSameHull(string action, bool completes)
@@ -354,6 +355,8 @@ public sealed partial class SkillLaborTests
             MoveAtContact(ship, start, standingOnSolid: true);
             _owner.Transform.Local.SetPosition(settled);
         }
+        if (action == "unreported-start")
+            _owner.Transform.Local.SetPosition(start);
         if (action == "unreported-at-deadline")
             _owner.Transform.Local.SetPosition(settled + new Vector3(.001953125f, 0, 0));
         if (action == "repeat")

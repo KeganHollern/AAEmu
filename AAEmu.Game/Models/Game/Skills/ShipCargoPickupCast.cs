@@ -83,10 +83,10 @@ internal sealed class ShipCargoPickupCast
         var now = player.Transform.Local.Position;
         if (support == _startSupport)
         {
-            if (SkillCastReactions.SameMovementPosition(_start, now))
-                return true;
             if (!observeRestingHull)
-                return _lastRestingHullPosition == now;
+                return _lastRestingHullPosition.HasValue
+                    ? _lastRestingHullPosition.Value == now
+                    : SkillCastReactions.SameMovementPosition(_start, now);
             if (now.Z != _start.Z || Vector3.DistanceSquared(now, _start) > MaxRestingHullOffset * MaxRestingHullOffset)
             {
                 Logger.Debug("Resting contact left the cargo pickup position on hull {HullId}, rack {RackId}: {Start} to {Current}",
@@ -100,7 +100,7 @@ internal sealed class ShipCargoPickupCast
 
         // Either support can be a stock cargo rack. Compare both reports in one hull frame
         // only for registered, fixed racks whose local axes and scale agree with the hull.
-        if (!UsesHullAxes(_startSupport) || !UsesHullAxes(support))
+        if (_lastRestingHullPosition.HasValue || !UsesHullAxes(_startSupport) || !UsesHullAxes(support))
             return false;
         var start = SkillCastReactions.PackedPosition(_start);
         var end = SkillCastReactions.PackedPosition(now);
