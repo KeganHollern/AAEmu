@@ -1,11 +1,13 @@
 ﻿using System.Reflection;
 
+using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.World.Zones;
 
 using Moq;
+using MySql.Data.MySqlClient;
 using Xunit;
 
 namespace AAEmu.IntegrationTests.Core.Manager;
@@ -93,6 +95,93 @@ public sealed class ZoneConflictPersistenceTests
         using var connection = MySQL.CreateConnection();
         zoneManager.RestoreStates(connection);
         Assert.Equal(expected[65011], zoneManager.GetConflicts()[0].GetSnapshot());
+    }
+
+    [Theory]
+    [InlineData(0, false, 1, true)]
+    [InlineData(1, false, 2, true)]
+    [InlineData(2, false, 2, false)]
+    [InlineData(0, true, 1, false)]
+    public async Task Shutdown_CheckpointsZoneStateOrReportsFailure(
+        int preCommitFailures, bool uncertainCommit, int expectedAttempts, bool cleanShutdown)
+    {
+        var id = (ushort)(65100 + preCommitFailures + (uncertainCommit ? 10 : 0));
+        var oldState = new ZoneConflictSnapshot(ZoneConflictType.Danger, 80, DateTime.MinValue);
+        var zone = CreateManager(new Dictionary<ushort, ZoneConflictSnapshot> { [id] = oldState });
+        using (var connection = MySQL.CreateConnection())
+        using (var transaction = connection.BeginTransaction())
+        {
+            zone.Save(connection, transaction);
+            transaction.Commit();
+        }
+        zone.GetConflicts()[0].AddZoneKill();
+        var newState = zone.GetConflicts()[0].GetSnapshot();
+        Assert.NotEqual(oldState, newState);
+
+        var zoneWrites = new Mock<IZoneManager>();
+        var scheduler = new TaskManager(Mock.Of<ITickManager>());
+        var graph = new EconomyPersistenceTests.SaveGraph(scheduler, zoneWrites.Object);
+        var item = graph.AddItem(1);
+        var mail = graph.AddMail(2);
+        var dirtyBeforeCommit = new List<bool>();
+        var writes = 0;
+        zoneWrites.Setup(manager => manager.Save(It.IsAny<MySqlConnection>(), It.IsAny<MySqlTransaction>()))
+            .Returns((MySqlConnection connection, MySqlTransaction transaction) =>
+            {
+                dirtyBeforeCommit.Add(item.IsDirty && mail.IsDirty && graph.Container.IsDirty);
+                var rows = zone.Save(connection, transaction);
+                if (++writes <= preCommitFailures)
+                    throw new InvalidOperationException("Simulated failure after the zone write and before commit.");
+                return rows;
+            });
+        var save = graph.Save;
+        var consistencyStops = 0;
+        save.StopForConsistencyFailure = (_, _) => consistencyStops++;
+        if (uncertainCommit)
+            save.CommitTransaction = transaction =>
+            {
+                transaction.Commit();
+                throw new InvalidOperationException("Simulated loss of commit confirmation.");
+            };
+
+        // The production cancellation uses TaskManager.Instance on the saved scheduled task.
+        var schedulerField = typeof(Singleton<TaskManager>).GetField("s_instance",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousScheduler = schedulerField.GetValue(null);
+        schedulerField.SetValue(null, scheduler);
+        Exception failure;
+        try
+        {
+            save.SaveTickStart();
+            failure = await Record.ExceptionAsync(save.StopAsync);
+        }
+        finally
+        {
+            schedulerField.SetValue(null, previousScheduler);
+        }
+
+        using var reader = MySQL.CreateConnection();
+        zone.RestoreStates(reader);
+        Assert.Equal(cleanShutdown || uncertainCommit ? newState : oldState, zone.GetConflicts()[0].GetSnapshot());
+        Assert.Equal(expectedAttempts, writes);
+        Assert.All(dirtyBeforeCommit, Assert.True);
+        Assert.Equal(!cleanShutdown, item.IsDirty);
+        Assert.Equal(!cleanShutdown, mail.IsDirty);
+        Assert.Equal(!cleanShutdown, graph.Container.IsDirty);
+        using var query = reader.CreateCommand();
+        query.CommandText = "SELECT (SELECT COUNT(*) FROM items WHERE id=@item), (SELECT COUNT(*) FROM mails WHERE id=@mail)";
+        query.Parameters.AddWithValue("@item", item.Id);
+        query.Parameters.AddWithValue("@mail", mail.Id);
+        using var rows = query.ExecuteReader();
+        Assert.True(rows.Read());
+        var savedRows = cleanShutdown || uncertainCommit ? 1L : 0L;
+        Assert.Equal(savedRows, rows.GetInt64(0));
+        Assert.Equal(savedRows, rows.GetInt64(1));
+        Assert.Equal(uncertainCommit ? 1 : 0, consistencyStops);
+        if (cleanShutdown)
+            Assert.Null(failure);
+        else
+            Assert.IsType<InvalidOperationException>(failure);
     }
 
     private static ZoneManager CreateManager(Dictionary<ushort, ZoneConflictSnapshot> states)
