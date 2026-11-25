@@ -57,8 +57,8 @@ public sealed class ArenaScoreTests
             CREATE TABLE battle_fields(id INTEGER, zone_key INTEGER);
             INSERT INTO battle_fields VALUES(7,198),(11,302);
             CREATE TABLE game_rule_sets(id INTEGER, battle_field_id INTEGER, corps_size INTEGER, corps1_id INTEGER,
-                corps2_id INTEGER, time_opening INTEGER, time_ending INTEGER, time_playing INTEGER, victory_score INTEGER);
-            INSERT INTO game_rule_sets VALUES(22,7,5,159,160,4,1,15,0),(28,11,1,159,160,2,1,10,60);
+                corps2_id INTEGER, time_opening INTEGER, time_ending INTEGER, time_playing INTEGER, victory_score INTEGER, level_min INTEGER);
+            INSERT INTO game_rule_sets VALUES(22,7,5,159,160,4,1,15,0,40),(28,11,1,159,160,2,1,10,60,50);
             CREATE TABLE game_score_rules(id INTEGER, rule_set_id INTEGER, rule_set_corps INTEGER,
                 event_id INTEGER, event_value INTEGER, event_score INTEGER);
             INSERT INTO game_score_rules VALUES(68,22,-1,200,0,3),(93,28,-1,200,0,30),
