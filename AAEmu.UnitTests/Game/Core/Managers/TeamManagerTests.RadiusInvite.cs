@@ -1,5 +1,7 @@
 using System.Reflection;
 
+using AAEmu.Commons.Utils;
+
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
@@ -48,12 +50,7 @@ public partial class TeamManagerTests
     public async Task RadiusInvite_SoloLeaderAndTwoAcceptancesCreateOneRaid()
     {
         using var friends = new EmptyFriendsScope();
-        var chat = Mock.Of<IChatManager>();
-        var ids = Mock.Of<ITeamIdManager>();
-        ids.GetNextId().Returns(10u);
-        chat.GetPartyChat(Arg.Any<Team>(), Arg.Any<Character>()).Returns(new ChatChannel());
-        chat.GetRaidChat(Arg.Any<Team>()).Returns(new ChatChannel());
-        var manager = new TeamManager(Mock.Of<IWorldManager>().Object, chat.Object, ids.Object);
+        var manager = CreateRaidManager();
         var owner = CreateCharacter(1, "Leader");
         var first = CreateCharacter(2, "First");
         var second = CreateCharacter(3, "Second");
@@ -207,6 +204,50 @@ public partial class TeamManagerTests
         await Assert.That(GetActiveInvitations(manager)).IsEmpty();
     }
 
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RadiusInvite_LeaveWorldClearsOnlyOffersForTheDepartingPlayer(bool recipientLeaves)
+    {
+        using var friends = new EmptyFriendsScope();
+        var manager = CreateRaidManager();
+        var singleton = typeof(Singleton<TeamManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var original = singleton.GetValue(null);
+        singleton.SetValue(null, manager);
+        try
+        {
+            var owner = CreateCharacter(1, "SoloLeader");
+            var player = CreateCharacter(2, "Nearby");
+            var direct = CreateCharacter(3, "Direct");
+            SetNearbyPlayers((owner, 1f), (player, 2f));
+            manager.InviteAreaToTeam(owner, 0, false);
+            manager.AskToJoin(owner, direct.Name, 0, true, direct);
+
+            // Character selection and connection loss both clear this property.
+            (recipientLeaves ? player : owner).IsOnline = false;
+            var pending = GetActiveInvitations(manager);
+            await Assert.That(pending.ContainsKey(player.Id)).IsFalse();
+            manager.ReplyToJoinTeam(player, 0, false, owner.Id, false, player.Name, true);
+            await Assert.That(GetActiveTeams(manager)).IsEmpty();
+            await Assert.That(pending.ContainsKey(direct.Id)).IsTrue();
+        }
+        finally
+        {
+            singleton.SetValue(null, original);
+        }
+    }
+
+    private static TeamManager CreateRaidManager()
+    {
+        var chat = Mock.Of<IChatManager>();
+        var ids = Mock.Of<ITeamIdManager>();
+        ids.GetNextId().Returns(10u);
+        chat.GetPartyChat(Arg.Any<Team>(), Arg.Any<Character>()).Returns(new ChatChannel());
+        chat.GetRaidChat(Arg.Any<Team>()).Returns(new ChatChannel());
+        return new TeamManager(Mock.Of<IWorldManager>().Object, chat.Object, ids.Object);
+    }
+
     private static void SetNearbyPlayers(params (Character character, float x)[] players)
     {
         var region = new Region(null, 0, 0, 0);
@@ -214,6 +255,8 @@ public partial class TeamManagerTests
         for (var index = 0; index < players.Length; index++)
         {
             var (character, x) = players[index];
+            typeof(Character).GetField("<IsOnline>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(character, true);
             character.Region = region;
             character.ObjId = character.Id;
             character.Transform.Local.SetPosition(x, 1f, 0f);

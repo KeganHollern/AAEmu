@@ -199,6 +199,8 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
         };
         lock (_activeInvitationsLock)
         {
+            if (isArea && (!owner.IsOnline || !target.IsOnline))
+                return;
             if (!_activeInvitations.TryAdd(target.Id, invitation))
             {
                 owner.SendPacket(new SCRejectedTeamPacket(targetName, isParty));
@@ -229,10 +231,12 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
         }
 
         if (activeInvitation.IsArea != isArea ||
-            (isArea && (teamId != activeInvitation.TeamId || ownerId != activeInvitation.Owner.Id)))
+            (isArea && (!ReferenceEquals(target, activeInvitation.Target) ||
+                        teamId != activeInvitation.TeamId || ownerId != activeInvitation.Owner.Id)))
             return;
 
-        if (isReject || activeInvitation.Time + InvitationLifetime < DateTime.UtcNow ||
+        if (isReject || (isArea && (!activeInvitation.Owner.IsOnline || !target.IsOnline)) ||
+            activeInvitation.Time + InvitationLifetime < DateTime.UtcNow ||
             CharacterBlocked.IsBlockedBy(target, activeInvitation.Owner.Id))
         {
             activeInvitation.Owner.SendPacket(new SCRejectedTeamPacket(activeInvitation.Target.Name, activeInvitation.IsParty));
@@ -716,6 +720,16 @@ public class TeamManager(IWorldManager worldManager, IChatManager chatManager, I
 
     public void SetOffline(Character unit)
     {
+        lock (_activeInvitationsLock)
+        {
+            foreach (var entry in _activeInvitations)
+            {
+                var offer = entry.Value;
+                if (offer.IsArea && (ReferenceEquals(offer.Owner, unit) || ReferenceEquals(offer.Target, unit)))
+                    _activeInvitations.TryRemove(entry);
+            }
+        }
+
         var activeTeam = GetActiveTeamByUnit(unit.Id);
         var memberInfo = activeTeam?.ChangeStatus(unit);
         if (memberInfo == null) return;
