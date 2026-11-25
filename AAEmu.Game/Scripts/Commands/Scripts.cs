@@ -74,7 +74,7 @@ public class Scripts : ICommand
                     "Slave Attachment Point Locations reloaded from .json file");
                 break;
             case "shutdown":
-                var shutdownTime = DateTime.UtcNow.AddMinutes(30);
+                uint minutes = 30;
                 var doCancel = false;
                 if (args.Length > 1)
                 {
@@ -84,29 +84,30 @@ public class Scripts : ICommand
                     }
                     else if (args[1].Equals("now", StringComparison.CurrentCultureIgnoreCase))
                     {
-                        shutdownTime = DateTime.UtcNow;
+                        minutes = 0;
                     }
                     else if (uint.TryParse(args[1], out var shutdownTimeMinutes))
                     {
-                        shutdownTime = DateTime.UtcNow.AddMinutes(shutdownTimeMinutes);
+                        minutes = shutdownTimeMinutes;
                     }
                 }
 
-                var shutdownTimeRemaining = shutdownTime - DateTime.UtcNow;
+                var when = minutes switch { 0 => "now", 1 => "in 1 minute", _ => $"in {minutes} minutes" };
 
-                var result = SaveManager.Instance.SetShutdownTime(doCancel ? null : shutdownTime);
+                var result = SaveManager.Instance.SetShutdownTime(doCancel ? null : DateTime.UtcNow.AddMinutes(minutes));
                 switch (result)
                 {
                     case ShutdownScheduleResult.Scheduled:
                         CommandManager.SendNormalText(this, messageOutput,
-                            $"Shutdown sequence started, shutting down in |nn;{shutdownTimeRemaining.TotalMinutes:F0}|r minutes");
+                            $"Shutdown sequence started. The server will shut down {when}.");
                         break;
                     case ShutdownScheduleResult.Rescheduled:
                         CommandManager.SendNormalText(this, messageOutput,
-                            $"Shutdown was already in progress, changed to {shutdownTimeRemaining.TotalMinutes:F0} minutes from now.");
-                        var minutes = (int)Math.Ceiling((shutdownTime.AddSeconds(1) - DateTime.UtcNow).TotalMinutes);
-                        WorldManager.Instance.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Red, 10000,
-                            $"Server shutdown has been rescheduled to {minutes} minutes from now!"));
+                            $"Shutdown was already in progress. The server will shut down {when}.");
+                        // The countdown sends its own immediate final notice.
+                        if (minutes > 0)
+                            WorldManager.Instance.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Red, 10000,
+                                $"The server will shut down {when}."));
                         break;
                     case ShutdownScheduleResult.Cancelled:
                         CommandManager.SendNormalText(this, messageOutput, "Shutdown cancelled.");
