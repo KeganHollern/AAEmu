@@ -215,6 +215,30 @@ public sealed class TerrainPhysicsTests
     }
 
     [Test]
+    [Arguments(-1, 6, 3)]
+    [Arguments(1, -6, 3)]
+    [Arguments(-3, 1, 3)]
+    [Arguments(3, -1, 3)]
+    [Arguments(1, 1, 0)]
+    [Arguments(-1, 6, 0)]
+    [Arguments(3, -1, 0)]
+    public async Task RayKeepsTheMeasuredCornerAtTheStartOrAfterSeveralSquares(int dx, int dz, int time)
+    {
+        using var scene = new Scene(2, 2);
+        scene.Publish(0, 0, (_, _) => 27);
+        scene.Start();
+        var direction = new JVector(dx, -1, dz);
+        foreach (var offset in new[] { -.02f, 0f, .02f })
+        {
+            var origin = new JVector(1022 - dx * time + offset, 27 + time, 1022 - dz * time + offset);
+            var hit = scene.Physics.DynamicTree.RayCast(origin, direction, null, null, out _, out _, out var distance);
+            await Assert.That(hit).IsEqualTo(offset <= 0);
+            if (hit)
+                await Assert.That(Math.Abs(distance - time)).IsLessThan(.002f);
+        }
+    }
+
+    [Test]
     public async Task ObliqueRayEntersTheGridAndAnOutsideRayMisses()
     {
         using var scene = new Scene(1, 1);

@@ -24,10 +24,15 @@ public sealed class HeightmapTester(Heightmap heightmap) : IDynamicTreeProxy, IR
         var z = Math.Clamp((int)MathF.Floor(start.Z / spacing), 0, Heightmap.QuadsZ - 1);
         var stepX = Math.Sign(direction.X);
         var stepZ = Math.Sign(direction.Z);
-        var deltaX = stepX == 0 ? float.PositiveInfinity : spacing / Math.Abs(direction.X);
-        var deltaZ = stepZ == 0 ? float.PositiveInfinity : spacing / Math.Abs(direction.Z);
-        var nextX = stepX == 0 ? float.PositiveInfinity : ((x + (stepX > 0 ? 1 : 0)) * spacing - origin.X) / direction.X;
-        var nextZ = stepZ == 0 ? float.PositiveInfinity : ((z + (stepZ > 0 ? 1 : 0)) * spacing - origin.Z) / direction.Z;
+        // Measure every crossing from the ray origin. Accumulating a fractional delta
+        // can separate simultaneous crossings and skip the only measured corner.
+        static float NextCrossing(int square, int step, float origin, float direction) =>
+            step == 0 ? float.PositiveInfinity : ((square + (step > 0 ? 1 : 0)) * spacing - origin) / direction;
+
+        var nextX = NextCrossing(x, stepX, origin.X, direction.X);
+        var nextZ = NextCrossing(z, stepZ, origin.Z, direction.Z);
+        var west = x > 0 && start.X == x * spacing;
+        var south = z > 0 && start.Z == z * spacing;
 
         // Keep the original 100 m horizontal ray range. A vertical ray visits one square.
         var horizontalSpeed = MathF.Sqrt(direction.X * direction.X + direction.Z * direction.Z);
@@ -36,9 +41,7 @@ public sealed class HeightmapTester(Heightmap heightmap) : IDynamicTreeProxy, IR
         while (t <= limit && (uint)x < (uint)Heightmap.QuadsX && (uint)z < (uint)Heightmap.QuadsZ)
         {
             var end = Math.Min(limit, Math.Min(nextX, nextZ));
-            // On a grid line the ray can touch a measured face on either side.
-            var west = stepX == 0 && x > 0 && origin.X == x * spacing;
-            var south = stepZ == 0 && z > 0 && origin.Z == z * spacing;
+            // At the start, and along a grid line, either adjacent face can supply the contact.
             if (IntersectSquare(x, z, origin, direction, end, out normal, out lambda) ||
                 (west && IntersectSquare(x - 1, z, origin, direction, end, out normal, out lambda)) ||
                 (south && IntersectSquare(x, z - 1, origin, direction, end, out normal, out lambda)) ||
@@ -52,16 +55,18 @@ public sealed class HeightmapTester(Heightmap heightmap) : IDynamicTreeProxy, IR
                 return true;
             if (float.IsPositiveInfinity(end) || end >= limit)
                 break;
+            west &= stepX == 0;
+            south &= stepZ == 0;
             t = Math.Min(nextX, nextZ);
             if (nextX <= t)
             {
                 x += stepX;
-                nextX += deltaX;
+                nextX = NextCrossing(x, stepX, origin.X, direction.X);
             }
             if (nextZ <= t)
             {
                 z += stepZ;
-                nextZ += deltaZ;
+                nextZ = NextCrossing(z, stepZ, origin.Z, direction.Z);
             }
         }
         normal = JVector.Zero;
