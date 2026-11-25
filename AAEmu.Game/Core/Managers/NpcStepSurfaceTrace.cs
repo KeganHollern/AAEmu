@@ -82,6 +82,6 @@ public sealed class NpcStepSurfaceTrace
     internal enum FloorSearch
     {
         None, NoSharedBrush, DestinationOutsideBrush, GeometryUnavailable, NoStaticSolidMesh, NoStartFace, NoEndFace,
-        TargetOutsideInclinedFace, AmbiguousInclinedFoot, FacesDisconnectedAlongStep, ContinuousStaticFloor
+        TargetOutsideInclinedFace, AmbiguousInclinedFoot, FacesDisconnectedAlongStep, ContinuousStaticFloor, AmbiguousLevelFoot, AcceptedFlatFloor
     }
 }

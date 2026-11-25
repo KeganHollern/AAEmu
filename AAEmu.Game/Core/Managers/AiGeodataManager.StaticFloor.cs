@@ -154,6 +154,27 @@ public partial class AiGeoDataManager
                         trace?.Observe(AmbiguousInclinedFoot, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
                         return true;
                     }
+                    // A level step can hit a parallel deck first. Prefer the connected flat plane
+                    // at the accepted foot height when a ray differs by more than rounding error.
+                    if (!inclinedTarget.HasValue && first.Normal.Z == 1f && last.Normal.Z == 1f &&
+                        (last.Position.Z < MathF.BitDecrement(from.Z) || last.Position.Z > MathF.BitIncrement(from.Z)))
+                    {
+                        if (TryFollowFlatFaces(part, mesh, brush, from, to, out var a, out var b))
+                        {
+                            trace?.Observe(AcceptedFlatFloor, cell, brush, index, a, b);
+                            floor = from.Z;
+                            return true;
+                        }
+                        if (HasOtherFootSupport(from, brush, index, first.TriangleIndex) ||
+                            HasOtherFootSupport(to, brush, index, last.TriangleIndex))
+                        {
+                            if (TryFollowAcceptedFlatFloor(from, to, brush, index, trace))
+                                floor = from.Z;
+                            else
+                                trace?.Observe(AmbiguousLevelFoot, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
+                            return true;
+                        }
+                    }
                     if (!CanFollowFloorFaces(mesh,
                             part.Transform * brush.Transform, first.TriangleIndex, last.TriangleIndex, from, to, belowTerrain))
                     {
@@ -178,6 +199,21 @@ public partial class AiGeoDataManager
     // For a change in elevation, a second solid inside that band leaves the intended layer ambiguous.
     private bool HasOtherFootSupport(Vector3 foot, CryWorldObjectInstance support, int partIndex, int face)
     {
+        var margin = Vector3.UnitZ * StaticFloorPrecision;
+        foreach (var (_, brush, i, part) in GetSolidPartsAtFoot(foot))
+        {
+            var ownMesh = ReferenceEquals(brush, support) && i == partIndex ? part.Shape as CryTriangleMesh : null;
+            bool DistinctSupport(int triangle, Vector3 normal) => IsGentlyInclined(normal) &&
+                (ownMesh == null || triangle != face && !SharesOppositeEdge(ownMesh, face, triangle));
+            if (CryGeometryQueries.Raycast(part, brush.Transform, foot + margin, -Vector3.UnitZ,
+                    StaticFloorPrecision * 2, true, out _, DistinctSupport))
+                return true;
+        }
+        return false;
+    }
+
+    private IEnumerable<(WorldCell Cell, CryWorldObjectInstance Brush, int Index, CryGeometryPart Part)> GetSolidPartsAtFoot(Vector3 foot)
+    {
         var (cellX, cellY) = foot.ToCellIndex();
         var margin = Vector3.UnitZ * StaticFloorPrecision;
         for (var y = cellY - 1; y <= cellY + 1; y++)
@@ -194,18 +230,82 @@ public partial class AiGeoDataManager
                 if (asset == null || asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
                     continue;
                 for (var i = 0; i < asset.Parts.Count; i++)
-                {
-                    var part = asset.Parts[i];
-                    if (part.PhysicsType != 0x1000)
-                        continue;
-                    var ownMesh = ReferenceEquals(brush, support) && i == partIndex ? part.Shape as CryTriangleMesh : null;
-                    bool DistinctSupport(int triangle, Vector3 normal) => IsGentlyInclined(normal) &&
-                        (ownMesh == null || triangle != face && !SharesOppositeEdge(ownMesh, face, triangle));
-                    if (CryGeometryQueries.Raycast(part, brush.Transform, foot + margin, -Vector3.UnitZ,
-                            StaticFloorPrecision * 2, true, out _, DistinctSupport))
-                        return true;
-                }
+                    if (asset.Parts[i].PhysicsType == 0x1000)
+                        yield return (cell, brush, i, asset.Parts[i]);
             }
+        }
+    }
+
+    private bool TryFollowAcceptedFlatFloor(Vector3 from, Vector3 to, CryWorldObjectInstance checkedBrush,
+        int checkedPart, NpcStepSurfaceTrace trace)
+    {
+        foreach (var (cell, brush, index, part) in GetSolidPartsAtFoot(from))
+        {
+            if (ReferenceEquals(brush, checkedBrush) && index == checkedPart ||
+                part.Shape is not CryTriangleMesh mesh ||
+                to.X < brush.Min.X || to.X > brush.Max.X || to.Y < brush.Min.Y || to.Y > brush.Max.Y)
+                continue;
+            if (!TryFollowFlatFaces(part, mesh, brush, from, to, out var a, out var b))
+                continue;
+            trace?.Observe(AcceptedFlatFloor, cell, brush, index, a, b);
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryFollowFlatFaces(CryGeometryPart part, CryTriangleMesh mesh, CryWorldObjectInstance brush,
+        Vector3 from, Vector3 to, out int first, out int last)
+    {
+        first = last = -1;
+        // Keep edge comparisons in the foot's local frame. Allow one representable world
+        // height on either side for rounding when the accepted foot was saved.
+        var offset = brush.Transform;
+        offset.Translation -= from;
+        var transform = part.Transform * offset;
+        var mirrored = transform.GetDeterminant() < 0;
+        var minZ = MathF.BitDecrement(from.Z) - from.Z;
+        var maxZ = MathF.BitIncrement(from.Z) - from.Z;
+        var step = to - from;
+        List<int> starts = null;
+        List<int> ends = null;
+        for (var n = 0; n < mesh.Indices.Length; n += 3)
+        {
+            var a = Vector3.Transform(mesh.Vertices[mesh.Indices[n]], transform);
+            if (a.Z < minZ || a.Z > maxZ)
+                continue;
+            var b = Vector3.Transform(mesh.Vertices[mesh.Indices[n + 1]], transform);
+            var c = Vector3.Transform(mesh.Vertices[mesh.Indices[n + 2]], transform);
+            if (b.Z != a.Z || c.Z != a.Z)
+                continue;
+            var winding = SideOfEdge(a, b, c);
+            if (winding == 0 || (winding < 0) != mirrored)
+                continue;
+            bool Covers(Vector3 point) => winding * SideOfEdge(a, b, point) >= 0 &&
+                winding * SideOfEdge(b, c, point) >= 0 && winding * SideOfEdge(c, a, point) >= 0;
+            var atStart = Covers(Vector3.Zero);
+            var atEnd = Covers(step);
+            if (atStart && atEnd)
+            {
+                first = last = n / 3;
+                return true;
+            }
+            if (atStart)
+                (starts ??= []).Add(n / 3);
+            if (atEnd)
+                (ends ??= []).Add(n / 3);
+        }
+        if (starts == null || ends == null)
+            return false;
+
+        var placement = part.Transform * brush.Transform;
+        foreach (var start in starts)
+        foreach (var end in ends)
+        {
+            if (!CanFollowFloorFaces(mesh, placement, start, end, from, to, false))
+                continue;
+            first = start;
+            last = end;
+            return true;
         }
         return false;
     }
