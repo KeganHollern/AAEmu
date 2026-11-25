@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Numerics;
 using System.Xml;
@@ -1471,12 +1471,18 @@ public class WorldManager(
     /// </summary>
     /// <param name="playerObjId"></param>
     /// <returns></returns>
-    public bool TryRemoveCharacter(uint playerObjId)
+    public bool TryRemoveCharacter(uint playerObjId) =>
+        _characters.TryGetValue(playerObjId, out var character) && TryRemoveCharacter(character);
+
+    internal bool TryRemoveCharacter(Character character)
     {
-        if (!_characters.TryRemove(playerObjId, out var character))
-            return false;
-        character.CurrentInstantGame?.CancelPendingInvitation(character);
-        return true;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (!_characters.TryRemove(new KeyValuePair<uint, Character>(character.ObjId, character)))
+                return false;
+            InstantGameManager.Instance.OnCharacterDisconnected(character);
+            return true;
+        }
     }
 
     /// <summary>

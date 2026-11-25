@@ -111,13 +111,21 @@ public partial class InstantGame
         }
     }
 
-    internal void CancelPendingInvitation(Character character)
+    internal void DisconnectPlayer(Character character)
     {
-        lock (SaveManager.PersistenceSyncRoot)
+        if (IsInvited(character))
         {
-            if (IsInvited(character))
-                CancelAdmission(character);
+            CancelAdmission(character);
+            return;
         }
+
+        if (!RemovePlayer(character))
+            return;
+
+        // Keep the earned result in the team history when the live session leaves.
+        character.Events.OnKill -= OnKill;
+        if (_members.Remove(character))
+            character.SetFaction(character.OriginFaction.Id);
     }
 
     private bool IsInvited(Character character) =>
@@ -138,6 +146,8 @@ public partial class InstantGame
         }
         character.Events.OnKill -= OnKill;
     }
+
+    internal bool HasPlayer(uint characterId) => _players.Any(player => player.Id == characterId);
 
     internal bool IsFinished => _finished;
 

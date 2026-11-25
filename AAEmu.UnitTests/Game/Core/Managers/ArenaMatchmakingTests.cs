@@ -150,6 +150,122 @@ public sealed class ArenaMatchmakingTests
     }
 
     [Test]
+    public async Task FirstQueueSurvivesAnotherApplicationAndAllowsAChangeAfterCancel()
+    {
+        var player = AddApplicant(1);
+        var opponent = AddApplicant(2);
+        var observer = Observe(player);
+        _queue.ApplyToBattlefield(7, InstantCorps.Any, player);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, opponent);
+        var tick = TimeSpan.FromSeconds(15);
+        _queue.BattlefieldTick(tick);
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(1);
+        await Assert.That(opponent.CurrentInstantGame).IsNull();
+
+        _queue.WithdrawFromBattlefield(player);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        _queue.BattlefieldTick(tick);
+        var duel = opponent.CurrentInstantGame;
+        await Assert.That(duel.BattlefieldId).IsEqualTo(11u);
+        await Assert.That(player.CurrentInstantGame).IsSameReferenceAs(duel);
+
+        _queue.ApplyToBattlefield(7, InstantCorps.Any, player);
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(2);
+        duel.PlayerInviteResponse(player, false, 1); // Next room queues the original mode again.
+        _queue.ApplyToBattlefield(7, InstantCorps.Any, player);
+        _queue.BattlefieldTick(tick);
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(3);
+        await Assert.That(player.CurrentInstantGame.BattlefieldId).IsEqualTo(11u);
+    }
+
+    [Test]
+    public async Task ConcurrentApplicationsReserveOnePlace()
+    {
+        var player = AddApplicant(1);
+        var observer = Observe(player);
+        await Task.WhenAll(
+            Task.Run(() => _queue.ApplyToBattlefield(7, InstantCorps.Any, player)),
+            Task.Run(() => _queue.ApplyToBattlefield(11, InstantCorps.Any, player)));
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReplacementSessionCanApplyAsSoonAsWaitingOrInvitedSessionLeaves(bool invited)
+    {
+        var first = AddApplicant(1);
+        var oldObserver = Observe(first);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, first);
+        var tick = TimeSpan.FromSeconds(15);
+        if (invited)
+        {
+            _queue.ApplyToBattlefield(11, InstantCorps.Any, AddApplicant(2));
+            _queue.BattlefieldTick(tick);
+        }
+
+        var returned = NewSession(1, 101);
+        var observer = Observe(returned);
+        _queue.ApplyToBattlefield(7, InstantCorps.Any, returned);
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(0);
+        _worlds.TryRemoveCharacter(first.ObjId);
+        _queue.ApplyToBattlefield(7, InstantCorps.Any, returned);
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(1);
+        foreach (var teammate in Enumerable.Range(3, 9).Select(AddApplicant))
+            _queue.ApplyToBattlefield(7, InstantCorps.Any, teammate);
+        _queue.BattlefieldTick(tick);
+        await Assert.That(returned.CurrentInstantGame.BattlefieldId).IsEqualTo(7u);
+        await Assert.That(first.CurrentInstantGame).IsNull();
+        await Assert.That(Messages(oldObserver, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(invited ? 1 : 0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DisconnectedMemberCanReapplyBeforeOldMatchCleanup(bool inviteBeforeCleanup)
+    {
+        var first = AddApplicant(1);
+        var opponent = AddApplicant(2);
+        var observer = Observe(first);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, first);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, opponent);
+        var tick = TimeSpan.FromSeconds(15);
+        _queue.BattlefieldTick(tick);
+        var oldMatch = first.CurrentInstantGame;
+        var invitation = Messages(observer, SCOffsets.SCInviteToInstantGamePacket).Single();
+        first.Faction = new() { Id = (InstantCorps)invitation[20] == InstantCorps.Corps1 ? (FactionsEnum)159 : (FactionsEnum)160 };
+        first.OriginFaction = first.Faction;
+        oldMatch.PlayerInviteResponse(first, true, 1);
+        oldMatch.OnEnterWorld(first, 1);
+        _queue.ApplyToBattlefield(7, InstantCorps.Any, first);
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(1);
+
+        _worlds.TryRemoveCharacter(first.ObjId);
+        var returned = NewSession(1, first.ObjId);
+        var newObserver = Observe(returned);
+        _queue.ApplyToBattlefield(7, InstantCorps.Any, returned);
+        foreach (var teammate in Enumerable.Range(3, 9).Select(AddApplicant))
+            _queue.ApplyToBattlefield(7, InstantCorps.Any, teammate);
+        if (inviteBeforeCleanup)
+            _queue.BattlefieldTick(tick);
+
+        // A late logout for the previous object cannot remove the replacement with the reused runtime ID.
+        await Assert.That(_worlds.TryRemoveCharacter(first)).IsFalse();
+        await Assert.That(_worlds.GetCharacterByObjId(returned.ObjId)).IsSameReferenceAs(returned);
+        // The other invitation leaves normally before the old match ends.
+        _queue.WithdrawFromBattlefield(opponent);
+        await oldMatch.EndGame();
+        _queue.BattlefieldTick(tick);
+        await Assert.That(first.CurrentInstantGame).IsNull();
+        await Assert.That(Messages(observer, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(1);
+        await Assert.That(Messages(newObserver, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(1);
+        await Assert.That(Messages(newObserver, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(1);
+        await Assert.That(returned.CurrentInstantGame.BattlefieldId).IsEqualTo(7u);
+        await Assert.That(returned.CurrentInstantGame.IsFull).IsTrue();
+    }
+
+    [Test]
     public async Task APlayerWhoLeavesTheWorldBeforeTheTickDoesNotFillATeamSlot()
     {
         var first = new CharacterMock { Id = 1, ObjId = 10, Buffs = Mock.Of<IBuffs>().Object };
@@ -364,9 +480,11 @@ public sealed class ArenaMatchmakingTests
     private static IEnumerable<byte[]> Messages(TransferVisibilityTests.RecordingSession session, ushort type) =>
         session.Packets.Where(bytes => bytes.Length >= 8 && BitConverter.ToUInt16(bytes, 6) == type);
 
-    private CharacterMock AddApplicant(int id)
+    private CharacterMock AddApplicant(int id) => NewSession(id, (uint)id);
+
+    private CharacterMock NewSession(int id, uint objectId)
     {
-        var player = new CharacterMock { Id = (uint)id, ObjId = (uint)id, Name = $"Player{id}", Buffs = Mock.Of<IBuffs>().Object };
+        var player = new CharacterMock { Id = (uint)id, ObjId = objectId, Level = 50, Name = $"Player{id}", Buffs = Mock.Of<IBuffs>().Object };
         _worlds.TryAddCharacter(player);
         return player;
     }

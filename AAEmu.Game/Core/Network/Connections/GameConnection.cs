@@ -438,11 +438,7 @@ public class GameConnection
         RunDisconnectStep(() => RadarManager.Instance.UnRegister(activeChar));
         RunDisconnectStep(() => activeChar.Buffs?.CancelAllEffectTasks());
         RunDisconnectStep(activeChar.Delete);
-        RunDisconnectStep(() =>
-        {
-            if (WorldManager.Instance.GetCharacterByObjId(activeChar.ObjId) == activeChar)
-                WorldManager.Instance.TryRemoveCharacter(activeChar.ObjId);
-        });
+        RunDisconnectStep(() => WorldManager.Instance.TryRemoveCharacter(activeChar));
         if (!activeChar.SaveDirectlyToDatabase())
             throw new IOException($"Could not save departing character {activeChar.Id}.");
     }
