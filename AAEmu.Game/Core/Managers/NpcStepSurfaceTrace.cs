@@ -38,7 +38,7 @@ public sealed class NpcStepSurfaceTrace
         }
         var next = Npc.GetRequestedStep(from, target, distance, range);
         var trace = new NpcStepSurfaceTrace();
-        var height = npc.ResolveStepHeight(from, target, next, trace);
+        var height = npc.ResolveStepHeight(from, target, next, out _, trace);
         yield return $"Prospective ad-hoc step height for obj={npc.ObjId} from={FormatStepPosition(from)} target={FormatStepPosition(target)} requested={FormatStepPosition(next)}";
         yield return $"selected={trace._selection} z={(height ?? from.Z).ToString("F3", CultureInfo.InvariantCulture)} staticCheck={trace._staticCheck}";
         if (trace._brush != null)
@@ -82,6 +82,6 @@ public sealed class NpcStepSurfaceTrace
     internal enum FloorSearch
     {
         None, NoSharedBrush, DestinationOutsideBrush, GeometryUnavailable, NoStaticSolidMesh, NoStartFace, NoEndFace,
-        TargetOutsideInclinedFace, AmbiguousInclinedFoot, FacesDisconnectedAlongStep, ContinuousStaticFloor, AmbiguousLevelFoot, AcceptedFlatFloor
+        TargetOutsideInclinedFace, AmbiguousInclinedFoot, FacesDisconnectedAlongStep, ContinuousStaticFloor, AmbiguousLevelFoot, AcceptedFlatFloor, ContinuedInclinedFace
     }
 }

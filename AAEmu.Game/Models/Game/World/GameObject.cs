@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Units;
 using NLog;
 
@@ -70,6 +71,8 @@ public class GameObject : IGameObject
             if (_parentWorld != value)
             {
                 var previousWorld = _parentWorld;
+                if (this is Npc npc)
+                    npc.AcceptedFloor = null;
                 if (this is Unit unit)
                     unit.FallMovement.Reset();
                 _parentWorld = value;

@@ -419,6 +419,8 @@ public partial class Unit : BaseUnit, IUnit
         var moved = !Transform.World.Position.X.Equals(x) || !Transform.World.Position.Y.Equals(y) || !Transform.World.Position.Z.Equals(z);
         if (moved)
         {
+            if (this is Npc npc && !DisabledSetPosition)
+                npc.AcceptedFloor = null;
             Events.OnMovement(this, new OnMovementArgs());
         }
         base.SetPosition(x, y, z, rotationX, rotationY, rotationZ);
@@ -440,6 +442,8 @@ public partial class Unit : BaseUnit, IUnit
         var moved = !Transform.World.Position.X.Equals(oldPosition.X) || !Transform.World.Position.Y.Equals(oldPosition.Y) || !Transform.World.Position.Z.Equals(oldPosition.Z);
         if (moved)
         {
+            if (this is Npc { AcceptedFloor: { } floor } npc && floor.Foot != Transform.Local.Position)
+                npc.AcceptedFloor = null;
             Events.OnMovement(this, new OnMovementArgs());
         }
         if (DisabledSetPosition)

@@ -876,11 +876,12 @@ public class WorldManager(
     public const float NavigationAnchorTolerance = 1.5f;
 
     public float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId)
-        => ResolveReferenceHeight(ai, x, y, z, zoneId, null) ?? ai.HomePosition.Z;
+        => ResolveReferenceHeight(ai, x, y, z, zoneId, null, out _) ?? ai.HomePosition.Z;
 
     internal float? ResolveReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId, Vector3? previousPosition,
-        NpcStepSurfaceTrace trace = null, Vector3? inclinedTarget = null)
+        out AiGeoDataManager.AcceptedFace accepted, NpcStepSurfaceTrace trace = null, Vector3 destination = default, bool checkIncline = false)
     {
+        accepted = null;
         float finalHeight;
 
         // 0. Just in case.
@@ -917,7 +918,7 @@ public class WorldManager(
             if (source != GroundSurfaceSource.Terrain)
                 finalHeight = AnchorNavigationSourcedHeight(ai, finalHeight, trace);
 
-            if (inclinedTarget.HasValue && (source != GroundSurfaceSource.Terrain || finalHeight - z <= AiGeoDataManager.StaticFloorPrecision))
+            if (checkIncline && (source != GroundSurfaceSource.Terrain || finalHeight - z <= AiGeoDataManager.StaticFloorPrecision))
             {
                 trace?.Skip("InclinedStepOutsideCave");
                 return finalHeight;
@@ -928,8 +929,8 @@ public class WorldManager(
             {
                 if (GetWorldTemplateByZoneKey(zoneId) is { Name: "main_world", GeoData: { } geoData })
                 {
-                    if (geoData.TryResolveStaticFloorStep(ai.Owner, from, new Vector3(x, y, inclinedTarget.HasValue ? z : from.Z),
-                            source, out var floor, trace, inclinedTarget))
+                    if (geoData.TryResolveStaticFloorStep(ai.Owner, from, new Vector3(x, y, checkIncline ? z : from.Z),
+                            source, out var floor, out accepted, trace, destination, checkIncline))
                     {
                         trace?.Select(floor.HasValue ? "StaticFloor" : "HoldAmbiguousFloor");
                         return floor;

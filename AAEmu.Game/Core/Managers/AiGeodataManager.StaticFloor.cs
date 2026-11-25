@@ -13,6 +13,13 @@ namespace AAEmu.Game.Core.Managers;
 
 public partial class AiGeoDataManager
 {
+    // A real step commits this identity only after the NPC reaches the returned foot.
+    internal sealed record AcceptedFace(WorldInstance World, AiGeoDataManager Geometry, WorldCell Cell,
+        ObjectsFile Objects, CryWorldObjectInstance Brush, int PartIndex, CryGeometryPart Part, int Triangle, Vector3 Foot)
+    {
+        public AcceptedFace At(Vector3 next, float height) => this with { Foot = new Vector3(next.X, next.Y, height) };
+    }
+
     internal const float StaticFloorPrecision = 0.01f;
     private const float CaveFloorReferenceSpan = 0.5f;
     private readonly ConditionalWeakTable<ObjectsFile, CryWorldObjectIndex> _groundBrushes = new();
@@ -22,9 +29,10 @@ public partial class AiGeoDataManager
     // A horizontal NPC step can leave a waypoint's region of influence while still on its solid deck.
     // Require continuous static collision between the two feet before replacing the selected ground.
     // A resolved null height holds a step whose current or next support is ambiguous.
-    internal bool TryResolveStaticFloorStep(Npc npc, Vector3 from, Vector3 to, GroundSurfaceSource selectedSource, out float? floor, NpcStepSurfaceTrace trace = null, Vector3? inclinedTarget = null)
+    internal bool TryResolveStaticFloorStep(Npc npc, Vector3 from, Vector3 to, GroundSurfaceSource selectedSource, out float? floor, out AcceptedFace accepted, NpcStepSurfaceTrace trace, Vector3 destination, bool checkIncline)
     {
         floor = default;
+        accepted = null;
         var (cellX, cellY) = from.ToCellIndex();
         var (nextX, nextY) = to.ToCellIndex();
         if (Math.Abs(cellX - nextX) > 1 || Math.Abs(cellY - nextY) > 1)
@@ -50,7 +58,7 @@ public partial class AiGeoDataManager
             trace?.Skip("StartFootBelowTerrainWithNavigation");
             return false;
         }
-        if (inclinedTarget.HasValue && separation >= 0f)
+        if (checkIncline && separation >= 0f)
         {
             trace?.Skip("InclinedTargetRequiresCaveFloor");
             return false;
@@ -58,8 +66,16 @@ public partial class AiGeoDataManager
         trace?.Skip("NoLoadedBrushData");
 
         var belowTerrain = separation < 0f;
+        var previous = belowTerrain ? FindAcceptedFaceAtFoot(npc, from) : null;
+        if (previous != null && TryContinueAcceptedFace(previous, to, destination, out var continued, trace))
+        {
+            floor = continued;
+            accepted = previous.At(to, continued);
+            return true;
+        }
+        Vector3? inclinedTarget = checkIncline ? destination : null;
         var mayLeaveBrush = false;
-        if (TryResolveStaticFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace, inclinedTarget))
+        if (TryResolveStaticFloorInCell(npc, previous, worldTemplate.GetCell(cellX, cellY), from, to, belowTerrain, ref mayLeaveBrush, out floor, out accepted, trace, inclinedTarget))
             return true;
 
         // A brush belongs to one cell even where its floor extends into the next cell.
@@ -68,7 +84,7 @@ public partial class AiGeoDataManager
         for (var x = cellX - 1; x <= cellX + 1; x++)
         {
             if ((x != cellX || y != cellY) &&
-                TryResolveStaticFloorInCell(worldTemplate.GetCell(x, y), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace, inclinedTarget))
+                TryResolveStaticFloorInCell(npc, previous, worldTemplate.GetCell(x, y), from, to, belowTerrain, ref mayLeaveBrush, out floor, out accepted, trace, inclinedTarget))
                 return true;
         }
         if (!belowTerrain && mayLeaveBrush && TryCrossPlacedFloorFaces(npc, cellX, cellY, from, to, out var across, trace))
@@ -79,14 +95,51 @@ public partial class AiGeoDataManager
         return false;
     }
 
+    private AcceptedFace FindAcceptedFaceAtFoot(Npc npc, Vector3 from)
+    {
+        var previous = npc.AcceptedFloor;
+        if (previous == null || previous.Foot != from || !ReferenceEquals(previous.World, npc.ParentWorld) ||
+            !ReferenceEquals(previous.Geometry, this) || !ReferenceEquals(previous.Cell.LoadedObjectDat, previous.Objects) ||
+            !ReferenceEquals(worldTemplate.GetCell(previous.Cell.CellX, previous.Cell.CellY), previous.Cell))
+            return null;
+
+        var asset = TryReadBrush(previous.Brush);
+        if (asset == null || asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision) ||
+            previous.PartIndex >= asset.Parts.Count || !ReferenceEquals(asset.Parts[previous.PartIndex], previous.Part))
+            return null;
+        return TryInclinedFloorHit(previous.Part, previous.Brush.Transform, from, out _, previous.Triangle) ? previous : null;
+    }
+
+    private bool TryContinueAcceptedFace(AcceptedFace previous, Vector3 to, Vector3 destination,
+        out float height, NpcStepSurfaceTrace trace)
+    {
+        height = default;
+        // The stock target can sit slightly off the authored plane. If it also fits another
+        // deck, the remembered face must be the closer of the two at the destination.
+        bool HitsFace(Vector3 point, out CryRayHit hit) =>
+            TryInclinedFloorHit(previous.Part, previous.Brush.Transform, point, out hit, previous.Triangle);
+        if (!HitsFace(to, out var end) || !HitsFace(destination, out var target))
+            return false;
+        var rounding = MathF.BitIncrement(destination.Z) - destination.Z;
+        var targetGap = MathF.Abs(target.Position.Z - destination.Z);
+        if (targetGap > rounding && HasOtherFootSupport(destination, previous.Brush, previous.PartIndex,
+                previous.Triangle, targetGap + rounding))
+            return false;
+
+        height = end.Position.Z;
+        trace?.Observe(ContinuedInclinedFace, previous.Cell, previous.Brush, previous.PartIndex, previous.Triangle, previous.Triangle);
+        return true;
+    }
+
     private CryWorldObjectIndex GetGroundBrushIndex(WorldCell cell, ObjectsFile objects) =>
         _groundBrushes.GetValue(objects, data => new CryWorldObjectIndex(
             CryWorldObjectIndex.ReadBrushInstances(data, cell.CellX, cell.CellY)));
 
-    private bool TryResolveStaticFloorInCell(WorldCell cell, Vector3 from, Vector3 to, bool belowTerrain,
-        ref bool mayLeaveBrush, out float? floor, NpcStepSurfaceTrace trace, Vector3? inclinedTarget)
+    private bool TryResolveStaticFloorInCell(Npc npc, AcceptedFace previous, WorldCell cell, Vector3 from, Vector3 to, bool belowTerrain,
+        ref bool mayLeaveBrush, out float? floor, out AcceptedFace accepted, NpcStepSurfaceTrace trace, Vector3? inclinedTarget)
     {
         floor = default;
+        accepted = null;
         if (cell?.LoadedObjectDat is not { HasUnparsedObjects: false } objects)
             return false;
 
@@ -152,6 +205,7 @@ public partial class AiGeoDataManager
                          HasOtherFootSupport(to, brush, index, first.TriangleIndex)))
                     {
                         trace?.Observe(AmbiguousInclinedFoot, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
+                        accepted = previous;
                         return true;
                     }
                     // A level step can hit a parallel deck first. Prefer the connected flat plane
@@ -171,7 +225,10 @@ public partial class AiGeoDataManager
                             if (TryFollowAcceptedFlatFloor(from, to, brush, index, trace))
                                 floor = from.Z;
                             else
+                            {
                                 trace?.Observe(AmbiguousLevelFoot, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
+                                accepted = previous;
+                            }
                             return true;
                         }
                     }
@@ -183,6 +240,12 @@ public partial class AiGeoDataManager
                     }
                     trace?.Observe(ContinuousStaticFloor, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
                     floor = last.Position.Z;
+                    if (inclinedTarget.HasValue && npc.ParentWorld is { } world && ReferenceEquals(world.Template, worldTemplate))
+                        accepted = new AcceptedFace(world, this, cell, objects, brush, index, part, last.TriangleIndex,
+                            new Vector3(to.X, to.Y, last.Position.Z));
+                    else if (previous != null && ReferenceEquals(previous.Brush, brush) && ReferenceEquals(previous.Part, part) &&
+                             first.TriangleIndex == previous.Triangle && last.TriangleIndex == previous.Triangle)
+                        accepted = previous.At(to, last.Position.Z);
                     return true;
                 }
             }
@@ -197,16 +260,17 @@ public partial class AiGeoDataManager
 
     // The ordinary level-step ray takes the first upward hit within the foot tolerance.
     // For a change in elevation, a second solid inside that band leaves the intended layer ambiguous.
-    private bool HasOtherFootSupport(Vector3 foot, CryWorldObjectInstance support, int partIndex, int face)
+    private bool HasOtherFootSupport(Vector3 foot, CryWorldObjectInstance support, int partIndex, int face,
+        float tolerance = StaticFloorPrecision)
     {
-        var margin = Vector3.UnitZ * StaticFloorPrecision;
+        var margin = Vector3.UnitZ * tolerance;
         foreach (var (_, brush, i, part) in GetSolidPartsAtFoot(foot))
         {
             var ownMesh = ReferenceEquals(brush, support) && i == partIndex ? part.Shape as CryTriangleMesh : null;
             bool DistinctSupport(int triangle, Vector3 normal) => IsGentlyInclined(normal) &&
                 (ownMesh == null || triangle != face && !SharesOppositeEdge(ownMesh, face, triangle));
             if (CryGeometryQueries.Raycast(part, brush.Transform, foot + margin, -Vector3.UnitZ,
-                    StaticFloorPrecision * 2, true, out _, DistinctSupport))
+                    tolerance * 2, true, out _, DistinctSupport))
                 return true;
         }
         return false;
