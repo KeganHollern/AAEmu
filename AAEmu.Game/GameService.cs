@@ -145,21 +145,19 @@ public sealed class GameService : IHostedService, IDisposable
         // SpawnManager.Instance.Stop(); Moved to World Instance
         TowerDefenseManager.Instance.Dispose();
         TaskManager.Instance.Stop();
-        await SaveManager.Instance.StopAsync();
-
-        /*
-        HousingManager.Instance.Save();
-        MailManager.Instance.Save();
-        ItemManager.Instance.Save();
-        */
-        AIManager.Instance.Stop();
-        WorldManager.Instance.Stop();
-
-        TickManager.Instance.Stop();
-        TimeManager.Instance.Stop();
-        SusManager.Instance.Dispose();
-
-        ClientFileManager.ClearSources();
+        try
+        {
+            await SaveManager.Instance.StopAsync();
+        }
+        finally
+        {
+            AIManager.Instance.Stop();
+            WorldManager.Instance.Stop();
+            TickManager.Instance.Stop();
+            TimeManager.Instance.Stop();
+            SusManager.Instance.Dispose();
+            ClientFileManager.ClearSources();
+        }
     }
 
     public void Dispose()

@@ -75,8 +75,17 @@ public class SaveManager(
         {
             saveTask = null;
         }
-        // Do one final save here
-        DoSave();
+        if (DoSave())
+            return;
+
+        // Only a failed checkpoint before commit can be replayed.
+        ThrowIfConsistencyFailed();
+        Logger.Warn("Final database checkpoint failed before commit. Retrying once.");
+        if (!DoSave())
+        {
+            ThrowIfConsistencyFailed();
+            throw new InvalidOperationException("The final database checkpoint failed before commit on both attempts.");
+        }
     }
 
     public void SaveTickStart()
