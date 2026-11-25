@@ -30,9 +30,8 @@ internal sealed class ShipCargoPickupCast
 
     internal static ShipCargoPickupCast Start(Skill skill, BaseUnit caster, BaseUnit target)
     {
-        if (skill.Id != 15309 || caster is not Character player ||
-            target is not Doodad { TemplateId: 3446, FuncGroupId: 8265, ItemId: > 0, ParentObj: Slave ship } rack ||
-            ship.Template?.IsABoat() != true || !ship.AttachedDoodads.Contains(rack) || rack.Transform.Parent != ship.Transform)
+        if (skill.Id != Doodad.RetrieveTradePackSkillId || caster is not Character player ||
+            target is not Doodad rack || rack.GetLoadedCargoShip() is not { } ship)
             return null;
         var support = player.Transform.Parent;
         if (support != rack.Transform && support != ship.Transform && !IsInstalledEmptyRack(support, ship))

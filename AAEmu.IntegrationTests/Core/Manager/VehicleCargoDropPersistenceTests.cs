@@ -1,11 +1,15 @@
 using System.Numerics;
 using System.Reflection;
 
+using AAEmu.Commons.Network;
+using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.CryEngine.Entities;
 using AAEmu.Game.Models.CryEngine.Loaders;
@@ -21,11 +25,13 @@ using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Interactions;
 using AAEmu.IntegrationTests.Fixtures;
 
+using Moq;
 using Xunit;
 
 namespace AAEmu.IntegrationTests.Core.Manager;
@@ -40,6 +46,65 @@ public sealed partial class PlayerMailSendPersistenceTests
     [Trait("Category", "GameMySql")]
     public sealed partial class VehicleCargoDropPersistenceTests
     {
+        [Fact]
+        public void RestoreLoadedSchooner_FirstVisibleRackOffersTheTimedAction()
+        {
+            using var fixture = new ShipyardGraph();
+            fixture.EnableSalvage();
+            ConfigureCargoBindings();
+            fixture.Replace(new HousingManager(null, null, null, null, null, null, null, null, null, null, null, null, null, null));
+            var graph = fixture.Graph;
+            var owner = graph.Sender;
+            var world = fixture.World;
+            Array.Clear(world.Template.ZoneKeyByRegions);
+            var pack = CreateCargoItem(graph);
+            var template = new SlaveTemplate { Id = 75, SlaveKind = SlaveKind.SmallSailingShip, ModelId = 1205 };
+            var hullId = owner.Id + 87;
+            var scroll = new SummonSlave(owner.Id + 42UL, new SummonSlaveTemplate { Id = 23398, SlaveId = 75 }, 1)
+                { SlaveDbId = hullId, OwnerId = owner.Id, SlotType = SlotType.Inventory, Slot = 0, _holdingContainer = owner.Inventory.Bag };
+            owner.Inventory.Bag.Items.Add(scroll);
+            owner.Inventory.Bag.UpdateFreeSlotCount();
+            Assert.True(graph.Items.AddItem(scroll));
+            Assert.True(graph.Save.TryCommitEconomy([owner]));
+
+            Slave Schooner() => new() { Id = hullId, ObjId = fixture.ObjectIds.Object.GetNextId(), Template = template,
+                TemplateId = template.Id, ModelId = template.ModelId, Name = "Schooner", Hp = 100, Summoner = owner,
+                ParentWorld = world, OwnerId = owner.Id, OwnerType = BaseUnitType.Character, SummoningItem = scroll };
+            var first = Schooner();
+            first.Transform.Local.SetPosition(100, 120, 40);
+            Assert.True(first.Save());
+            var original = CreateCargoSlot(world, first, pack, fixture.ObjectIds.Object);
+            var restored = Schooner();
+            restored.Transform.Local.SetPosition(first.Transform.World.Position);
+            var observer = new Mock<ISession>();
+            var created = new List<byte[]>();
+            observer.Setup(s => s.SendPacket(It.IsAny<byte[]>())).Callback<byte[]>(packet =>
+            {
+                if (BitConverter.ToUInt16(packet, 6) == SCOffsets.SCDoodadCreatedPacket)
+                    created.Add(packet);
+            });
+            owner.Connection = new GameConnection(observer.Object) { ActiveChar = owner };
+            world.GetRegionByPos(restored.Transform.World.Position).AddObject(owner);
+
+            Assert.Equal(1, world.SpawnManager.SpawnPersistentDoodads(DoodadOwnerType.Slave, (int)restored.Id, restored, true));
+            var loaded = Assert.Single(restored.AttachedDoodads);
+            Assert.Equal(original.DbId, loaded.DbId);
+            Assert.Equal(pack.Id, loaded.ItemId);
+            var body = new PacketStream(Assert.Single(created)[8..]);
+            Assert.Equal(loaded.ObjId, body.ReadBc());
+            Assert.Equal(3446u, body.ReadUInt32());
+            body.ReadBc(); // owner
+            Assert.Equal(restored.ObjId, body.ReadBc());
+            Assert.Equal((byte)loaded.AttachPoint, body.ReadByte());
+            body.ReadPosition();
+            body.ReadInt16();
+            body.ReadInt16();
+            body.ReadInt16();
+            body.ReadSingle(); // scale
+            Assert.False(body.ReadBoolean()); // Keep the stock Retrieve Trade Pack action.
+            Assert.Equal(8265u, body.ReadUInt32());
+        }
+
         [Theory]
         [InlineData(AttachPointKind.Box1, 1205, true, true)]
         [InlineData(AttachPointKind.Box13, 1205, true, false)]
@@ -164,7 +229,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                 [new DoodadFuncGroups { Id = 6984, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Start }] };
             var functions = HousingField<Dictionary<uint, List<DoodadFunc>>>(manager, "_funcsByGroups");
             functions[8265] =
-                [new DoodadFunc { FuncType = nameof(DoodadFuncRecoverItem), FuncId = 393, NextPhase = 8264 }];
+                [new DoodadFunc { FuncType = nameof(DoodadFuncRecoverItem), FuncId = 393, SkillId = 15309, PermId = 5, NextPhase = 8264 }];
             var collect = new DoodadFuncRecoverItem { Id = 241 };
             HousingField<Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>>(manager, "_funcTemplates")
                 [nameof(DoodadFuncRecoverItem)] = new() { [collect.Id] = collect };

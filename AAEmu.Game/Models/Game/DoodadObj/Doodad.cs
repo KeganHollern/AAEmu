@@ -419,6 +419,12 @@ public class Doodad : BaseUnit
         _data = data;
     }
 
+    internal const uint RetrieveTradePackSkillId = 15309;
+
+    internal Slave GetLoadedCargoShip() =>
+        this is { TemplateId: 3446, FuncGroupId: 8265, ItemId: > 0, ParentObj: Slave ship } &&
+        ship.Template?.IsABoat() == true && Transform.Parent == ship.Transform && ship.AttachedDoodads.Contains(this) ? ship : null;
+
     internal DoodadFuncAttachment GetBondedSeatAction(uint skillId)
     {
         if (Template?.OnceOneMan != true)
@@ -1082,14 +1088,11 @@ public class Doodad : BaseUnit
         stream.Write(yaw);
 
         stream.Write(Scale); //The size of the object
-        // Mark doodad as lootable for client UI (gear icon) ONLY when its current phase is exclusively driven by
-        // loot/recover funcs. If the group also contains non-loot interaction funcs (CraftPack, StoreUi, Use, etc.),
-        // the doodad must keep the normal interaction wheel (F/G/H...). Otherwise the client would route every
-        // interaction through CSLootOpenBagPacket -> doodad.Use(skillId=0) and silently break workshops/shops while
-        // accidentally despawning them (RecoverItem with NextPhase=-1 deletes the doodad). This restriction keeps
-        // pickup working for trade packs, chests and crafting tables stored in the world (single-RecoverItem groups)
-        // while preserving multi-action doodads (workshops with CraftPack+StoreUi+RecoverItem).
-        var hasLootItem = CurrentFuncs.Count > 0 && CurrentFuncs.All(func => IsFuncDrivenLootFunc(func.FuncType));
+        // A loot flag replaces the normal F action with loot-open. Mixed-action doodads need the
+        // interaction menu. A loaded ship rack also needs its own timed Retrieve Trade Pack action.
+        var shipRackPickup = CurrentFuncs is [{ FuncType: nameof(DoodadFuncRecoverItem), SkillId: RetrieveTradePackSkillId }]
+            && GetLoadedCargoShip() != null;
+        var hasLootItem = !shipRackPickup && CurrentFuncs.Count > 0 && CurrentFuncs.All(func => IsFuncDrivenLootFunc(func.FuncType));
         stream.Write(hasLootItem); // hasLootItem
         stream.Write(FuncGroupId); // doodad_func_group_id
         stream.Write(OwnerId); // characterId (Database relative)
