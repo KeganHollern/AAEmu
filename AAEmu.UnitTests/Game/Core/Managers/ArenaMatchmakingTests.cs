@@ -15,6 +15,7 @@ using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.UnitTests.Game.Models.Game.Units;
 using AAEmu.UnitTests.Utils.Mocks;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
@@ -33,13 +34,13 @@ public sealed class ArenaMatchmakingTests
         var camp = new Battlefield
         {
             Id = 7, ZoneKey = 198,
-            Spawns = new() { Corps1Spawn = new(), Corps2Spawn = new() },
+            Spawns = new() { Corps1Spawn = new() { ZoneId = 198 }, Corps2Spawn = new() { ZoneId = 198 } },
             RuleSet = new() { Id = 22, CorpsSize = 5, Corps1FactionId = 159, Corps2FactionId = 160 }
         };
         var duel = new Battlefield
         {
             Id = 11, ZoneKey = 302,
-            Spawns = new() { Corps1Spawn = new(), Corps2Spawn = new() },
+            Spawns = new() { Corps1Spawn = new() { ZoneId = 302 }, Corps2Spawn = new() { ZoneId = 302 } },
             RuleSet = new() { Id = 28, CorpsSize = 1, Corps1FactionId = 159, Corps2FactionId = 160 }
         };
         Set(fields, "_battlefields", new Dictionary<uint, Battlefield> { [camp.Id] = camp, [duel.Id] = duel });
@@ -67,6 +68,85 @@ public sealed class ArenaMatchmakingTests
     {
         foreach (var (field, original) in _originals)
             field.SetValue(null, original);
+    }
+
+    [Test]
+    public async Task StockBattlefields_QueueOnlyTheTwoModesWithBothTeamSpawns()
+    {
+        var compact = Environment.GetEnvironmentVariable("AAEMU_COMBAT_TEST_COMPACT");
+        Skip.Unless(!string.IsNullOrEmpty(compact), "Set AAEMU_COMBAT_TEST_COMPACT to the read-only r208022 compact.");
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = compact, Mode = SqliteOpenMode.ReadOnly }.ToString());
+        connection.Open();
+        var fields = BattlefieldGameData.Instance;
+        fields.Load(connection);
+        var applicant = AddApplicant(1);
+        var session = Observe(applicant);
+        foreach (var id in new uint[] { 1, 2, 3, 6, 10 })
+        {
+            await Assert.That(fields.GetBattlefield(id).RuleSet.BattlefieldId).IsEqualTo(id);
+            _queue.ApplyToBattlefield(id, InstantCorps.Any, applicant);
+            _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        }
+        await Assert.That(Messages(session, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(0);
+        await Assert.That(applicant.CurrentInstantGame).IsNull();
+
+        foreach (var (id, size) in new[] { (7u, 10), (11u, 2) })
+        {
+            session.Packets.Clear();
+            _queue.ApplyToBattlefield(id, InstantCorps.Any, applicant);
+            _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+            await Assert.That(Messages(session, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(1);
+            await Assert.That(applicant.CurrentInstantGame).IsNull();
+            var others = Enumerable.Range((int)id * 10, size - 1).Select(AddApplicant).ToArray();
+            foreach (var other in others)
+                _queue.ApplyToBattlefield(id, InstantCorps.Any, other);
+            _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+            var match = applicant.CurrentInstantGame;
+            await Assert.That(match.BattlefieldId).IsEqualTo(id);
+            await Assert.That(others.All(other => other.CurrentInstantGame == match)).IsTrue();
+            foreach (var member in others.Append(applicant))
+                _queue.WithdrawFromBattlefield(member);
+        }
+    }
+
+    [Test]
+    [Arguments("rules")]
+    [Arguments("size")]
+    [Arguments("factions")]
+    [Arguments("spawns")]
+    [Arguments("firstTeam")]
+    [Arguments("secondTeam")]
+    [Arguments("zone")]
+    [Arguments("position")]
+    public async Task IncompleteMatchData_DoesNotEnterTheQueueOrDelayACompleteMode(string missing)
+    {
+        var field = BattlefieldGameData.Instance.GetBattlefield(7);
+        switch (missing)
+        {
+            case "rules": field.RuleSet = null; break;
+            case "size": field.RuleSet.CorpsSize = 0; break;
+            case "factions": field.RuleSet.Corps2FactionId = field.RuleSet.Corps1FactionId; break;
+            case "spawns": field.Spawns = null; break;
+            case "firstTeam": field.Spawns.Corps1Spawn = null; break;
+            case "secondTeam": field.Spawns.Corps2Spawn = null; break;
+            case "zone": field.Spawns.Corps1Spawn.ZoneId = 302; break;
+            case "position": field.Spawns.Corps2Spawn.Z = float.NaN; break;
+        }
+
+        var first = AddApplicant(1);
+        var second = AddApplicant(2);
+        var observer = Observe(first);
+        _queue.ApplyToBattlefield(7, InstantCorps.Any, first);
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(0);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        await Assert.That(first.CurrentInstantGame).IsNull();
+
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, first);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, second);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(1);
+        await Assert.That(first.CurrentInstantGame.BattlefieldId).IsEqualTo(11u);
+        await Assert.That(second.CurrentInstantGame).IsSameReferenceAs(first.CurrentInstantGame);
     }
 
     [Test]
