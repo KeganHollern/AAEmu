@@ -301,12 +301,82 @@ public sealed partial class SkillLaborTests
         return pack;
     }
 
-    private void MoveAtContact(BaseUnit support, Vector3 position)
+    [Test]
+    [Arguments("idle", true)]
+    [Arguments("repeat", true)]
+    [Arguments("walk", false)]
+    [Arguments("stop", false)]
+    [Arguments("jump", false)]
+    [Arguments("boundary", true)]
+    [Arguments("outside", false)]
+    [Arguments("different-contact", false)]
+    [Arguments("turned", false)]
+    [Arguments("accumulated", false)]
+    [Arguments("height", false)]
+    [Arguments("without-solid-contact", false)]
+    [Arguments("unreported-at-deadline", false)]
+    [Arguments("on-rack", false)]
+    [Arguments("changed-pack", false)]
+    public async Task LoadedShipRack_HandlesStandingContactOnTheSameHull(string action, bool completes)
+    {
+        var (rack, world, live) = SetUpWorldForCargoPickup();
+        using var sus = new SusManager(WorldManager.Instance) { WriteBatch = _ => { } };
+        SetInstance(sus);
+        var (ship, skill) = SetUpShipRack(rack, world, live, 3446, 15309);
+        var pack = PutOriginalPackOnRack(rack);
+        // Two successive hull-local samples from the standing player on the saved Schooner.
+        var start = new Vector3(1.7226562f, 11.097656f, 1.6661f);
+        var settled = new Vector3(1.7089844f, 11.095703f, 1.6661f);
+        BaseUnit support = action == "on-rack" ? rack : ship;
+        _owner.Transform.Parent = support.Transform;
+        MoveAtContact(support, start, standingOnSolid: true);
+        var target = new SkillCastDoodadTarget { ObjId = rack.ObjId };
+        await Assert.That(skill.Use(_owner, new SkillCasterUnit(_owner.ObjId), target,
+            new SkillObject(), true, out _)).IsEqualTo(SkillResult.Success);
+        var cast = (CastTask)_owner.SkillTask;
+        var motion = action switch
+        {
+            "walk" => MoveTypeFlags.Moving,
+            "stop" => MoveTypeFlags.Stopping,
+            "jump" => MoveTypeFlags.Jumping,
+            _ => MoveTypeFlags.None
+        };
+        if (action == "height")
+            settled.Z += .01f;
+        if (action is "boundary" or "outside")
+            settled = start - new Vector3((action == "boundary" ? 8f : 9f) / 512f, 0, 0);
+        MoveAtContact(support, settled, action != "without-solid-contact", motion,
+            groundContact: action == "different-contact" ? (byte)0 : (byte)1,
+            heading: action == "turned" ? (sbyte)5 : (sbyte)0);
+        if (action == "unreported-at-deadline")
+            _owner.Transform.Local.SetPosition(settled + new Vector3(.001953125f, 0, 0));
+        if (action == "repeat")
+            MoveAtContact(ship, settled, standingOnSolid: true);
+        if (action == "accumulated")
+        {
+            for (var i = 1; i <= 40; i++)
+                MoveAtContact(ship, settled + (settled - start) * i, standingOnSolid: true);
+        }
+        if (action == "changed-pack")
+            rack.ItemId++;
+        cast.CastWindow = new CastWindow(DateTime.UtcNow.AddSeconds(-1), true, false, false);
+        cast.Execute();
+        cast.Execute();
+        await Assert.That(skill.Cancelled).IsEqualTo(!completes);
+        await Assert.That(_owner.Inventory.Equipment.Items.Contains(pack)).IsEqualTo(completes);
+        await Assert.That(_owner.Inventory.SystemContainer.Items.Contains(pack)).IsEqualTo(!completes);
+        await Assert.That(pack.Count).IsEqualTo(1);
+    }
+
+    private void MoveAtContact(BaseUnit support, Vector3 position, bool standingOnSolid = false,
+        MoveTypeFlags motion = MoveTypeFlags.None, byte groundContact = 1, sbyte heading = 0)
     {
         var data = new PacketStream().WriteBc(_owner.ObjId).Write((byte)MoveTypeEnum.Unit);
         new UnitMoveType { X = position.X, Y = position.Y, Z = position.Z, DeltaMovement = new sbyte[3],
-            Flags = support == null ? MoveTypeFlags.None : MoveTypeFlags.StandingOnObject,
-            ActorFlags = support == null ? (byte)0 : (byte)MoveTypeActorFlags.StandingOnObject, GcId = support?.ObjId ?? 0 }.Write(data);
+            Flags = motion | (support == null ? MoveTypeFlags.None : MoveTypeFlags.StandingOnObject),
+            ActorFlags = (byte)((support == null ? MoveTypeActorFlags.None : MoveTypeActorFlags.StandingOnObject) |
+                (standingOnSolid ? MoveTypeActorFlags.StandingOnSolid : MoveTypeActorFlags.None)),
+            GcFlags = standingOnSolid ? groundContact : (byte)0, RotationZ = heading, GcId = support?.ObjId ?? 0 }.Write(data);
         data.Rollback();
         var step = new CSMoveUnitPacket { Connection = _owner.Connection };
         step.Read(data);

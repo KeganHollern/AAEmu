@@ -16,6 +16,10 @@ internal sealed class ShipCargoPickupCast
     private readonly Vector3 _start;
     private readonly Vector3 _targetSocket;
     private readonly Vector3 _startSocket;
+    private Vector3? _lastRestingHullPosition;
+    // The resting Schooner contact shifted seven packed X steps and one Y step.
+    // Eight horizontal steps from the original hull-local position cover that sample.
+    private const float MaxRestingHullOffset = 8f / 512f;
 
     private ShipCargoPickupCast(Doodad rack, Slave ship, Character player)
     {
@@ -53,9 +57,11 @@ internal sealed class ShipCargoPickupCast
     private bool UsesHullAxes(Transform support) => support == _ship.Transform ||
         support.Local.Rotation == Vector3.Zero && support.GameObject is Doodad rack && rack.Scale == _ship.Scale;
 
-    internal bool CanContinue(Unit player)
+    internal bool CanContinue(Unit player, bool observeRestingHull = false)
     {
         var support = player.Transform.Parent;
+        if (observeRestingHull && (support != _ship.Transform || _startSupport != support))
+            return false;
         if (!IsSupport(support) || !IsSupport(_startSupport) || SocketOnHull(_startSupport) != _startSocket ||
             player.ParentWorld != _ship.ParentWorld || _rack.ParentWorld != _ship.ParentWorld ||
             _ship.IsDead || _ship.AttachmentsRetired || _rack.ItemId != _itemId || _rack.FuncGroupId != 8265 ||
@@ -65,7 +71,17 @@ internal sealed class ShipCargoPickupCast
 
         var now = player.Transform.Local.Position;
         if (support == _startSupport)
-            return SkillCastReactions.SameMovementPosition(_start, now);
+        {
+            if (SkillCastReactions.SameMovementPosition(_start, now))
+                return true;
+            if (!observeRestingHull)
+                return _lastRestingHullPosition == now;
+            if (now.Z != _start.Z || Vector3.DistanceSquared(now, _start) > MaxRestingHullOffset * MaxRestingHullOffset)
+                return false;
+
+            _lastRestingHullPosition = now;
+            return true;
+        }
 
         // Either support can be a stock cargo rack. Compare both reports in one hull frame
         // only for registered, fixed racks whose local axes and scale agree with the hull.

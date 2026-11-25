@@ -323,7 +323,9 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                     if (targetUnit is Unit castUnit)
                         SkillCastReactions.OnMovement(castUnit, previousPosition, targetUnit.Transform.Local.Position,
                             ReferenceEquals(previousParent, targetUnit.Transform.Parent),
-                            SkillCastReactions.HasTurned(previousRotation, targetUnit.Transform.Local.Rotation), previousParent);
+                            SkillCastReactions.HasTurned(previousRotation, targetUnit.Transform.Local.Rotation), previousParent,
+                            dmt.Flags == MoveTypeFlags.StandingOnObject && dmt.GcFlags == 1 &&
+                            (MoveTypeActorFlags)dmt.ActorFlags == (MoveTypeActorFlags.StandingOnSolid | MoveTypeActorFlags.StandingOnObject));
 
                     // Observe only accepted world movement. The optional native report
                     // signals contact on roofs/objects, but its number never sets damage.
