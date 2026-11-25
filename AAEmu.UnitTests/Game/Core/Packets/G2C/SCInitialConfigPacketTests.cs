@@ -8,6 +8,19 @@ namespace AAEmu.UnitTests.Game.Core.Packets.G2C;
 public class SCInitialConfigPacketTests
 {
     [Test]
+    public async Task Write_KeepsUnsupportedItemLockDisabled()
+    {
+        new FeaturesManager(Mock.Of<IExperienceManager>().Object).Initialize();
+        var stream = new SCInitialConfigPacket().Write(new PacketStream());
+        stream.Pos = 0;
+        stream.ReadString(); // Host precedes the r208022 feature bytes.
+        var features = stream.ReadBytes();
+
+        // The client reads itemSecure from bit 5 of the sixth feature byte.
+        await Assert.That(features[5] & 0x20).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task Write_WritesThresholdForTwelveHourIdleKick()
     {
         const ushort expectedThresholdSeconds = (12 * 60 * 60) - (5 * 60);
