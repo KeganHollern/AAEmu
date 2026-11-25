@@ -1319,9 +1319,9 @@ public partial class SkillManager(IAnimationManager animationManager, IPlotManag
                             Id = reader.GetUInt32("id"),
                             NeedMoney = reader.GetBoolean("need_money", true),
                             NeedLaborPower = reader.GetBoolean("need_labor_power", true),
-                            NeedPriest = reader.GetBoolean("need_priest", true)
+                            NeedPriest = reader.GetBoolean("need_priest", true),
+                            Penaltied = reader.GetBoolean("penaltied", true)
                         };
-                        // TODO 1.2 // template.Penaltied = reader.GetBoolean("penaltied", true);
                         _effects["RecoverExpEffect"].Add(template.Id, template);
                     }
                 }

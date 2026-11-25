@@ -22,7 +22,7 @@ public class SCCharacterStatePacket(Character character) : GamePacket(SCOffsets.
         stream.Write(character.Transform.World.Rotation.Z);
         stream.Write(character.Experience);
         stream.Write(character.RecoverableExp);
-        stream.Write(0u); // penaltiedExp
+        stream.Write(character.LastExpLoss); // penaltiedExp
         stream.Write(0);//character.ReturnDistrictId); // returnDistrictId
         stream.Write((uint)0); // returnDistrict -> type(id)
         stream.Write(character.ResurrectionDistrictId); // resurrectionDistrict -> type(id)
