@@ -48,9 +48,10 @@ public sealed class ArenaWorldRuntimeTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task EndGame_StopsOnlyItsDedicatedWorld(bool registryIdReused)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Finish_StopsOnlyItsDedicatedWorld(bool registryIdReused, bool abandonBeforeEntry)
     {
         _ids.SetupSequence(manager => manager.GetNextId()).Returns(200u).Returns(registryIdReused ? 200u : 201u);
         var first = new InstantGame(_field);
@@ -70,7 +71,10 @@ public sealed class ArenaWorldRuntimeTests : IDisposable
         Assert.Equal(2, _tasks.GetQueueCount());
         Assert.True(RespawnEnabled(retired));
 
-        await first.EndGame();
+        if (abandonBeforeEntry)
+            Assert.True(first.TryAbandonBeforeEntry());
+        else
+            await first.EndGame();
         await ApplyTicks();
         Assert.Same(active, Assert.Single(_worlds.GetWorlds()));
         Assert.True(active.Physics._thread.IsAlive);

@@ -46,7 +46,7 @@ public sealed class ArenaMatchmakingTests
         Install(fields);
         Install(_queue);
 
-        // Supply an existing world so normal invitations do not need to start physics in this test.
+        // Queue tests borrow a fixed world. ArenaWorldRuntimeTests covers release of dedicated instances.
         var template = new WorldTemplate { Id = 0, Name = "arena", ZoneKeys = [camp.ZoneKey, duel.ZoneKey] };
         var zones = new ZoneManager(null, null);
         Set(zones, "_zones", template.ZoneKeys.ToDictionary(key => key, key => new Zone { ZoneKey = key }));
@@ -160,7 +160,7 @@ public sealed class ArenaMatchmakingTests
         await Assert.That(Messages(session, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(0);
         await Assert.That(fresh.CurrentInstantGame).IsNull();
         await Assert.That(roster.All(player => player.CurrentInstantGame == null)).IsTrue();
-        await Assert.That(_worlds.GetWorlds().Length).IsEqualTo(0);
+        await Assert.That(_worlds.GetWorlds().Single()).IsSameReferenceAs(originalWorld);
 
         // Supply a new world with a reused ID. A late end of the old match must leave it intact.
         var next = new WorldInstance(originalWorld.Template, 0, true, originalWorld.Id);
@@ -207,7 +207,7 @@ public sealed class ArenaMatchmakingTests
         _queue.WithdrawFromBattlefield(roster[0]);
         await Assert.That(_worlds.GetWorlds().Single().Id).IsEqualTo(42u);
         await match.EndGame();
-        await Assert.That(_worlds.GetWorlds().Length).IsEqualTo(0);
+        await Assert.That(_worlds.GetWorlds().Single().Id).IsEqualTo(42u);
         _queue.ApplyToBattlefield((uint)mode, InstantCorps.Any, substitute);
         _queue.BattlefieldTick(tick);
         await Assert.That(substitute.CurrentInstantGame).IsNull();
@@ -271,7 +271,7 @@ public sealed class ArenaMatchmakingTests
 
         clock.Advance(TimeSpan.FromMinutes(1));
         await teardown;
-        await Assert.That(_worlds.GetWorlds().Length).IsEqualTo(0);
+        await Assert.That(_worlds.GetWorlds().Single().Id).IsEqualTo(42u);
     }
 
     private static TransferVisibilityTests.RecordingSession Observe(CharacterMock character)
