@@ -16,7 +16,8 @@ public class WorldCell
     public WorldTemplate Template { get; init; }
     public int CellX { get; init; }
     public int CellY { get; init; }
-    public bool Loaded { get; private set; }
+    private volatile bool _loaded;
+    public bool Loaded { get => _loaded; private set => _loaded = value; }
     private readonly Lock _loadLock = new();
     private Vector3 CellOffset { get; set; }
     internal ushort[,] HeightMap { get; private set; }
@@ -212,16 +213,9 @@ public class WorldCell
             }
         }
 
-        #region update_physics_hmap
-
-        // Update Physics world's heightmaps
-        // TODO: Merge local heightmap into physics engine
         foreach (var worldInstance in WorldManager.Instance.GetWorldsByTemplate(Template.Id))
-        {
-            worldInstance.Physics?.UpdateHeightMapFromCellBody(this);
             worldInstance.Water.AddFromCellData(this);
-        }
-        #endregion
+
         return true;
     }
 

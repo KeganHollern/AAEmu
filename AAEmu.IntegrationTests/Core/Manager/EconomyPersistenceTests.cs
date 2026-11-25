@@ -491,7 +491,6 @@ public sealed class EconomyPersistenceTests
     }
 
     [Theory]
-    [InlineData("portal_visited_district", "subzone", "_removedVisitedDistricts")]
     [InlineData("portal_book_coords", "id", "_removedPrivatePortals")]
     [InlineData("friends", "friend_id", "_removedFriends")]
     [InlineData("blocked", "blocked_id", "_removedBlocked")]
@@ -504,7 +503,7 @@ public sealed class EconomyPersistenceTests
         var character = CreateCharacter(graph.Id);
         object child = table switch
         {
-            "portal_visited_district" or "portal_book_coords" => character.Portals = new CharacterPortals(character),
+            "portal_book_coords" => character.Portals = new CharacterPortals(character),
             "friends" => character.Friends = new CharacterFriends(character),
             "blocked" => character.Blocked = new CharacterBlocked(character),
             "skills" => character.Skills = new CharacterSkills(character),
@@ -515,7 +514,6 @@ public sealed class EconomyPersistenceTests
         var id = graph.Id + 1;
         string Seed(uint childId) => table switch
         {
-            "portal_visited_district" => $"INSERT INTO {table} (id, subzone, owner) VALUES ({childId}, {childId}, {character.Id})",
             "portal_book_coords" => $"INSERT INTO {table} (id, name, owner) VALUES ({childId}, 'Test', {character.Id})",
             "friends" => $"INSERT INTO {table} (id, friend_id, owner) VALUES ({childId}, {childId}, {character.Id})",
             "blocked" => $"INSERT INTO {table} (blocked_id, owner) VALUES ({childId}, {character.Id})",

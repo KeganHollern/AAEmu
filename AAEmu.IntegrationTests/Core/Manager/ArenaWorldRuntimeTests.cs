@@ -13,6 +13,8 @@ using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Xml;
 using AAEmu.Game.Models.Game.World.Zones;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Moq;
 using Xunit;
 
@@ -156,6 +158,68 @@ public sealed class ArenaWorldRuntimeTests : IDisposable
         Assert.Equal(0, TickCount(world));
         Assert.Equal(0, _tasks.GetQueueCount());
         Assert.False(RespawnEnabled(world));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HostStop_DrainsActivePhysicsBeforeServiceDisposal(bool retireArena)
+    {
+        _ids.Setup(manager => manager.GetNextId()).Returns(200u);
+        var match = new InstantGame(_field);
+        var world = Assert.Single(_worlds.GetWorlds());
+        _created.Add(world);
+        using var enteredStep = new ManualResetEventSlim();
+        using var releaseStep = new ManualResetEventSlim();
+        var configRead = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var previousProvider = SingletonContainer.ServiceProvider;
+        using var provider = new ServiceCollection().AddSingleton(Options.Create(AppConfiguration.Instance)).BuildServiceProvider();
+        SingletonContainer.ServiceProvider = provider;
+        Task stop = null;
+        try
+        {
+            world.Physics._physWorld.PreStep += delta =>
+            {
+                enteredStep.Set();
+                releaseStep.Wait(TimeSpan.FromSeconds(10));
+                configRead.TrySetResult(Record.Exception(() => { _ = AppConfiguration.Instance; }));
+            };
+            Assert.True(enteredStep.Wait(TimeSpan.FromSeconds(3)));
+            if (retireArena)
+            {
+                await match.EndGame().WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.Empty(_worlds.GetWorlds());
+                Assert.True(world.Physics._thread.IsAlive);
+            }
+            stop = Task.Run(() =>
+            {
+                _worlds.Stop();
+                provider.Dispose();
+            });
+            Assert.True(SpinWait.SpinUntil(() => !world.Physics.ThreadRunning, TimeSpan.FromSeconds(3)));
+            await Task.WhenAny(stop, Task.Delay(150));
+            releaseStep.Set();
+            Assert.Null(await configRead.Task.WaitAsync(TimeSpan.FromSeconds(3)));
+            await stop.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.False(world.Physics._thread.IsAlive);
+        }
+        finally
+        {
+            releaseStep.Set();
+            try
+            {
+                if (stop != null)
+                    await stop.WaitAsync(TimeSpan.FromSeconds(3));
+                world.Physics.Stop();
+                world.Physics._thread.Join(TimeSpan.FromSeconds(3));
+            }
+            finally
+            {
+                SingletonContainer.ServiceProvider = previousProvider;
+            }
+        }
+
+        Assert.Empty(_worlds.GetWorlds());
     }
 
     private void Install<T>(T manager) where T : class
