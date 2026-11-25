@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using AAEmu.Commons.Network.Core;
 using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Network.Game;
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
@@ -131,6 +132,49 @@ public sealed class StaffShutdownCommandTests
             SwapSingleton(oldWorld);
             SwapSingleton(oldSave);
         }
+    }
+
+    [Theory]
+    [InlineData(1, 45)]
+    [InlineData(5, 240)]
+    public async Task RescheduleSkipsTheWarningAlreadyAnnouncedByTheStaffCommand(int minutes, int nextWarning)
+    {
+        var start = DateTimeOffset.UnixEpoch;
+        var clock = new Mock<TimeProvider>();
+        var now = start;
+        clock.Setup(c => c.GetUtcNow()).Returns(() => now);
+        var world = new Mock<IWorldManager>();
+        var shutdown = new ShutdownTask(start.UtcDateTime.AddMinutes(10), world.Object,
+            Mock.Of<IHostApplicationLifetime>(), clock.Object);
+
+        Assert.True(shutdown.ChangeShutdownTime(start.UtcDateTime.AddMinutes(minutes)));
+        now = start.AddSeconds(1); // The next scheduler tick after the command announced the new time.
+        await shutdown.ExecuteAsync();
+        world.Verify(m => m.BroadcastPacketToServer(It.IsAny<GamePacket>()), Times.Never);
+
+        now = now.AddMinutes(minutes).AddSeconds(-nextWarning);
+        await shutdown.ExecuteAsync();
+        await shutdown.ExecuteAsync();
+        var nextText = nextWarning == 45 ? "45 seconds!" : "4 minutes!";
+        var notice = Assert.IsType<SCNoticeMessagePacket>(Assert.Single(world.Invocations).Arguments[0]);
+        Assert.Contains(nextText, Encoding.UTF8.GetString(notice.Write(new PacketStream()).GetBytes()));
+    }
+
+    [Fact]
+    public async Task OrdinaryCountdownStillSendsTheOneMinuteWarning()
+    {
+        var start = DateTimeOffset.UnixEpoch;
+        var now = start;
+        var clock = new Mock<TimeProvider>();
+        clock.Setup(c => c.GetUtcNow()).Returns(() => now);
+        var world = new Mock<IWorldManager>();
+        var shutdown = new ShutdownTask(start.UtcDateTime.AddMinutes(2), world.Object,
+            Mock.Of<IHostApplicationLifetime>(), clock.Object);
+
+        now = start.AddMinutes(1);
+        await shutdown.ExecuteAsync();
+        var notice = Assert.IsType<SCNoticeMessagePacket>(Assert.Single(world.Invocations).Arguments[0]);
+        Assert.Contains("60 seconds!", Encoding.UTF8.GetString(notice.Write(new PacketStream()).GetBytes()));
     }
 
     [Fact]

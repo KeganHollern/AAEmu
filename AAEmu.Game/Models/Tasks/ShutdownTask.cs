@@ -24,6 +24,7 @@ public class ShutdownTask : Task
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private readonly IWorldManager _world;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly TimeProvider _clock;
     private readonly Lock _state = new();
     private bool _alreadyShuttingDown;
     private DateTime _shutdownTime;
@@ -52,17 +53,17 @@ public class ShutdownTask : Task
         10
     ];
 
-    internal ShutdownTask(DateTime shutdownTime, IWorldManager world, IHostApplicationLifetime lifetime)
+    internal ShutdownTask(DateTime shutdownTime, IWorldManager world, IHostApplicationLifetime lifetime, TimeProvider clock = null)
     {
         _shutdownTime = shutdownTime;
         _world = world;
         _lifetime = lifetime;
-        _nextTriggerTime = CalculateLargestNextTrigger();
+        _clock = clock ?? TimeProvider.System;
+        _nextTriggerTime = CalculateLargestNextTrigger(_shutdownTime - _clock.GetUtcNow().UtcDateTime);
     }
 
-    private DateTime CalculateLargestNextTrigger()
+    private DateTime CalculateLargestNextTrigger(TimeSpan remaining)
     {
-        var remaining = _shutdownTime - DateTime.UtcNow;
         var remainingDelta = Math.Ceiling(remaining.TotalSeconds);
         foreach (var triggerPoint in _triggerPoints)
         {
@@ -73,14 +74,16 @@ public class ShutdownTask : Task
         return DateTime.MaxValue;
     }
 
-    internal bool ChangeShutdownTime(DateTime shutdownTime)
+    internal bool ChangeShutdownTime(DateTime requestedTime)
     {
         lock (_state)
         {
             if (Cancelled || _alreadyShuttingDown)
                 return false;
-            _shutdownTime = shutdownTime;
-            _nextTriggerTime = CalculateLargestNextTrigger();
+            _shutdownTime = requestedTime.AddSeconds(1);
+            // The staff command already announced the requested time. The extra scheduler second
+            // must not queue the same warning behind it on the client.
+            _nextTriggerTime = CalculateLargestNextTrigger(requestedTime - _clock.GetUtcNow().UtcDateTime);
             return true;
         }
     }
@@ -99,9 +102,10 @@ public class ShutdownTask : Task
         {
             if (Cancelled || _alreadyShuttingDown)
                 return;
-            if (_shutdownTime > DateTime.UtcNow)
+            var now = _clock.GetUtcNow().UtcDateTime;
+            if (_shutdownTime > now)
             {
-                WarnBeforeShutdown();
+                WarnBeforeShutdown(now);
                 return;
             }
             _alreadyShuttingDown = true;
@@ -149,14 +153,14 @@ public class ShutdownTask : Task
         }
     }
 
-    private void WarnBeforeShutdown()
+    private void WarnBeforeShutdown(DateTime now)
     {
-        var remainingTime = _shutdownTime - DateTime.UtcNow;
+        var remainingTime = _shutdownTime - now;
         var remainingSeconds = (int)Math.Ceiling(remainingTime.TotalSeconds);
-        if (DateTime.UtcNow < _nextTriggerTime)
+        if (now < _nextTriggerTime)
             return;
 
-        _nextTriggerTime = CalculateLargestNextTrigger();
+        _nextTriggerTime = CalculateLargestNextTrigger(remainingTime);
 
         var showSeconds = remainingSeconds <= 100;
         var showMinutes = remainingSeconds <= 3600 && !showSeconds;

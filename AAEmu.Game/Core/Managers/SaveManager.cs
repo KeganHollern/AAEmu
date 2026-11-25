@@ -69,7 +69,7 @@ public class SaveManager(
         if (_countdown == null)
             return ShutdownScheduleResult.NoCountdown;
         if (deadline.HasValue)
-            return _countdown.ChangeShutdownTime(deadline.Value.AddSeconds(1))
+            return _countdown.ChangeShutdownTime(deadline.Value)
                 ? ShutdownScheduleResult.Rescheduled : ShutdownScheduleResult.Stopping;
         if (!_countdown.CancelCountdown(taskManager))
             return ShutdownScheduleResult.Stopping;
