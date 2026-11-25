@@ -152,7 +152,9 @@ public class TransferManager
         else
         {
             transfer.Transform.Local.AddDistanceToFront(Transfer.BoundedChildAlongFrontOffsetMeters);
-            transfer.Transform.Local.SetHeight(transfer.ParentWorld.Template.GeoData.GetHeight(transfer.Transform.World.Position)); // WorldManager.Instance.GetHeight(transfer.Transform)));
+            // Bindings without a known socket keep their authored height if the ground sample is missing.
+            if (parentWorld.Template.GeoData.TryGetHeight(transfer.Transform.World.Position, out var height))
+                transfer.Transform.Local.SetHeight(height);
             transfer.Transform.StickyParent = owner.Transform; // stick it to the driver/motor
             transfer.Transform.Parent = null;
             owner.Transform.Parent = transfer.Transform;

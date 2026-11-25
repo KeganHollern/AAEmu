@@ -110,7 +110,10 @@ public sealed partial class CarriageBoardingTests
     }
 
     [Test]
-    public async Task PassengerBindingOnMotor654_StillUsesItsOwnGroundAndRoute()
+    [Arguments(null, 761.6985f)]
+    [Arguments(0f, 0f)]
+    [Arguments(748f, 748f)]
+    public async Task PassengerBindingOnMotor654_UsesGroundWhenAvailable(float? ground, float expectedHeight)
     {
         var world = SetUpStation();
         var motorTemplate = Motor(654, AttachPointKind.Passenger0, 46).Template;
@@ -123,9 +126,25 @@ public sealed partial class CarriageBoardingTests
         ConfigureSpawn(motorTemplate);
         world.TransferManager = new TransferManager();
         var spawn = new WorldSpawnPosition { X = 7485.59f, Y = 12620.1f, Z = 761.6985f };
-        var motor = new TransferSpawner { ParentWorld = world, Position = spawn, UnitId = 24 }.Spawn(0);
         var expected = spawn.AsPositionVector() - Vector3.UnitY * 9.24417f;
-        expected.Z = world.Template.GeoData.GetHeight(expected);
+        world.Template.ZoneBaiLoader.Clear();
+        if (ground.HasValue)
+        {
+            var regionX = (int)expected.X / WorldManager.REGION_SIZE;
+            var regionY = (int)expected.Y / WorldManager.REGION_SIZE;
+            world.Template.ZoneKeyByRegions[regionX, regionY] = 154;
+            var bai = new BaseBaiLoader(world.Template);
+            var navigation = new NetMissionReader(Stream.Null, 154);
+            navigation.NodeDescriptorList.TryAdd(1, new NodeDescriptor(navigation)
+            {
+                Id = 1, Pos = new Vector3(expected.X, expected.Y, ground.Value),
+                NavigationType = BaiNavigationType.WaypointHuman
+            });
+            bai.NetMissionReaders.Add(navigation);
+            world.Template.ZoneBaiLoader.Add(154, bai);
+        }
+        var motor = new TransferSpawner { ParentWorld = world, Position = spawn, UnitId = 24 }.Spawn(0);
+        expected.Z = expectedHeight;
         await CheckPoint(motor.Transform.World.Position, first.AsPositionVector());
         await CheckPoint(motor.Bounded.Transform.World.Position, expected);
         await Assert.That(motor.Bounded.AttachPointId).IsEqualTo(AttachPointKind.Passenger0);
