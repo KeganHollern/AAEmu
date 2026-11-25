@@ -21,6 +21,8 @@ using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.InstantGame;
+using AAEmu.Game.Models.Game.InstantGame.Static;
 using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Buffs;
@@ -383,6 +385,86 @@ public sealed class TrialSentenceLifecycleTests
         _world.AddObject(killer);
         var mate = new Mate { OwnerObjId = killer.ObjId, OwnerId = matches ? killer.Id : 999, ParentWorld = _world };
         await Assert.That(player.GetArrestorOnPlayerDeath(mate, false) == killer).IsEqualTo(matches);
+    }
+
+    [Test]
+    public async Task ArenaAcceptanceKeepsSeatedJurorAtCourtAndReturnsJurorToOriginalPosition()
+    {
+        _world.MateManager = new MateManager(_world);
+        _world.SlaveManager = new SlaveManager(_world);
+        var trial = Trial(Player(10), TrialStep.AwaitingJurySummons);
+        var player = Player(11);
+        player.ParentWorld = _world;
+        player.Transform.World.SetPosition(10, 20, 30);
+        var originalPosition = player.Transform.World.Position;
+        var match = InviteToArena(player);
+
+        var seat = new Doodad { TemplateId = 4937, ObjId = 100 };
+        seat.Transform.World.SetPosition(85, 92, 105);
+        trial.Jury[0] = new TrialJuryBox { SeatId = 0, Seat = seat };
+        bool joined;
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (trial.SyncRoot)
+            joined = trial.SummonJuryMember(player);
+        await Assert.That(joined).IsTrue();
+        await Assert.That(player.Transform.World.Position).IsEqualTo(seat.Transform.World.Position);
+        await Assert.That(player.MainWorldPosition.World.Position).IsEqualTo(originalPosition);
+
+        match.PlayerInviteResponse(player, true, 1);
+        await Assert.That(player.CurrentInstantGame).IsNull();
+        await Assert.That(_sessions[player.Id].Body(SCOffsets.SCErrorMsgPacket).ReadInt16())
+            .IsEqualTo((short)ErrorMessageType.CannotUsePortalInTrial);
+        await Assert.That(_sessions[player.Id].Count(SCOffsets.SCLoadInstancePacket)).IsEqualTo(0);
+        await Assert.That(player.Transform.World.Position).IsEqualTo(seat.Transform.World.Position);
+        await Assert.That(player.MainWorldPosition.World.Position).IsEqualTo(originalPosition);
+
+        trial.Step = TrialStep.EndTrial;
+        trial.CurrentStepEndTime = DateTime.UtcNow.AddSeconds(-1);
+        _manager.UpdateTrialState(trial);
+        await Assert.That(_manager.IsPlayerInCourt(player.Id)).IsFalse();
+        await Assert.That(player.Transform.World.Position).IsEqualTo(originalPosition);
+        await Assert.That(player.MainWorldPosition).IsNull();
+
+        InviteToArena(player).PlayerInviteResponse(player, true, 1);
+        await Assert.That(_sessions[player.Id].Count(SCOffsets.SCLoadInstancePacket)).IsEqualTo(1);
+        await Assert.That(player.MainWorldPosition.World.Position).IsEqualTo(originalPosition);
+    }
+
+    [Test]
+    public async Task ArenaAcceptanceKeepsDefendantAtCourtButAdmitsUnrelatedPlayer()
+    {
+        var defendant = Player(10);
+        var newcomer = Player(11);
+        defendant.ParentWorld = newcomer.ParentWorld = _world;
+        var match = InviteToArena(defendant);
+        Trial(defendant, TrialStep.ConfirmCriminalRecord);
+
+        match.PlayerInviteResponse(defendant, true, 1);
+        await Assert.That(defendant.CurrentInstantGame).IsNull();
+        await Assert.That(_sessions[defendant.Id].Count(SCOffsets.SCLoadInstancePacket)).IsEqualTo(0);
+        await Assert.That(_sessions[defendant.Id].Body(SCOffsets.SCErrorMsgPacket).ReadInt16())
+            .IsEqualTo((short)ErrorMessageType.CannotUsePortalInTrial);
+        await Assert.That(defendant.MainWorldPosition).IsNull();
+
+        InviteToArena(newcomer).PlayerInviteResponse(newcomer, true, 1);
+        await Assert.That(_sessions[newcomer.Id].Count(SCOffsets.SCLoadInstancePacket)).IsEqualTo(1);
+    }
+
+    private static InstantGame InviteToArena(Character player)
+    {
+        var field = new Battlefield
+        {
+            Id = 11, ZoneKey = 302,
+            Spawns = new() { Corps1Spawn = new() { ZoneId = 302 }, Corps2Spawn = new() { ZoneId = 302 } },
+            RuleSet = new() { Id = 28, MinimumLevel = 50, CorpsSize = 1, Corps1FactionId = 159, Corps2FactionId = 160 }
+        };
+        var arenaWorld = new WorldInstance(new WorldTemplate { Id = 2, Name = "trial-arena" }, 0, true, 42);
+        GC.SuppressFinalize(arenaWorld);
+        Get<ConcurrentDictionary<uint, WorldInstance>>(WorldManager.Instance, "_worlds")[arenaWorld.Id] = arenaWorld;
+        var match = new InstantGame(field, arenaWorld, TimeProvider.System);
+        player.Level = 50;
+        match.AddPlayer(player, InstantCorps.Corps1);
+        return match;
     }
 
     private TrialData Trial(Character player, TrialStep step)

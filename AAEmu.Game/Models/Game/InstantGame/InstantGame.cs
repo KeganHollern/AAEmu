@@ -222,6 +222,13 @@ public partial class InstantGame
                 CancelAdmission(character);
                 return;
             }
+            // A trial owns the participant's return position until the court releases them.
+            if (TrialManager.Instance.IsPlayerInCourt(character.Id))
+            {
+                character.SendErrorMessage(ErrorMessageType.CannotUsePortalInTrial);
+                CancelAdmission(character);
+                return;
+            }
             var spawn = corps == InstantCorps.Corps1 ? _battlefield.Spawns.Corps1Spawn : _battlefield.Spawns.Corps2Spawn;
             _entryStarted = true;
             MoveCharacterToWorld(character, _battlefield.ZoneKey, spawn.X, spawn.Y, spawn.Z);
