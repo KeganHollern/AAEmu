@@ -40,7 +40,7 @@ public sealed class NpcStepSurfaceTrace
         var trace = new NpcStepSurfaceTrace();
         var height = npc.ResolveStepHeight(from, target, next, trace);
         yield return $"Prospective ad-hoc step height for obj={npc.ObjId} from={FormatStepPosition(from)} target={FormatStepPosition(target)} requested={FormatStepPosition(next)}";
-        yield return $"selected={trace._selection} z={height.ToString("F3", CultureInfo.InvariantCulture)} staticCheck={trace._staticCheck}";
+        yield return $"selected={trace._selection} z={(height ?? from.Z).ToString("F3", CultureInfo.InvariantCulture)} staticCheck={trace._staticCheck}";
         if (trace._brush != null)
         {
             yield return $"ownerCell=({trace._cell.X},{trace._cell.Y}) placement={trace._brush.Source}";
