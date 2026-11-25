@@ -28,7 +28,7 @@ using Microsoft.Data.Sqlite;
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
 
 [NotInParallel]
-public sealed class ResurrectionRulesTests
+public sealed partial class ResurrectionRulesTests
 {
     private static readonly DateTime Now = new(2026, 9, 26, 12, 0, 0, DateTimeKind.Utc);
 

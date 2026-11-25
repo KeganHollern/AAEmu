@@ -1,4 +1,6 @@
-﻿using AAEmu.Commons.Network;
+﻿using System.Numerics;
+
+using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
@@ -10,6 +12,8 @@ using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
+
+using MovementValidation = AAEmu.Game.Models.Game.Units.MovementValidation;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -131,6 +135,9 @@ public class CSResurrectCharacterPacket() : GamePacket(CSOffsets.CSResurrectChar
                 ),
                 true
             );
+
+            if (!inPlace && character.Transform.InstanceId == WorldManager.DefaultInstanceId)
+                MoveToTemple(character, portal);
         }
         else
         {
@@ -167,6 +174,26 @@ public class CSResurrectCharacterPacket() : GamePacket(CSOffsets.CSResurrectChar
         character.IsUnderWater = false;
         //character.StartRegen();
         character.Breath = character.LungCapacity;
+    }
+
+    private static void MoveToTemple(Character character, Portal portal)
+    {
+        var transform = character.Transform;
+        var destination = new Vector3(portal.X, portal.Y, portal.Z);
+        if (transform.World.Position == destination)
+            return;
+
+        if (transform.Parent != null || transform.StickyParent != null)
+        {
+            character.ForceDismount();
+            transform.StickyParent = null;
+        }
+
+        // Apply this server-selected return even if a previous portal still awaits its acknowledgement.
+        // The client movement gate and the portal cooldown keep their normal lifetimes.
+        transform.Local.SetPosition(destination);
+        MovementValidation.RecordServerRelocation(character);
+        WorldManager.Instance.AddVisibleObject(character);
     }
 
     /// <summary>
