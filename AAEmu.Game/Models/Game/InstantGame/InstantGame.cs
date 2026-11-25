@@ -189,9 +189,9 @@ public partial class InstantGame
                 return;
             }
 
-            if (character.CurrentInstantGame != this || !_characterCorps.TryGetValue(character, out var corps))
+            if (!IsInvited(character) || !_characterCorps.TryGetValue(character, out var corps))
                 return;
-            if (!_battlefield.CheckEntryLevel(character))
+            if (!InstantGameManager.PlayerCanEnter(character) || !_battlefield.CheckEntryLevel(character))
             {
                 CancelAdmission(character);
                 return;
