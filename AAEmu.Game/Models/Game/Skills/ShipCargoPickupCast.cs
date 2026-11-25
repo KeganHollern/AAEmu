@@ -4,11 +4,13 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World.Transform;
+using NLog;
 
 namespace AAEmu.Game.Models.Game.Skills;
 
 internal sealed class ShipCargoPickupCast
 {
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private readonly Doodad _rack;
     private readonly Slave _ship;
     private readonly ulong _itemId;
@@ -77,7 +79,11 @@ internal sealed class ShipCargoPickupCast
             if (!observeRestingHull)
                 return _lastRestingHullPosition == now;
             if (now.Z != _start.Z || Vector3.DistanceSquared(now, _start) > MaxRestingHullOffset * MaxRestingHullOffset)
+            {
+                Logger.Debug("Resting contact left the cargo pickup position on hull {HullId}, rack {RackId}: {Start} to {Current}",
+                    _ship.ObjId, _rack.ObjId, _start, now);
                 return false;
+            }
 
             _lastRestingHullPosition = now;
             return true;
