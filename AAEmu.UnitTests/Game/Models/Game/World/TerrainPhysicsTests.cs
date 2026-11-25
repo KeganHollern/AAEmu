@@ -196,6 +196,25 @@ public sealed class TerrainPhysicsTests
     }
 
     [Test]
+    [Arguments(-1)]
+    [Arguments(1)]
+    public async Task ObliqueRayCanTouchOnlyTheCornerOfALoadedCell(int direction)
+    {
+        using var scene = new Scene(2, 2);
+        scene.Publish(0, 0, (_, _) => 27);
+        scene.Start();
+        var ray = new JVector(direction, -1, -direction);
+        foreach (var (offset, expected) in new[] { (-.02f, true), (0f, true), (.02f, false) })
+        {
+            var origin = new JVector(1022 - 4 * direction + offset, 31, 1022 + 4 * direction + offset);
+            var hit = scene.Physics.DynamicTree.RayCast(origin, ray, null, null, out _, out _, out var distance);
+            await Assert.That(hit).IsEqualTo(expected);
+            if (expected)
+                await Assert.That(Math.Abs(distance - 4f)).IsLessThan(.002f);
+        }
+    }
+
+    [Test]
     public async Task ObliqueRayEntersTheGridAndAnOutsideRayMisses()
     {
         using var scene = new Scene(1, 1);

@@ -44,6 +44,12 @@ public sealed class HeightmapTester(Heightmap heightmap) : IDynamicTreeProxy, IR
                 (south && IntersectSquare(x, z - 1, origin, direction, end, out normal, out lambda)) ||
                 (west && south && IntersectSquare(x - 1, z - 1, origin, direction, end, out normal, out lambda)))
                 return true;
+            // At a diagonal crossing the ray also touches the two side squares at one vertex.
+            // Either side can supply the only complete face along a partially loaded cell edge.
+            if (stepX != 0 && stepZ != 0 && nextX == nextZ && nextX <= limit &&
+                (IntersectSquare(x + stepX, z, origin, direction, end, out normal, out lambda) ||
+                 IntersectSquare(x, z + stepZ, origin, direction, end, out normal, out lambda)))
+                return true;
             if (float.IsPositiveInfinity(end) || end >= limit)
                 break;
             t = Math.Min(nextX, nextZ);
