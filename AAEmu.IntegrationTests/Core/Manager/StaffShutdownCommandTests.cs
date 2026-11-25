@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
 using System.Reflection;
+using System.Text;
+using AAEmu.Commons.Network.Core;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
@@ -90,6 +93,41 @@ public sealed class StaffShutdownCommandTests
         finally
         {
             finishCancel.Set();
+            SwapSingleton(oldWorld);
+            SwapSingleton(oldSave);
+        }
+    }
+
+    [Theory]
+    [InlineData("now", "now", false)]
+    [InlineData("0", "now", false)]
+    [InlineData("1", "in 1 minute", true)]
+    [InlineData("5", "in 5 minutes", true)]
+    public void RescheduleShowsRequestedDelay(string command, string delay, bool expectBanner)
+    {
+        var scheduler = new Mock<ITaskManager>();
+        scheduler.Setup(m => m.Schedule(It.IsAny<GameTask>(), null, TimeSpan.FromSeconds(1), -1)).Returns(true);
+        var save = new EconomyPersistenceTests.SaveGraph(scheduler.Object).Save;
+        var world = new WorldManager(null, null, null, null, null);
+        var oldSave = SwapSingleton(save);
+        var oldWorld = SwapSingleton(world);
+        try
+        {
+            var session = new Mock<ISession>();
+            var broadcasts = new List<string>();
+            session.Setup(s => s.SendPacket(It.IsAny<byte[]>()))
+                .Callback<byte[]>(bytes => broadcasts.Add(Encoding.UTF8.GetString(bytes)));
+            Assert.True(world.TryAddCharacter(new Character(null) { Id = 1, ObjId = 1, Connection = new GameConnection(session.Object) }));
+            Assert.Contains("sequence started", Command(1, "10"));
+            var reply = Command(1, command);
+            Assert.Contains($"shut down {delay}.", reply);
+            if (expectBanner)
+                Assert.Contains($"shut down {delay}.", Assert.Single(broadcasts));
+            else
+                Assert.Empty(broadcasts); // The countdown itself sends the immediate final notice.
+        }
+        finally
+        {
             SwapSingleton(oldWorld);
             SwapSingleton(oldSave);
         }

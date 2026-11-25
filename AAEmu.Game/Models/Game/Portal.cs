@@ -38,6 +38,7 @@ public class Portal : PacketMarshaler
 
 public class VisitedDistrict
 {
+    public HashSet<uint> OmittedPortalIds { get; set; }
     public uint Id { get; set; }
     public uint SubZone { get; set; }
     public uint Owner { get; set; }
