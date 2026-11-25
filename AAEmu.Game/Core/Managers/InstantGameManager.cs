@@ -38,6 +38,11 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
 
             lock (_lock)
             {
+                if (WorldManager.Instance.GetCharacterByObjId(character.ObjId) != character ||
+                    character.CurrentInstantGame != null || _instantGames.Any(game => game.HasPlayer(character.Id)) ||
+                    _matchmakingQueue.Values.Any(queue => queue.Any(applicant => applicant.CharObj.Id == character.Id)))
+                    return;
+
                 var battlefield = BattlefieldGameData.Instance.GetBattlefield(battlefieldId);
                 if (battlefield?.HasMatchData != true)
                 {
@@ -53,11 +58,6 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
                     _matchmakingQueue.Add(battlefieldId, applicants);
                 }
 
-                if (applicants.Any(applicant => applicant.CharObj == character))
-                {
-                    return;
-                }
-
                 applicants.Add(new MatchmakingApplicant(character));
             }
 
@@ -68,14 +68,31 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
         }
     }
 
+    // The caller holds the persistence lock when it removes this session from the world.
+    internal void OnCharacterDisconnected(Character character)
+    {
+        lock (_lock)
+        {
+            RemoveApplications(character);
+            character.CurrentInstantGame?.DisconnectPlayer(character);
+        }
+    }
+
+    private bool RemoveApplications(Character character)
+    {
+        var removed = 0;
+        foreach (var applicants in _matchmakingQueue.Values)
+            removed += applicants.RemoveAll(applicant => applicant.CharObj == character);
+        return removed > 0;
+    }
+
     internal void CancelAdmissions(Character character)
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
             lock (_lock)
             {
-                foreach (var applicants in _matchmakingQueue.Values)
-                    applicants?.RemoveAll(applicant => applicant.CharObj == character);
+                RemoveApplications(character);
                 foreach (var game in _instantGames.Concat(_queueList).Append(character.CurrentInstantGame).Distinct().ToArray())
                     game?.CancelAdmission(character);
             }
@@ -94,20 +111,10 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
 
             lock (_lock)
             {
-                foreach (var applicants in _matchmakingQueue.Values)
+                if (RemoveApplications(character))
                 {
-                    if (applicants != null)
-                    {
-                        foreach (var player in applicants)
-                        {
-                            if (player.CharObj == character)
-                            {
-                                applicants.Remove(player);
-                                _log.Trace("[Matchmaking] Removing " + character.Name + " from matchmaking.");
-                                return;
-                            }
-                        }
-                    }
+                    _log.Trace("[Matchmaking] Removing " + character.Name + " from matchmaking.");
+                    return;
                 }
                 // Removes player from an invited game if they decline.
                 foreach (var game in _instantGames)

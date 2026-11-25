@@ -132,6 +132,29 @@ public sealed class ArenaScoreTests
     }
 
     [Test]
+    public async Task DisconnectedScorerKeepsEarnedResultUntilNormalEnd()
+    {
+        Start(11);
+        var departed = _blue[0];
+        var other = _red[0];
+        var worlds = WorldManager.Instance;
+        worlds.TryAddCharacter(departed);
+        Kill(departed, other);
+        worlds.TryRemoveCharacter(departed.ObjId);
+
+        await Assert.That(departed.CurrentInstantGame).IsNull();
+        await Assert.That(departed.Events.OnKill.GetInvocationList().Any(handler => handler.Target == _game)).IsFalse();
+        var teardown = _game.EndGame();
+        var result = Packets(SCOffsets.SCInstantGameEndPacket).Single();
+        result.ReadByte();
+        await CheckTeam(result, 1, 159, 0, 0, 1);
+        await CheckTeam(result, 2, 160, 30, 1, 0);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await teardown;
+        await Assert.That(other.CurrentInstantGame).IsNull();
+    }
+
+    [Test]
     [Arguments(7u, 1, 2)]
     [Arguments(7u, 2, 1)]
     [Arguments(7u, 1, 1)]
