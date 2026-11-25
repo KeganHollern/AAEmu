@@ -14,13 +14,14 @@ namespace AAEmu.Game.Core.Managers;
 public partial class AiGeoDataManager
 {
     internal const float StaticFloorPrecision = 0.01f;
+    private const float CaveFloorReferenceSpan = 0.5f;
     private readonly ConditionalWeakTable<ObjectsFile, CryWorldObjectIndex> _groundBrushes = new();
     internal Func<CryWorldObjectInstance, CryGeometryAsset> GroundBrushGeometry { get; init; } =
         new CryWorldGeometryResolver(new CryGeometryResolver(ClientFileManager.GetFileStream).Load).Load;
 
     // A horizontal NPC step can leave a waypoint's region of influence while still on its solid deck.
     // Require continuous static collision between the two feet before replacing the selected ground.
-    internal bool TryFollowStaticFloor(Npc npc, Vector3 from, Vector3 to, GroundSurfaceSource selectedSource, out float floor, NpcStepSurfaceTrace trace = null)
+    internal bool TryFollowStaticFloor(Npc npc, Vector3 from, Vector3 to, GroundSurfaceSource selectedSource, out float floor, NpcStepSurfaceTrace trace = null, Vector3? inclinedTarget = null)
     {
         floor = default;
         var (cellX, cellY) = from.ToCellIndex();
@@ -48,11 +49,16 @@ public partial class AiGeoDataManager
             trace?.Skip("StartFootBelowTerrainWithNavigation");
             return false;
         }
+        if (inclinedTarget.HasValue && separation >= 0f)
+        {
+            trace?.Skip("InclinedTargetRequiresCaveFloor");
+            return false;
+        }
         trace?.Skip("NoLoadedBrushData");
 
         var belowTerrain = separation < 0f;
         var mayLeaveBrush = false;
-        if (TryFollowFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace))
+        if (TryFollowFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace, inclinedTarget))
             return true;
 
         // A brush belongs to one cell even where its floor extends into the next cell.
@@ -61,7 +67,7 @@ public partial class AiGeoDataManager
         for (var x = cellX - 1; x <= cellX + 1; x++)
         {
             if ((x != cellX || y != cellY) &&
-                TryFollowFloorInCell(worldTemplate.GetCell(x, y), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace))
+                TryFollowFloorInCell(worldTemplate.GetCell(x, y), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace, inclinedTarget))
                 return true;
         }
         return !belowTerrain && mayLeaveBrush && TryCrossPlacedFloorFaces(npc, cellX, cellY, from, to, out floor, trace);
@@ -72,7 +78,7 @@ public partial class AiGeoDataManager
             CryWorldObjectIndex.ReadBrushInstances(data, cell.CellX, cell.CellY)));
 
     private bool TryFollowFloorInCell(WorldCell cell, Vector3 from, Vector3 to, bool belowTerrain,
-        ref bool mayLeaveBrush, out float floor, NpcStepSurfaceTrace trace)
+        ref bool mayLeaveBrush, out float floor, NpcStepSurfaceTrace trace, Vector3? inclinedTarget)
     {
         floor = default;
         if (cell?.LoadedObjectDat is not { HasUnparsedObjects: false } objects)
@@ -90,6 +96,14 @@ public partial class AiGeoDataManager
                 if (to.X < brush.Min.X || to.X > brush.Max.X || to.Y < brush.Min.Y || to.Y > brush.Max.Y)
                 {
                     mayLeaveBrush = true;
+                    trace?.Observe(DestinationOutsideBrush, cell, brush);
+                    continue;
+                }
+
+                // A distant pursuit needs no geometry reads when its target lies outside this placement.
+                if (inclinedTarget is { } target && (target.X < brush.Min.X || target.X > brush.Max.X ||
+                    target.Y < brush.Min.Y || target.Y > brush.Max.Y))
+                {
                     trace?.Observe(DestinationOutsideBrush, cell, brush);
                     continue;
                 }
@@ -117,6 +131,14 @@ public partial class AiGeoDataManager
                     if (!TryFloorHit(part, brush.Transform, to, belowTerrain, out var last))
                         continue;
 
+                    // A height difference along a cave slope can exceed the tolerance for a level step.
+                    // A single convex face supporting both feet and the target proves the full segment.
+                    if (inclinedTarget is { } destination && (first.Normal.Z == 1f || first.TriangleIndex != last.TriangleIndex ||
+                        !TryFloorHit(part, brush.Transform, destination, belowTerrain, out var end) || end.TriangleIndex != first.TriangleIndex))
+                    {
+                        trace?.Observe(TargetOutsideInclinedFace, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
+                        continue;
+                    }
                     if (!CanFollowFloorFaces(mesh,
                             part.Transform * brush.Transform, first.TriangleIndex, last.TriangleIndex, from, to, belowTerrain))
                     {
@@ -160,13 +182,19 @@ public partial class AiGeoDataManager
         return hit.Normal.Z == 1f || belowTerrain && IsGentlyInclined(hit.Normal);
     }
 
+    internal static bool FitsCaveFloorGrade(Vector3 from, Vector3 destination)
+    {
+        var offset = destination - from;
+        var rise = offset.Z * CaveFloorReferenceSpan;
+        return rise * rise <= StaticFloorPrecision * StaticFloorPrecision * (offset.X * offset.X + offset.Y * offset.Y);
+    }
+
     private static bool IsGentlyInclined(Vector3 normal)
     {
         // Allow at most one centimetre of rise over half a metre in any direction.
         // A short last step along a steep wall must not make the wall qualify as a floor.
-        const float referenceSpan = 0.5f;
         var horizontalNormal = new Vector2(normal.X, normal.Y);
-        return normal.Z > 0 && referenceSpan * horizontalNormal.Length() <= StaticFloorPrecision * normal.Z;
+        return normal.Z > 0 && CaveFloorReferenceSpan * horizontalNormal.Length() <= StaticFloorPrecision * normal.Z;
     }
 
     // Adjacent faces cover most steps. Build the per-mesh vertex index only for a longer chain.

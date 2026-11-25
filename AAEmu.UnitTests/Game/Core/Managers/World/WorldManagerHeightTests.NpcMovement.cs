@@ -129,6 +129,80 @@ public sealed partial class WorldManagerHeightTests
     }
 
     [Test]
+    [Arguments(1, Step, false)]
+    [Arguments(-1, Step, false)]
+    [Arguments(1, 1f, false)]
+    [Arguments(-1, 1f, false)]
+    [Arguments(1, Step, true)]
+    [Arguments(-1, Step, true)]
+    public async Task MoveTowards_UndergroundTargetOnInclinedFace_UsesItsActualFootHeight(
+        int direction, float distance, bool otherLayer)
+    {
+        // The Sanddeep target differs by 2.22 cm across 2 m. Both feet and the target
+        // lie on the same 1.11% slope. A separate floor overlaps its XY above it.
+        Vector3 Point(float x, float y) => new(x, y, DeckZ + (x - 111f) * .0111f);
+        var lower = new[] { Point(106f, 98f), Point(117f, 98f), Point(111f, 102f) };
+        var upper = lower.Select(p => p + Vector3.UnitZ * .037f);
+        var npc = CreateDeckWalker(customMesh: new CryTriangleMesh([.. lower, .. upper], [0, 1, 2, 3, 4, 5], []));
+        var world = npc.ParentWorld.Template;
+        world.ZoneBaiLoader.Clear();
+        SetTerrainHeight(world, 18);
+        var start = Point(111f - direction, 100f);
+        var target = Point(111f + direction, 100f);
+        if (otherLayer)
+        {
+            // Start on the upper floor and aim at the lower, or start on the
+            // lower and aim at the upper. Both are real triangles at the same XY.
+            if (direction > 0)
+                start.Z += .037f;
+            else
+                target.Z += .037f;
+        }
+        npc.Transform.Local.SetPosition(start);
+        npc.MoveTowards(target, distance, rangeTolerance: 0f);
+        var foot = npc.Transform.Local.Position;
+        var expected = otherLayer ? 18f : Point(foot.X, foot.Y).Z;
+        await Assert.That(foot.Z).IsEqualTo(expected).Within(.0001f);
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(expected).Within(.0001f);
+    }
+
+    [Test]
+    public async Task MoveTowards_InclinedCaveTargetAcrossGap_UsesTerrain()
+    {
+        Vector3 Point(float x, float y) => new(x, y, DeckZ + .0111f * (x - 111f));
+        // The first half-metre stays on the near face. The target is across
+        // a gap on a second coplanar triangle of the same placed mesh.
+        var mesh = new CryTriangleMesh(
+            [Point(108, 99), Point(112, 99), Point(110, 102),
+             Point(112, 99), Point(116, 99), Point(114, 102)], [0, 1, 2, 3, 4, 5], []);
+        var npc = CreateDeckWalker(customMesh: mesh);
+        npc.ParentWorld.Template.ZoneBaiLoader.Clear();
+        SetTerrainHeight(npc.ParentWorld.Template, 18);
+        npc.Transform.Local.SetPosition(Point(110f, 100f));
+        npc.MoveTowards(Point(114f, 100f), Step, rangeTolerance: 0f);
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(18f);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task MoveTowards_GentleCaveTargetOutsidePlacement_SkipsModelRead(bool distant)
+    {
+        var reads = new List<string>();
+        var npc = CreateDeckWalker(overlappingModelReads: reads);
+        var world = npc.ParentWorld.Template;
+        world.ZoneBaiLoader.Clear();
+        SetTerrainHeight(world, 18);
+        var start = new Vector3(111f, 100f, DeckZ);
+        var dx = distant ? 160f : 8f;
+        npc.Transform.Local.SetPosition(start);
+        npc.MoveTowards(start + new Vector3(dx, 0f, dx * .0111f), Step, rangeTolerance: 0f);
+
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(18f);
+        await Assert.That(reads).IsEmpty();
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
@@ -436,6 +510,8 @@ public sealed partial class WorldManagerHeightTests
             : new CryTriangleMesh(
                 [bounds.Min, new(114.5f, 99.5f, DeckZ), bounds.Max, new(107f, 100.5f, DeckZ)],
                 [0, 1, 2, 0, 2, 3], []));
+        if (customMesh != null)
+            bounds = new CryBounds(mesh.Vertices.Aggregate(Vector3.Min), mesh.Vertices.Aggregate(Vector3.Max));
         var part = new CryGeometryPart(mesh, Matrix4x4.Identity, 4096, "", "deck");
         var geometry = new CryGeometryAsset(bounds, [part]);
         template.GeoData = new AiGeoDataManager(template)
