@@ -166,6 +166,52 @@ public sealed partial class WorldManagerHeightTests
         await Assert.That(npc.Movements.Single().Z).IsEqualTo(expected).Within(.0001f);
     }
 
+    public enum Overlap { SameMesh, OtherPart, OtherPlacement }
+
+    [Test]
+    [Arguments(Overlap.SameMesh, false)]
+    [Arguments(Overlap.OtherPart, false)]
+    [Arguments(Overlap.OtherPlacement, false)]
+    [Arguments(Overlap.OtherPlacement, true)]
+    public async Task MoveTowards_InclinedCaveTargetOnCloseOverlappingFloor_UsesTerrain(Overlap overlap, bool nearTargetOnly)
+    {
+        Vector3 Point(float x, float y) => new(x, y, DeckZ + .007f * (x - 111f));
+        var lower = new[] { Point(101, 98), Point(121, 98), Point(111, 105) };
+        var upperFootprint = nearTargetOnly ? [Point(112, 98), Point(121, 98), Point(114, 105)] : lower;
+        var upper = upperFootprint.Select(p => p + Vector3.UnitZ * .007f).ToArray();
+        var mesh = new CryTriangleMesh([.. lower, .. upper], [0, 1, 2, 3, 4, 5], []);
+        var npc = CreateDeckWalker(customMesh: mesh);
+        var world = npc.ParentWorld.Template;
+        if (overlap != Overlap.SameMesh)
+        {
+            CryGeometryPart Part(Vector3[] vertices) => new(new CryTriangleMesh(vertices, [0, 1, 2], []),
+                Matrix4x4.Identity, 0x1000, "", "floor");
+            var bottom = Part(lower);
+            var top = Part(upper);
+            var bounds = new CryBounds(mesh.Vertices.Aggregate(Vector3.Min), mesh.Vertices.Aggregate(Vector3.Max));
+            if (overlap == Overlap.OtherPlacement)
+            {
+                var objects = world.Cells[0, 0].LoadedObjectDat;
+                objects.AssetPathsList.Add(new AssetPath { Name = "objects/upper.cgf" });
+                objects.PrefabsList.Add(new ObjectDataType1Brush
+                {
+                    PathId = 1, StartPos = bounds.Min, EndPos = bounds.Max,
+                    Matrix3X4 = new Matrix3x4 { M11 = 1, M22 = 1, M33 = 1 }
+                });
+            }
+            world.GeoData = new AiGeoDataManager(world)
+            {
+                GroundBrushGeometry = placement => new CryGeometryAsset(bounds, overlap == Overlap.OtherPart
+                    ? [bottom, top] : placement.ModelUri == "objects/upper.cgf" ? [top] : [bottom])
+            };
+        }
+        world.ZoneBaiLoader.Clear();
+        SetTerrainHeight(world, 18);
+        npc.Transform.Local.SetPosition(Point(111f, 100f));
+        npc.MoveTowards(Point(113.8f, 100f) + Vector3.UnitZ * .007f, Step, rangeTolerance: 0f);
+        await Assert.That(npc.Movements.Single().Z).IsEqualTo(18f);
+    }
+
     [Test]
     public async Task MoveTowards_InclinedCaveTargetAcrossGap_UsesTerrain()
     {

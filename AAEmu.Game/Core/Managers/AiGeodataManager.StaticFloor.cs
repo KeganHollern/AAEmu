@@ -139,6 +139,13 @@ public partial class AiGeoDataManager
                         trace?.Observe(TargetOutsideInclinedFace, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
                         continue;
                     }
+                    if (inclinedTarget is { } endFoot &&
+                        (HasOtherFootSupport(from, brush, index, first.TriangleIndex) ||
+                         HasOtherFootSupport(endFoot, brush, index, first.TriangleIndex)))
+                    {
+                        trace?.Observe(AmbiguousInclinedFoot, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
+                        continue;
+                    }
                     if (!CanFollowFloorFaces(mesh,
                             part.Transform * brush.Transform, first.TriangleIndex, last.TriangleIndex, from, to, belowTerrain))
                     {
@@ -155,6 +162,40 @@ public partial class AiGeoDataManager
         {
             trace?.Observe(GeometryUnavailable, cell);
             Logger.Debug(ex, "Could not read static floor geometry at {0} in {1}", from, worldTemplate.Name);
+        }
+        return false;
+    }
+
+    // The ordinary level-step ray takes the first upward hit within the foot tolerance.
+    // For a change in elevation, a second solid inside that band leaves the intended layer ambiguous.
+    private bool HasOtherFootSupport(Vector3 foot, CryWorldObjectInstance support, int partIndex, int face)
+    {
+        var (cellX, cellY) = foot.ToCellIndex();
+        var margin = Vector3.UnitZ * StaticFloorPrecision;
+        for (var y = cellY - 1; y <= cellY + 1; y++)
+        for (var x = cellX - 1; x <= cellX + 1; x++)
+        {
+            var cell = worldTemplate.GetCell(x, y);
+            if (cell?.LoadedObjectDat is not { HasUnparsedObjects: false } objects)
+                continue;
+            foreach (var brush in GetGroundBrushIndex(cell, objects).Query(foot - margin, foot + margin))
+            {
+                if (!brush.ModelUri.EndsWith(".cgf", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var asset = TryReadBrush(brush);
+                if (asset == null || asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
+                    continue;
+                for (var i = 0; i < asset.Parts.Count; i++)
+                {
+                    var part = asset.Parts[i];
+                    if (part.PhysicsType != 0x1000)
+                        continue;
+                    var exclude = ReferenceEquals(brush, support) && i == partIndex ? face : -1;
+                    if (CryGeometryQueries.Raycast(part, brush.Transform, foot + margin, -Vector3.UnitZ,
+                            StaticFloorPrecision * 2, true, out _, exclude))
+                        return true;
+                }
+            }
         }
         return false;
     }
