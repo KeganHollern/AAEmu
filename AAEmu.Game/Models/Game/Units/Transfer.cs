@@ -27,6 +27,9 @@ public class Transfer : Unit
     // transfers_cart01.cgf, model 565, places the second rail cart at this socket.
     private static readonly Vector3 RailCartSocket = new(0, -7.629541f, 0);
 
+    // $trailed0 on transfers_floatship01.chr supports the Marianople cabin above the street.
+    private static readonly Vector3 MarianopleTramSocket = new(0.040920f, -14.04129f, 4.969580f);
+
     internal Vector3? TrailerSocket
     {
         get
@@ -38,6 +41,7 @@ public class Transfer : Unit
             {
                 (654, _, 46) or (1463, _, 122) => CarriageSocket,
                 (565, 5, 28) or (565, 26, 42) or (565, 27, 43) => RailCartSocket,
+                (606, 3, 4) => MarianopleTramSocket,
                 _ => null
             };
         }
