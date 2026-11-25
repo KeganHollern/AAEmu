@@ -92,7 +92,7 @@ public class SaveManager(
         {
             return CommitPersistence([], context =>
             {
-                housingManager.Save(context.Connection, context.Transaction);
+                housingManager.Save(context);
                 crimeManager.Save(context.Connection, context.Transaction);
                 shipyardManager?.Save(context);
                 zoneManager.Save(context.Connection, context.Transaction);

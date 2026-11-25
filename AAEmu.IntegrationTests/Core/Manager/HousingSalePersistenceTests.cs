@@ -35,7 +35,7 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 
 [Collection("GameMySql")]
 [Trait("Category", "GameMySql")]
-public sealed class HousingSalePersistenceTests
+public sealed partial class HousingSalePersistenceTests
 {
     private static int _nextId = 980000;
     private static int _nextPurchaseId = 1300000;
@@ -384,7 +384,7 @@ public sealed class HousingSalePersistenceTests
         Assert.Equal((long)position.Z, Scalar($"SELECT z FROM doodads WHERE id={plant.DbId}"));
     }
 
-    private sealed class PurchaseGraph : IDisposable
+    private sealed partial class PurchaseGraph : IDisposable
     {
         public const uint Price = 250;
         private readonly Dictionary<FieldInfo, object> _oldSingletons = [];
@@ -396,6 +396,7 @@ public sealed class HousingSalePersistenceTests
         private readonly HousingTemplate _houseTemplate;
         private readonly WorldConfig _oldWorldConfig;
         private uint _nextObjectId;
+        private uint _nextGrantId;
         private uint _nextMailId;
         private uint _nextHouseTl;
         private ulong _nextContainerId;
@@ -422,6 +423,7 @@ public sealed class HousingSalePersistenceTests
             _oldWorldConfig = AppConfiguration.Instance.World;
             AppConfiguration.Instance.World = new WorldConfig { DaysForTaxPayment = 7 };
             _nextObjectId = id + 1000;
+            _nextGrantId = 10 * id;
             _nextMailId = id + 60;
             _nextContainerId = id * 100UL;
             _nextHouseTl = 100;
@@ -575,8 +577,13 @@ public sealed class HousingSalePersistenceTests
             return world;
         }
 
-        private ItemManager NewItems() => Replace(new ItemManager(Mock.Of<ISkillManager>(),
-            Mock.Of<IItemIdManager>(), Mock.Of<IContainerIdManager>(), Mock.Of<ILocalizationManager>(), _tasks, _world.Object));
+        private ItemManager NewItems()
+        {
+            var ids = new Mock<IItemIdManager>();
+            ids.Setup(manager => manager.GetNextId()).Returns(() => ++_nextGrantId);
+            return Replace(new ItemManager(Mock.Of<ISkillManager>(), ids.Object, Mock.Of<IContainerIdManager>(),
+                Mock.Of<ILocalizationManager>(), _tasks, _world.Object));
+        }
 
         private MailManager NewMails(ItemManager items) => new(_mailIds.Object, _names, items, _tasks,
             _world.Object, new Lazy<IHousingManager>(() => HousingManager.Instance), Mock.Of<ILocalizationManager>())
@@ -602,7 +609,7 @@ public sealed class HousingSalePersistenceTests
             });
             HousingManager housing = null;
             housing = new HousingManager(objectIds.Object, factions.Object, Mock.Of<ILocalizationManager>(),
-                _world.Object, _tasks, Mock.Of<ISkillManager>(), Mock.Of<IHousingIdManager>(), houseTlds.Object,
+                _world.Object, _tasks, Mock.Of<ISkillManager>(), HouseIds.Object, houseTlds.Object,
                 items, mails, _names, zones.Object, doodads, Mock.Of<IUccManager>(),
                 new Lazy<ISaveManager>(() => NewSave(items, mails, housing)));
             return Replace(housing);
@@ -671,7 +678,7 @@ public sealed class HousingSalePersistenceTests
 
         private static HousingTemplate HouseTemplate(uint id) => new()
         {
-            Id = id, IsSellable = true, HousingBindingDoodad = [], Taxation = new Taxation { Tax = 5000 },
+            Id = id, Hp = 1500, IsSellable = true, HousingBindingDoodad = [], Taxation = new Taxation { Tax = 5000 },
             // The shared schema includes Lodestones saved at construction step zero.
             BuildSteps = { [0] = new HousingBuildStep { HousingId = id, Step = 0, NumActions = 1 } }
         };

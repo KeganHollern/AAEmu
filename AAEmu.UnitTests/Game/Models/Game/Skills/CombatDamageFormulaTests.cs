@@ -3,16 +3,21 @@
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Formulas;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
+using AAEmu.Game.Models.Game.World;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Skills;
@@ -67,6 +72,124 @@ public sealed class CombatDamageFormulaTests
         FormulaInstance.SetValue(null, _previous);
         SkillInstance.SetValue(null, _previousSkills);
         BuffInstance.SetValue(null, _previousBuffs);
+    }
+
+    [Test]
+    [Arguments(39u, 106u, 1000, 30)]
+    [Arguments(2250u, 1876u, 15000, 10)]
+    public async Task AbandonedHouse_AuthoredTickNeedsConfirmedReturns(uint buffId, uint effectId, int interval, int damage)
+    {
+        var house = new House
+        {
+            ObjId = 7, Id = 19, OwnerId = 23, AccountId = 17, Template = new HousingTemplate { Hp = 1500 },
+            Faction = new(), Hp = 1500, ProtectionEndDate = DateTime.UtcNow.AddDays(1)
+        };
+        var tick = HouseTick(house, buffId, effectId, interval, damage);
+        house.AcknowledgeDemolitionReturns();
+        tick.Template.TimeToTimeApply(house, house, tick);
+        await Assert.That(house.Hp).IsEqualTo(1500);
+
+        house.ProtectionEndDate = DateTime.UtcNow.AddSeconds(-1);
+        house.AcknowledgeDemolitionReturns();
+        tick.Template.TimeToTimeApply(house, house, tick);
+        await Assert.That(house.Hp).IsEqualTo(1500);
+
+        house.OwnerId = house.AccountId = 0;
+        tick.Template.TimeToTimeApply(house, house, tick);
+        await Assert.That(house.Hp).IsEqualTo(1500);
+
+        house.AcknowledgeDemolitionReturns();
+        tick.Template.TimeToTimeApply(house, house, tick);
+        await Assert.That(house.Hp).IsEqualTo(1500 - damage);
+        await Assert.That(house.Buffs.CheckBuff((uint)BuffConstants.Retribution)).IsFalse();
+
+        house.OwnerId = 23;
+        tick.Template.TimeToTimeApply(house, house, tick);
+        await Assert.That(house.Hp).IsEqualTo(1500 - damage);
+    }
+
+    [Test]
+    public async Task AbandonedHouse_CottageLeavesTheWorldAtZeroHealth()
+    {
+        var house = new House
+        {
+            ObjId = 7, Id = 19, TlId = 13, Template = new HousingTemplate { Id = 172, Hp = 1500 },
+            Faction = new(), Hp = 1500, ProtectionEndDate = DateTime.UtcNow.AddSeconds(-1)
+        };
+        var world = new WorldInstance(new WorldTemplate { Id = 10 }, 0, true, 0);
+        typeof(GameObject).GetField("_parentWorld", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(house, world);
+        world.AddObject(house);
+        var mails = Mock.Of<IMailManager>();
+        mails.GetMyHouseMails(house.Id).Returns([]);
+        var manager = new HousingManager(null, null, null, null, null, SkillManager.Instance, Mock.Of<IHousingIdManager>().Object,
+            Mock.Of<IHousingTldManager>().Object, null, mails.Object, null, null, null, null);
+        var effectTasks = typeof(Singleton<EffectTaskManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var oldEffectTasks = effectTasks.GetValue(null);
+        var previousWorldConfig = AppConfiguration.Instance.World;
+        var instance = typeof(Singleton<HousingManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previous = instance.GetValue(null);
+        try
+        {
+            AppConfiguration.Instance.World = new WorldConfig();
+            instance.SetValue(null, manager);
+            effectTasks.SetValue(null, new EffectTaskManager(Mock.Of<ITaskManager>().Object));
+            ((Dictionary<uint, House>)typeof(HousingManager).GetField("_houses", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(manager)!).Add(house.Id, house);
+            ((Dictionary<ushort, House>)typeof(HousingManager).GetField("_housesTl", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(manager)!).Add(house.TlId, house);
+            var burnTemplate = HouseTick(house, 39, 106, 1000, 30).Template;
+            var removalTemplate = HouseTick(house, 2250, 1876, 15000, 10).Template;
+            typeof(SkillManager).GetField("_buffs", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(
+                SkillManager.Instance, new Dictionary<uint, BuffTemplate> { [39] = burnTemplate, [2250] = removalTemplate });
+            manager.UpdateTaxInfo(house);
+            await Assert.That(house.Buffs.CheckBuff(39)).IsFalse();
+            house.AcknowledgeDemolitionReturns();
+            manager.UpdateTaxInfo(house);
+            var burn = house.Buffs.GetEffectFromBuffId(39);
+            var removal = house.Buffs.GetEffectFromBuffId(2250);
+            await Assert.That(burn).IsNotNull();
+            await Assert.That(removal).IsNotNull();
+            for (var ms = 1000; ms <= 48000; ms += 1000)
+            {
+                burn.Template.TimeToTimeApply(house, house, burn);
+                if (ms % removal.Template.Tick == 0)
+                    removal.Template.TimeToTimeApply(house, house, removal);
+            }
+            await Assert.That(house.Hp).IsEqualTo(30);
+            await Assert.That(manager.GetHouseById(house.Id)).IsSameReferenceAs(house);
+            burn.Template.TimeToTimeApply(house, house, burn);
+            await Assert.That(house.Hp).IsEqualTo(0);
+            await Assert.That(manager.GetHouseById(house.Id)).IsNull();
+            await Assert.That(world.GetUnit(house.ObjId)).IsNull();
+        }
+        finally
+        {
+            instance.SetValue(null, previous);
+            effectTasks.SetValue(null, oldEffectTasks);
+            AppConfiguration.Instance.World = previousWorldConfig;
+        }
+    }
+
+    private static Buff HouseTick(House house, uint buffId, uint effectId, int interval, int damage)
+    {
+        var globalId = buffId == 39 ? 286u : 12864u;
+        var template = new BuffTemplate { Id = buffId, Tick = interval, Duration = buffId == 39 ? 99999999 : 0 };
+        template.TickEffects.Add(new TickEffect { EffectId = globalId });
+        var types = typeof(SkillManager).GetField("_types", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var typeMap = (Dictionary<uint, EffectType>)types.GetValue(SkillManager.Instance) ?? [];
+        typeMap[globalId] = new EffectType { ActualId = effectId, Type = "DamageEffect" };
+        types.SetValue(SkillManager.Instance, typeMap);
+        var effects = typeof(SkillManager).GetField("_effects", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var effectMap = (Dictionary<string, Dictionary<uint, EffectTemplate>>)effects.GetValue(SkillManager.Instance) ?? [];
+        if (!effectMap.TryGetValue("DamageEffect", out var damageEffects))
+            effectMap["DamageEffect"] = damageEffects = [];
+        damageEffects[effectId] = new DamageEffect
+        {
+            Id = effectId, DamageType = buffId == 39 ? DamageType.Magic : DamageType.Siege,
+            UseFixedDamage = true, FixedMin = damage, FixedMax = damage, CheckCrime = true
+        };
+        effects.SetValue(SkillManager.Instance, effectMap);
+        return new Buff(house, house, new SkillCasterUnit(house.ObjId), template, null, DateTime.UtcNow);
     }
 
     [Test]

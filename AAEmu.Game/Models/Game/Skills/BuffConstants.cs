@@ -24,6 +24,7 @@ public enum BuffConstants : uint
     Bloodlust = 1482, // Ctrl+F
     Prisoner_Haranyan = 2028,
     Retribution = 2167,
+    BurningHouse = 39,
     RemovalDebuff = 2250, // for houses
     LoggedOn = 2423, // player is logging in
     Dash = 2675,

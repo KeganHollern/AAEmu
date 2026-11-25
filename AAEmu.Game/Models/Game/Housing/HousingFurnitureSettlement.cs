@@ -21,13 +21,27 @@ internal sealed class HousingFurnitureSettlement(House house, IItemManager items
     private readonly HashSet<Doodad> _removed = [];
     private readonly Dictionary<uint, List<Item>> _returned = [];
     private bool _finished;
+    private bool _demolition;
+    private bool _removeSavedHouse;
 
     public IReadOnlyDictionary<uint, List<Item>> ReturnedItems => _returned;
 
-    public bool TryPrepare(Character buyer, InventoryMutation inventory)
+    public bool TryPrepare(Character buyer, InventoryMutation inventory) =>
+        Prepare(buyer, inventory, false, false);
+
+    public bool TryPrepareDemolition(InventoryMutation inventory, bool forceRestoreAllDecor, bool removeSavedHouse) =>
+        Prepare(null, inventory, forceRestoreAllDecor, removeSavedHouse);
+
+    private bool Prepare(Character buyer, InventoryMutation inventory, bool forceRestoreAllDecor, bool removeSavedHouse)
     {
+        _demolition = buyer == null;
+        _removeSavedHouse = removeSavedHouse;
         var furniture = (house.ParentWorld?.GetDoodadByHouseDbId(house.Id) ?? [])
-            .Concat(house.AttachedDoodads).Distinct().Where(d => d.TemplateId != 6760).ToArray();
+            .Where(d => d.OwnerType == DoodadOwnerType.Housing)
+            .Concat(house.AttachedDoodads).Distinct().Where(d =>
+                (d.TemplateId != HousingManager.ForSaleMarkerDoodadId || _demolition) &&
+                (!_demolition || removeSavedHouse || d.AttachPoint == AttachPointKind.None || d is DoodadCoffer)).ToArray();
+        var replacementCounts = new Dictionary<(uint Owner, uint Template), int>();
         foreach (var doodad in furniture)
             _states.Add(doodad, new DoodadState(doodad));
 
@@ -37,11 +51,38 @@ internal sealed class HousingFurnitureSettlement(House house, IItemManager items
                 return false;
             if (doodad.AttachPoint != AttachPointKind.None && doodad is not DoodadCoffer)
             {
-                TransferOwner(doodad, buyer);
+                if (!_demolition)
+                    TransferOwner(doodad, buyer);
+                else
+                {
+                    // Keep the ordinary door visible on the voluntary ruin until it leaves the world.
+                    if (doodad.ItemId != 0)
+                        return false;
+                    doodad.IsPersistent = false;
+                }
+                continue;
+            }
+            if (_demolition && doodad.TemplateId == HousingManager.ForSaleMarkerDoodadId)
+            {
+                if (doodad.ItemId != 0 || doodad is DoodadCoffer)
+                    return false;
+                StageRemoval(doodad);
                 continue;
             }
             var design = HousingGameData.Instance.GetDecorationDesignFromDoodadId(doodad.TemplateId);
             var decoration = design == null ? null : HousingGameData.Instance.GetItemHousingDecorations(design.Id);
+            if (_demolition && doodad is DoodadCoffer fixture && decoration == null)
+            {
+                // A fixed coffer can have contents without a portable furniture design.
+                // A backed coffer needs a known return rule before its backing can move.
+                if (fixture.ItemId != 0 || !EmptyCoffer(fixture, inventory, house.OwnerId))
+                    return false;
+                if (fixture.AttachPoint != AttachPointKind.None)
+                {
+                    StageRemoval(fixture);
+                    continue;
+                }
+            }
             if (decoration == null)
             {
                 doodad.Transform.Parent = null;
@@ -60,38 +101,41 @@ internal sealed class HousingFurnitureSettlement(House house, IItemManager items
 
             if (doodad is DoodadCoffer coffer)
             {
-                if (coffer.ItemContainer == null || coffer.ItemContainer.ContainerId == 0)
+                if (!EmptyCoffer(coffer, inventory, _demolition ? house.OwnerId : null))
                     return false;
-                foreach (var content in coffer.ItemContainer.Items.ToArray())
-                    if (!ReturnItem(content, inventory))
-                        return false;
-                coffer.OpenedBy = null;
-                coffer.ItemContainer.SetOwnerId(buyer.Id);
+                if (!_demolition)
+                    coffer.ItemContainer.SetOwnerId(buyer.Id);
             }
 
             var bound = backingItem?.ItemFlags.HasFlag(ItemFlag.SoulBound) ??
                 (items.GetTemplate(doodad.ItemTemplateId)?.BindType is ItemBindType.BindOnPickup or ItemBindType.BindOnPickupPack);
-            if (bound)
+            if (bound || _demolition && (decoration.Restore || forceRestoreAllDecor))
             {
                 if (backingItem != null)
                 {
-                    if (!ReturnItem(backingItem, inventory))
+                    if (!ReturnItem(backingItem, inventory, _demolition ? house.OwnerId : null))
                         return false;
                 }
                 else
                 {
-                    if (doodad.OwnerId == 0 || doodad.ItemTemplateId == 0)
+                    var recipient = _demolition ? house.OwnerId : doodad.OwnerId;
+                    if (recipient == 0 || doodad.ItemTemplateId == 0)
                         return false;
-                    var mailContainer = items.GetItemContainerForCharacter(doodad.OwnerId, SlotType.Mail, null, 0);
-                    if (!inventory.TryGrant(mailContainer, doodad.ItemTemplateId, 1, out var granted))
+                    if (_demolition)
+                    {
+                        var key = (recipient, doodad.ItemTemplateId);
+                        replacementCounts[key] = replacementCounts.GetValueOrDefault(key) + 1;
+                    }
+                    else if (!GrantReplacement(inventory, recipient, doodad.ItemTemplateId, 1))
                         return false;
-                    ReturnedFor(doodad.OwnerId).AddRange(granted);
                 }
-                _removed.Add(doodad);
-                doodad.ItemId = 0;
-                doodad.Despawn = DateTime.UtcNow;
-                // Prevent an independent doodad save from recreating a committed deletion.
-                doodad.IsPersistent = false;
+                StageRemoval(doodad);
+            }
+            else if (_demolition)
+            {
+                if (backingItem != null && !inventory.TryConsume(backingItem._holdingContainer, backingItem, 1))
+                    return false;
+                StageRemoval(doodad);
             }
             else
             {
@@ -102,23 +146,57 @@ internal sealed class HousingFurnitureSettlement(House house, IItemManager items
             }
         }
 
+        foreach (var ((owner, template), count) in replacementCounts)
+            if (!GrantReplacement(inventory, owner, template, count))
+                return false;
+
         // Children of returned decorations retain their world position on the property.
         foreach (var doodad in furniture.Where(d => !_removed.Contains(d)))
         {
             if (doodad.Transform.Parent?.GameObject is Doodad parent && _removed.Contains(parent))
             {
                 doodad.Transform.Parent = doodad.OwnerDbId == house.Id ? house.Transform : null;
-                doodad.ParentObjId = doodad.Transform.Parent == null ? 0 : house.ObjId;
+                doodad.ParentObj = doodad.Transform.Parent?.GameObject;
+                doodad.ParentObjId = doodad.ParentObj?.ObjId ?? 0;
             }
         }
         return true;
     }
 
-    private bool ReturnItem(Item item, InventoryMutation inventory)
+    private bool EmptyCoffer(DoodadCoffer coffer, InventoryMutation inventory, uint? demolitionOwner)
+    {
+        if (coffer.ItemContainer == null || coffer.ItemContainer.ContainerId == 0)
+            return false;
+        foreach (var item in coffer.ItemContainer.Items.ToArray())
+            if (!ReturnItem(item, inventory, demolitionOwner))
+                return false;
+        coffer.OpenedBy = null;
+        return true;
+    }
+
+    private bool GrantReplacement(InventoryMutation inventory, uint owner, uint template, int count)
+    {
+        var destination = items.GetItemContainerForCharacter(owner, SlotType.Mail, null, 0);
+        if (!inventory.TryGrant(destination, template, count, out var granted))
+            return false;
+        ReturnedFor(owner).AddRange(granted);
+        return true;
+    }
+
+    private void StageRemoval(Doodad doodad)
+    {
+        _removed.Add(doodad);
+        doodad.ItemId = 0;
+        doodad.Despawn = DateTime.UtcNow;
+        // Prevent an independent doodad save from recreating a committed deletion.
+        doodad.IsPersistent = false;
+    }
+
+    private bool ReturnItem(Item item, InventoryMutation inventory, uint? demolitionOwner)
     {
         if (item.OwnerId is 0 or > uint.MaxValue)
             return false;
-        var owner = (uint)item.OwnerId;
+        var owner = demolitionOwner ?? (uint)item.OwnerId;
         var destination = items.GetItemContainerForCharacter(owner, SlotType.Mail, null, 0);
         if (!inventory.TryMove(item, destination))
             return false;
@@ -149,7 +227,7 @@ internal sealed class HousingFurnitureSettlement(House house, IItemManager items
                 using var command = context.Connection.CreateCommand();
                 command.Transaction = context.Transaction;
                 command.Parameters.AddWithValue("@id", doodad.DbId);
-                if (_removed.Contains(doodad))
+                if (!doodad.IsPersistent)
                     command.CommandText = "DELETE FROM doodads WHERE id=@id";
                 else
                 {
@@ -174,12 +252,25 @@ internal sealed class HousingFurnitureSettlement(House house, IItemManager items
             {
                 using var containerCommand = context.Connection.CreateCommand();
                 containerCommand.Transaction = context.Transaction;
-                containerCommand.CommandText = "DELETE FROM item_containers WHERE container_id=@id";
+                containerCommand.CommandText = "DELETE FROM item_containers WHERE container_id=@id " +
+                    "AND NOT EXISTS (SELECT 1 FROM items WHERE container_id=@id)";
                 containerCommand.Parameters.AddWithValue("@id", coffer.ItemContainer.ContainerId);
                 if (containerCommand.ExecuteNonQuery() != 1)
                     throw new InvalidOperationException("The returned coffer container did not settle.");
                 context.AfterCommit(() => ItemManager.Instance.ForgetCommittedItemContainer(coffer.ItemContainer));
             }
+        }
+        if (_demolition)
+        {
+            // An unloaded furniture or coffer row must keep the former owner and all returns intact.
+            using var command = context.Connection.CreateCommand();
+            command.Transaction = context.Transaction;
+            command.CommandText = "SELECT id FROM doodads WHERE house_id=@id AND owner_type=@housing" +
+                (_removeSavedHouse ? "" : " AND (COALESCE(attach_point,0)=0 OR item_container_id<>0)") + " LIMIT 1";
+            command.Parameters.AddWithValue("@id", house.Id);
+            command.Parameters.AddWithValue("@housing", DoodadOwnerType.Housing);
+            if (command.ExecuteScalar() != null)
+                throw new InvalidOperationException($"Housing {house.Id} has unsettled furniture.");
         }
     }
 
@@ -199,7 +290,17 @@ internal sealed class HousingFurnitureSettlement(House house, IItemManager items
                 doodad.Delete();
             }
             else
+            {
+                if (doodad.OwnerDbId != house.Id)
+                    house.AttachedDoodads.Remove(doodad);
+                else if (_removeSavedHouse && doodad.AttachPoint != AttachPointKind.None)
+                {
+                    house.ParentWorld?.SpawnManager.RemovePlayerDoodad(doodad);
+                    if (!house.AttachedDoodads.Contains(doodad))
+                        house.AttachedDoodads.Add(doodad);
+                }
                 doodad.BroadcastPacket(new SCDoodadOriginatorPacket(doodad.ObjId, doodad.OwnerId, doodad.Faction?.Id ?? 0), true);
+            }
         }
     }
 

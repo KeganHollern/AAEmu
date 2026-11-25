@@ -162,6 +162,12 @@ public sealed class HousingSaleSettlementTests
             await Assert.That(_mail._allPlayerMails).IsEmpty();
 
             connection.ActiveChar = _seller;
+            _save.TryCommitEconomy(Any<IReadOnlyCollection<Character>>(), Any<Action<PersistenceSaveContext>>()).Returns(false);
+            CompleteCast();
+            await Assert.That(_house.OwnerId).IsEqualTo(_seller.Id);
+            await Assert.That(_mail._allPlayerMails).IsEmpty();
+
+            _save.TryCommitEconomy(Any<IReadOnlyCollection<Character>>(), Any<Action<PersistenceSaveContext>>()).Returns(true);
             CompleteCast();
             CompleteCast();
 
