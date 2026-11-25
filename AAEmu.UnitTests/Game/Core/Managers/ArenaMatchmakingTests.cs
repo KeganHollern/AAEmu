@@ -380,6 +380,107 @@ public sealed class ArenaMatchmakingTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DepartedMemberBeforeStart_GivesTheirPlaceToTheNextApplicant(bool disconnect)
+    {
+        var first = AddApplicant(1);
+        var second = AddApplicant(2);
+        var replacement = AddApplicant(3);
+        var session = Observe(second);
+        var rules = BattlefieldGameData.Instance.GetBattlefield(11).RuleSet;
+        first.Faction = new() { Id = (FactionsEnum)rules.Corps1FactionId };
+        second.Faction = new() { Id = (FactionsEnum)rules.Corps2FactionId };
+        replacement.Faction = first.Faction;
+        foreach (var player in new[] { first, second, replacement })
+            player.OriginFaction = player.Faction;
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, first);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, second);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        var match = first.CurrentInstantGame;
+        Set(match, "_clock", new FakeTimeProvider());
+        match.PlayerInviteResponse(first, true, 1);
+        match.OnEnterWorld(first, 1);
+        if (disconnect)
+            _worlds.TryRemoveCharacter(first.ObjId);
+        else
+            match.LeaveInstantGame(first);
+        match.PlayerInviteResponse(second, true, 1);
+        match.OnEnterWorld(second, 1);
+        await Assert.That(Messages(session, SCOffsets.SCInstantGameStartPacket).Count()).IsEqualTo(0);
+
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, replacement);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        await Assert.That(replacement.CurrentInstantGame).IsSameReferenceAs(match);
+        match.PlayerInviteResponse(replacement, true, 1);
+        match.OnEnterWorld(replacement, 1);
+        await Assert.That(Messages(session, SCOffsets.SCInstantGameStartPacket).Count()).IsEqualTo(1);
+        await match.EndGame();
+    }
+
+    [Test]
+    [Arguments("leave", false, false)]
+    [Arguments("leave", true, false)]
+    [Arguments("disconnect", true, false)]
+    [Arguments("leave", false, true)]
+    [Arguments("disconnect", true, true)]
+    [Arguments("sentence", true, false)]
+    public async Task LastDepartureBeforeStart_RetiresMatchAndRequiresANewOpponent(
+        string departure, bool stillLoading, bool inviteeLeavesLast)
+    {
+        var player = AddApplicant(1);
+        var opponent = AddApplicant(2);
+        var session = Observe(player);
+        var rules = BattlefieldGameData.Instance.GetBattlefield(11).RuleSet;
+        player.Faction = new() { Id = (FactionsEnum)rules.Corps1FactionId };
+        player.OriginFaction = player.Faction;
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, opponent);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        var match = player.CurrentInstantGame;
+        match.PlayerInviteResponse(player, true, 1);
+        if (!stillLoading)
+            match.OnEnterWorld(player, 1);
+        if (!inviteeLeavesLast)
+            _queue.WithdrawFromBattlefield(opponent);
+        await Assert.That(match.IsFinished).IsFalse();
+
+        switch (departure)
+        {
+            case "disconnect":
+                _worlds.TryRemoveCharacter(player.ObjId);
+                break;
+            case "sentence":
+                player.OfflineGuiltyTime = -1;
+                match.OnEnterWorld(player, 1);
+                break;
+            default:
+                match.LeaveInstantGame(player);
+                break;
+        }
+        if (inviteeLeavesLast)
+        {
+            await Assert.That(match.IsFinished).IsFalse();
+            _queue.WithdrawFromBattlefield(opponent);
+        }
+
+        await Assert.That(match.IsFinished).IsTrue();
+        await Assert.That(Messages(session, SCOffsets.SCInstantGameEndPacket).Count()).IsEqualTo(0);
+        await Assert.That(player.CurrentInstantGame).IsNull();
+        if (departure == "leave")
+            await Assert.That(player.Transform.InstanceId).IsEqualTo(WorldManager.DefaultInstanceId);
+
+        var next = AddApplicant(3);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, next);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        await Assert.That(next.CurrentInstantGame).IsNull();
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, opponent);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        await Assert.That(next.CurrentInstantGame).IsNotNull();
+        await Assert.That(next.CurrentInstantGame).IsNotSameReferenceAs(match);
+    }
+
+    [Test]
     [Arguments(InstantGameType.Gladiator, 2)]
     [Arguments(InstantGameType.DrillCamp, 10)]
     public async Task AcceptedInvite_KeepsItsWorldUntilNormalEnd(InstantGameType mode, int teamTotal)

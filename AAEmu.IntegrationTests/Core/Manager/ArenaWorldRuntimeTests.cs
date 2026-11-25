@@ -3,11 +3,16 @@ using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.InstantGame;
+using AAEmu.Game.Models.Game.InstantGame.Static;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Xml;
+using AAEmu.Game.Models.Game.World.Zones;
 using Moq;
 using Xunit;
 
@@ -108,6 +113,49 @@ public sealed class ArenaWorldRuntimeTests : IDisposable
         Assert.True(RespawnEnabled(shared));
         Assert.Equal(3, TickCount(shared));
         Assert.Equal(1, _tasks.GetQueueCount());
+    }
+
+    [Fact]
+    public async Task LastDisconnectWhileLoading_StopsTheEmptyArenaRuntime()
+    {
+        var zones = new ZoneManager(null, null);
+        typeof(ZoneManager).GetField("_zones", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(zones, new Dictionary<uint, Zone> { [302] = new Zone { ZoneKey = 302 } });
+        Install(zones);
+        _ids.Setup(manager => manager.GetNextId()).Returns(200u);
+        _field.RuleSet.CorpsSize = 1;
+        _field.Spawns = new() { Corps1Spawn = new() { ZoneId = 302 }, Corps2Spawn = new() { ZoneId = 302 } };
+        var fields = new BattlefieldGameData();
+        typeof(BattlefieldGameData).GetField("_battlefields", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(fields, new Dictionary<uint, Battlefield> { [_field.Id] = _field });
+        Install(fields);
+
+        var one = new Character(null) { Id = 1, ObjId = 1, Level = 50, Buffs = Mock.Of<IBuffs>() };
+        var two = new Character(null) { Id = 2, ObjId = 2, Level = 50, Buffs = Mock.Of<IBuffs>() };
+        var queue = InstantGameManager.Instance;
+        foreach (var player in new[] { one, two })
+        {
+            _worlds.TryAddCharacter(player);
+            queue.ApplyToBattlefield(_field.Id, InstantCorps.Any, player);
+        }
+        queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        var world = Assert.Single(_worlds.GetWorlds());
+        _created.Add(world);
+        var match = one.CurrentInstantGame;
+        match.PlayerInviteResponse(one, true, 1);
+        queue.WithdrawFromBattlefield(two);
+        await ApplyTicks();
+        Assert.Equal(world.Id, one.Transform.InstanceId);
+        Assert.True(world.Physics._thread.IsAlive);
+
+        Assert.True(_worlds.TryRemoveCharacter(one.ObjId));
+        await ApplyTicks();
+        Assert.True(match.IsFinished);
+        Assert.Empty(_worlds.GetWorlds());
+        Assert.True(world.Physics._thread.Join(TimeSpan.FromSeconds(2)));
+        Assert.Equal(0, TickCount(world));
+        Assert.Equal(0, _tasks.GetQueueCount());
+        Assert.False(RespawnEnabled(world));
     }
 
     private void Install<T>(T manager) where T : class
