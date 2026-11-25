@@ -1,4 +1,5 @@
-﻿using AAEmu.Game.Models.Game.World;
+﻿using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.World;
 
 namespace AAEmu.Game.Models.Game.InstantGame;
 
@@ -13,6 +14,15 @@ public class Battlefield
         ZoneKey != 0 && RuleSet is { CorpsSize: > 0, Corps1FactionId: > 0, Corps2FactionId: > 0 } &&
         RuleSet.Corps1FactionId != RuleSet.Corps2FactionId &&
         IsTeamSpawn(Spawns?.Corps1Spawn) && IsTeamSpawn(Spawns?.Corps2Spawn);
+
+    internal bool CheckEntryLevel(Character character)
+    {
+        if (character.Level >= RuleSet.MinimumLevel)
+            return true;
+
+        character.SendErrorMessage(ErrorMessageType.InstantGameBadLevel);
+        return false;
+    }
 
     private bool IsTeamSpawn(Point point) =>
         point != null && point.ZoneId == ZoneKey &&

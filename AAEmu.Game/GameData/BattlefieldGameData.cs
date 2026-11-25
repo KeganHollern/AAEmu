@@ -61,6 +61,7 @@ public class BattlefieldGameData : Singleton<BattlefieldGameData>, IGameDataLoad
                     {
                         Id = reader.GetUInt32("id"),
                         BattlefieldId = reader.GetUInt32("battle_field_id"),
+                        MinimumLevel = reader.GetUInt32("level_min"),
                         CorpsSize = reader.GetUInt32("corps_size"),
                         Corps1FactionId = reader.GetUInt32("corps1_id"),
                         Corps2FactionId = reader.GetUInt32("corps2_id"),

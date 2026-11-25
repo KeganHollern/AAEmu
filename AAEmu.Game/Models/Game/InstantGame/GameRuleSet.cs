@@ -3,6 +3,7 @@
 public class GameRuleSet
 {
     public uint Id { get; set; }
+    public uint MinimumLevel { get; set; }
     public uint CorpsSize { get; set; }
     public uint Corps1FactionId { get; set; }
     public uint Corps2FactionId { get; set; }
