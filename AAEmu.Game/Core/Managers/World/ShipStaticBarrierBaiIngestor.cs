@@ -268,8 +268,8 @@ internal static class ShipStaticBarrierBaiIngestor
                 var ty = grid == 1 ? 0.5f : iy / (float)(grid - 1);
                 var sx = minX + (maxX - minX) * tx;
                 var sy = minY + (maxY - minY) * ty;
-                var h = world.GetHeight(sx, sy);
-                if (h >= waterSurfaceRef - extendedBelow && h <= waterSurfaceRef + maxAbove)
+                if (world.TryGetHeight(sx, sy, out var height) &&
+                    height >= waterSurfaceRef - extendedBelow && height <= waterSurfaceRef + maxAbove)
                 {
                     if (deckCandidate)
                     {
