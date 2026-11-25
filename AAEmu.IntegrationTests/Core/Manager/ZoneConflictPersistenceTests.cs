@@ -119,22 +119,22 @@ public sealed class ZoneConflictPersistenceTests
         Assert.NotEqual(oldState, newState);
 
         var zoneWrites = new Mock<IZoneManager>();
+        var scheduler = new TaskManager(Mock.Of<ITickManager>());
+        var graph = new EconomyPersistenceTests.SaveGraph(scheduler, zoneWrites.Object);
+        var item = graph.AddItem(1);
+        var mail = graph.AddMail(2);
+        var dirtyBeforeCommit = new List<bool>();
         var writes = 0;
         zoneWrites.Setup(manager => manager.Save(It.IsAny<MySqlConnection>(), It.IsAny<MySqlTransaction>()))
             .Returns((MySqlConnection connection, MySqlTransaction transaction) =>
             {
+                dirtyBeforeCommit.Add(item.IsDirty && mail.IsDirty && graph.Container.IsDirty);
                 var rows = zone.Save(connection, transaction);
                 if (++writes <= preCommitFailures)
                     throw new InvalidOperationException("Simulated failure after the zone write and before commit.");
                 return rows;
             });
-        var world = new Mock<IWorldManager>();
-        world.Setup(manager => manager.GetAllCharacters()).Returns([]);
-        world.Setup(manager => manager.GetWorlds()).Returns([]);
-        var scheduler = new TaskManager(Mock.Of<ITickManager>());
-        var save = new SaveManager(scheduler, Mock.Of<IHousingManager>(), Mock.Of<IMailManager>(),
-            Mock.Of<IItemManager>(), Mock.Of<IAuctionManager>(), Mock.Of<ICrimeManager>(),
-            world.Object, zoneWrites.Object);
+        var save = graph.Save;
         var consistencyStops = 0;
         save.StopForConsistencyFailure = (_, _) => consistencyStops++;
         if (uncertainCommit)
@@ -164,6 +164,19 @@ public sealed class ZoneConflictPersistenceTests
         zone.RestoreStates(reader);
         Assert.Equal(cleanShutdown || uncertainCommit ? newState : oldState, zone.GetConflicts()[0].GetSnapshot());
         Assert.Equal(expectedAttempts, writes);
+        Assert.All(dirtyBeforeCommit, Assert.True);
+        Assert.Equal(!cleanShutdown, item.IsDirty);
+        Assert.Equal(!cleanShutdown, mail.IsDirty);
+        Assert.Equal(!cleanShutdown, graph.Container.IsDirty);
+        using var query = reader.CreateCommand();
+        query.CommandText = "SELECT (SELECT COUNT(*) FROM items WHERE id=@item), (SELECT COUNT(*) FROM mails WHERE id=@mail)";
+        query.Parameters.AddWithValue("@item", item.Id);
+        query.Parameters.AddWithValue("@mail", mail.Id);
+        using var rows = query.ExecuteReader();
+        Assert.True(rows.Read());
+        var savedRows = cleanShutdown || uncertainCommit ? 1L : 0L;
+        Assert.Equal(savedRows, rows.GetInt64(0));
+        Assert.Equal(savedRows, rows.GetInt64(1));
         Assert.Equal(uncertainCommit ? 1 : 0, consistencyStops);
         if (cleanShutdown)
             Assert.Null(failure);
