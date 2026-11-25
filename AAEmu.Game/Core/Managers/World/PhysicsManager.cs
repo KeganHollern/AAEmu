@@ -839,9 +839,11 @@ public class PhysicsManager
     /// <summary>
     /// Stops the physics engine from running its update loop
     /// </summary>
-    public void Stop()
+    public void Stop(bool waitForExit = false)
     {
         ThreadRunning = false;
+        if (waitForExit && _thread?.IsAlive == true)
+            _thread.Join();
     }
 
     public void Dispose() => _physWorld?.Dispose();
