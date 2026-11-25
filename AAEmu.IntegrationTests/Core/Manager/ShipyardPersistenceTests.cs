@@ -20,6 +20,7 @@ using AAEmu.Game.Models.Game.Taxations;
 using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.StaticValues;
+using AAEmu.Game.Utils;
 
 using Moq;
 using Xunit;
@@ -439,6 +440,18 @@ public sealed partial class PlayerMailSendPersistenceTests
                         throw new InvalidOperationException("Injected failure after shipyard skill writes");
                 })
             };
+
+        public void EnableVehicleIds()
+        {
+            foreach (var manager in new IdManager[] { new TlIdManager(), new ObjectIdManager(), new CharacterIdManager() })
+            {
+                var field = manager.GetType().GetField("_instance", BindingFlags.NonPublic | BindingFlags.Static)!;
+                var previous = field.GetValue(null);
+                Assert.True(manager.Initialize());
+                field.SetValue(null, manager);
+                _restore.Add(() => field.SetValue(null, previous));
+            }
+        }
 
         public void EnableSalvage()
         {

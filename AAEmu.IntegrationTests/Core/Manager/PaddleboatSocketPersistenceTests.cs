@@ -1,8 +1,6 @@
 using System.Numerics;
-using System.Reflection;
 
 using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.GameData;
@@ -18,7 +16,6 @@ using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.StaticValues;
-using AAEmu.Game.Utils;
 
 using Xunit;
 
@@ -32,17 +29,9 @@ public sealed partial class PlayerMailSendPersistenceTests
         public void PaddleboatScroll_FreshAndSavedHullUseTheirAuthoredAttachmentPoints()
         {
             using var fixture = new ShipyardGraph();
-            fixture.EnableSalvage();
-            ConfigureCharacterList(fixture);
+            PrepareVehicleSummons(fixture);
             var owner = fixture.Graph.Sender;
             var world = fixture.World;
-            Array.Clear(world.Template.ZoneKeyByRegions);
-            for (var x = 0; x < world.Regions.GetLength(0); x++)
-            {
-                for (var y = 0; y < world.Regions.GetLength(1); y++)
-                    world.Regions[x, y] = new Region(world, x, y, 0);
-            }
-            world.SlaveManager = new SlaveManager(world);
             var physics = new PhysicsManager { SimulationWorld = world };
             typeof(WorldInstance).GetProperty(nameof(WorldInstance.Physics))!.SetValue(world, physics);
             physics.Initialize();
@@ -52,17 +41,8 @@ public sealed partial class PlayerMailSendPersistenceTests
             var scroll = new SummonSlave(owner.Id + 42UL, scrollTemplate, 1)
                 { OwnerId = owner.Id, SlotType = SlotType.Inventory, Slot = 0, _holdingContainer = owner.Inventory.Bag };
 
-            var ids = new IdManager[] { new TlIdManager(), new ObjectIdManager(), new CharacterIdManager() };
-            var previous = new List<(FieldInfo Field, object Value)>();
             try
             {
-                foreach (var manager in ids)
-                {
-                    var field = manager.GetType().GetField("_instance", BindingFlags.NonPublic | BindingFlags.Static)!;
-                    previous.Add((field, field.GetValue(null)));
-                    Assert.True(manager.Initialize());
-                    field.SetValue(null, manager);
-                }
                 using var pose = new Transform(null);
                 pose.Local.SetPosition(100, 100, 40, 0, 0, 0.6f);
                 var first = world.SlaveManager.Create(owner, null, 102, scroll, positionOverride: pose);
@@ -70,7 +50,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                 Assert.DoesNotContain(first.AttachedDoodads, part => part.AttachPoint == AttachPointKind.HealPoint0);
                 first.Hp = (int)(first.MaxHp * 0.6);
                 world.SlaveManager.UpdateSlaveRepairPoints(first);
-                CheckPaddleboatPoint(first, AttachPointKind.HealPoint0, 6107, new(0, -1.8169743f, 1.8278f));
+                CheckVehiclePoint(first, AttachPointKind.HealPoint0, 6107, new(0, -1.8169743f, 1.8278f));
                 Assert.True(first.Save());
                 var savedId = first.Id;
                 Assert.True(savedId > 0);
@@ -81,14 +61,30 @@ public sealed partial class PlayerMailSendPersistenceTests
                 Assert.NotEqual(first.ObjId, restored.ObjId);
                 Assert.Equal(first.Hp, restored.Hp);
                 CheckPaddleboatFixedParts(restored);
-                CheckPaddleboatPoint(restored, AttachPointKind.HealPoint0, 6107, new(0, -1.8169743f, 1.8278f));
+                CheckVehiclePoint(restored, AttachPointKind.HealPoint0, 6107, new(0, -1.8169743f, 1.8278f));
             }
             finally
             {
-                foreach (var (field, value) in previous)
-                    field.SetValue(null, value);
                 physics.Dispose();
             }
+        }
+
+        private static void PrepareVehicleSummons(ShipyardGraph fixture)
+        {
+            fixture.EnableSalvage();
+            ConfigureCharacterList(fixture);
+            var world = fixture.World;
+            Array.Clear(world.Template.ZoneKeyByRegions);
+            for (var x = 0; x < world.Regions.GetLength(0); x++)
+            {
+                for (var y = 0; y < world.Regions.GetLength(1); y++)
+                    world.Regions[x, y] = new Region(world, x, y, 0);
+            }
+            world.SlaveManager = new SlaveManager(world);
+            var formulas = HousingField<Dictionary<FormulaOwnerType, Dictionary<UnitFormulaKind, UnitFormula>>>(FormulaManager.Instance, "_unitFormulas");
+            formulas[FormulaOwnerType.Slave] = formulas[FormulaOwnerType.Character];
+            SetField(FormulaManager.Instance, "_unitVariables", new Dictionary<uint, Dictionary<UnitFormulaVariableType, Dictionary<uint, UnitFormulaVariable>>>());
+            fixture.EnableVehicleIds();
         }
 
         private static void ConfigurePaddleboat(ShipyardGraph fixture)
@@ -109,9 +105,6 @@ public sealed partial class PlayerMailSendPersistenceTests
             var templates = HousingField<Dictionary<uint, DoodadTemplate>>(DoodadManager.Instance, "_templates");
             foreach (var id in new uint[] { 6004, 6005, 6107 })
                 templates[id] = new DoodadTemplate { Id = id, FuncGroups = [new DoodadFuncGroups { Id = id, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Start }] };
-            var formulas = HousingField<Dictionary<FormulaOwnerType, Dictionary<UnitFormulaKind, UnitFormula>>>(FormulaManager.Instance, "_unitFormulas");
-            formulas[FormulaOwnerType.Slave] = formulas[FormulaOwnerType.Character];
-            SetField(FormulaManager.Instance, "_unitVariables", new Dictionary<uint, Dictionary<UnitFormulaVariableType, Dictionary<uint, UnitFormulaVariable>>>());
             var models = new ModelManager();
             SetField(models, "_modelTypes", new Dictionary<uint, ModelType> { [1287] = new() { SubType = "ShipModel", SubId = 17 } });
             SetField(models, "_models", new Dictionary<string, Dictionary<uint, Model>>
@@ -121,19 +114,19 @@ public sealed partial class PlayerMailSendPersistenceTests
 
         private static void CheckPaddleboatFixedParts(Slave boat)
         {
-            CheckPaddleboatPoint(boat, AttachPointKind.Passenger0, 6004, new(-0.47789f, 0.36952f, 0.93644f));
-            CheckPaddleboatPoint(boat, AttachPointKind.Helms, 6005, new(0.39534f, -0.12314f, 1.41566f));
+            CheckVehiclePoint(boat, AttachPointKind.Passenger0, 6004, new(-0.47789f, 0.36952f, 0.93644f));
+            CheckVehiclePoint(boat, AttachPointKind.Helms, 6005, new(0.39534f, -0.12314f, 1.41566f));
             Assert.True(SlaveManager.TryGetSeatPosition(boat, AttachPointKind.Driver, null, out var driver));
             Assert.Equal(boat.Transform.TransformPoint(new(0.47789f, 0, 1.41567f)), driver);
         }
 
-        private static void CheckPaddleboatPoint(Slave boat, AttachPointKind kind, uint doodadId, Vector3 position)
+        private static void CheckVehiclePoint(Slave vehicle, AttachPointKind kind, uint doodadId, Vector3 position)
         {
-            var part = Assert.Single(boat.AttachedDoodads, part => part.AttachPoint == kind);
+            var part = Assert.Single(vehicle.AttachedDoodads, part => part.AttachPoint == kind);
             Assert.Equal(doodadId, part.TemplateId);
-            Assert.Same(boat.Transform, part.Transform.Parent);
+            Assert.Same(vehicle.Transform, part.Transform.Parent);
             Assert.Equal(position, part.Transform.Local.Position);
-            Assert.Equal(boat.Transform.TransformPoint(position), part.Transform.World.Position);
+            Assert.Equal(vehicle.Transform.TransformPoint(position), part.Transform.World.Position);
         }
     }
 }
