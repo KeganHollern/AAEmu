@@ -81,28 +81,77 @@ public sealed class SlaveGameDataTests
     }
 
     [Test]
-    public async Task ExactClient_SpeedcarPassengerTransformsMatchSharedNativeBone()
+    public async Task ExactClient_CarsSharingAnAttachmentModelKeepTheirOwnBindings()
     {
-        var path = Environment.GetEnvironmentVariable("AAEMU_HOUSING_GAME_PAK");
-        Skip.Unless(!string.IsNullOrEmpty(path), "Set AAEMU_HOUSING_GAME_PAK for the native attachment check.");
+        var compact = Environment.GetEnvironmentVariable("AAEMU_COMBAT_TEST_COMPACT");
+        Skip.Unless(!string.IsNullOrEmpty(compact), "Set AAEMU_COMBAT_TEST_COMPACT to the read-only r208022 compact.");
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        { DataSource = compact, Mode = SqliteOpenMode.ReadOnly }.ToString());
+        connection.Open();
+        var data = new SlaveGameData();
+        data.Load(connection);
+
+        foreach (var (primary, display, model, hood) in new[]
+                 { (106u, 117u, 1323u, 6445u), (112u, 118u, 1371u, 6771u), (116u, 119u, 1406u, 6772u) })
+        {
+            var car = data.GetSlaveTemplate(primary);
+            var preview = data.GetSlaveTemplate(display);
+            await Assert.That(car.ModelId).IsEqualTo(model);
+            await Assert.That(preview.ModelId).IsEqualTo(model);
+            await Assert.That(preview.DoodadBindings.Single().DoodadId).IsEqualTo(hood);
+            await Assert.That(car.DoodadBindings.Single(d => d.AttachPointId == AttachPointKind.Sail0).DoodadId).IsEqualTo(hood);
+            foreach (var socket in new[] { AttachPointKind.Box0, AttachPointKind.Box1 })
+                await Assert.That(car.DoodadBindings.Single(d => d.AttachPointId == socket && d.Persist).DoodadId).IsEqualTo(3446u);
+            await Assert.That(car.HealingPointDoodads.Single().DoodadId).IsEqualTo(6444u);
+            await Assert.That(preview.HealingPointDoodads.Single().DoodadId).IsEqualTo(6444u);
+        }
+
+        var archeOne = data.GetSlaveTemplate(122);
+        await Assert.That(archeOne.ModelId).IsEqualTo(1323u);
+        var binding = archeOne.DoodadBindings.Single();
+        await Assert.That(binding.AttachPointId).IsEqualTo(AttachPointKind.Sail0);
+        await Assert.That(binding.DoodadId).IsEqualTo(7162u);
+        await Assert.That(archeOne.HealingPointDoodads).IsEmpty();
+    }
+
+    [Test]
+    [Arguments("AAEMU_HOUSING_GAME_PAK", "speedcar_body.chr")]
+    [Arguments("AAEMU_HOUSING_GAME_PAK", "speedcar_body_25.chr")]
+    [Arguments("AAEMU_REDBULL_GAME_PAK", "speedcar_body.chr")]
+    [Arguments("AAEMU_REDBULL_GAME_PAK", "speedcar_body_25.chr")]
+    public async Task ExactClient_SpeedcarAttachmentsMatchTheirNativeBones(string archive, string body)
+    {
+        var path = Environment.GetEnvironmentVariable(archive);
+        Skip.Unless(!string.IsNullOrEmpty(path), $"Set {archive} for the native attachment check.");
         var source = new ClientSource { PathName = path, SourceType = ClientSourceType.GamePak };
         await Assert.That(source.Open()).IsTrue();
         try
         {
-            using var stream = source.GetFileStream("game/objects/env/06_unit/05_carriage/speedcar_body.chr");
+            using var stream = source.GetFileStream("game/objects/env/06_unit/05_carriage/" + body);
             using var buffer = new MemoryStream();
             stream.CopyTo(buffer);
-            var bone = CryGeometryResolver.ReadCgf(buffer.ToArray()).CharacterBones.Single(bone => bone.Name == "passenger0");
+            var bones = CryGeometryResolver.ReadCgf(buffer.ToArray()).CharacterBones.ToDictionary(bone => bone.Name);
+            var helpers = new Dictionary<AttachPointKind, string>
+            {
+                [AttachPointKind.Driver] = "driver", [AttachPointKind.Passenger0] = "passenger0",
+                [AttachPointKind.Sail0] = "sail0", [AttachPointKind.HealPoint0] = "heal_point0",
+                [AttachPointKind.Box0] = "box0", [AttachPointKind.Box1] = "box1"
+            };
             var data = new SlaveGameData();
             data.LoadSlaveAttachmentPointLocations();
             foreach (var model in new uint[] { 1323, 1371, 1406 })
             {
-                var point = data.GetAttachPointsForSlave(model)[AttachPointKind.Passenger0];
-                var rotation = PositionAndRotation.ToQuaternion(new Vector3(point.Roll, point.Pitch, point.Yaw));
-                await Assert.That(Vector3.Distance(bone.BindTransform.Translation, point.AsPositionVector())).IsLessThan(0.00001f);
-                foreach (var axis in new[] { Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ })
-                    await Assert.That(Vector3.Distance(Vector3.Transform(axis, rotation),
-                        Vector3.TransformNormal(axis, bone.BindTransform))).IsLessThan(0.00001f);
+                var points = data.GetAttachPointsForSlave(model);
+                foreach (var (kind, name) in helpers)
+                {
+                    var bone = bones[name];
+                    var point = points[kind];
+                    var rotation = PositionAndRotation.ToQuaternion(new Vector3(point.Roll, point.Pitch, point.Yaw));
+                    await Assert.That(Vector3.Distance(bone.BindTransform.Translation, point.AsPositionVector())).IsLessThan(0.00001f);
+                    foreach (var axis in new[] { Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ })
+                        await Assert.That(Vector3.Distance(Vector3.Transform(axis, rotation),
+                            Vector3.TransformNormal(axis, bone.BindTransform))).IsLessThan(0.00001f);
+                }
             }
         }
         finally { source.Close(); }

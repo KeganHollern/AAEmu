@@ -1024,19 +1024,26 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         }
     }
 
-    internal static void RestoreSchoonerRackPosition(Slave ship, Doodad rack)
+    internal static void RestoreSavedRackPosition(Slave vehicle, Doodad rack)
     {
+        if (rack.TemplateId != 3446)
+            return;
+
+        var points = SlaveGameData.Instance.GetAttachPointsForSlave(vehicle.ModelId);
+        if (points == null || !points.TryGetValue(rack.AttachPoint, out var socket))
+            return;
+
+        var local = rack.Transform.Local;
+        // These three speedcars originally saved both cargo sockets at the origin with no rotation.
+        if ((vehicle.TemplateId, vehicle.ModelId) is (106, 1323) or (112, 1371) or (116, 1406) &&
+            rack.AttachPoint is AttachPointKind.Box0 or AttachPointKind.Box1 &&
+            local.Position == Vector3.Zero && local.Rotation == Vector3.Zero)
+            local.SetPosition(socket.X, socket.Y, socket.Z, socket.Roll, socket.Pitch, socket.Yaw);
         // Older saves placed the Merchant Schooner's second cargo rack at Box13.
-        if (ship.ModelId != 1205 || rack.TemplateId != 3446 || rack.AttachPoint != AttachPointKind.Box1)
-            return;
-
-        var points = SlaveGameData.Instance.GetAttachPointsForSlave(ship.ModelId);
-        if (points == null || !points.TryGetValue(AttachPointKind.Box1, out var box1) ||
-            !points.TryGetValue(AttachPointKind.Box13, out var box13))
-            return;
-
-        if (Vector3.DistanceSquared(rack.Transform.Local.Position, box13.AsPositionVector()) < 0.000001f)
-            rack.Transform.Local.SetPosition(box1.AsPositionVector());
+        else if (vehicle.ModelId == 1205 && rack.AttachPoint == AttachPointKind.Box1 &&
+                 points.TryGetValue(AttachPointKind.Box13, out var box13) &&
+                 Vector3.DistanceSquared(local.Position, box13.AsPositionVector()) < 0.000001f)
+            local.SetPosition(socket.AsPositionVector());
     }
 
     /// <summary>
