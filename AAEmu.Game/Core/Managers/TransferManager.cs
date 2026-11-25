@@ -41,6 +41,8 @@ public class TransferManager
         _initialized = true;
     }
 
+    internal void Stop() => TickManager.Instance.OnTick.UnSubscribe(TransferTick);
+
     private void TransferTick(TimeSpan delta)
     {
         var activeTransfers = GetTransfers();

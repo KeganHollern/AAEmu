@@ -328,8 +328,7 @@ public partial class InstantGame
             LeaveInstantGame(character);
         }
 
-        // TODO: Unbind all events from characters
-        WorldManager.Instance.RemoveWorld(_world.Id);
+        WorldManager.Instance.RemoveArenaWorld(_world);
         InstantGameManager.Instance.RemoveGame(this);
     }
 

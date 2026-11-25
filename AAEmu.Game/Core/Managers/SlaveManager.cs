@@ -36,6 +36,7 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
 
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private WorldInstance World { get; init; } = parentWorldInstance;
+    private SendMySlaveTask _sendMySlaveTask;
     internal Func<Slave, bool> SaveForRemoval { get; set; } = slave => slave.Save();
 
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
@@ -1072,8 +1073,14 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
     /// </summary>
     public void Initialize()
     {
-        var sendMySlaveTask = new SendMySlaveTask(World);
-        TaskManager.Instance.Schedule(sendMySlaveTask, TimeSpan.Zero, TimeSpan.FromSeconds(5));
+        _sendMySlaveTask = new SendMySlaveTask(World);
+        TaskManager.Instance.Schedule(_sendMySlaveTask, TimeSpan.Zero, TimeSpan.FromSeconds(5));
+    }
+
+    internal void Stop()
+    {
+        if (_sendMySlaveTask != null)
+            TaskManager.Instance.Cancel(_sendMySlaveTask);
     }
 
     /// <summary>
