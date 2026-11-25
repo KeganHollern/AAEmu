@@ -2,13 +2,17 @@ using System.Numerics;
 
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World.Transform;
+using NLog;
 
 namespace AAEmu.Game.Models.Game.Skills;
 
 internal sealed class ShipCargoPickupCast
 {
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+    private readonly Skill _skill;
     private readonly Doodad _rack;
     private readonly Slave _ship;
     private readonly ulong _itemId;
@@ -16,9 +20,10 @@ internal sealed class ShipCargoPickupCast
     private readonly Vector3 _start;
     private readonly Vector3 _targetSocket;
     private readonly Vector3 _startSocket;
-
-    private ShipCargoPickupCast(Doodad rack, Slave ship, Character player)
+    private Vector3? _lastRestingHullPosition;
+    private ShipCargoPickupCast(Skill skill, Doodad rack, Slave ship, Character player)
     {
+        _skill = skill;
         _rack = rack;
         _ship = ship;
         _itemId = rack.ItemId;
@@ -36,7 +41,7 @@ internal sealed class ShipCargoPickupCast
         var support = player.Transform.Parent;
         if (support != rack.Transform && support != ship.Transform && !IsInstalledEmptyRack(support, ship))
             return null;
-        return new ShipCargoPickupCast(rack, ship, player);
+        return new ShipCargoPickupCast(skill, rack, ship, player);
     }
 
     private static bool IsInstalledEmptyRack(Transform support, Slave ship) =>
@@ -53,9 +58,20 @@ internal sealed class ShipCargoPickupCast
     private bool UsesHullAxes(Transform support) => support == _ship.Transform ||
         support.Local.Rotation == Vector3.Zero && support.GameObject is Doodad rack && rack.Scale == _ship.Scale;
 
-    internal bool CanContinue(Unit player)
+    internal bool ContinuesAfterMovement(Unit player, Transform previousSupport, bool sameSupport, bool restingOnSupport)
+    {
+        // A later movement report replaces the previous resting sample, even on a return to the start.
+        _lastRestingHullPosition = null;
+        return IsSupport(previousSupport) && (!sameSupport || restingOnSupport) && CanContinue(player, sameSupport);
+    }
+
+    internal bool CanContinue(Unit player) => CanContinue(player, false);
+
+    private bool CanContinue(Unit player, bool observeRestingHull)
     {
         var support = player.Transform.Parent;
+        if (observeRestingHull && (support != _ship.Transform || _startSupport != support))
+            return false;
         if (!IsSupport(support) || !IsSupport(_startSupport) || SocketOnHull(_startSupport) != _startSocket ||
             player.ParentWorld != _ship.ParentWorld || _rack.ParentWorld != _ship.ParentWorld ||
             _ship.IsDead || _ship.AttachmentsRetired || _rack.ItemId != _itemId || _rack.FuncGroupId != 8265 ||
@@ -65,11 +81,30 @@ internal sealed class ShipCargoPickupCast
 
         var now = player.Transform.Local.Position;
         if (support == _startSupport)
-            return SkillCastReactions.SameMovementPosition(_start, now);
+        {
+            if (!observeRestingHull)
+                return _lastRestingHullPosition.HasValue
+                    ? _lastRestingHullPosition.Value == now && SkillRange.Check(_skill, player, _rack) == SkillResult.Success
+                    : SkillCastReactions.SameMovementPosition(_start, now);
+            // Use the character footprint in world units, as for a repair cast on deck.
+            // The hull-local start stays fixed even when the ship moves or turns.
+            var displacement = (now - _start) * _ship.Scale;
+            var radius = player.ModelSize;
+            var insideFootprint = _ship.Scale > 0 && displacement.LengthSquared() <= radius * radius;
+            if (now.Z != _start.Z || !insideFootprint || SkillRange.Check(_skill, player, _rack) != SkillResult.Success)
+            {
+                Logger.Debug("Resting contact left the cargo pickup position on hull {HullId}, rack {RackId}: {Start} to {Current}",
+                    _ship.ObjId, _rack.ObjId, _start, now);
+                return false;
+            }
+
+            _lastRestingHullPosition = now;
+            return true;
+        }
 
         // Either support can be a stock cargo rack. Compare both reports in one hull frame
         // only for registered, fixed racks whose local axes and scale agree with the hull.
-        if (!UsesHullAxes(_startSupport) || !UsesHullAxes(support))
+        if (_lastRestingHullPosition.HasValue || !UsesHullAxes(_startSupport) || !UsesHullAxes(support))
             return false;
         var start = SkillCastReactions.PackedPosition(_start);
         var end = SkillCastReactions.PackedPosition(now);

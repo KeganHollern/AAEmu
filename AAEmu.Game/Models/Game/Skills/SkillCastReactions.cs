@@ -13,7 +13,7 @@ namespace AAEmu.Game.Models.Game.Skills;
 internal static class SkillCastReactions
 {
     internal static void OnMovement(Unit unit, Vector3 oldPosition, Vector3 newPosition,
-        bool sameParent, bool turned, Transform previousParent = null)
+        bool sameParent, bool turned, Transform previousParent = null, bool restingOnSupport = false)
     {
         // Compare accepted local coordinates. A carried actor does not move locally.
         // Active server controllers own forced movement and must finish their skill.
@@ -30,8 +30,8 @@ internal static class SkillCastReactions
         var task = unit.SkillTask;
         if (task is CastTask { Repair: { } repair } && moved && repair.CanContinue(unit))
             moved = false;
-        if (!sameParent && task is CastTask { CargoPickup: { } pickup } &&
-            pickup.IsSupport(previousParent) && pickup.CanContinue(unit))
+        if (moved && task is CastTask { CargoPickup: { } pickup } &&
+            pickup.ContinuesAfterMovement(unit, previousParent, sameParent, restingOnSupport && !turned))
             moved = false;
         if (task?.CastWindow == null || (!moved && !(turned && task.Skill.Template.StopCastingByTurn)) ||
             !task.CastWindow.TryCancel())
