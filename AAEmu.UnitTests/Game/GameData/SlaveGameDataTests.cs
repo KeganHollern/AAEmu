@@ -117,8 +117,10 @@ public sealed class SlaveGameDataTests
     [Test]
     [Arguments("AAEMU_HOUSING_GAME_PAK", "speedcar_body.chr")]
     [Arguments("AAEMU_HOUSING_GAME_PAK", "speedcar_body_25.chr")]
+    [Arguments("AAEMU_HOUSING_GAME_PAK", "speedcar_body_decal.chr")]
     [Arguments("AAEMU_REDBULL_GAME_PAK", "speedcar_body.chr")]
     [Arguments("AAEMU_REDBULL_GAME_PAK", "speedcar_body_25.chr")]
+    [Arguments("AAEMU_REDBULL_GAME_PAK", "speedcar_body_decal.chr")]
     public async Task ExactClient_SpeedcarAttachmentsMatchTheirNativeBones(string archive, string body)
     {
         var path = Environment.GetEnvironmentVariable(archive);
@@ -139,7 +141,8 @@ public sealed class SlaveGameDataTests
             };
             var data = new SlaveGameData();
             data.LoadSlaveAttachmentPointLocations();
-            foreach (var model in new uint[] { 1323, 1371, 1406 })
+            await Assert.That(data.GetAttachPointsForSlave(1444)).IsNull();
+            foreach (var model in new uint[] { 1323, 1371, 1406, 1460, 1461, 1462 })
             {
                 var points = data.GetAttachPointsForSlave(model);
                 foreach (var (kind, name) in helpers)
