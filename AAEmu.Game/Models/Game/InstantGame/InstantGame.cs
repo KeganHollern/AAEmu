@@ -416,7 +416,8 @@ public partial class InstantGame
     private void MoveCharacterToWorld(Character character, uint zoneId, float x, float y, float z)
     {
         character.DisabledSetPosition = true;
-        character.MainWorldPosition ??= character.Transform.CloneDetached(character);
+        if (character.Transform.InstanceId == WorldManager.DefaultInstanceId || character.MainWorldPosition == null)
+            character.MainWorldPosition = character.Transform.CloneDetached(character);
         character.Transform.ApplyWorldSpawnPosition(new WorldSpawnPosition { ZoneId = zoneId, X = x, Y = y, Z = z }, _world.Id);
         character.SendPacket(new SCLoadInstancePacket(_world.Id, zoneId, x, y, z, 0, 0, 0));
     }

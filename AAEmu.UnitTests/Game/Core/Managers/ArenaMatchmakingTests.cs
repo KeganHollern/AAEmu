@@ -382,6 +382,55 @@ public sealed class ArenaMatchmakingTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task SecondArenaVisit_ReturnsToTheLastMainWorldDeparture(bool enterFromOtherInstance)
+    {
+        var main = new WorldInstance(new WorldTemplate { Id = 1, Name = "main_world" }, 0, true, WorldManager.DefaultInstanceId);
+        var island = new WorldInstance(new WorldTemplate { Id = 2, Name = "mirage_isle" }, 0, true, 93);
+        GC.SuppressFinalize(main);
+        GC.SuppressFinalize(island);
+        _instances[main.Id] = main;
+        _instances[island.Id] = island;
+        var player = AddApplicant(1);
+        var opponent = AddApplicant(2);
+        var session = Observe(player);
+        player.Faction = new() { Id = (FactionsEnum)159 };
+        player.OriginFaction = player.Faction;
+        player.Transform.Local.Position = new(10, 20, 30);
+        player.Transform.InstanceId = WorldManager.DefaultInstanceId;
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, opponent);
+
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        var first = player.CurrentInstantGame;
+        first.PlayerInviteResponse(player, true, 1);
+        first.OnEnterWorld(player, 1);
+        first.LeaveInstantGame(player);
+        var original = player.Transform.World.Position;
+        await Assert.That(original.X).IsEqualTo(10f);
+
+        // A nested trip still returns to the last departure from the main world.
+        if (enterFromOtherInstance)
+            player.Transform.InstanceId = island.Id;
+        player.Transform.Local.Position = new(80, 91, 102);
+        var expected = enterFromOtherInstance ? original : player.Transform.World.Position;
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        var second = player.CurrentInstantGame;
+        second.PlayerInviteResponse(player, true, 1);
+        second.OnEnterWorld(player, 1);
+        second.LeaveInstantGame(player);
+
+        await Assert.That(player.Transform.InstanceId).IsEqualTo(WorldManager.DefaultInstanceId);
+        await Assert.That(player.Transform.World.Position).IsEqualTo(expected);
+        var load = Messages(session, SCOffsets.SCLoadInstancePacket).Last();
+        await Assert.That(BitConverter.ToSingle(load, 16)).IsEqualTo(expected.X);
+        await Assert.That(BitConverter.ToSingle(load, 20)).IsEqualTo(expected.Y);
+        await Assert.That(BitConverter.ToSingle(load, 24)).IsEqualTo(expected.Z);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task DepartedMemberBeforeStart_GivesTheirPlaceToTheNextApplicant(bool disconnect)
     {
         var first = AddApplicant(1);
