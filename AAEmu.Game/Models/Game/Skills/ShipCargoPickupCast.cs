@@ -2,6 +2,7 @@ using System.Numerics;
 
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World.Transform;
 using NLog;
@@ -11,6 +12,7 @@ namespace AAEmu.Game.Models.Game.Skills;
 internal sealed class ShipCargoPickupCast
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+    private readonly Skill _skill;
     private readonly Doodad _rack;
     private readonly Slave _ship;
     private readonly ulong _itemId;
@@ -19,12 +21,9 @@ internal sealed class ShipCargoPickupCast
     private readonly Vector3 _targetSocket;
     private readonly Vector3 _startSocket;
     private Vector3? _lastRestingHullPosition;
-    // The resting Schooner contact shifted seven packed X steps and one Y step.
-    // Eight horizontal steps from the original hull-local position cover that sample.
-    private const float MaxRestingHullOffset = 8f / 512f;
-
-    private ShipCargoPickupCast(Doodad rack, Slave ship, Character player)
+    private ShipCargoPickupCast(Skill skill, Doodad rack, Slave ship, Character player)
     {
+        _skill = skill;
         _rack = rack;
         _ship = ship;
         _itemId = rack.ItemId;
@@ -42,7 +41,7 @@ internal sealed class ShipCargoPickupCast
         var support = player.Transform.Parent;
         if (support != rack.Transform && support != ship.Transform && !IsInstalledEmptyRack(support, ship))
             return null;
-        return new ShipCargoPickupCast(rack, ship, player);
+        return new ShipCargoPickupCast(skill, rack, ship, player);
     }
 
     private static bool IsInstalledEmptyRack(Transform support, Slave ship) =>
@@ -85,9 +84,14 @@ internal sealed class ShipCargoPickupCast
         {
             if (!observeRestingHull)
                 return _lastRestingHullPosition.HasValue
-                    ? _lastRestingHullPosition.Value == now
+                    ? _lastRestingHullPosition.Value == now && SkillRange.Check(_skill, player, _rack) == SkillResult.Success
                     : SkillCastReactions.SameMovementPosition(_start, now);
-            if (now.Z != _start.Z || Vector3.DistanceSquared(now, _start) > MaxRestingHullOffset * MaxRestingHullOffset)
+            // Use the character footprint in world units, as for a repair cast on deck.
+            // The hull-local start stays fixed even when the ship moves or turns.
+            var displacement = (now - _start) * _ship.Scale;
+            var radius = player.ModelSize;
+            var insideFootprint = _ship.Scale > 0 && displacement.LengthSquared() <= radius * radius;
+            if (now.Z != _start.Z || !insideFootprint || SkillRange.Check(_skill, player, _rack) != SkillResult.Success)
             {
                 Logger.Debug("Resting contact left the cargo pickup position on hull {HullId}, rack {RackId}: {Start} to {Current}",
                     _ship.ObjId, _rack.ObjId, _start, now);

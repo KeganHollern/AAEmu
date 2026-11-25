@@ -17,6 +17,7 @@ using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
@@ -303,12 +304,16 @@ public sealed partial class SkillLaborTests
 
     [Test]
     [Arguments("idle", true)]
+    [Arguments("saved-schooner", true)]
     [Arguments("repeat", true)]
     [Arguments("walk", false)]
     [Arguments("stop", false)]
     [Arguments("jump", false)]
     [Arguments("boundary", true)]
     [Arguments("outside", false)]
+    [Arguments("scaled-hull", false)]
+    [Arguments("out-of-range", false)]
+    [Arguments("lost-range-at-finish", false)]
     [Arguments("different-contact", false)]
     [Arguments("turned", false)]
     [Arguments("accumulated", false)]
@@ -326,9 +331,22 @@ public sealed partial class SkillLaborTests
         SetInstance(sus);
         var (ship, skill) = SetUpShipRack(rack, world, live, 3446, 15309);
         var pack = PutOriginalPackOnRack(rack);
+        // The stock Nuian character model (10) uses actor 1, radius 0.55 m.
+        _owner.ModelId = 10;
+        SetField(ModelManager.Instance, "_modelTypes", new Dictionary<uint, ModelType>
+            { [10] = new() { SubType = "ActorModel", SubId = 1 } });
+        SetField(ModelManager.Instance, "_models", new Dictionary<string, Dictionary<uint, Model>>
+            { ["ActorModel"] = new() { [1] = new ActorModel { Radius = .55f } } });
+        if (action == "scaled-hull")
+            ship.Scale = 2;
         // Two successive hull-local samples from the standing player on the saved Schooner.
         var start = new Vector3(1.7226562f, 11.097656f, 1.6661f);
         var settled = new Vector3(1.7089844f, 11.095703f, 1.6661f);
+        if (action == "saved-schooner")
+        {
+            start = new Vector3(1.7109375f, 11.099609f, 1.6671f);
+            settled = new Vector3(1.7265625f, 11.1015625f, 1.6671f);
+        }
         BaseUnit support = action == "on-rack" ? rack : ship;
         _owner.Transform.Parent = support.Transform;
         MoveAtContact(support, start, standingOnSolid: true);
@@ -345,8 +363,10 @@ public sealed partial class SkillLaborTests
         };
         if (action == "height")
             settled.Z += .01f;
-        if (action is "boundary" or "outside")
-            settled = start - new Vector3((action == "boundary" ? 8f : 9f) / 512f, 0, 0);
+        if (action is "boundary" or "outside" or "scaled-hull")
+            settled = start - new Vector3((action == "outside" ? 282f : 281f) / 512f, 0, 0);
+        if (action == "out-of-range")
+            skill.Template.MaxRange = 0;
         MoveAtContact(support, settled, action != "without-solid-contact", motion,
             groundContact: action == "different-contact" ? (byte)0 : (byte)1,
             heading: action == "turned" ? (sbyte)5 : (sbyte)0);
@@ -368,6 +388,8 @@ public sealed partial class SkillLaborTests
         }
         if (action == "changed-pack")
             rack.ItemId++;
+        if (action == "lost-range-at-finish")
+            skill.Template.MaxRange = 0;
         cast.CastWindow = new CastWindow(DateTime.UtcNow.AddSeconds(-1), true, false, false);
         cast.Execute();
         cast.Execute();
