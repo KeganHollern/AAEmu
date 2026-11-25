@@ -515,9 +515,14 @@ public sealed partial class CarriageBoardingTests
         foreach (var (rider, seat) in new[] { (firstRider, front), (secondRider, rear) })
         {
             rider.Transform.Local.SetPosition(seat.Transform.World.Position);
+            world.AddObject(rider);
             seat.Use(rider, 15857);
             await Assert.That(rider.Bonding.GetOwner()).IsSameReferenceAs(seat);
         }
+
+        // The client can report either world footing or cabin footing during a seated ride.
+        ReportRiderPosition(firstRider, front.Transform.World.Position);
+        ReportRiderPosition(secondRider, rear.Transform.Local.Position, cabin);
 
         var parked = cabin.Transform.World.Position;
         motor.WaitTime = DateTime.MinValue;
@@ -531,8 +536,33 @@ public sealed partial class CarriageBoardingTests
         foreach (var (rider, seat) in new[] { (firstRider, front), (secondRider, rear) })
         {
             await CheckPoint(rider.Transform.World.Position, seat.Transform.World.Position);
+            await Assert.That(rider.Transform.Parent).IsSameReferenceAs(seat.Transform);
+            await Assert.That(WorldManager.GetAround<CharacterMock>(seat, 0.5f)).Contains(rider);
             await LeaveSeat(rider, seat);
+            var step = rider.Transform.World.Position + Vector3.UnitX * 0.25f;
+            ReportRiderPosition(rider, step);
+            await CheckPoint(rider.Transform.World.Position, step);
         }
+    }
+
+    private static void ReportRiderPosition(CharacterMock rider, Vector3 position, Transfer standingOn = null)
+    {
+        var report = new UnitMoveType
+        {
+            X = position.X,
+            Y = position.Y,
+            Z = position.Z,
+            DeltaMovement = new sbyte[3],
+            Flags = standingOn == null ? MoveTypeFlags.None : MoveTypeFlags.StandingOnObject,
+            ActorFlags = standingOn == null ? (byte)0 : (byte)MoveTypeActorFlags.StandingOnObject,
+            GcId = standingOn?.ObjId ?? 0
+        };
+        var stream = new PacketStream().WriteBc(rider.ObjId).Write((byte)MoveTypeEnum.Unit);
+        report.Write(stream);
+        stream.Rollback();
+        var movement = new CSMoveUnitPacket { Connection = new GameConnection(null) { ActiveChar = rider } };
+        movement.Read(stream);
+        movement.Execute();
     }
 
     private static async Task CheckTramBench(Doodad bench, Transfer cabin, Vector3 local, Vector3 forward)

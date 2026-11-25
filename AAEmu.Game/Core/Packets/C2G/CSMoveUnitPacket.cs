@@ -186,6 +186,12 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                             return;
                         }
 
+                        // The cabin moves its seated riders. A standing-object report can describe
+                        // the deck or street while the client is still bonded to the bench.
+                        var seat = player.Bonding?.GetOwner();
+                        if (seat?.Transform.Parent?.GameObject is Transfer && player.Transform.Parent == seat.Transform)
+                            return;
+
                         // We moved
                         RemoveEffects(player, _moveType);
 
