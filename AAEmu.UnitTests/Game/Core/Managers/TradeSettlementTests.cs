@@ -31,7 +31,6 @@ using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.UnitTests.Utils.Mocks;
 
-using ShutdownTask = AAEmu.Game.Models.Tasks.ShutdownTask;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
@@ -847,7 +846,6 @@ public sealed class TradeSettlementTests
 
     private sealed class RecordingSave : ISaveManager
     {
-        public ShutdownTask ShutdownTask { get; set; }
         public bool Result { get; set; } = true;
         public int Calls { get; private set; }
         public Action BeforeReturn { get; set; }
