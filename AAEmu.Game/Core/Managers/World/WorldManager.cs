@@ -1425,7 +1425,8 @@ public class WorldManager(
             foreach (var world in _worlds.Values)
             {
                 Logger.Info($"Shutting down {world}");
-                world.Physics?.Stop();
+                // The host disposes the services used by the physics step after this method returns.
+                world.Physics?.Stop(waitForExit: true);
                 world.SpawnManager?.Stop();
                 world.SpawnManager?.DeSpawnAll();
                 world.SpawnManager?.DeleteAllSpawners();

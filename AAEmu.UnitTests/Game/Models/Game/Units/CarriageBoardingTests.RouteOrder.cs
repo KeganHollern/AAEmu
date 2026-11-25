@@ -6,6 +6,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.GameData;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models.Game.Transfers;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.World;
 using Microsoft.Data.Sqlite;
 
@@ -91,6 +92,48 @@ public sealed partial class CarriageBoardingTests
         await Assert.That(visits.SequenceEqual(Enumerable.Range(0, template.TransferRoads.Count).Append(0))).IsTrue();
         await Assert.That(farStop).IsTrue();
         await Assert.That(returned).IsTrue();
+    }
+
+    [Test]
+    public async Task StockMarianopleTram_HoldsBothBenchesWithinReachOfTheStationPlatforms()
+    {
+        var compact = Environment.GetEnvironmentVariable("AAEMU_COMBAT_TEST_COMPACT");
+        var archive = Environment.GetEnvironmentVariable("AAEMU_REDBULL_GAME_PAK");
+        Skip.Unless(!string.IsNullOrEmpty(compact) && !string.IsNullOrEmpty(archive), "Supply the r208022 server compact and client game_pak.");
+        var world = SetUpStation(modelId: 606, vehicleModelId: 20);
+        var template = LoadStockCarriage(3, compact, archive);
+        ConfigureSpawn(template, cabinModelId: 314, seatId: 5921, phaseId: 15276);
+        world.TransferManager = new TransferManager();
+        var file = Path.Combine(AppContext.BaseDirectory, "Data", "Worlds", "main_world", "transfer_spawns.json");
+        var spawner = JsonHelper.DeserializeObject<List<TransferSpawner>>(await File.ReadAllTextAsync(file)).Single(s => s.UnitId == 3);
+        spawner.ParentWorld = world;
+        var motor = spawner.Spawn(0);
+        // Walkable points on the stock Cerin bridge station and Borland station, beside the two benches.
+        var platforms = new[]
+        {
+            (Front: new Vector3(11135.40f, 11823.236f, 136.5282f), Rear: new Vector3(11128.198f, 11824.785f, 136.5282f)),
+            (Front: new Vector3(11377.195f, 12084.033f, 137.1347f), Rear: new Vector3(11376.262f, 12076.479f, 137.1347f))
+        };
+        var checkedStops = 0;
+        for (var tick = 0; tick < 2000 && checkedStops < platforms.Length; tick++)
+        {
+            motor.WaitTime = DateTime.MinValue;
+            motor.MoveTo(motor);
+            if (motor.Steering != checkedStops + 1 || motor.TimeLeft < 14000)
+                continue;
+
+            var bench0 = motor.Bounded.AttachedDoodads.Single(seat => seat.AttachPoint == AttachPointKind.Passenger0);
+            var bench1 = motor.Bounded.AttachedDoodads.Single(seat => seat.AttachPoint == AttachPointKind.Passenger1);
+            var (front, rear) = platforms[checkedStops];
+            // Both public benches use skill 15857, whose maximum range is four metres.
+            await Assert.That(Vector3.Distance(bench0.Transform.World.Position, front)).IsLessThan(4);
+            await Assert.That(Vector3.Distance(bench1.Transform.World.Position, rear)).IsLessThan(4);
+            var parked = motor.Bounded.Transform.World.Position;
+            motor.MoveTo(motor);
+            await CheckPoint(motor.Bounded.Transform.World.Position, parked);
+            checkedStops++;
+        }
+        await Assert.That(checkedStops).IsEqualTo(2);
     }
 
     private TransferTemplate LoadStockCarriage(uint id, string compact, string archive)

@@ -49,12 +49,150 @@ public sealed class SubZoneVisitPersistenceTests
         }
         finally
         {
-            using var connection = MySQL.CreateConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM portal_visited_district WHERE owner=@owner";
-            command.Parameters.AddWithValue("@owner", OwnerId);
-            command.ExecuteNonQuery();
+            DeleteFixtureRows(OwnerId);
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DeleteOneDistrictDestination_KeepsOtherEntries(bool reconnect)
+    {
+        const uint OwnerId = 4_200_525;
+        using var scope = new SubZoneScope(OwnerId);
+        var owner = scope.Owner;
+        try
+        {
+            owner.Portals.NotifySubZone(10);
+            owner.Transform.Local.SetPosition(20005, 30005, 10);
+            owner.Portals.NotifySubZone(20);
+            Save(owner.Portals);
+            Assert.Equal(new uint[] { 100, 101, 200 }, owner.Portals.DistrictPortals.Keys.Order().ToArray());
+
+            // A bound sibling and the unrelated visit must survive the named deletion.
+            owner.ReturnDistrictId = 42;
+            PortalManager.DeletePortal(owner, 1, 101);
+            PortalManager.DeletePortal(owner, 1, 100);
+            PortalManager.DeletePortal(owner, 1, 100);
+            Save(owner.Portals);
+            var book = reconnect ? Reload(OwnerId) : owner.Portals;
+            Assert.Equal(new uint[] { 101, 200 }, book.DistrictPortals.Keys.Order().ToArray());
+
+            owner.Portals.NotifySubZone(20);
+            Assert.Null(owner.Portals.GetPortalInfo(100));
+            owner.Transform.Local.SetPosition(5, 5, 10);
+            owner.Portals.NotifySubZone(10);
+            Save(owner.Portals);
+            Assert.Equal(new uint[] { 100, 101, 200 }, Reload(OwnerId).DistrictPortals.Keys.Order().ToArray());
+        }
+        finally
+        {
+            DeleteFixtureRows(OwnerId);
+        }
+    }
+
+    [Fact]
+    public void DeletePrivateAndLastDistrictEntries_RetainsOtherCharacterAndEntryTypes()
+    {
+        const uint OwnerId = 4_200_526;
+        const uint OtherId = 4_200_527;
+        using var scope = new SubZoneScope(OwnerId);
+        var owner = scope.Owner;
+        var other = scope.CreateOwner(OtherId);
+        try
+        {
+            foreach (var character in new[] { owner, other })
+            {
+                character.Portals.NotifySubZone(10);
+                character.Transform.Local.SetPosition(20005, 30005, 10);
+                character.Portals.NotifySubZone(20);
+                Save(character.Portals);
+            }
+            owner.Portals.PrivatePortals.Add(100, new Portal { Id = 100, Owner = OwnerId, Name = "My spot" });
+            Save(owner.Portals);
+            PortalManager.DeletePortal(owner, 2, 100);
+            PortalManager.DeletePortal(owner, 1, 200);
+            owner.Portals.NotifySubZone(20);
+            Save(owner.Portals);
+
+            var book = Reload(OwnerId);
+            Assert.Empty(book.PrivatePortals);
+            Assert.Equal(new uint[] { 100, 101 }, book.DistrictPortals.Keys.Order().ToArray());
+            Assert.Equal(new uint[] { 100, 101, 200 }, Reload(OtherId).DistrictPortals.Keys.Order().ToArray());
+
+            owner.Transform.Local.SetPosition(5, 5, 10);
+            owner.Portals.NotifySubZone(10);
+            owner.Transform.Local.SetPosition(20005, 30005, 10);
+            owner.Portals.NotifySubZone(20);
+            Save(owner.Portals);
+            Assert.Equal(new uint[] { 100, 101, 200 }, Reload(OwnerId).DistrictPortals.Keys.Order().ToArray());
+        }
+        finally
+        {
+            DeleteFixtureRows(OwnerId);
+            DeleteFixtureRows(OtherId);
+        }
+    }
+
+    [Theory]
+    [InlineData(10u, 100u, 101u)]
+    [InlineData(20u, 200u, 100u)]
+    public void ReconnectInDeletedArea_OnlyARealReturnRestoresDestination(uint home, uint deleted, uint retained)
+    {
+        const uint OwnerId = 4_200_528;
+        using var scope = new SubZoneScope(OwnerId);
+        static void Visit(Character character, uint area)
+        {
+            if (area == 10)
+                character.Transform.Local.SetPosition(5, 5, 10);
+            else
+                character.Transform.Local.SetPosition(20005, 30005, 10);
+            character.Portals.NotifySubZone(area);
+        }
+        try
+        {
+            var owner = scope.Owner;
+            Visit(owner, 10);
+            Visit(owner, 20);
+            Visit(owner, home);
+            Save(owner.Portals);
+            PortalManager.DeletePortal(owner, 1, deleted);
+
+            using (var db = MySQL.CreateConnection())
+            using (var transaction = db.BeginTransaction())
+            {
+                owner.Portals.Save(new PersistenceSaveContext(db, transaction));
+                transaction.Rollback();
+            }
+            Assert.Contains(deleted, Reload(OwnerId).DistrictPortals.Keys);
+            Save(owner.Portals);
+
+            var reconnected = scope.CreateOwner(OwnerId);
+            reconnected.Transform.Local.SetPosition(owner.Transform.World.Position);
+            using (var db = MySQL.CreateConnection())
+                reconnected.Portals.Load(db);
+            reconnected.Portals.NotifySubZone(home);
+            Assert.DoesNotContain(deleted, reconnected.Portals.DistrictPortals.Keys);
+            Assert.Contains(retained, reconnected.Portals.DistrictPortals.Keys);
+
+            Visit(reconnected, home == 10 ? 20u : 10u);
+            Visit(reconnected, home);
+            Save(reconnected.Portals);
+            Assert.Contains(deleted, Reload(OwnerId).DistrictPortals.Keys);
+        }
+        finally
+        {
+            DeleteFixtureRows(OwnerId);
+        }
+    }
+
+    private static void DeleteFixtureRows(uint ownerId)
+    {
+        using var connection = MySQL.CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM portal_visited_district WHERE owner=@owner; DELETE FROM portal_book_coords WHERE owner=@owner";
+        command.Parameters.AddWithValue("@owner", ownerId);
+        command.ExecuteNonQuery();
     }
 
     private static void Save(CharacterPortals portals)
@@ -95,7 +233,10 @@ public sealed class SubZoneVisitPersistenceTests
                     [20] = [new() { Id = 200, SubZoneId = 20, Name = "far" }]
                 });
             typeof(PortalManager).GetField("_districtReturnPoints", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .SetValue(portals, new Dictionary<uint, DistrictReturnPoints>());
+                .SetValue(portals, new Dictionary<uint, DistrictReturnPoints>
+                {
+                    [1] = new() { DistrictId = 42, ReturnPointId = 101 }
+                });
             Replace(typeof(Singleton<PortalManager>), "s_instance", portals);
             var ids = new VisitedSubZoneIdManager();
             ids.Initialize(true);
@@ -107,15 +248,18 @@ public sealed class SubZoneVisitPersistenceTests
                 new Area { Id = 20, Points = [new(20000, 30000, 0), new(20010, 30000, 0), new(20010, 30010, 0), new(20000, 30010, 0)] }
             ];
             World = new WorldInstance(template, 0, true, 42);
-            Owner = new Character(null) { Id = ownerId, Name = "SubZone", Faction = new SystemFaction() };
-            Owner.Portals = new CharacterPortals(Owner);
-            typeof(Transform).GetField("_instanceId", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(Owner.Transform, 42u);
-            SetWorld(World);
-            Owner.Transform.Local.SetPosition(5, 5, 10);
+            Owner = CreateOwner(ownerId);
         }
 
-        public void SetWorld(WorldInstance world) => typeof(GameObject)
-            .GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(Owner, world);
+        public Character CreateOwner(uint id)
+        {
+            var owner = new Character(null) { Id = id, Name = "SubZone", Faction = new SystemFaction() };
+            owner.Portals = new CharacterPortals(owner);
+            typeof(Transform).GetField("_instanceId", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(owner.Transform, 42u);
+            typeof(GameObject).GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(owner, World);
+            owner.Transform.Local.SetPosition(5, 5, 10);
+            return owner;
+        }
 
         private void Replace(Type type, string name, object value)
         {
