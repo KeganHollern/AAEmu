@@ -392,7 +392,7 @@ public static class SCOffsets
     public const ushort SCInstantGameAddPointPacket = 0x193;
     public const ushort SCInstantGameKillPacket = 0x194;
     public const ushort SCInstantGameKillstreakPacket = 0x195;
-    public const ushort SCInstantGameUnkPacket = 0x196;
+    public const ushort SCInstantGameUnearnedWinPacket = 0x196;
     public const ushort SCLoadInstancePacket = 0x197;
     public const ushort SCProcessingInstancePacket = 0x198;
     public const ushort SCGmCommandPacket = 0x199;
