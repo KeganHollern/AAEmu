@@ -1139,9 +1139,10 @@ public partial class Npc : Unit
     /// Gait speed this movement represents, used to encode the broadcast velocity. Zero keeps the legacy
     /// fixed velocity used by ad-hoc movement (chasing, roaming, returning home).
     /// </param>
-    /// <returns>True if withing rangeTolerance of other</returns>
+    /// <param name="missingGroundHeight">Fallback for an explicit relocation. Ordinary steps hold when no ground is available.</param>
+    /// <returns>True if within rangeTolerance of other</returns>
     public bool MoveTowards(Vector3 other, float distance, byte actorFlags = 4, float rangeTolerance = 1f,
-        bool authoredPathZ = false, float speedMetersPerSecond = 0f)
+        bool authoredPathZ = false, float speedMetersPerSecond = 0f, float? missingGroundHeight = null)
     {
         if ((ActiveSkillController?.State ?? SkillController.SCState.Ended) == SkillController.SCState.Running)
             return false;
@@ -1192,7 +1193,7 @@ public partial class Npc : Unit
         // ad-hoc movement re-grounds every step through the geodata resolver.
         var targetPositionZ = authoredPathZ
             ? AiUtils.ResolveAuthoredPathHeight(this, next.X, next.Y, next.Z)
-            : ResolveStepHeight(oldPosition, other, next);
+            : ResolveStepHeight(oldPosition, other, next) ?? missingGroundHeight;
         if (!targetPositionZ.HasValue)
             return false;
         Transform.Local.SetPosition(next.X, next.Y, targetPositionZ.Value);

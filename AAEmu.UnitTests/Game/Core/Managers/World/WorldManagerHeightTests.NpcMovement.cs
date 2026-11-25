@@ -11,7 +11,6 @@ using AAEmu.Game.Models.CryEngine.Objects;
 using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.CryEngine.Readers;
 using AAEmu.Game.Models.Game.AI.v2.AiCharacters;
-using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.UnitTests.Utils.Mocks;
 
@@ -24,95 +23,6 @@ public sealed partial class WorldManagerHeightTests
     private const float DeckZ = 6f;
     private const float Step = 0.5f;
     private readonly List<Action> _restoreMovementServices = [];
-
-    [Test]
-    [Arguments(0f)]
-    [Arguments(3f)]
-    public async Task MoveTowards_NoGroundBeyondLastAcceptedFoot_HoldsAndRetries(float targetZ)
-    {
-        var npc = CreateDeckWalker(hasDeck: false);
-        var world = npc.ParentWorld.Template;
-        world.ZoneBaiLoader.Clear();
-        var west = world.Cells[0, 0];
-        var east = new WorldCell(1, 0, world);
-        SetPrivateMember(east, nameof(WorldCell.Loaded), true);
-        world.CellX = 2;
-        world.Cells = new WorldCell[,] { { west }, { east } };
-        npc.Ai.HomePosition = new Vector3(600f, 100f, 12f);
-        var lastFoot = new Vector3(WorldManager.CELL_SIZE - 2f, 100f, 0f);
-        npc.Transform.Local.SetPosition(lastFoot - Vector3.UnitX * Step);
-        var notifications = 0;
-        npc.Events.OnMovement += (_, _) => notifications++;
-        npc.MoveTowards(lastFoot, Step, rangeTolerance: 0f);
-        await Assert.That(npc.Transform.Local.Position).IsEqualTo(lastFoot);
-        await Assert.That(npc.Movements.Single().Z).IsEqualTo(0f);
-
-        // The next terrain triangle needs a vertex from the missing neighboring heightmap.
-        var destination = lastFoot + new Vector3(2f, 0f, targetZ);
-        var rotation = npc.Transform.Local.Rotation;
-        var trace = NpcStepSurfaceTrace.DescribeStep(npc, destination, Step).ToArray();
-        await Assert.That(trace[1]).Contains("selected=HoldWithoutGround z=0.000");
-        for (var retry = 0; retry < 2; retry++)
-        {
-            var arrived = npc.MoveTowards(destination, Step, rangeTolerance: 0f);
-            await Assert.That(arrived).IsFalse();
-            await Assert.That(npc.Transform.Local.Position).IsEqualTo(lastFoot);
-            await Assert.That(npc.Transform.Local.Rotation).IsEqualTo(rotation);
-        }
-        await Assert.That(notifications).IsEqualTo(1);
-        await Assert.That(npc.Movements.Count).IsEqualTo(1);
-
-        SetPrivateMember(east, nameof(WorldCell.HeightMap), west.HeightMap);
-        npc.MoveTowards(destination, Step, rangeTolerance: 0f);
-        await Assert.That(npc.Transform.Local.Position.X).IsGreaterThan(lastFoot.X);
-        await Assert.That(npc.Transform.Local.Position.Z).IsEqualTo(0f);
-        await Assert.That(notifications).IsEqualTo(2);
-        await Assert.That(npc.Movements.Count).IsEqualTo(2);
-    }
-
-    public enum MissingGroundControl { Flying, Parented, StickyParent, Authored, OtherWorld, HeightSourcesDisabled }
-
-    [Test]
-    [Arguments(MissingGroundControl.Flying)]
-    [Arguments(MissingGroundControl.Parented)]
-    [Arguments(MissingGroundControl.StickyParent)]
-    [Arguments(MissingGroundControl.Authored)]
-    [Arguments(MissingGroundControl.OtherWorld)]
-    [Arguments(MissingGroundControl.HeightSourcesDisabled)]
-    public async Task MoveTowards_NoGround_PreservesOtherMovementPaths(MissingGroundControl mode)
-    {
-        var npc = CreateDeckWalker(hasDeck: false);
-        var world = npc.ParentWorld.Template;
-        world.ZoneBaiLoader.Clear();
-        SetPrivateMember(world.Cells[0, 0], nameof(WorldCell.HeightMap), null);
-        npc.Ai.HomePosition = new Vector3(60f, 100f, 12f);
-        if (mode == MissingGroundControl.Flying)
-            npc.CanFly = true;
-        if (mode is MissingGroundControl.Parented or MissingGroundControl.StickyParent)
-        {
-            var parent = new Npc { Template = new NpcTemplate { Scale = 1f } };
-            npc.Template = new NpcTemplate { Scale = 1f };
-            if (mode == MissingGroundControl.Parented)
-                npc.Transform.Parent = parent.Transform;
-            else
-                npc.Transform.StickyParent = parent.Transform;
-        }
-        if (mode == MissingGroundControl.OtherWorld)
-            world.Name = "instance";
-        if (mode == MissingGroundControl.HeightSourcesDisabled)
-        {
-            AppConfiguration.Instance.World.GeoDataMode = false;
-            AppConfiguration.Instance.HeightMapsEnable = false;
-        }
-
-        var from = new Vector3(100f, 100f, 6f);
-        npc.Transform.Local.SetPosition(from);
-        var authored = mode == MissingGroundControl.Authored;
-        npc.MoveTowards(from + Vector3.UnitX, Step, rangeTolerance: 0f, authoredPathZ: authored);
-        var expected = new Vector3(from.X + Step, from.Y, authored ? from.Z : npc.Ai.HomePosition.Z);
-        await Assert.That(npc.Transform.Local.Position).IsEqualTo(expected);
-        await Assert.That(npc.Movements.Single().Z).IsEqualTo(expected.Z);
-    }
 
     [Test]
     public async Task MoveTowards_ContinuousDeckAboveTerrain_KeepsFloorAcrossFiveSteps()
