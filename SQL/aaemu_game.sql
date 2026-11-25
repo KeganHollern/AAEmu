@@ -527,6 +527,7 @@ CREATE TABLE IF NOT EXISTS `portal_visited_district` (
   `id` int NOT NULL,
   `subzone` int NOT NULL,
   `owner` int NOT NULL,
+  `omitted_portal_ids` json DEFAULT NULL,
   PRIMARY KEY (`id`,`subzone`,`owner`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='List of visited area for the portal book';
 
