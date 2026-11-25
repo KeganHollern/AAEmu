@@ -160,10 +160,14 @@ public sealed class ArenaWorldRuntimeTests : IDisposable
         Assert.False(RespawnEnabled(world));
     }
 
-    [Fact]
-    public async Task HostStop_WaitsForAnActivePhysicsStepBeforeClearingTheWorld()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HostStop_DrainsActivePhysicsBeforeServiceDisposal(bool retireArena)
     {
-        var world = _worlds.CreateWorldInstance(_template, 0, true, 42);
+        _ids.Setup(manager => manager.GetNextId()).Returns(200u);
+        var match = new InstantGame(_field);
+        var world = Assert.Single(_worlds.GetWorlds());
         _created.Add(world);
         using var enteredStep = new ManualResetEventSlim();
         using var releaseStep = new ManualResetEventSlim();
@@ -181,6 +185,12 @@ public sealed class ArenaWorldRuntimeTests : IDisposable
                 configRead.TrySetResult(Record.Exception(() => { _ = AppConfiguration.Instance; }));
             };
             Assert.True(enteredStep.Wait(TimeSpan.FromSeconds(3)));
+            if (retireArena)
+            {
+                await match.EndGame().WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.Empty(_worlds.GetWorlds());
+                Assert.True(world.Physics._thread.IsAlive);
+            }
             stop = Task.Run(() =>
             {
                 _worlds.Stop();

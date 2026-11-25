@@ -71,6 +71,7 @@ public class WorldManager(
     /// List of loaded world instances (instanceId, WorldInstance)
     /// </summary>
     private ConcurrentDictionary<uint, WorldInstance> _worlds = new();
+    private readonly HashSet<Thread> _retiringArenaPhysics = [];
 
     /// <summary>
     /// WorldTemplateId by ZoneId list (zoneId, worldTemplateId)
@@ -1433,6 +1434,15 @@ public class WorldManager(
             }
             _worlds.Clear();
         }
+
+        Thread[] retiring;
+        lock (_retiringArenaPhysics)
+        {
+            retiring = [.. _retiringArenaPhysics];
+            _retiringArenaPhysics.Clear();
+        }
+        foreach (var thread in retiring)
+            thread.Join();
     }
 
     /// <summary>
@@ -1454,6 +1464,13 @@ public class WorldManager(
             return;
 
         world.StopArenaRuntime();
+        // Arena teardown can hold the persistence lock. Only the host can wait for an active step.
+        lock (_retiringArenaPhysics)
+        {
+            _retiringArenaPhysics.RemoveWhere(thread => !thread.IsAlive);
+            if (world.Physics?._thread is { IsAlive: true } thread)
+                _retiringArenaPhysics.Add(thread);
+        }
         _worlds.TryRemove(new KeyValuePair<uint, WorldInstance>(world.Id, world));
     }
 
