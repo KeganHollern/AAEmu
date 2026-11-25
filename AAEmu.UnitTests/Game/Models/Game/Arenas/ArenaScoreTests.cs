@@ -233,6 +233,39 @@ public sealed class ArenaScoreTests
         await Assert.That((duel.Id, duel.EnemyPlayerKillScore, duel.VictoryScore, duel.TimePlaying)).IsEqualTo((28u, 30, 60, 10));
     }
 
+    [Test]
+    [Arguments(VictoryState.Invalid, 14u)]
+    [Arguments(VictoryState.Draw, 14u)]
+    [Arguments(VictoryState.Win, 15u)]
+    [Arguments(VictoryState.Lose, 30u)]
+    public async Task MemberResult_UsesOnlyTheFinalOutcomeAndKeepsOtherAchievements(VictoryState state, uint expected)
+    {
+        var member = new InstantGameTeamMember
+        {
+            Character = new ArenaPlayer { Id = 1, Name = "Player" },
+            Corps = new InstantGameTeamResult(state, 159),
+            BonusSet = 0x1f
+        };
+        var stream = member.Write(new PacketStream());
+        stream.Pos = 0;
+        stream.ReadUInt32();
+        stream.ReadString();
+        stream.ReadInt32();
+        stream.ReadInt32();
+        await Assert.That(stream.ReadUInt32()).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task OpenMatch_HasNoFinalTeamOutcome()
+    {
+        Start(11);
+        var members = (Dictionary<Character, InstantGameTeamMember>)typeof(InstantGame)
+            .GetField("_members", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_game)!;
+        foreach (var member in members.Values)
+            await Assert.That(member.Corps.State).IsEqualTo(VictoryState.Invalid);
+        await Assert.That(Packets(SCOffsets.SCInstantGameEndPacket).Length).IsEqualTo(0);
+    }
+
     private void Start(uint id, bool finishCountdown = true)
     {
         var field = _fields.GetBattlefield(id);
@@ -301,8 +334,9 @@ public sealed class ArenaScoreTests
             stream.ReadUInt32();
             stream.ReadString();
             personalScores += stream.ReadInt32();
-            stream.ReadInt32();
-            stream.ReadUInt32();
+            await Assert.That(stream.ReadInt32()).IsEqualTo(0);
+            var expectedBadge = state switch { 2 => 1u, 1 => 16u, _ => 0u };
+            await Assert.That(stream.ReadUInt32()).IsEqualTo(expectedBadge);
             stream.ReadUInt16();
             stream.ReadUInt16();
             stream.ReadUInt16();

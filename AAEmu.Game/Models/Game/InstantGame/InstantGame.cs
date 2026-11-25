@@ -52,8 +52,8 @@ public partial class InstantGame
         _players = [];
 
         _members = new Dictionary<Character, InstantGameTeamMember>();
-        _corps1Result = new InstantGameTeamResult(VictoryState.Lose, _battlefield.RuleSet.Corps1FactionId);
-        _corps2Result = new InstantGameTeamResult(VictoryState.Lose, _battlefield.RuleSet.Corps2FactionId);
+        _corps1Result = new InstantGameTeamResult(VictoryState.Invalid, _battlefield.RuleSet.Corps1FactionId);
+        _corps2Result = new InstantGameTeamResult(VictoryState.Invalid, _battlefield.RuleSet.Corps2FactionId);
 
         _corps = new Dictionary<uint, List<Character>>
         {
