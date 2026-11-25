@@ -1195,13 +1195,11 @@ public partial class Npc : Unit
             : ResolveStepHeight(oldPosition, other, next, out accepted) ?? missingGroundHeight;
         if (!targetPositionZ.HasValue)
         {
-            AcceptedFloor = null;
+            AcceptedFloor = accepted;
             return false;
         }
         Transform.Local.SetPosition(next.X, next.Y, targetPositionZ.Value);
         AcceptedFloor = accepted;
-        if (accepted != null)
-            accepted.Foot = Transform.Local.Position;
 
         var moveType = (UnitMoveType)MoveType.GetType(MoveTypeEnum.Unit);
         var angle = MathUtil.CalculateAngleFrom(Transform.Local.Position, other);
