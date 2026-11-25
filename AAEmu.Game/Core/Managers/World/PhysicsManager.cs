@@ -16,6 +16,7 @@ using AAEmu.Game.Physics.Debug;
 using AAEmu.Game.Physics.Forces;
 using AAEmu.Game.Physics.HeightMaps;
 using AAEmu.Game.Physics.Util;
+using AAEmu.Game.Services.Health;
 using AAEmu.Game.Utils;
 using Jitter2.Dynamics;
 using Jitter2.LinearMath;
@@ -190,6 +191,7 @@ public class PhysicsManager
                     Logger.Warn($"Physics thread is running slow in {SimulationWorld} at {timeSinceLastTick.TotalMilliseconds:F1} / {targetStepTime.TotalMilliseconds:F1} ms");
                 }
 
+                using var timer = GameWorkMetrics.Default.MeasurePhysics();
                 var physicsTotalDelta = TimeSpan.FromMilliseconds(Environment.TickCount64) - lastTick; 
                 lastTick = currentTick;
                 _physicsLoopIndex++;

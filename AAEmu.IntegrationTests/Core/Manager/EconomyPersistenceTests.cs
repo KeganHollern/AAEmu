@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Globalization;
 using System.Reflection;
 
 using AAEmu.Commons.Utils;
@@ -21,6 +22,7 @@ using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.StaticValues;
+using AAEmu.Game.Services.Security;
 
 using Moq;
 using Xunit;
@@ -380,6 +382,39 @@ public sealed class EconomyPersistenceTests
         Assert.Equal([laterId], graph.ItemDeletes);
         Assert.Equal([(long)laterId], graph.MailDeletes);
         Assert.Equal([(long)laterId], graph.AuctionDeletes.ToArray());
+    }
+
+    [Fact]
+    public void PeriodicSave_MeasuresARejectedWriteAndASuccessfulRetry()
+    {
+        var graph = new SaveGraph();
+        var item = graph.AddItem(1);
+        var before = ReadSaveMetrics();
+        var trigger = $"reject_measured_item_{graph.Id}";
+        Execute($"CREATE TRIGGER {trigger} BEFORE INSERT ON items FOR EACH ROW " +
+            $"BEGIN IF NEW.id={item.Id} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Reject test item'; END IF; END");
+        try
+        {
+            Assert.False(graph.Save.DoSave());
+            Assert.Equal((before.Saves + 1, before.Failures + 1), ReadSaveMetrics());
+        }
+        finally
+        {
+            Execute($"DROP TRIGGER {trigger}");
+        }
+        Assert.True(graph.Save.DoSave());
+        Assert.Equal((before.Saves + 2, before.Failures + 1), ReadSaveMetrics());
+        Assert.Equal(1, Count("items", item.Id));
+
+        static (long Saves, long Failures) ReadSaveMetrics()
+        {
+            var lines = GameSecurityMetrics.Default.Collect().Split('\n');
+            return (Value("aaemu_game_work_duration_seconds_count{operation=\"database_save\"} "),
+                Value("aaemu_game_database_save_failures_total "));
+
+            long Value(string prefix) => long.Parse(lines.Single(line =>
+                line.StartsWith(prefix, StringComparison.Ordinal)).AsSpan(prefix.Length), CultureInfo.InvariantCulture);
+        }
     }
 
     [Fact]

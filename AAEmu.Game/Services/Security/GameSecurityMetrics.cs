@@ -1,5 +1,7 @@
 ﻿using System.Text;
 
+using AAEmu.Game.Services.Health;
+
 using Prometheus;
 
 namespace AAEmu.Game.Services.Security;
@@ -30,6 +32,8 @@ public sealed class GameSecurityMetrics
 
     public static GameSecurityMetrics Default { get; } = new();
 
+    internal GameWorkMetrics Work { get; }
+
     private readonly CollectorRegistry _registry;
     private readonly Counter _tokenFailures;
     private readonly Counter _packetRejections;
@@ -41,6 +45,7 @@ public sealed class GameSecurityMetrics
     {
         _registry = Metrics.NewCustomRegistry();
         var factory = Metrics.WithCustomRegistry(_registry);
+        Work = new GameWorkMetrics(factory);
         _tokenFailures = Create(factory, "aaemu_game_token_failures_total", "Rejected Game authentication tokens.",
             "kind", TokenKinds, "reason", TokenReasons);
         _packetRejections = Create(factory, "aaemu_game_packets_rejected_total", "Rejected Game server packets.",
@@ -71,7 +76,7 @@ public sealed class GameSecurityMetrics
     internal string Collect()
     {
         using var stream = new MemoryStream();
-        // This private registry has only in-memory counters and no collection callbacks.
+        // This private registry has only in-memory metrics and no collection callbacks.
         _registry.CollectAndExportAsTextAsync(stream).GetAwaiter().GetResult();
         return Encoding.UTF8.GetString(stream.GetBuffer(), 0, checked((int)stream.Length));
     }

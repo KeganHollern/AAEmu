@@ -21,6 +21,7 @@ using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
+using AAEmu.Game.Services.Health;
 using AAEmu.Game.Utils.DB;
 using AAEmu.Game.Utils.Scripts;
 
@@ -159,8 +160,9 @@ public class WorldManager(
         var sw = new Stopwatch();
         sw.Start();
 
-        // Players
-        foreach (var character in GetAllCharacters())
+        var characters = GetAllCharacters();
+        var activeSpawnerCount = 0;
+        foreach (var character in characters)
             character.OnActiveRegionTick(delta);
 
         foreach (var world in _worlds.Values)
@@ -187,6 +189,8 @@ public class WorldManager(
                 .Where(spawner => spawner.Template != null && IsSpawnerActive(spawner))
                 .ToList();
 
+            activeSpawnerCount += activeSpawners.Count;
+
             // Consistent processing of spawners
             if (sw.ElapsedMilliseconds > 50)
             {
@@ -200,6 +204,7 @@ public class WorldManager(
         }
 
         sw.Stop();
+        GameWorkMetrics.Default.RecordActiveRegion(sw.Elapsed, characters.Count, activeSpawnerCount);
         if (sw.ElapsedMilliseconds > 100)
         {
             Logger.Warn($"ActiveRegionTick took {sw.ElapsedMilliseconds} ms");
