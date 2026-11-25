@@ -110,18 +110,57 @@ public sealed partial class CarriageBoardingTests
     }
 
     [Test]
+    public async Task CradleCarriage24_CarriesBothSeatsAtItsMotorHitch()
+    {
+        var compact = Environment.GetEnvironmentVariable("AAEMU_COMBAT_TEST_COMPACT");
+        var archive = Environment.GetEnvironmentVariable("AAEMU_REDBULL_GAME_PAK");
+        Skip.Unless(!string.IsNullOrEmpty(compact) && !string.IsNullOrEmpty(archive), "Supply the r208022 server compact and client game_pak.");
+        var world = SetUpStation();
+        world.Template.ZoneBaiLoader.Clear();
+        var template = LoadStockCarriage(24, compact, archive);
+        ConfigureSpawn(template);
+        world.TransferManager = new TransferManager();
+        var file = Path.Combine(AppContext.BaseDirectory, "Data", "Worlds", "main_world", "transfer_spawns.json");
+        var spawner = JsonHelper.DeserializeObject<List<TransferSpawner>>(await File.ReadAllTextAsync(file)).Single(s => s.UnitId == 24);
+        spawner.ParentWorld = world;
+        var motor = spawner.Spawn(0);
+        var cabin = motor.Bounded;
+        var front = cabin.AttachedDoodads.Single(d => d.AttachPoint == AttachPointKind.Passenger0);
+        var rear = cabin.AttachedDoodads.Single(d => d.AttachPoint == AttachPointKind.Passenger1);
+
+        var start = template.TransferRoads[0].Pos[0].AsPositionVector();
+        await CheckPoint(motor.Transform.World.Position, start);
+        await CheckSeats(motor, cabin, front, rear);
+        await Assert.That(cabin.AttachPointId).IsEqualTo(AttachPointKind.Trailed0);
+        using var movement = new SusManager(WorldManager.Instance);
+        SetSingleton(movement);
+        var passenger = new CharacterMock { Id = 10, ObjId = 100, ParentWorld = world };
+        await BoardSeat(passenger, front, 15857, AttachPointKind.Passenger0);
+
+        motor.WaitTime = DateTime.MinValue;
+        motor.MoveTo(motor);
+        motor.WaitTime = DateTime.MinValue;
+        motor.MoveTo(motor);
+        await Assert.That(motor.Transform.World.Position.X).IsLessThan(start.X);
+        await CheckSeats(motor, cabin, front, rear);
+        await CheckPoint(passenger.Transform.World.Position, front.Transform.World.Position);
+        await LeaveSeat(passenger, front);
+        await BoardAndLeave(passenger, rear);
+    }
+
+    [Test]
     [Arguments(null, 761.6985f)]
     [Arguments(0f, 0f)]
     [Arguments(748f, 748f)]
-    public async Task PassengerBindingOnMotor654_UsesGroundWhenAvailable(float? ground, float expectedHeight)
+    public async Task UnrecognizedPassengerBinding_UsesGroundWhenAvailable(float? ground, float expectedHeight)
     {
         var world = SetUpStation();
         var motorTemplate = Motor(654, AttachPointKind.Passenger0, 46).Template;
-        motorTemplate.Id = 24;
+        motorTemplate.Id = 9000; // A binding without a known hitch still uses the ground fallback.
         motorTemplate.WaitTime = 10;
         var first = new WorldSpawnPosition { X = 6868.6814f, Y = 12876.4597f, Z = 814.61157f, ZoneId = 154 };
         var next = new WorldSpawnPosition { X = 6837.1708f, Y = 12900.981f, Z = 828.95984f, ZoneId = 154 };
-        motorTemplate.TransferAllPaths.Add(new TransferPaths { Id = 349, OwnerId = 24, PathName = "carriage_cradle_barefoot_in" });
+        motorTemplate.TransferAllPaths.Add(new TransferPaths { Id = 349, OwnerId = motorTemplate.Id, PathName = "carriage_cradle_barefoot_in" });
         motorTemplate.TransferRoads.Add(new TransferRoads { Name = "carriage_cradle_barefoot_in", Pos = [first, next] });
         ConfigureSpawn(motorTemplate);
         world.TransferManager = new TransferManager();
@@ -143,7 +182,7 @@ public sealed partial class CarriageBoardingTests
             bai.NetMissionReaders.Add(navigation);
             world.Template.ZoneBaiLoader.Add(154, bai);
         }
-        var motor = new TransferSpawner { ParentWorld = world, Position = spawn, UnitId = 24 }.Spawn(0);
+        var motor = new TransferSpawner { ParentWorld = world, Position = spawn, UnitId = motorTemplate.Id }.Spawn(0);
         expected.Z = expectedHeight;
         await CheckPoint(motor.Transform.World.Position, first.AsPositionVector());
         await CheckPoint(motor.Bounded.Transform.World.Position, expected);
@@ -630,6 +669,12 @@ public sealed partial class CarriageBoardingTests
     private static async Task BoardAndLeave(CharacterMock passenger, Doodad seat, uint skillId = 15857,
         AttachPointKind attachPoint = AttachPointKind.Passenger0)
     {
+        await BoardSeat(passenger, seat, skillId, attachPoint);
+        await LeaveSeat(passenger, seat);
+    }
+
+    private static async Task BoardSeat(CharacterMock passenger, Doodad seat, uint skillId, AttachPointKind attachPoint)
+    {
         // Both bench types use stock skill 15857. The safari chair uses 23464 with attachment 193.
         var action = new DoodadFuncAttachment { AttachPointId = attachPoint, Space = 2, BondKindId = BondKind.BondChairDouble };
         passenger.Transform.Local.SetPosition(seat.Transform.World.Position);
@@ -637,7 +682,6 @@ public sealed partial class CarriageBoardingTests
         await Assert.That(passenger.Bonding.GetOwner()).IsSameReferenceAs(seat);
         await Assert.That(passenger.Transform.Parent).IsSameReferenceAs(seat.Transform);
         await CheckPoint(passenger.Transform.World.Position, seat.Transform.World.Position);
-        await LeaveSeat(passenger, seat);
     }
 
     private static async Task LeaveSeat(CharacterMock passenger, Doodad seat)
