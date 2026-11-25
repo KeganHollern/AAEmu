@@ -7,6 +7,7 @@ using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Tasks;
 using AAEmu.Game.Models.Tasks.SaveTask;
+using AAEmu.Game.Services.Health;
 
 using NLog;
 using MySql.Data.MySqlClient;
@@ -88,9 +89,10 @@ public class SaveManager(
     public bool DoSave()
     {
         var stopWatch = Stopwatch.StartNew();
+        var saved = false;
         try
         {
-            return CommitPersistence([], context =>
+            saved = CommitPersistence([], context =>
             {
                 housingManager.Save(context);
                 crimeManager.Save(context.Connection, context.Transaction);
@@ -104,6 +106,7 @@ public class SaveManager(
                     }
                 }
             });
+            return saved;
         }
         catch (Exception exception)
         {
@@ -113,7 +116,9 @@ public class SaveManager(
         }
         finally
         {
-            Logger.Debug("Saving data took {0}", stopWatch.Elapsed);
+            var elapsed = stopWatch.Elapsed;
+            GameWorkMetrics.Default.RecordDatabaseSave(elapsed, saved);
+            Logger.Debug("Saving data took {0}", elapsed);
         }
     }
 

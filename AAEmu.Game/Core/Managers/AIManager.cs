@@ -1,5 +1,6 @@
 ﻿using AAEmu.Commons.Utils;
 using AAEmu.Game.Models.Game.AI.v2.Framework;
+using AAEmu.Game.Services.Health;
 
 using NLog;
 
@@ -35,6 +36,7 @@ public class AIManager : Singleton<AIManager>, IAIManager
 
     public void Tick(TimeSpan delta)
     {
+        using var timer = GameWorkMetrics.Default.MeasureNpcAi();
         lock (_aiLock)
         {
             foreach (var npcai in _npcAis.ToList())

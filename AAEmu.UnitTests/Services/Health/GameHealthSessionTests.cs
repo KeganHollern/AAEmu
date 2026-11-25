@@ -87,6 +87,39 @@ public class GameHealthSessionTests
         await Assert.That(contentType).IsEqualTo("Content-Type: text/plain; version=0.0.4; charset=utf-8");
     }
 
+    [Test]
+    public async Task Metrics_ExportsWorkForEachFixedOperationAndTheLatestWorldCounts()
+    {
+        var metrics = new GameSecurityMetrics();
+        var health = new GameHealthState();
+        using var server = new GameHealthServer(IPAddress.Loopback, 10000, health, metrics);
+        using var session = new GameHealthSessionFake(server, health, metrics);
+        const string count = "aaemu_game_work_duration_seconds_count";
+
+        session.Receive(new HttpRequest("GET", "/metrics", "HTTP/1.1"));
+        foreach (var operation in new[] { "active_region", "npc_ai", "physics", "database_save" })
+            await Assert.That(session.CapturedResponse.Body).Contains($"{count}{{operation=\"{operation}\"}} 0");
+        await Assert.That(session.CapturedResponse.Body).Contains("aaemu_game_database_save_failures_total 0");
+
+        metrics.Work.RecordActiveRegion(TimeSpan.FromMilliseconds(20), 5, 13);
+        metrics.Work.RecordActiveRegion(TimeSpan.FromMilliseconds(5), 2, 7);
+        using (metrics.Work.MeasureNpcAi()) { }
+        using (metrics.Work.MeasurePhysics()) { }
+        metrics.Work.RecordDatabaseSave(TimeSpan.FromMilliseconds(80), true);
+        metrics.Work.RecordDatabaseSave(TimeSpan.FromMilliseconds(40), false);
+
+        session.Receive(new HttpRequest("GET", "/metrics", "HTTP/1.1"));
+        var body = session.CapturedResponse.Body;
+        await Assert.That(body).Contains($"{count}{{operation=\"active_region\"}} 2");
+        await Assert.That(body).Contains($"{count}{{operation=\"npc_ai\"}} 1");
+        await Assert.That(body).Contains($"{count}{{operation=\"physics\"}} 1");
+        await Assert.That(body).Contains($"{count}{{operation=\"database_save\"}} 2");
+        await Assert.That(body).Contains("aaemu_game_work_duration_seconds_sum{operation=\"active_region\"} 0.025");
+        await Assert.That(body).Contains("aaemu_game_players 2");
+        await Assert.That(body).Contains("aaemu_game_active_spawners 7");
+        await Assert.That(body).Contains("aaemu_game_database_save_failures_total 1");
+    }
+
     private sealed class GameHealthSessionFake(HttpServer server, GameHealthState healthState, GameSecurityMetrics metrics = null)
         : GameHealthSession(server, healthState, metrics)
     {
