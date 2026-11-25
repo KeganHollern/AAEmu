@@ -44,7 +44,13 @@ public class BattlefieldGameData : Singleton<BattlefieldGameData>, IGameDataLoad
 
         using (var command = connection.CreateCommand())
         {
-            command.CommandText = "SELECT * FROM game_rule_sets";
+            // Event 200 awards the enemy player's final hitter, for either corps.
+            command.CommandText = """
+                SELECT rules.*, score.event_score AS enemy_player_kill_score
+                FROM game_rule_sets rules
+                LEFT JOIN game_score_rules score ON score.rule_set_id = rules.id
+                    AND score.rule_set_corps = -1 AND score.event_id = 200 AND score.event_value = 0
+                """;
             command.Prepare();
             using (var sqliteReader = command.ExecuteReader())
             using (var reader = new SQLiteWrapperReader(sqliteReader))
@@ -61,6 +67,7 @@ public class BattlefieldGameData : Singleton<BattlefieldGameData>, IGameDataLoad
                         TimeOpening = reader.GetInt32("time_opening"),
                         TimeEnding = reader.GetInt32("time_ending"),
                         TimePlaying = reader.GetInt32("time_playing"),
+                        EnemyPlayerKillScore = reader.GetInt32("enemy_player_kill_score", 0),
                         VictoryScore = reader.GetInt32("victory_score")
                     };
 

@@ -32,8 +32,20 @@ public partial class InstantGame
 
     private readonly CancellationTokenSource _endGameTokenSource;
 
-    public InstantGame(Battlefield battlefield)
+    private readonly TimeProvider _clock;
+    private long? _startedAt;
+    private bool _finished;
+
+    public InstantGame(Battlefield battlefield) : this(battlefield,
+        WorldManager.Instance.CreateWorldInstance(WorldManager.Instance.GetWorldTemplateByZoneKey(battlefield.ZoneKey), 0),
+        TimeProvider.System)
     {
+    }
+
+    internal InstantGame(Battlefield battlefield, WorldInstance world, TimeProvider clock)
+    {
+        _clock = clock;
+        _world = world;
         _battlefield = battlefield;
         _players = [];
 
@@ -49,8 +61,6 @@ public partial class InstantGame
 
         _characterCorps = new Dictionary<Character, InstantCorps>();
 
-        var worldTemplate = WorldManager.Instance.GetWorldTemplateByZoneKey(_battlefield.ZoneKey);
-        _world = WorldManager.Instance.CreateWorldInstance(worldTemplate, 0);
         _zoneInstanceId = new ZoneInstanceId(_battlefield.ZoneKey, _world.Id);
 
         _endGameTokenSource = new CancellationTokenSource();
@@ -193,29 +203,41 @@ public partial class InstantGame
         }
     }
 
+    private TimeSpan PlayingTime => TimeSpan.FromMinutes(_battlefield.RuleSet.TimePlaying);
+
     public void Start()
     {
-        var now = (uint)(Environment.TickCount & int.MaxValue);
-        var start = now + 20000;
-        BroadcastPacket(new SCInstantGameStartPacket(_zoneInstanceId, start, now));
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (_startedAt.HasValue || _finished)
+                return;
 
-        // Reset players on Start
-        Task.Run(async () =>
-        {
-            await Task.Delay(3000);
-            ResetPlayers();
-        });
-        Task.Run(async () =>
-        {
-            await Task.Delay(_battlefield.RuleSet.TimePlaying * 60 * 1000, _endGameTokenSource.Token);
-            await EndGame();
-        }, _endGameTokenSource.Token);
+            _startedAt = _clock.GetTimestamp();
+            var now = (uint)(Environment.TickCount & int.MaxValue);
+            BroadcastPacket(new SCInstantGameStartPacket(_zoneInstanceId, now + 20000, now));
+            _ = ResetPlayersAfterStart();
+            _ = EndOnTimeout();
+        }
+    }
+
+    private async Task ResetPlayersAfterStart()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(3), _clock);
+        ResetPlayers();
+    }
+
+    private async Task EndOnTimeout()
+    {
+        await Task.Delay(PlayingTime, _clock, _endGameTokenSource.Token);
+        await EndGame();
     }
 
     internal void ResetPlayers()
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            if (_finished)
+                return;
             foreach (var (character, _) in _characterCorps.ToArray())
             {
                 if (character == null || character.CurrentInstantGame != this)
@@ -242,18 +264,29 @@ public partial class InstantGame
         }
     }
 
-    public async Task EndGame()
-    {
-        SendResult();
-        await Task.Delay(_battlefield.RuleSet.TimeEnding * 60 * 1000);
-        DestroyInstantGame();
-    }
+    public Task EndGame() => FinishGame(BattlefieldEndingReason.Timeout);
 
-    private void SendResult()
+    private async Task FinishGame(BattlefieldEndingReason reason)
     {
-        BroadcastPacket(new SCInstantGameEndPacket(_zoneInstanceId, BattlefieldEndingReason.AchievementScore,
-            _corps1Result,
-            _corps2Result));
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (_finished)
+                return;
+            _finished = true;
+            _endGameTokenSource.Cancel();
+
+            (_corps1Result.State, _corps2Result.State) = _corps1Result.Score.CompareTo(_corps2Result.Score) switch
+            {
+                > 0 => (VictoryState.Win, VictoryState.Lose),
+                < 0 => (VictoryState.Lose, VictoryState.Win),
+                _ => (VictoryState.Draw, VictoryState.Draw)
+            };
+            BroadcastPacket(new SCInstantGameEndPacket(_zoneInstanceId, reason, _corps1Result, _corps2Result));
+        }
+
+        await Task.Delay(TimeSpan.FromMinutes(_battlefield.RuleSet.TimeEnding), _clock);
+        lock (SaveManager.PersistenceSyncRoot)
+            DestroyInstantGame();
     }
 
     private void DestroyInstantGame()

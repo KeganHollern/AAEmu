@@ -11,18 +11,13 @@ public partial class InstantGame
 {
     private void AddScore(InstantCorps corps, InstantGameTeamMember scorer, int score)
     {
-        var result = corps == InstantCorps.Corps1 ? _corps1Result : _corps2Result;
-
         scorer.Score += score;
+        BroadcastPacket(new SCInstantGameAddPointPacket(_zoneInstanceId, corps, score,
+            _corps1Result.Score, _corps2Result.Score, scorer.Character.Name));
 
-        BroadcastPacket(new SCInstantGameAddPointPacket(_zoneInstanceId, InstantCorps.Corps1, score, result.Score, 0, scorer.Character.Name));
-
-        if (result.Score >= _battlefield.RuleSet.VictoryScore)
-        {
-            result.State = VictoryState.Win;
-            _endGameTokenSource.Cancel();
-            EndGame().Start();
-        }
+        var target = _battlefield.RuleSet.VictoryScore;
+        if (target > 0 && scorer.Corps.Score >= target)
+            _ = FinishGame(BattlefieldEndingReason.Score);
     }
 
     public void OnKill(object sender, OnKillArgs args)
@@ -32,10 +27,17 @@ public partial class InstantGame
             if (args.Killer is not Character killer || args.Victim is not Character victim)
                 return;
 
-            // _log.Debug("{0} killed {1}", args.Killer.Name, args.Victim.Name, character.Name);
+            if (_finished || _startedAt is not { } start)
+                return;
+            if (_clock.GetElapsedTime(start) >= PlayingTime)
+            {
+                _ = EndGame();
+                return;
+            }
 
             if (killer.CurrentInstantGame != this || victim.CurrentInstantGame != this ||
-                !_members.TryGetValue(killer, out var memberKiller) || !_members.TryGetValue(victim, out var memberVictim))
+                !_members.TryGetValue(killer, out var memberKiller) || !_members.TryGetValue(victim, out var memberVictim) ||
+                memberKiller.Corps == memberVictim.Corps)
                 return;
             memberKiller.Kills++;
             memberKiller.Killstreak++;
@@ -45,16 +47,19 @@ public partial class InstantGame
 
             BroadcastPacket(new SCInstantGameKillPacket(_zoneInstanceId, killer, victim, _characterCorps[killer], _characterCorps[victim], (sbyte)memberKiller.Killstreak, memberKiller.Corps.TotalKills, memberVictim.Corps.TotalKills));
             killer.SendPacket(new SCInstantGameKillstreakPacket(_zoneInstanceId, (sbyte)memberKiller.Killstreak, 0, true));
-            // TODO: Get score from events
-            AddScore(_characterCorps[killer], memberKiller, 30);
+            if (_battlefield.RuleSet.EnemyPlayerKillScore != 0)
+                AddScore(_characterCorps[killer], memberKiller, _battlefield.RuleSet.EnemyPlayerKillScore);
 
-            var corps = _characterCorps[victim];
-            Task.Run(async () =>
-            {
-                await Task.Delay(6000);
-                ResetAfterKill(killer, victim, memberKiller, memberVictim, corps);
-            });
+            if (!_finished)
+                _ = ResetAfterKillDelay(killer, victim, memberKiller, memberVictim, _characterCorps[victim]);
         }
+    }
+
+    private async Task ResetAfterKillDelay(Character killer, Character victim, InstantGameTeamMember expectedKiller,
+        InstantGameTeamMember expectedVictim, InstantCorps victimCorps)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(6), _clock);
+        ResetAfterKill(killer, victim, expectedKiller, expectedVictim, victimCorps);
     }
 
     private bool CanResetMember(Character character, InstantGameTeamMember expected)
@@ -72,6 +77,9 @@ public partial class InstantGame
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
+            if (_finished)
+                return;
+
             if (CanResetMember(victim, expectedVictim))
             {
                 var spawn = victimCorps == InstantCorps.Corps1 ? _battlefield.Spawns.Corps1Spawn : _battlefield.Spawns.Corps2Spawn;
