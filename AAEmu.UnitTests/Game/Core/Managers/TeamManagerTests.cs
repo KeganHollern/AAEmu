@@ -17,7 +17,7 @@ using AchievementDataBuilder = AAEmu.UnitTests.Game.Models.Game.Char.CharacterAc
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
-public class TeamManagerTests
+public partial class TeamManagerTests
 {
     private static readonly FieldInfo s_achievementsField =
         typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!;
