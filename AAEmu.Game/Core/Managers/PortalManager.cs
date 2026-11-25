@@ -498,10 +498,7 @@ public class PortalManager(ILocalizationManager localizationManager, IWorldManag
 
     public static void DeletePortal(Character owner, byte type, uint id)
     {
-        var isPrivate = type != 1;
-        var portalInfo = owner.Portals.GetPortalInfo(id);
-        if (portalInfo == null) return;
-        owner.Portals.RemoveFromBookPortal(portalInfo, isPrivate);
+        owner.Portals.RemoveFromBook(id, type != 1);
     }
 
     /// <summary>

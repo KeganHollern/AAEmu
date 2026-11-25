@@ -120,6 +120,21 @@ public sealed class GameMySqlFixture : IAsyncLifetime
         await command.ExecuteNonQueryAsync();
         await command.ExecuteNonQueryAsync();
 
+        // A visit saved before individual deletions existed keeps every destination.
+        command.CommandText = "ALTER TABLE portal_visited_district DROP COLUMN omitted_portal_ids";
+        await command.ExecuteNonQueryAsync();
+        command.CommandText = "INSERT INTO portal_visited_district (id,subzone,owner) VALUES (100,358,4200961)";
+        await command.ExecuteNonQueryAsync();
+        var portalUpdate = Path.Combine(AppContext.BaseDirectory, "SQL", "updates", "2026-11-25_aaemu_game_portal_destinations.sql");
+        command.CommandText = await File.ReadAllTextAsync(portalUpdate);
+        await command.ExecuteNonQueryAsync();
+        await command.ExecuteNonQueryAsync();
+        command.CommandText = "SELECT COUNT(*) FROM portal_visited_district WHERE owner=4200961 AND subzone=358 AND omitted_portal_ids IS NULL";
+        if (Convert.ToInt32(await command.ExecuteScalarAsync()) != 1)
+            throw new InvalidOperationException("The portal update changed an earlier visit.");
+        command.CommandText = "DELETE FROM portal_visited_district WHERE owner=4200961";
+        await command.ExecuteNonQueryAsync();
+
         // Exercise the mail update from a pre-update schema before any test creates assets.
         command.CommandText = "DROP TABLE `mail_archive_items`; DROP TABLE `mail_lifecycle`";
         await command.ExecuteNonQueryAsync();
