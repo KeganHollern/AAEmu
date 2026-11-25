@@ -352,7 +352,7 @@ public static class ShipTuningDebug
         if (!TryConsumeDebugChatThrottle(_lastSpeedMsgAtMs, ship.Id, intervalMs))
             return;
 
-        var isGrounded = (ship.CachedFloorLevel > ship.CachedWaterSurface) || ship.GroundContactLatched;
+        var isGrounded = ship.IsGrounded;
         var escapeThrottleSign = ship.GroundedByStern ? 1 : -1;
         var isEscapeInputOnGround = isGrounded && ship.ThrottleRequest != 0 && Math.Sign(ship.ThrottleRequest) == escapeThrottleSign;
 

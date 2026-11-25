@@ -119,13 +119,10 @@ public class Slave : Unit
     public ShipHarpoonRopeState HarpoonRope;
     public Vector3 CachedWaterFlow { get; set; }
     public float CachedWaterSurface { get; set; }
-    private float? _cachedFloorLevel;
-    public float CachedFloorLevel
-    {
-        get => _cachedFloorLevel.GetValueOrDefault();
-        set => _cachedFloorLevel = value;
-    }
-    internal float? CachedWaterDepth => CachedWaterSurface - _cachedFloorLevel;
+    // A missing terrain sample gives no depth or ground contact. A measured zero is a valid seabed.
+    public float? CachedFloorLevel { get; set; }
+    internal bool IsGrounded => GroundContactLatched || CachedFloorLevel > CachedWaterSurface;
+    internal float? CachedWaterDepth => CachedWaterSurface - CachedFloorLevel;
     internal Vector3? MeasuredWaterAndLandPosition { get; set; }
 
     public Slave()
@@ -1013,7 +1010,7 @@ public class Slave : Unit
         // Get Floor and WaterSurface at given location
         var position = Transform.World.Position;
         var measured = ParentWorld.TryGetHeight(position.X, position.Y, out var floor);
-        _cachedFloorLevel = measured ? floor : null;
+        CachedFloorLevel = measured ? floor : null;
         MeasuredWaterAndLandPosition = measured ? position : null;
         CachedWaterSurface = ParentWorld.Water.GetWaterSurface(position, out var cachedWaterFlow);
         CachedWaterFlow = cachedWaterFlow;
