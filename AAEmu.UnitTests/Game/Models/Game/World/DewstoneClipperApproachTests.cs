@@ -17,6 +17,7 @@ using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Physics;
+using Jitter2.LinearMath;
 
 namespace AAEmu.UnitTests.Game.Models.Game.World;
 
@@ -37,6 +38,57 @@ public sealed class DewstoneClipperApproachTests
     {
         foreach (var (field, value) in _previous)
             field.SetValue(null, value);
+    }
+
+    [Test]
+    [Arguments(0, 0f, true)]
+    [Arguments(0, 0.25f, true)]
+    [Arguments(0, -1f, true)]
+    [Arguments(10, 10.25f, true)]
+    [Arguments(10, 14f, false)]
+    [Arguments(5, 4f, true)]
+    public async Task ClipperUsesMeasuredSeabedForShallowHelmControls(int bed, float water, bool capped)
+    {
+        SetUpModels();
+        var template = WorldTemplateTests.CreateWorldTemplate(2, 1);
+        WorldTemplateTests.SetLoadedCell(template, 0, 0, WorldTemplateTests.CreateHeightMap((ushort)bed));
+        var ship = new Clipper
+        {
+            ModelId = 128,
+            Template = new SlaveTemplate { Id = 14, ModelId = 128, SlaveKind = (SlaveKind)3 }
+        };
+        var world = new WorldInstance(template, 0, true, ship.Transform.InstanceId)
+        {
+            Water = new WaterBodies { OceanLevel = water },
+            Regions = new Region[2 * WorldManager.SECTORS_PER_CELL, WorldManager.SECTORS_PER_CELL]
+        };
+        ship.ParentWorld = world;
+        using var physics = new Jitter2.World();
+        var controller = new ShipController(physics, ModelManager.Instance.GetShipModel(128));
+        controller.Build(new JVector(12, water, 12), JQuaternion.Identity);
+        ship.ShipController = controller;
+        ship.RigidBody = controller.Hull;
+
+        async Task CheckHelmAt(float x, bool expectGroundControls)
+        {
+            ship.Transform.Local.SetPosition(x, 12, water);
+            ship.RigidBody.Position = new JVector(x, water, 12);
+            ship.CreateWaterAndLandSurfaceCache();
+            ship.Throttle = ship.ThrottleRequest = 100;
+            ship.Speed = 2f;
+            controller.ApplyForceAndTorque(ship, TimeSpan.FromMilliseconds(40));
+            await Assert.That(ship.GroundedLastTick).IsEqualTo(expectGroundControls);
+            await Assert.That(ship.Throttle < 100).IsEqualTo(expectGroundControls);
+        }
+
+        const float missingCellX = WorldManager.CELL_SIZE + 12f;
+        await CheckHelmAt(missingCellX, false);
+        await CheckHelmAt(12, capped);
+        await CheckHelmAt(missingCellX, false);
+        ship.GroundContactLatched = true;
+        await CheckHelmAt(missingCellX, true);
+        ship.GroundContactLatched = false;
+        await CheckHelmAt(12, capped);
     }
 
     [Test]

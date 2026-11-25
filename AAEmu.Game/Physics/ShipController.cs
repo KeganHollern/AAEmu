@@ -360,10 +360,10 @@ public class ShipController(World world, ShipModelV1 shipModel)
         //
         // Use the latched ground contact from PhysicsManager to avoid shoreline jitter causing
         // abrupt control/velocity changes ("jerks") when transitioning water<->land.
-        var isGrounded = (slave.CachedFloorLevel > slave.CachedWaterSurface) || slave.GroundContactLatched;
+        var waterDepth = slave.CachedWaterDepth;
+        var isGrounded = waterDepth < 0f || slave.GroundContactLatched;
         var shallowDepthForCaps = ShipMotionDefaults.ShallowWaterDepthForGroundSpeedCaps;
         shallowDepthForCaps = MathF.Max(0f, shallowDepthForCaps);
-        var waterDepth = slave.CachedWaterSurface - slave.CachedFloorLevel; // meters
         var isShallowForCaps = waterDepth >= 0f && waterDepth <= shallowDepthForCaps;
         var isGroundedForSpeedCaps = isGrounded || isShallowForCaps;
 

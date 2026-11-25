@@ -119,7 +119,13 @@ public class Slave : Unit
     public ShipHarpoonRopeState HarpoonRope;
     public Vector3 CachedWaterFlow { get; set; }
     public float CachedWaterSurface { get; set; }
-    public float CachedFloorLevel { get; set; }
+    private float? _cachedFloorLevel;
+    public float CachedFloorLevel
+    {
+        get => _cachedFloorLevel.GetValueOrDefault();
+        set => _cachedFloorLevel = value;
+    }
+    internal float? CachedWaterDepth => CachedWaterSurface - _cachedFloorLevel;
     internal Vector3? MeasuredWaterAndLandPosition { get; set; }
 
     public Slave()
@@ -1007,7 +1013,7 @@ public class Slave : Unit
         // Get Floor and WaterSurface at given location
         var position = Transform.World.Position;
         var measured = ParentWorld.TryGetHeight(position.X, position.Y, out var floor);
-        CachedFloorLevel = measured ? floor : 0f;
+        _cachedFloorLevel = measured ? floor : null;
         MeasuredWaterAndLandPosition = measured ? position : null;
         CachedWaterSurface = ParentWorld.Water.GetWaterSurface(position, out var cachedWaterFlow);
         CachedWaterFlow = cachedWaterFlow;
