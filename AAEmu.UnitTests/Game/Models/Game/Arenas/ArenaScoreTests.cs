@@ -39,6 +39,8 @@ public sealed class ArenaScoreTests
     private WorldConfig _previousWorld;
     private bool _previousDebugInfo;
     private InstantGame _game;
+    private readonly List<GladiatorRankResult> _rankResults = [];
+    private Task _rankSaved = Task.CompletedTask;
 
     [Before(Test)]
     public void SetUp()
@@ -57,8 +59,9 @@ public sealed class ArenaScoreTests
             CREATE TABLE battle_fields(id INTEGER, zone_key INTEGER);
             INSERT INTO battle_fields VALUES(7,198),(11,302);
             CREATE TABLE game_rule_sets(id INTEGER, battle_field_id INTEGER, corps_size INTEGER, corps1_id INTEGER,
-                corps2_id INTEGER, time_opening INTEGER, time_ending INTEGER, time_playing INTEGER, victory_score INTEGER, level_min INTEGER, time_resurrection_delay INTEGER);
-            INSERT INTO game_rule_sets VALUES(22,7,5,159,160,4,1,15,0,40,15),(28,11,1,159,160,2,1,10,60,50,5);
+                corps2_id INTEGER, time_opening INTEGER, time_ending INTEGER, time_playing INTEGER, victory_score INTEGER, level_min INTEGER, time_resurrection_delay INTEGER,
+                rank_win_point INTEGER, rank_lose_point INTEGER, rank_draw_point INTEGER);
+            INSERT INTO game_rule_sets VALUES(22,7,5,159,160,4,1,15,0,40,15,0,0,0),(28,11,1,159,160,2,1,10,60,50,5,4,1,0);
             CREATE TABLE game_score_rules(id INTEGER, rule_set_id INTEGER, rule_set_corps INTEGER,
                 event_id INTEGER, event_value INTEGER, event_score INTEGER);
             INSERT INTO game_score_rules VALUES(68,22,-1,200,0,3),(93,28,-1,200,0,30),
@@ -175,6 +178,9 @@ public sealed class ArenaScoreTests
         await Assert.That(departed.CurrentInstantGame).IsNull();
         await Assert.That(departed.Events.OnKill.GetInvocationList().Any(handler => handler.Target == _game)).IsFalse();
         var teardown = _game.EndGame();
+        var rank = _rankResults.Single();
+        await Assert.That((rank.Corps1CharacterId, rank.Corps1RankPoints, rank.Corps2CharacterId, rank.Corps2RankPoints))
+            .IsEqualTo((other.Id, 1, departed.Id, 4));
         var result = Packets(SCOffsets.SCInstantGameEndPacket).Single();
         result.ReadByte();
         await CheckTeam(result, 1, 159, 0, 0, 1);
@@ -208,6 +214,14 @@ public sealed class ArenaScoreTests
         _clock.Advance(TimeSpan.FromMinutes(id == 7 ? 15 : 10) - TimeSpan.FromTicks(1));
         await Assert.That(Packets(SCOffsets.SCInstantGameEndPacket).Length).IsEqualTo(0);
         _clock.Advance(TimeSpan.FromTicks(1));
+        if (id == 7)
+            await Assert.That(_rankResults).IsEmpty();
+        else
+        {
+            var rank = _rankResults.Single();
+            await Assert.That((rank.Corps1Score, rank.Corps2Score)).IsEqualTo((redScore, blueScore));
+            await Assert.That((rank.Corps1RankPoints, rank.Corps2RankPoints)).IsEqualTo(blueScore > redScore ? (1, 4) : (0, 0));
+        }
         var end = Packets(SCOffsets.SCInstantGameEndPacket).Single();
         await Assert.That(end.ReadByte()).IsEqualTo((byte)1);
         await CheckTeam(end, redScore > blueScore ? 2 : redScore < blueScore ? 1 : 3, 159, redScore, redKills, blueKills);
@@ -284,6 +298,8 @@ public sealed class ArenaScoreTests
         var duel = _fields.GetBattlefield(11).RuleSet;
         await Assert.That(camp.ResurrectionDelay).IsEqualTo(TimeSpan.FromSeconds(15));
         await Assert.That(duel.ResurrectionDelay).IsEqualTo(TimeSpan.FromSeconds(5));
+        await Assert.That((camp.RankWinPoints, camp.RankLossPoints, camp.RankDrawPoints)).IsEqualTo((0, 0, 0));
+        await Assert.That((duel.RankWinPoints, duel.RankLossPoints, duel.RankDrawPoints)).IsEqualTo((4, 1, 0));
         await Assert.That((camp.Id, camp.EnemyPlayerKillScore, camp.VictoryScore, camp.TimePlaying)).IsEqualTo((22u, 3, 0, 15));
         await Assert.That((duel.Id, duel.EnemyPlayerKillScore, duel.VictoryScore, duel.TimePlaying)).IsEqualTo((28u, 30, 60, 10));
     }
@@ -321,10 +337,82 @@ public sealed class ArenaScoreTests
         await Assert.That(Packets(SCOffsets.SCInstantGameEndPacket).Length).IsEqualTo(0);
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task GladiatorTarget_HoldsBothFinalNoticesUntilTheSameResultCommits(bool corps2Wins)
+    {
+        var database = new TaskCompletionSource();
+        _rankSaved = database.Task;
+        Start(11);
+        var (winner, loser) = corps2Wins ? (_blue[0], _red[0]) : (_red[0], _blue[0]);
+        Kill(winner, loser);
+        Kill(winner, loser);
+        await Task.WhenAll(_game.EndGame(), Task.Run(_game.EndGame));
+        Kill(winner, loser);
+        var rank = _rankResults.Single();
+        await Assert.That((rank.Corps1RankPoints, rank.Corps2RankPoints)).IsEqualTo(corps2Wins ? (1, 4) : (4, 1));
+        await Assert.That(Packets(SCOffsets.SCInstantGameAddPointPacket).Length).IsEqualTo(1);
+        await Assert.That(Packets(SCOffsets.SCInstantGameEndPacket)).IsEmpty();
+        _game.CancelAdmission(_blue[0]);
+        database.SetResult();
+        await Assert.That(Packets(SCOffsets.SCInstantGameAddPointPacket).Length).IsEqualTo(2);
+        var end = Packets(SCOffsets.SCInstantGameEndPacket).Single();
+        await Assert.That(end.ReadByte()).IsEqualTo((byte)BattlefieldEndingReason.Score);
+        await CheckTeam(end, corps2Wins ? 1 : 2, 159, corps2Wins ? 0 : 60, corps2Wins ? 0 : 2, corps2Wins ? 2 : 0);
+        await CheckTeam(end, corps2Wins ? 2 : 1, 160, corps2Wins ? 60 : 0, corps2Wins ? 2 : 0, corps2Wins ? 0 : 2);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task GladiatorDepartureAtCombatOpening_UsesTheActualRoster(bool cancelAdmission, bool atStart)
+    {
+        Start(11, false);
+        _clock.Advance(TimeSpan.FromSeconds(20) - (atStart ? TimeSpan.Zero : TimeSpan.FromTicks(1)));
+        if (cancelAdmission)
+            _game.CancelAdmission(_blue[0]);
+        else
+            _game.LeaveInstantGame(_blue[0]);
+        _clock.Advance(TimeSpan.FromMinutes(11));
+        await Assert.That(_game.IsFinished).IsTrue();
+        await Assert.That(_rankResults.Count).IsEqualTo(atStart ? 1 : 0);
+    }
+
+    [Test]
+    public async Task BothPlayersLeaveBeforeTimeout_SavesNoRankResult()
+    {
+        Start(11);
+        Kill(_blue[0], _red[0]);
+        _game.LeaveInstantGame(_red[0]);
+        _game.LeaveInstantGame(_blue[0]);
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        await Assert.That(_game.IsFinished).IsTrue();
+        await Assert.That(_rankResults).IsEmpty();
+    }
+
+    [Test]
+    public async Task CountdownEndsEarly_SavesNoRankResult()
+    {
+        Start(11, false);
+        var end = _game.EndGame();
+        await Assert.That(_rankResults).IsEmpty();
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await end;
+    }
+
     private void Start(uint id, bool finishCountdown = true)
     {
         var field = _fields.GetBattlefield(id);
-        _game = new InstantGame(field, _world, _clock);
+        _game = new InstantGame(field, _world, _clock)
+        {
+            SaveRankResult = result =>
+            {
+                _rankResults.Add(result);
+                return _rankSaved;
+            }
+        };
         for (var i = 0; i < field.RuleSet.CorpsSize; i++)
         {
             _red.Add(Join((uint)i + 1, InstantCorps.Corps1, (FactionsEnum)159));

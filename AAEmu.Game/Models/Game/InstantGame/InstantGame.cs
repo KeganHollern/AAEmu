@@ -37,6 +37,8 @@ public partial class InstantGame
     private long? _announcedAt;
     private bool _finished;
     private bool _entryStarted;
+    private bool _incompleteGladiatorStart;
+    internal Func<GladiatorRankResult, Task> SaveRankResult { get; init; } = result => InstantGameManager.Instance.RecordRankResult(result);
 
     public InstantGame(Battlefield battlefield) : this(battlefield,
         WorldManager.Instance.CreateWorldInstance(WorldManager.Instance.GetWorldTemplateByZoneKey(battlefield.ZoneKey), 0),
@@ -99,6 +101,9 @@ public partial class InstantGame
             if (!_players.Contains(character))
                 return false;
 
+            if (_battlefield.Id == (uint)InstantGameType.Gladiator && _members.ContainsKey(character) &&
+                _announcedAt is { } start && _clock.GetElapsedTime(start) < StartCountdown)
+                _incompleteGladiatorStart = true;
             _players.Remove(character);
 
             foreach (var members in _corps.Values)
@@ -160,7 +165,8 @@ public partial class InstantGame
             character.CurrentInstantGame = null;
         if (_members.Remove(character, out var member))
         {
-            member.Corps?.Members.Remove(member);
+            if (!_finished)
+                member.Corps?.Members.Remove(member);
             character.SetFaction(character.OriginFaction.Id);
         }
         character.Events.OnKill -= OnKill;
@@ -335,8 +341,9 @@ public partial class InstantGame
 
     public Task EndGame() => FinishGame(BattlefieldEndingReason.Timeout);
 
-    private async Task FinishGame(BattlefieldEndingReason reason)
+    private async Task FinishGame(BattlefieldEndingReason reason, GamePacket finalPoints = null)
     {
+        Task saved = Task.CompletedTask;
         lock (SaveManager.PersistenceSyncRoot)
         {
             if (_finished)
@@ -351,12 +358,48 @@ public partial class InstantGame
                 < 0 => (VictoryState.Lose, VictoryState.Win),
                 _ => (VictoryState.Draw, VictoryState.Draw)
             };
+            // Register this outcome before a disconnect or the final Game checkpoint can run.
+            if (GetCompletedGladiatorResult() is { } rank)
+                saved = SaveRankResult(rank);
+        }
+
+        await saved;
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (finalPoints != null)
+                BroadcastPacket(finalPoints);
             BroadcastPacket(new SCInstantGameEndPacket(_zoneInstanceId, reason, _corps1Result, _corps2Result));
         }
 
         await Task.Delay(TimeSpan.FromMinutes(_battlefield.RuleSet.TimeEnding), _clock);
         lock (SaveManager.PersistenceSyncRoot)
             DestroyInstantGame();
+    }
+
+    private GladiatorRankResult GetCompletedGladiatorResult()
+    {
+        if (_battlefield.Id != (uint)InstantGameType.Gladiator || _incompleteGladiatorStart ||
+            _announcedAt is not { } start ||
+            _clock.GetElapsedTime(start) < StartCountdown || _members.Count == 0 ||
+            _corps1Result.Members.Count != 1 || _corps2Result.Members.Count != 1)
+            return null;
+
+        var red = _corps1Result.Members[0];
+        var blue = _corps2Result.Members[0];
+        if (red.Character.Id == blue.Character.Id)
+            return null;
+
+        var rule = _battlefield.RuleSet;
+        var (redPoints, bluePoints) = _corps1Result.State switch
+        {
+            VictoryState.Win => (rule.RankWinPoints, rule.RankLossPoints),
+            VictoryState.Lose => (rule.RankLossPoints, rule.RankWinPoints),
+            VictoryState.Draw => (rule.RankDrawPoints, rule.RankDrawPoints),
+            _ => throw new InvalidOperationException("Gladiator has no final team result.")
+        };
+        var now = _clock.GetUtcNow().UtcDateTime;
+        return new GladiatorRankResult(Guid.NewGuid(), now.AddTicks(-(now.Ticks % 10)),
+            red.Character.Id, red.Score, redPoints, blue.Character.Id, blue.Score, bluePoints);
     }
 
     internal bool TryAbandonBeforeEntry()

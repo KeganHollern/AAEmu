@@ -143,6 +143,7 @@ public class SaveManager(
         {
             saved = CommitPersistence([], context =>
             {
+                InstantGameManager.Instance.SavePendingRankResults(context);
                 housingManager.Save(context);
                 crimeManager.Save(context.Connection, context.Transaction);
                 shipyardManager?.Save(context);
