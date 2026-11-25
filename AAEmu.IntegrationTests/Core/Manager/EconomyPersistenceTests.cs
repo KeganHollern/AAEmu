@@ -23,6 +23,7 @@ using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Services.Security;
+using Microsoft.Extensions.Hosting;
 
 using Moq;
 using Xunit;
@@ -621,7 +622,7 @@ public sealed class EconomyPersistenceTests
         public ConcurrentBag<long> AuctionDeletes => (ConcurrentBag<long>)typeof(AuctionManager)
             .GetProperty("DeletedAuctionItemIds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Auction)!;
 
-        public SaveGraph(ITaskManager scheduler = null, IZoneManager zones = null)
+        public SaveGraph(ITaskManager scheduler = null, IZoneManager zones = null, IHostApplicationLifetime lifetime = null)
         {
             var world = new Mock<IWorldManager>();
             world.Setup(manager => manager.GetAllCharacters()).Returns([]);
@@ -642,7 +643,7 @@ public sealed class EconomyPersistenceTests
                 Mock.Of<ILocalizationManager>(), Mock.Of<ITaskManager>(), Mail,
                 new Lazy<ISaveManager>(() => Save));
             Save = new SaveManager(scheduler ?? Mock.Of<ITaskManager>(), Mock.Of<IHousingManager>(), Mail, items, Auction,
-                Mock.Of<ICrimeManager>(), world.Object, zones ?? Mock.Of<IZoneManager>());
+                Mock.Of<ICrimeManager>(), world.Object, zones ?? Mock.Of<IZoneManager>(), hostLifetime: lifetime);
         }
 
         public Item AddItem(uint offset)

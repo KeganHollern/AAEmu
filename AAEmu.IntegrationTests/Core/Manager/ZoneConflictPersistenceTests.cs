@@ -206,7 +206,7 @@ public sealed class ZoneConflictPersistenceTests
         world.Setup(manager => manager.GetAllCharacters()).Returns([]);
         var cancelled = new ShutdownTask(DateTime.UtcNow.AddSeconds(-1), world.Object, lifetime);
         Assert.True(scheduler.Schedule(cancelled, TimeSpan.FromSeconds(1)));
-        Assert.True(cancelled.CancelCountdown());
+        Assert.True(cancelled.CancelCountdown(scheduler));
         cancelled.Execute(); // A callback that the scheduler already collected must respect cancellation.
         Assert.False(lifetime.ApplicationStopping.IsCancellationRequested);
 

@@ -1,12 +1,21 @@
 ﻿using System.Drawing;
-using AAEmu.Commons.Utils;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NLog;
 
 namespace AAEmu.Game.Models.Tasks;
+
+public enum ShutdownScheduleResult
+{
+    Scheduled,
+    Rescheduled,
+    Cancelled,
+    NoCountdown,
+    SaveFailed,
+    Stopping
+}
 
 public class ShutdownTask : Task
 {
@@ -41,11 +50,6 @@ public class ShutdownTask : Task
         10
     ];
 
-    public ShutdownTask(DateTime shutdownTime) : this(shutdownTime, WorldManager.Instance,
-        SingletonContainer.ServiceProvider.GetRequiredService<IHostApplicationLifetime>())
-    {
-    }
-
     internal ShutdownTask(DateTime shutdownTime, IWorldManager world, IHostApplicationLifetime lifetime)
     {
         _shutdownTime = shutdownTime;
@@ -67,24 +71,22 @@ public class ShutdownTask : Task
         return DateTime.MaxValue;
     }
 
-    public bool ChangeShutdownTime(DateTime shutdownTime)
+    internal bool ChangeShutdownTime(DateTime shutdownTime)
     {
         lock (_state)
         {
             if (Cancelled || _alreadyShuttingDown)
                 return false;
             _shutdownTime = shutdownTime;
-            var remaining = (int)Math.Ceiling((_shutdownTime - DateTime.UtcNow).TotalMinutes);
-            _world.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Red, 10000, $"Server shutdown has been rescheduled to {remaining} minutes from now!"));
             _nextTriggerTime = CalculateLargestNextTrigger();
             return true;
         }
     }
 
-    public bool CancelCountdown()
+    internal bool CancelCountdown(ITaskManager scheduler)
     {
         lock (_state)
-            return !_alreadyShuttingDown && Cancel();
+            return !_alreadyShuttingDown && scheduler.Cancel(this);
     }
 
     public override void Execute()
