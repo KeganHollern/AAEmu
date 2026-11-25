@@ -122,10 +122,30 @@ public partial class InstantGame
         if (!RemovePlayer(character))
             return;
 
-        // Keep the earned result in the team history when the live session leaves.
+        RemoveDepartedMember(character);
+        RefillOrReleaseBeforeStart();
+    }
+
+    private void RemoveDepartedMember(Character character)
+    {
         character.Events.OnKill -= OnKill;
-        if (_members.Remove(character))
+        if (_members.Remove(character, out var member))
+        {
             character.SetFaction(character.OriginFaction.Id);
+            // A player earns a place in the results only after the match starts.
+            if (!_announcedAt.HasValue && !_finished)
+                member.Corps.Members.Remove(member);
+        }
+    }
+
+    private void RefillOrReleaseBeforeStart()
+    {
+        if (_finished || _announcedAt.HasValue)
+            return;
+
+        // Keep the world while a player is loading or still has an invitation.
+        _entryStarted = _players.Any(player => !IsInvited(player));
+        InstantGameManager.Instance.OnInvitationRemoved(this);
     }
 
     private bool IsInvited(Character character) =>
@@ -135,8 +155,7 @@ public partial class InstantGame
     internal void CancelAdmission(Character character)
     {
         var invited = IsInvited(character);
-        if (RemovePlayer(character) && invited)
-            InstantGameManager.Instance.OnInvitationRemoved(this);
+        var removed = RemovePlayer(character);
         if (character.CurrentInstantGame == this)
             character.CurrentInstantGame = null;
         if (_members.Remove(character, out var member))
@@ -145,6 +164,13 @@ public partial class InstantGame
             character.SetFaction(character.OriginFaction.Id);
         }
         character.Events.OnKill -= OnKill;
+        if (removed)
+        {
+            if (invited)
+                InstantGameManager.Instance.OnInvitationRemoved(this);
+            else
+                RefillOrReleaseBeforeStart();
+        }
     }
 
     internal bool HasPlayer(uint characterId) => _players.Any(player => player.Id == characterId);
@@ -189,9 +215,9 @@ public partial class InstantGame
                 return;
             }
 
-            if (character.CurrentInstantGame != this || !_characterCorps.TryGetValue(character, out var corps))
+            if (!IsInvited(character) || !_characterCorps.TryGetValue(character, out var corps))
                 return;
-            if (!_battlefield.CheckEntryLevel(character))
+            if (!InstantGameManager.PlayerCanEnter(character) || !_battlefield.CheckEntryLevel(character))
             {
                 CancelAdmission(character);
                 return;
@@ -360,8 +386,7 @@ public partial class InstantGame
             }
 
             RemovePlayer(character);
-            character.SetFaction(character.OriginFaction.Id);
-            character.Events.OnKill -= OnKill;
+            RemoveDepartedMember(character);
             character.DisabledSetPosition = true;
 
             if (character.MainWorldPosition == null)
@@ -384,6 +409,7 @@ public partial class InstantGame
                     character.MainWorldPosition.World.Rotation.Z.DegToRad()
                 )
             );
+            RefillOrReleaseBeforeStart();
         }
     }
 

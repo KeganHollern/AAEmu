@@ -7,8 +7,11 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Indun;
 using AAEmu.Game.Models.Game.InstantGame;
 using AAEmu.Game.Models.Game.InstantGame.Static;
+using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Xml;
@@ -26,6 +29,7 @@ public sealed class ArenaMatchmakingTests
 {
     private readonly WorldManager _worlds = new(null, null, null, null, null);
     private readonly InstantGameManager _queue = new();
+    private readonly ConcurrentDictionary<uint, WorldInstance> _instances = new();
     private readonly List<(FieldInfo Field, object Original)> _originals = [];
 
     [Before(Test)]
@@ -60,7 +64,8 @@ public sealed class ArenaMatchmakingTests
         _worlds.WorldTemplates.Add(template.Name, template);
         Set(_worlds, "<WorldNames>k__BackingField", new List<string> { template.Name });
         Set(_worlds, "_worldIdByZoneKey", template.ZoneKeys.ToDictionary(key => key, _ => template.Id));
-        Set(_worlds, "_worlds", new ConcurrentDictionary<uint, WorldInstance>(new Dictionary<uint, WorldInstance> { [world.Id] = world }));
+        _instances[world.Id] = world;
+        Set(_worlds, "_worlds", _instances);
         Install(_worlds);
     }
 
@@ -375,6 +380,107 @@ public sealed class ArenaMatchmakingTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DepartedMemberBeforeStart_GivesTheirPlaceToTheNextApplicant(bool disconnect)
+    {
+        var first = AddApplicant(1);
+        var second = AddApplicant(2);
+        var replacement = AddApplicant(3);
+        var session = Observe(second);
+        var rules = BattlefieldGameData.Instance.GetBattlefield(11).RuleSet;
+        first.Faction = new() { Id = (FactionsEnum)rules.Corps1FactionId };
+        second.Faction = new() { Id = (FactionsEnum)rules.Corps2FactionId };
+        replacement.Faction = first.Faction;
+        foreach (var player in new[] { first, second, replacement })
+            player.OriginFaction = player.Faction;
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, first);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, second);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        var match = first.CurrentInstantGame;
+        Set(match, "_clock", new FakeTimeProvider());
+        match.PlayerInviteResponse(first, true, 1);
+        match.OnEnterWorld(first, 1);
+        if (disconnect)
+            _worlds.TryRemoveCharacter(first.ObjId);
+        else
+            match.LeaveInstantGame(first);
+        match.PlayerInviteResponse(second, true, 1);
+        match.OnEnterWorld(second, 1);
+        await Assert.That(Messages(session, SCOffsets.SCInstantGameStartPacket).Count()).IsEqualTo(0);
+
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, replacement);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        await Assert.That(replacement.CurrentInstantGame).IsSameReferenceAs(match);
+        match.PlayerInviteResponse(replacement, true, 1);
+        match.OnEnterWorld(replacement, 1);
+        await Assert.That(Messages(session, SCOffsets.SCInstantGameStartPacket).Count()).IsEqualTo(1);
+        await match.EndGame();
+    }
+
+    [Test]
+    [Arguments("leave", false, false)]
+    [Arguments("leave", true, false)]
+    [Arguments("disconnect", true, false)]
+    [Arguments("leave", false, true)]
+    [Arguments("disconnect", true, true)]
+    [Arguments("sentence", true, false)]
+    public async Task LastDepartureBeforeStart_RetiresMatchAndRequiresANewOpponent(
+        string departure, bool stillLoading, bool inviteeLeavesLast)
+    {
+        var player = AddApplicant(1);
+        var opponent = AddApplicant(2);
+        var session = Observe(player);
+        var rules = BattlefieldGameData.Instance.GetBattlefield(11).RuleSet;
+        player.Faction = new() { Id = (FactionsEnum)rules.Corps1FactionId };
+        player.OriginFaction = player.Faction;
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, opponent);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        var match = player.CurrentInstantGame;
+        match.PlayerInviteResponse(player, true, 1);
+        if (!stillLoading)
+            match.OnEnterWorld(player, 1);
+        if (!inviteeLeavesLast)
+            _queue.WithdrawFromBattlefield(opponent);
+        await Assert.That(match.IsFinished).IsFalse();
+
+        switch (departure)
+        {
+            case "disconnect":
+                _worlds.TryRemoveCharacter(player.ObjId);
+                break;
+            case "sentence":
+                player.OfflineGuiltyTime = -1;
+                match.OnEnterWorld(player, 1);
+                break;
+            default:
+                match.LeaveInstantGame(player);
+                break;
+        }
+        if (inviteeLeavesLast)
+        {
+            await Assert.That(match.IsFinished).IsFalse();
+            _queue.WithdrawFromBattlefield(opponent);
+        }
+
+        await Assert.That(match.IsFinished).IsTrue();
+        await Assert.That(Messages(session, SCOffsets.SCInstantGameEndPacket).Count()).IsEqualTo(0);
+        await Assert.That(player.CurrentInstantGame).IsNull();
+        if (departure == "leave")
+            await Assert.That(player.Transform.InstanceId).IsEqualTo(WorldManager.DefaultInstanceId);
+
+        var next = AddApplicant(3);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, next);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        await Assert.That(next.CurrentInstantGame).IsNull();
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, opponent);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        await Assert.That(next.CurrentInstantGame).IsNotNull();
+        await Assert.That(next.CurrentInstantGame).IsNotSameReferenceAs(match);
+    }
+
+    [Test]
     [Arguments(InstantGameType.Gladiator, 2)]
     [Arguments(InstantGameType.DrillCamp, 10)]
     public async Task AcceptedInvite_KeepsItsWorldUntilNormalEnd(InstantGameType mode, int teamTotal)
@@ -519,6 +625,120 @@ public sealed class ArenaMatchmakingTests
         player.Level = 50;
         _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
         await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task EntryConditions_StockTagSeparatesTheWornLumberPackAndGlider()
+    {
+        var compact = Environment.GetEnvironmentVariable("AAEMU_COMBAT_TEST_COMPACT");
+        Skip.Unless(!string.IsNullOrEmpty(compact), "Set AAEMU_COMBAT_TEST_COMPACT to the read-only r208022 compact.");
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = compact, Mode = SqliteOpenMode.ReadOnly }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT i.id,i.buff_id,t.tag_id FROM items i JOIN item_backpacks p ON p.item_id=i.id
+            LEFT JOIN tagged_buffs t ON t.buff_id=i.buff_id AND t.tag_id=1253
+            WHERE i.id IN (17683,14677) ORDER BY i.id
+            """;
+        using var rows = command.ExecuteReader();
+        await Assert.That(rows.Read()).IsTrue();
+        await Assert.That((rows.GetInt32(0), rows.GetInt32(1), rows.IsDBNull(2))).IsEqualTo((14677, 2224, true));
+        await Assert.That(rows.Read()).IsTrue();
+        await Assert.That((rows.GetInt32(0), rows.GetInt32(1), rows.GetInt32(2))).IsEqualTo((17683, 1454, 1253));
+        await Assert.That(rows.Read()).IsFalse();
+    }
+
+    public enum AdmissionStage { Application, Matchmaking, Invitation }
+
+    [Test]
+    [Arguments(ErrorMessageType.InstantGameCannotJoinByBuff, 1454u, AdmissionStage.Application)]
+    [Arguments(ErrorMessageType.InstantGameCannotJoinByBuff, 1454u, AdmissionStage.Matchmaking)]
+    [Arguments(ErrorMessageType.InstantGameCannotJoinByBuff, 1454u, AdmissionStage.Invitation)]
+    [Arguments(ErrorMessageType.RunawayCantApplyBattleField, 5529u, AdmissionStage.Application)]
+    [Arguments(ErrorMessageType.RunawayCantApplyBattleField, 5529u, AdmissionStage.Invitation)]
+    [Arguments(ErrorMessageType.InstantGameCannotJoinByBuff, 6117u, AdmissionStage.Application)]
+    [Arguments(ErrorMessageType.InstantGameCannotJoinByBuff, 6117u, AdmissionStage.Invitation)]
+    [Arguments(ErrorMessageType.InstantGameCannotJoinByNoSeamless, 0u, AdmissionStage.Application)]
+    [Arguments(ErrorMessageType.InstantGameCannotJoinByNoSeamless, 0u, AdmissionStage.Invitation)]
+    public async Task EntryConditions_RefuseOnlyWhileTheStockRestrictionIsActive(ErrorMessageType error, uint buff, AdmissionStage stage)
+    {
+        var player = AddApplicant(1);
+        var other = AddApplicant(2);
+        var session = Observe(player);
+        if (stage != AdmissionStage.Application)
+        {
+            _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+            _queue.ApplyToBattlefield(11, InstantCorps.Any, other);
+        }
+        if (stage == AdmissionStage.Invitation)
+        {
+            _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+            await Assert.That(player.CurrentInstantGame).IsNotNull();
+        }
+
+        if (buff == 0)
+        {
+            var world = new WorldInstance(new WorldTemplate { ZoneKeys = [199] }, 0, true, 94);
+            GC.SuppressFinalize(world);
+            _instances[world.Id] = world;
+            _ = new Dungeon(new IndunZone(), world);
+            player.ParentWorld = world;
+        }
+        else
+        {
+            var status = Mock.Of<IBuffs>();
+            status.CheckBuff(buff).Returns(true);
+            status.CheckBuffTag(1253u).Returns(buff == 1454);
+            player.Buffs = status.Object;
+        }
+
+        if (stage == AdmissionStage.Application)
+            _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        else if (stage == AdmissionStage.Matchmaking)
+            _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        else
+            player.CurrentInstantGame.PlayerInviteResponse(player, true, 1);
+
+        await Assert.That(Messages(session, SCOffsets.SCErrorMsgPacket)
+            .Count(bytes => BitConverter.ToInt16(bytes, 8) == (short)error)).IsEqualTo(1);
+        await Assert.That(player.CurrentInstantGame).IsNull();
+        await Assert.That(Messages(session, SCOffsets.SCLoadInstancePacket).Count()).IsEqualTo(0);
+        player.ParentWorld = null;
+        player.Buffs = Mock.Of<IBuffs>().Object;
+        session.Packets.Clear();
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        await Assert.That(Messages(session, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task EntryConditions_AllowUntaggedGliderAndRespawnEffectsInANonDungeonWorld()
+    {
+        var player = AddApplicant(1);
+        var other = AddApplicant(2);
+        var session = Observe(player);
+        var status = Mock.Of<IBuffs>();
+        status.CheckBuff(2224u).Returns(true); // Experimental Glider 14677
+        status.CheckBuff(2385u).Returns(true); // Rebirth Trauma
+        player.Buffs = status.Object;
+        var world = new WorldInstance(new WorldTemplate { ZoneKeys = [200] }, 1, true, 93);
+        GC.SuppressFinalize(world);
+        _instances[world.Id] = world;
+        player.ParentWorld = world;
+        player.Equipment = new EquipmentContainer(player.Id, SlotType.Equipment, false, player);
+        player.Equipment.Items.Add(new Item
+        {
+            Id = 43, TemplateId = 14677, Count = 1, OwnerId = player.Id, SlotType = SlotType.Equipment,
+            Slot = (int)EquipmentItemSlot.Backpack, _holdingContainer = player.Equipment
+        });
+        await Assert.That(player.Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack).TemplateId).IsEqualTo(14677u);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, other);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        var match = player.CurrentInstantGame;
+        await Assert.That(match).IsNotNull();
+        match.PlayerInviteResponse(player, true, 1);
+        await Assert.That(Messages(session, SCOffsets.SCLoadInstancePacket).Count()).IsEqualTo(1);
+        await Assert.That(Messages(session, SCOffsets.SCErrorMsgPacket).Count()).IsEqualTo(0);
     }
 
     private static BattlefieldGameData LoadStockFields()

@@ -2,10 +2,12 @@
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.InstantGame;
 using AAEmu.Game.Models.Game.InstantGame.Static;
+using AAEmu.Game.Models.Game.Skills;
 
 using NLog;
 
@@ -33,7 +35,7 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
-            if (!PrisonerAccess.CanEnter(character, true))
+            if (!PlayerCanEnter(character))
                 return;
 
             lock (_lock)
@@ -155,7 +157,7 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
         var world = WorldManager.Instance;
         applicants.RemoveAll(applicant =>
             world.GetCharacterByObjId(applicant.CharObj.ObjId) != applicant.CharObj ||
-            !PrisonerAccess.CanEnter(applicant.CharObj, true) || !battlefield.CheckEntryLevel(applicant.CharObj));
+            !PlayerCanEnter(applicant.CharObj) || !battlefield.CheckEntryLevel(applicant.CharObj));
 
         _log.Trace("[Matchmaking] Running matchmaking for battlefield " + bfId + "... Queue: " + applicants.Count);
         var playersNeeded = games.Count == 0 ? battlefield.RuleSet.CorpsSize * 2 : 1;
@@ -224,29 +226,20 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
         }
     }
 
-    public bool PlayerCanEnter(Character character)
+    internal static bool PlayerCanEnter(Character character)
     {
         if (!PrisonerAccess.CanEnter(character, true))
             return false;
-        if (character != null)
-        {
-            // TODO: Not in jury, not in duel conditions
-            if (character.IsInBattle)
-                return false; // In Combat
-            else if (character.Transform.InstanceId != WorldManager.DefaultInstanceId)
-                return false; // In an instanced world (Dungeon or Mirage)
-            else if (character.IsDead)
-                return false; // Is dead
-            else if (character.Inventory.Equipment.GetItemBySlot(26) != null)
-                return false; // Tradepack equipped
-            else if (character.Buffs.CheckBuff(2385))
-                return false; // Rebirth trauma is active
-            else if (WorldManager.Instance.GetWorld(character.Transform.InstanceId)?.SlaveManager.GetActiveSlaveByOwnerObjId(character.ObjId) != null)
-                return false; // Vehicle or boat is summoned
-            else
-                return true;
-        }
-        return false; // Character is null
+        if (character.Buffs.CheckBuff((uint)BuffConstants.ArenaDeserter))
+            character.SendErrorMessage(ErrorMessageType.RunawayCantApplyBattleField);
+        else if (character.Buffs.CheckBuffTag((uint)BuffConstants.TagCannotEnterArena) ||
+                 character.Buffs.CheckBuff((uint)BuffConstants.InBeautySalon))
+            character.SendErrorMessage(ErrorMessageType.InstantGameCannotJoinByBuff);
+        else if (character.ParentWorld?.DungeonInstance != null)
+            character.SendErrorMessage(ErrorMessageType.InstantGameCannotJoinByNoSeamless);
+        else
+            return true;
+        return false;
     }
 
     public void BattlefieldTick(TimeSpan delta)

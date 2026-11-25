@@ -46,6 +46,7 @@ public enum BuffConstants : uint
     ScoreMemorized = 6010,
     FlutePlay = 6176,
     LutePlay = 6177,
+    ArenaDeserter = 5529,
     InBeautySalon = 6117,
     CannotEscapeBuff = 6729,
     DrumPlay = 8216, // this one is actually called Play Drums, but not really used
@@ -59,4 +60,5 @@ public enum BuffConstants : uint
     TagWanted = 894,
     TagOffender = 1008,
     TagSuspects = 1035, // All Bot suspect related buffs have this tag once over the threshold
+    TagCannotEnterArena = 1253,
 }
