@@ -58,6 +58,30 @@ public sealed class ArenaMatchmakingTests
     }
 
     [Test]
+    public async Task APlayerWhoLeavesTheWorldBeforeTheTickDoesNotFillATeamSlot()
+    {
+        var first = new CharacterMock { Id = 1, ObjId = 10, Buffs = Mock.Of<IBuffs>().Object };
+        var applicant = new CharacterMock { Id = 2, ObjId = 20, Buffs = Mock.Of<IBuffs>().Object };
+        var returned = new CharacterMock { Id = first.Id, ObjId = 30, Buffs = Mock.Of<IBuffs>().Object };
+        _worlds.TryAddCharacter(first);
+        _worlds.TryAddCharacter(applicant);
+        _queue.ApplyToBattlefield((uint)InstantGameType.Gladiator, InstantCorps.Any, first);
+        _queue.ApplyToBattlefield((uint)InstantGameType.Gladiator, InstantCorps.Any, applicant);
+        _worlds.TryRemoveCharacter(first.ObjId);
+        _worlds.TryAddCharacter(returned);
+
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        await Assert.That(applicant.CurrentInstantGame).IsNull();
+        await Assert.That(returned.CurrentInstantGame).IsNull();
+
+        _queue.ApplyToBattlefield((uint)InstantGameType.Gladiator, InstantCorps.Any, returned);
+        _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+        await Assert.That(applicant.CurrentInstantGame).IsNotNull();
+        await Assert.That(applicant.CurrentInstantGame.IsFull).IsTrue();
+        await Assert.That(returned.CurrentInstantGame).IsSameReferenceAs(applicant.CurrentInstantGame);
+    }
+
+    [Test]
     [Arguments(InstantGameType.DrillCamp, 10)]
     [Arguments(InstantGameType.Gladiator, 2)]
     public async Task QueueWaitsForBothTeamsAndRefillsAVacancy(InstantGameType mode, int playersNeeded)

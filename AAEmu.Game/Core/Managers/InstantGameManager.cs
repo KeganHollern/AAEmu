@@ -141,15 +141,10 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
             return;
         }
 
-        // Remove offline players in the queue list
-        var offlinePlayers = applicants.Where(a => !PrisonerAccess.CanEnter(a.CharObj, true)).ToList();
-        if (offlinePlayers.Count > 0)
-        {
-            foreach (var players in offlinePlayers)
-            {
-                applicants.Remove(players);
-            }
-        }
+        var world = WorldManager.Instance;
+        applicants.RemoveAll(applicant =>
+            world.GetCharacterByObjId(applicant.CharObj.ObjId) != applicant.CharObj ||
+            !PrisonerAccess.CanEnter(applicant.CharObj, true));
 
         _log.Trace("[Matchmaking] Running matchmaking for battlefield " + bfId + "... Queue: " + applicants.Count);
         var battlefield = BattlefieldGameData.Instance.GetBattlefield(bfId);
@@ -184,18 +179,14 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
             }
 
             // Obtain character of player matchmaking and remove them from queue to add them into a game.
-            var playerCharacter = WorldManager.Instance.GetCharacterById(applicants[0].CharObj.Id);
-            applicants.Remove(applicants[0]);
+            var playerCharacter = applicants[0].CharObj;
+            applicants.RemoveAt(0);
 
             // Add player and invite to instant game
-            if (playerCharacter != null)
+            if (world.GetCharacterByObjId(playerCharacter.ObjId) == playerCharacter)
             {
                 game.AddPlayer(playerCharacter, game.GetCorps());
                 _log.Trace("[Matchmaking] Adding player to game: " + playerCharacter.Name);
-            }
-            else
-            {
-                // playerCharacter is null.
             }
         }
         // Add new arena with paired players if there are no queued games to fill up.
