@@ -132,6 +132,8 @@ public sealed partial class CarriageBoardingTests
         await CheckPoint(motor.Transform.World.Position, start);
         await CheckSeats(motor, cabin, front, rear);
         await Assert.That(cabin.AttachPointId).IsEqualTo(AttachPointKind.Trailed0);
+        using var movement = new SusManager(WorldManager.Instance);
+        SetSingleton(movement);
         var passenger = new CharacterMock { Id = 10, ObjId = 100, ParentWorld = world };
         await BoardSeat(passenger, front, 15857, AttachPointKind.Passenger0);
 
