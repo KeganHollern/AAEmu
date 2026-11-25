@@ -122,6 +122,17 @@ public sealed class GameMySqlFixture : IAsyncLifetime
         await command.ExecuteNonQueryAsync();
         await command.ExecuteNonQueryAsync();
 
+        // Upgrade the previous housing schema; all twelve public Lodestones must remain unmarked.
+        command.CommandText = "ALTER TABLE housings DROP COLUMN demolition_hp";
+        await command.ExecuteNonQueryAsync();
+        var demolitionUpdate = Path.Combine(AppContext.BaseDirectory, "SQL", "updates", "2026-11-25_aaemu_game_tax_demolition.sql");
+        command.CommandText = await File.ReadAllTextAsync(demolitionUpdate);
+        await command.ExecuteNonQueryAsync();
+        await command.ExecuteNonQueryAsync();
+        command.CommandText = "SELECT COUNT(*) FROM housings WHERE owner=0 AND account_id=0 AND demolition_hp IS NULL";
+        if (Convert.ToInt32(await command.ExecuteScalarAsync()) != 12)
+            throw new InvalidOperationException("The housing migration changed the unowned Lodestone seed rows.");
+
         // Shipyards did not have a persistence table before this update.
         command.CommandText = "DROP TABLE `shipyards`";
         await command.ExecuteNonQueryAsync();

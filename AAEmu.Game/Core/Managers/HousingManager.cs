@@ -54,7 +54,7 @@ public partial class HousingManager(
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
-    private const uint ForSaleMarkerDoodadId = 6760;
+    internal const uint ForSaleMarkerDoodadId = 6760;
     private const int MaxHeavyTaxCounted = 10; // Maximum number of heavy tax buildings to take into account for tax calculation
     private const int HoursForFailedTaxToReturnHouse = 22;
     private const double CopperPerCertificate = 1000000.0; // For older versions of AA, 1 sale certificate / 100g
@@ -184,11 +184,16 @@ public partial class HousingManager(
                         house.SellToPlayerId = reader.GetUInt32("sell_to");
                         house.SellPrice = reader.GetUInt32("sell_price");
                         house.AllowRecover = reader.GetBoolean("allow_recover");
+                        if (house.OwnerId == 0 && house.AccountId == 0 && !reader.IsDBNull(reader.GetOrdinal("demolition_hp")))
+                        {
+                            house.Hp = reader.GetInt32("demolition_hp");
+                            house.AcknowledgeDemolitionReturns();
+                        }
                         _houses.Add(house.Id, house);
                         _housesTl.Add(house.TlId, house);
 
                         // Manually placed houses (or after upgrading MySQL), will get 2 weeks for free as to not immediately trigger them into demolition
-                        if (house.PlaceDate == house.ProtectionEndDate)
+                        if (!house.DemolitionReturnsCommitted && house.PlaceDate == house.ProtectionEndDate)
                             house.ProtectionEndDate = house.PlaceDate.AddDays(14);
 
                         UpdateTaxInfo(house);
@@ -209,35 +214,31 @@ public partial class HousingManager(
     /// <summary>
     /// Saves player housing information
     /// </summary>
-    /// <param name="connection"></param>
-    /// <param name="transaction"></param>
-    /// <returns></returns>
-    public (int, int) Save(MySqlConnection connection, MySqlTransaction transaction)
+    /// <param name="context">The active save transaction.</param>
+    public (int, int) Save(PersistenceSaveContext context)
     {
-        var deleteCount = 0;
-        lock (_removedHousings)
+        var removed = _removedHousings.ToArray();
+        if (removed.Length > 0)
         {
-            if (_removedHousings.Count > 0)
+            using var command = context.Connection.CreateCommand();
+            command.Transaction = context.Transaction;
+            command.CommandText = $"DELETE FROM housings WHERE id IN({string.Join(",", removed)})";
+            command.ExecuteNonQuery();
+            context.AfterCommit(() =>
             {
-                using (var command = connection.CreateCommand())
+                foreach (var id in removed)
                 {
-                    command.CommandText =
-                        $"DELETE FROM housings WHERE id IN({string.Join(",", _removedHousings)})";
-                    command.Prepare();
-                    command.ExecuteNonQuery();
-                    deleteCount++;
+                    _removedHousings.Remove(id);
+                    housingIdManager.ReleaseId(id);
                 }
-
-                _removedHousings.Clear();
-            }
+            });
         }
 
         var updateCount = 0;
         foreach (var house in _houses.Values)
-            if (house.Save(connection, transaction))
+            if (house.Save(context))
                 updateCount++;
-
-        return (updateCount, deleteCount);
+        return (updateCount, removed.Length);
     }
 
     /// <summary>
@@ -699,7 +700,10 @@ public partial class HousingManager(
     /// <param name="house"></param>
     /// <param name="failedToPayTax"></param>
     /// <param name="forceRestoreAllDecor"></param>
-    public void Demolish(GameConnection connection, House house, bool failedToPayTax, bool forceRestoreAllDecor)
+    public void Demolish(GameConnection connection, House house, bool failedToPayTax, bool forceRestoreAllDecor) =>
+        Demolish(connection, house, failedToPayTax, forceRestoreAllDecor, DateTime.UtcNow);
+
+    internal void Demolish(GameConnection connection, House house, bool failedToPayTax, bool forceRestoreAllDecor, DateTime asOf)
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
@@ -708,45 +712,22 @@ public partial class HousingManager(
                 connection?.ActiveChar?.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
                 return;
             }
-            if (failedToPayTax && house.ProtectionEndDate > DateTime.UtcNow)
+            if (failedToPayTax && house.ProtectionEndDate > asOf)
                 return; // the queued tax-expiry check was superseded by a payment
 
             // Check if owner
             if (connection is null || house.OwnerId == connection.ActiveChar?.Id)
             {
-                if (connection != null && !failedToPayTax && house.TaxDueDate <= DateTime.UtcNow)
+                if (connection != null && !failedToPayTax && house.TaxDueDate <= asOf)
                 {
                     connection.ActiveChar.SendErrorMessage(ErrorMessageType.HouseCannotDemolishUnpaidTax);
                     return;
                 }
-                var ownerChar = worldManager.GetCharacterById(house.OwnerId);
-
-                lock (house.TaxPaymentSyncRoot)
+                if (!TrySettleDemolition(house, failedToPayTax, forceRestoreAllDecor, asOf))
                 {
-                    // Mark it as expired protection and remove tax mail before changing ownership.
-                    house.ProtectionEndDate = DateTime.UtcNow.AddSeconds(-1);
-                    UpdateTaxInfo(house);
-                    ReturnHouseItemsToOwner(house, failedToPayTax, forceRestoreAllDecor, null);
-
-                    house.OwnerId = 0;
-                    house.CoOwnerId = 0;
-                    house.AccountId = 0;
-                    house.SellPrice = 0;
-                    house.SellToPlayerId = 0;
-                    house.Permission = HousingPermission.Public;
+                    Logger.Warn($"Demolition did not settle for house {house.Id}, owner {house.OwnerId}.");
+                    connection?.ActiveChar?.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
                 }
-                house.BroadcastPacket(new SCHouseDemolishedPacket(house.TlId), false);
-
-                ownerChar?.SendPacket(new SCMyHouseRemovedPacket(house.TlId));
-                // Make killable
-                UpdateHouseFaction(house, FactionsEnum.Monstrosity);
-
-                SetForSaleMarkers(house, false);
-
-                house.IsDirty = true;
-
-                // TODO: better house killing handling
-                _removedHousings.Add(house.Id);
             }
             else
             {
@@ -777,7 +758,7 @@ public partial class HousingManager(
         _houses.Remove(house.Id);
         _housesTl.Remove(house.TlId);
         housingTldManager.ReleaseId(house.TlId);
-        housingIdManager.ReleaseId(house.Id);
+        // The database ID stays reserved until the deletion commits.
         // TODO: not sure how to handle this, just instant delete it for now
         house.Delete();
         // TODO: Add to despawn handler
@@ -869,6 +850,12 @@ public partial class HousingManager(
             var isTaxDue = house.TaxDueDate <= utcNow;
 
             // Update Buffs (if needed)
+            // Keep assets protected until the owner's return and surrender commit together.
+            if (isDemolished && house.OwnerId > 0)
+            {
+                SetUntouchable(house, true);
+                return;
+            }
             SetUntouchable(house, !isDemolished);
             SetDemolitionBuff(house, BuffConstants.RemovalDebuff, isDemolished);
             if (house.DemolitionReturnsCommitted && house.OwnerId == 0 && house.AccountId == 0 && isDemolished)
@@ -1025,263 +1012,6 @@ public partial class HousingManager(
                 UpdateHouseFaction(h.Value, factionId);
     }
 
-    /// <summary>
-    /// Returns furniture of a house that's being demolished or sold
-    /// </summary>
-    /// <param name="house"></param>
-    /// <param name="failedToPayTax">Set true if demolishing due to failed tax, this adds a delay to the mail</param>
-    /// <param name="forceRestoreAllDecor">For GM commands or server merges. Will try to send ALL placed furniture if set to true, even those that normally don't get returned.</param>
-    /// <param name="newOwner">New owner Character if buying, otherwise leave null</param>
-    private void ReturnHouseItemsToOwner(House house, bool failedToPayTax, bool forceRestoreAllDecor, Character newOwner)
-    {
-        if (house.OwnerId <= 0)
-            return;
-
-        var returnedItems = new List<Item>();
-        var returnedMoney = 0;
-
-        // If returning items because of a new House Owner, then don't include the design
-        if (newOwner == null)
-        {
-            // TODO: proper grades for design
-            // TODO: for future versions: Support Full-Kit demolition
-            var designItemId = HousingGameData.Instance.GetItemIdByDesign(house.Template.Id);
-            var designItem = itemManager.Create(designItemId, 1, 0);
-            var designTemplate = itemManager.GetTemplate(designItemId);
-            if (designTemplate != null && designItem != null)
-            {
-                designItem.Grade = designTemplate.FixedGrade >= 0 ? (byte)designTemplate.FixedGrade : (byte)0;
-                designItem.OwnerId = house.OwnerId;
-                designItem.SlotType = SlotType.Mail;
-                returnedItems.Add(designItem);
-            }
-            else
-            {
-                Logger.Error($"Was unable to find design items for demolishing {house.Name} ({house.Id}). HouseTemplateId: {house.Template.Id}, DesignItemId: {designItemId}");
-            }
-
-            // Return taxes
-            if (!failedToPayTax)
-            {
-                if (FeaturesManager.Fsets.Check(Models.Game.Features.Feature.taxItem))
-                {
-                    var taxItem = itemManager.Create(Item.BoundTaxCertificate, (int)(house.Template.Taxation.Tax / 5000), 0);
-                    taxItem.OwnerId = house.OwnerId;
-                    taxItem.SlotType = SlotType.Mail;
-                    returnedItems.Add(taxItem);
-                }
-                else
-                {
-                    returnedMoney = (int)(house.Template.Taxation.Tax * 2);
-                }
-            }
-        }
-
-        var furniture = house.ParentWorld.GetDoodadByHouseDbId(house.Id);
-        foreach (var f in furniture)
-        {
-            // Ignore attached objects (those are doors/windows etc)
-            if (f.AttachPoint != AttachPointKind.None)
-                continue;
-
-            // Ignore for sale signs
-            if (f.TemplateId == ForSaleMarkerDoodadId)
-                continue;
-
-            var decoDesign = HousingGameData.Instance.GetDecorationDesignFromDoodadId(f.TemplateId);
-            if (decoDesign == null)
-            {
-                // Is not furniture, probably plants or backpacks
-                f.Transform.DetachAll();
-                f.ParentObjId = 0;
-                f.ParentObj = null;
-                f.OwnerDbId = 0;
-                // TODO: probably needs to send a packet as well here
-                continue;
-            }
-
-            var decoInfo = HousingGameData.Instance.GetItemHousingDecorations(decoDesign.Id);
-            if (decoInfo == null)
-            {
-                // No design info for this item ? Just detach it for now
-                f.Transform.DetachAll();
-                f.ParentObjId = 0;
-                f.ParentObj = null;
-                f.OwnerDbId = 0;
-                Logger.Warn($"ReturnHouseItemsToOwner - Furniture has a design, but couldn't find a item for it, DoodadObjId:{f.ObjId} Template:{f.TemplateId}, DesignId: {decoDesign.Id}");
-                continue;
-            }
-
-            var thisDoodadsItem = itemManager.GetItemByItemId(f.ItemId);
-            var returnedThisItem = false;
-
-            var wantReturned = (newOwner == null && decoInfo.Restore) || forceRestoreAllDecor;
-
-            // If item is bound, always return it owner
-            if (f.ItemId > 0)
-            {
-                var item = itemManager.GetItemByItemId(f.ItemId);
-                if (item.ItemFlags.HasFlag(ItemFlag.SoulBound))
-                    wantReturned = true;
-            }
-
-            // If this doodad is a Coffer and has a ItemContainer attached, also return all item of that container
-            if (f is DoodadCoffer coffer && f.GetItemContainerId() > 0)
-            {
-                // TODO: Check if items should stay in the coffer when house is sold.
-                // Move it to new owner's SystemContainer first so they don't get destroyed
-                var ownerSystemContainer = itemManager.GetItemContainerForCharacter(house.OwnerId, SlotType.System, null, 0);
-                for (var i = coffer.ItemContainer.Items.Count - 1; i >= 0; i--)
-                {
-                    var cofferItem = coffer.ItemContainer.Items[i];
-                    //if (cofferItem.HasFlag(ItemFlag.SoulBound) || forceRestoreAllDecor)
-                    {
-                        ownerSystemContainer?.AddOrMoveExistingItem(ItemTaskType.Invalid, cofferItem);
-                        returnedItems.Add(cofferItem);
-                    }
-                }
-            }
-
-            // If the decoration item isn't marked as Restore, then just delete it (and it's possibly attached item)
-            if (!wantReturned)
-            {
-                // Non-restore-able item
-                if (newOwner == null)
-                {
-                    // Just delete the doodad and attached item if no new owner
-                    // Delete the attached item
-                    if (f.ItemId != 0)
-                        thisDoodadsItem._holdingContainer?.ConsumeItem(ItemTaskType.Invalid,
-                            thisDoodadsItem.TemplateId, thisDoodadsItem.Count, thisDoodadsItem);
-
-                    // Is furniture, but doesn't restore, destroy it
-                    f.Transform.DetachAll();
-                    f.ItemId = 0;
-                    f.Delete();
-                }
-                else
-                {
-                    // Move the doodad and item to the new owner
-                    if (f.ItemId != 0)
-                    {
-                        // If a single item is attached, change it's owner and location
-                        var item = itemManager.GetItemByItemId(f.ItemId);
-                        newOwner.Inventory.SystemContainer.AddOrMoveExistingItem(ItemTaskType.Invalid, item);
-                    }
-                    // Change doodad owner
-                    f.OwnerId = newOwner.Id;
-                }
-
-                continue;
-            }
-
-            // Item needs to be actually returned, so let's do that
-            if (f.ItemId > 0)
-            {
-                // Ignore if it's not in a System container for whatever reason
-                if (thisDoodadsItem is { SlotType: SlotType.System })
-                {
-                    returnedItems.Add(thisDoodadsItem);
-                    returnedThisItem = true;
-                    f.ItemId = 0; // don't auto-delete
-                }
-            }
-            else
-            if (f.ItemTemplateId > 0)
-            {
-                // try to stack stackable items
-                var oldItem = returnedItems.FirstOrDefault(x => x.TemplateId == f.ItemTemplateId && x.Count < x.Template.MaxCount);
-
-                if (oldItem != null)
-                {
-                    oldItem.Count++;
-                }
-                else
-                {
-                    // It's a new one, add an item slot
-                    var furnitureItem = itemManager.Create(f.ItemTemplateId, 1, 0);
-                    var furnitureTemplate = itemManager.GetTemplate(f.ItemTemplateId);
-                    furnitureItem.Grade = furnitureTemplate.FixedGrade >= 0 ? (byte)furnitureTemplate.FixedGrade : (byte)0;
-                    furnitureItem.OwnerId = house.OwnerId;
-                    furnitureItem.SlotType = SlotType.Mail;
-                    returnedItems.Add(furnitureItem);
-                }
-                returnedThisItem = true;
-            }
-            else
-            {
-                // Not sure what happened here, just ignore it
-                continue;
-            }
-
-            // Set new doodad owner if needed
-            if (newOwner != null)
-            {
-                f.OwnerId = newOwner.Id;
-            }
-
-            if (newOwner == null || returnedThisItem)
-            {
-                f.Transform.DetachAll();
-                f.Delete();
-            }
-        }
-
-        // TODO: Grab a list of items in chests
-
-        // TODO: Proper Mail handler
-        BaseMail newMail = null;
-        for (var i = 0; i < returnedItems.Count; i++)
-        {
-            // Split items into mails of maximum 10 attachments
-            if (i % 10 == 0)
-            {
-                // TODO: proper mail handler
-                newMail = new BaseMail
-                {
-                    MailType = MailType.Demolish,
-                    ReceiverName = nameManager.GetCharacterName(house.OwnerId), // Doesn't seem like this needs to be set
-                    Header =
-                    {
-                        ReceiverId = house.OwnerId,
-                        SenderId = 0,
-                        SenderName = ".houseDemolish",
-                        Extra = house.Id
-                    },
-                    Title = "title",
-                    Body = {
-                        Text = "body", // Yes, that's indeed what it needs to be set to
-                        SendDate = DateTime.UtcNow,
-                        RecvDate = DateTime.UtcNow.AddHours(failedToPayTax ? HoursForFailedTaxToReturnHouse : 0)
-                    }
-                };
-            }
-            // Only attach money to first mail
-            if (returnedMoney > 0 && i == 0)
-                newMail.AttachMoney(returnedMoney);
-
-            // If player is loaded in at the moment (which he/she should be anyway), directly manipulate the inventory
-            // If not, only change the container
-            var onlineOwner = worldManager.GetCharacterById((uint)returnedItems[i].OwnerId);
-            if (onlineOwner != null)
-                onlineOwner.Inventory.MailAttachments.AddOrMoveExistingItem(ItemTaskType.Invalid, returnedItems[i]);
-            else
-                returnedItems[i].SlotType = SlotType.Mail;
-
-            // Attach item
-            newMail.Body.Attachments.Add(returnedItems[i]);
-
-            // Send on last or 10th item of the mail
-            if (i % 10 == 9 || i == returnedItems.Count - 1)
-                newMail.Send();
-        }
-
-        if (newMail != null)
-        {
-            Logger.Trace($"Demolition mail sent to {newMail.ReceiverName}");
-        }
-    }
-
     /* Unused
     /// <summary>
     /// Get house design by item template
@@ -1419,7 +1149,7 @@ public partial class HousingManager(
 
             var certAmount = CalculateSaleCertifcates(house, price);
             var failure = ErrorMessageType.InvalidHouseInfo;
-            var settled = ExecuteSaleSettlement(house, seller, (inventory, _, _) =>
+            var settled = ExecuteHousingSettlement(house, seller, (inventory, _, _) =>
             {
                 var remaining = certAmount;
                 foreach (var item in seller.Inventory.Bag.Items.Where(i => i.TemplateId == Item.AppraisalCertificate).ToArray())
@@ -1472,7 +1202,7 @@ public partial class HousingManager(
                 return false;
             }
             var certAmount = CalculateSaleCertifcates(house, house.SellPrice);
-            var settled = ExecuteSaleSettlement(house, seller, (inventory, mail, _) =>
+            var settled = ExecuteHousingSettlement(house, seller, (inventory, mail, _) =>
             {
                 if (!inventory.TryGrant(seller.Inventory.MailAttachments, Item.AppraisalCertificate, certAmount, out var refund))
                     return false;
@@ -1534,7 +1264,7 @@ public partial class HousingManager(
 
             var previousOwner = plan.PreviousState.OwnerId;
             var previousOwnerName = nameManager.GetCharacterName(previousOwner);
-            var settled = ExecuteSaleSettlement(house, character, (inventory, mail, furniture) =>
+            var settled = ExecuteHousingSettlement(house, character, (inventory, mail, furniture) =>
             {
                 if (!inventory.TryChangeMoney(character, -plan.Price))
                     return false;
@@ -1606,12 +1336,13 @@ public partial class HousingManager(
         };
     }
 
-    private bool ExecuteSaleSettlement(House house, Character actor,
+    private bool ExecuteHousingSettlement(House house, Character actor,
         Func<InventoryMutation, MailMutation, HousingFurnitureSettlement, bool> prepare,
-        Action publish, bool includeFurniture = false)
+        Action publish, bool includeFurniture = false, Action<PersistenceSaveContext> writeHouse = null,
+        ItemTaskType itemTask = ItemTaskType.BuyHouse, Action commitHouse = null)
     {
         var before = HousingSaleState.Capture(house);
-        using var inventory = new InventoryMutation(ItemTaskType.BuyHouse);
+        using var inventory = new InventoryMutation(itemTask);
         using var mail = mailManager.BeginMutation();
         using var furniture = includeFurniture ? new HousingFurnitureSettlement(house, itemManager) : null;
         var preserve = false;
@@ -1619,12 +1350,15 @@ public partial class HousingManager(
         {
             if (!prepare(inventory, mail, furniture))
                 return false;
-            house.IsDirty = true;
+            if (writeHouse == null)
+                house.IsDirty = true;
             try
             {
-                if (!(saveManager?.Value ?? SaveManager.Instance).TryCommitEconomy([actor], context =>
+                if (!(saveManager?.Value ?? SaveManager.Instance).TryCommitEconomy(actor == null ? [] : [actor], context =>
                 {
-                    if (!house.Save(context))
+                    if (writeHouse != null)
+                        writeHouse(context);
+                    else if (!house.Save(context))
                         throw new InvalidOperationException("The staged house could not be persisted.");
                     furniture?.Save(context);
                 }))
@@ -1637,6 +1371,7 @@ public partial class HousingManager(
                 throw;
             }
             preserve = true;
+            commitHouse?.Invoke();
             inventory.Complete();
             mail.Complete();
             furniture?.Complete();
@@ -1677,7 +1412,8 @@ public partial class HousingManager(
             {
                 if (house.Value?.ProtectionEndDate <= DateTime.UtcNow && house.Value?.OwnerId > 0)
                     expiredHouseList.Add(house.Value);
-                UpdateTaxInfo(house.Value);
+                else
+                    UpdateTaxInfo(house.Value);
             }
             foreach (var house in expiredHouseList)
             {

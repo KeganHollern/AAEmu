@@ -49,9 +49,11 @@ public sealed class House : Unit
     internal bool DemolitionReturnsCommitted { get; private set; }
 
     // Call only after the return mail, attachments and ownership change commit together.
-    internal void AcknowledgeDemolitionReturns()
+    internal void AcknowledgeDemolitionReturns() => AcknowledgeDemolitionReturns(DateTime.UtcNow);
+
+    internal void AcknowledgeDemolitionReturns(DateTime asOf)
     {
-        if (OwnerId == 0 && AccountId == 0 && ProtectionEndDate <= DateTime.UtcNow)
+        if (OwnerId == 0 && AccountId == 0 && ProtectionEndDate <= asOf)
             DemolitionReturnsCommitted = true;
     }
 
@@ -174,6 +176,17 @@ public sealed class House : Unit
         };
     }
 
+    public override int Hp
+    {
+        get => base.Hp;
+        set
+        {
+            if (DemolitionReturnsCommitted && base.Hp != value)
+                IsDirty = true;
+            base.Hp = value;
+        }
+    }
+
     public override int MaxHp => Template.Hp;
 
     public HousingPermission Permission
@@ -268,6 +281,8 @@ public sealed class House : Unit
             {
                 if (doodad.AttachPoint == AttachPointKind.None)
                     doodad.Transform.Parent = null; // detach furniture from transform hierarchy
+                else if (doodad.ParentWorld != null)
+                    doodad.Delete();
                 if (doodad.ObjId > 0)
                     ObjectIdManager.Instance.ReleaseId(doodad.ObjId);
             }
@@ -348,8 +363,28 @@ public sealed class House : Unit
         ArgumentNullException.ThrowIfNull(context);
         lock (TaxPaymentSyncRoot)
         {
-            if (!IsDirty || AccountId == 0 || OwnerId == 0)
+            if (!IsDirty)
                 return false;
+            if (AccountId == 0 || OwnerId == 0)
+            {
+                if (!DemolitionReturnsCommitted || OwnerId != 0 || AccountId != 0 || Hp <= 0)
+                    return false;
+                var remainingHp = Hp;
+                using var command = context.Connection.CreateCommand();
+                command.Transaction = context.Transaction;
+                command.CommandText = "UPDATE housings SET demolition_hp=@hp WHERE id=@id " +
+                    "AND owner=0 AND account_id=0 AND demolition_hp IS NOT NULL";
+                command.Parameters.AddWithValue("@hp", remainingHp);
+                command.Parameters.AddWithValue("@id", Id);
+                if (command.ExecuteNonQuery() != 1)
+                    throw new InvalidOperationException($"The abandoned house {Id} could not be persisted.");
+                context.AfterCommit(() =>
+                {
+                    if (Hp == remainingHp)
+                        IsDirty = false;
+                });
+                return true;
+            }
             var values = CaptureSaveValues();
             WriteSaveRow(context.Connection, context.Transaction, values);
             context.AfterCommit(() =>

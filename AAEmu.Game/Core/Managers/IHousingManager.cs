@@ -6,7 +6,6 @@ using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.StaticValues;
 
-using MySql.Data.MySqlClient;
 
 namespace AAEmu.Game.Core.Managers;
 
@@ -38,6 +37,6 @@ public interface IHousingManager
     int? GetWeeklyTaxAmount(House house);
     bool CanPayTaxMail(House house);
     bool PayWeeklyTax(House house);
-    (int, int) Save(MySqlConnection connection, MySqlTransaction transaction);
+    (int, int) Save(PersistenceSaveContext context);
     void ReconcileBoundDoodads();
 }
