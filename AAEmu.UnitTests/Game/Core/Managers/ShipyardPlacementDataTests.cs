@@ -3,8 +3,10 @@ using System.Numerics;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.GameData;
 using AAEmu.Game.IO;
+using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Shipyard;
+using AAEmu.Game.Models.Game.World;
 
 using Microsoft.Data.Sqlite;
 
@@ -28,6 +30,41 @@ public sealed class ShipyardPlacementDataTests
         command.CommandText = "DELETE FROM item_shipyards; INSERT INTO item_shipyards VALUES(28013,0)";
         command.ExecuteNonQuery();
         await Assert.That(() => ShipyardManager.ReadDesignShipyards(connection)).Throws<InvalidDataException>();
+    }
+
+    [Test]
+    public async Task ExactClient_DewstoneCutterHitsUseTheAuthoredOceanAtBothCoordinates()
+    {
+        var path = Environment.GetEnvironmentVariable("AAEMU_HOUSING_GAME_PAK");
+        Skip.Unless(!string.IsNullOrEmpty(path), "Set AAEMU_HOUSING_GAME_PAK for the two recorded r208022 Cutter previews.");
+        var source = new ClientSource { PathName = path, SourceType = ClientSourceType.GamePak };
+        await Assert.That(source.Open()).IsTrue();
+        try
+        {
+            const string cell = "game/worlds/main_world/cells/012_013/client/";
+            var world = new WorldTemplate { Name = "main_world", Cells = new WorldCell[13, 14] };
+            var water = HousingWaterGeometry.Load(world, name =>
+                (!name.Contains("/cells/") || name.StartsWith(cell)) && source.FileExists(name) ? source.GetFileStream(name) : null);
+            using var heightmap = source.GetFileStream(cell + "terrain/heightmap.dat");
+            var terrain = CryTerrainGrid.Read(heightmap, new Vector2(12 * 1024, 13 * 1024));
+            foreach (var (cursor, ground) in new[]
+            {
+                (new Vector3(13006.683f, 13679.304f, 109.87585f), 59.21325f),
+                (new Vector3(12989.4f, 13682.096f, 109.55605f), 62.000946f)
+            })
+            {
+                var sample = cursor - Vector3.UnitZ * ShipyardPlacementRules.PreviewHeight;
+                var surface = water.GetWaterLevel(sample, 100, [], out var waveSize);
+                await Assert.That(surface).IsEqualTo(100f);
+                await Assert.That(waveSize).IsEqualTo(0.75f);
+                await Assert.That(terrain.SampleHeight(cursor.X, cursor.Y)).IsEqualTo(ground).Within(0.01f);
+                await Assert.That(ShipyardPlacementRules.IsOnWater(cursor, surface, waveSize)).IsTrue();
+            }
+        }
+        finally
+        {
+            source.Close();
+        }
     }
 
     [Test]

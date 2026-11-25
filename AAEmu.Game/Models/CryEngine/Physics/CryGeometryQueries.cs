@@ -6,7 +6,11 @@ namespace AAEmu.Game.Models.CryEngine.Physics;
 public static class CryGeometryQueries
 {
     public static bool Raycast(CryGeometryPart part, Matrix4x4 objectTransform, Vector3 origin,
-        Vector3 direction, float maximumDistance, bool ignoreBackFaces, out CryRayHit hit)
+        Vector3 direction, float maximumDistance, bool ignoreBackFaces, out CryRayHit hit) =>
+        Raycast(part, objectTransform, origin, direction, maximumDistance, ignoreBackFaces, out hit, -1);
+
+    internal static bool Raycast(CryGeometryPart part, Matrix4x4 objectTransform, Vector3 origin,
+        Vector3 direction, float maximumDistance, bool ignoreBackFaces, out CryRayHit hit, int excludedTriangle)
     {
         hit = default;
         if (!float.IsFinite(maximumDistance) || maximumDistance < 0 ||
@@ -26,7 +30,8 @@ public static class CryGeometryQueries
         void Accept(float candidate, Vector3 candidateNormal, int candidateTriangle = -1, int candidateMaterial = -1)
         {
             if (candidate < 0 || candidate > distance || !float.IsFinite(candidate) ||
-                (ignoreBackFaces && Vector3.Dot(candidateNormal, localDirection) >= 0))
+                (ignoreBackFaces && Vector3.Dot(candidateNormal, localDirection) >= 0) ||
+                (excludedTriangle >= 0 && candidateTriangle == excludedTriangle))
                 return;
             distance = candidate;
             normal = candidateNormal;

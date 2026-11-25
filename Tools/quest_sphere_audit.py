@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Check r208022 quest objective sphere coverage without changing compact data."""
+"""Check r208022 quest sphere geometry without changing compact data."""
 
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
+from collections import Counter, defaultdict
 import hashlib
 import json
 import math
@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import sqlite3
 import sys
+import xml.etree.ElementTree as ET
 
 
 ACT_TABLES = {
@@ -127,7 +128,7 @@ def starter_evidence(connection: sqlite3.Connection, quest_id: int, placements: 
            LEFT JOIN quest_act_con_accept_components d
              ON a.act_detail_type = 'QuestActConAcceptComponent' AND d.id = a.act_detail_id
            WHERE c.quest_context_id = ? AND c.component_kind_id = 2
-             AND a.act_detail_type LIKE 'QuestActConAccept%'""",
+             AND a.act_detail_type LIKE 'QuestActConAccept%' ORDER BY a.id""",
         (quest_id,)))
     alternate = []
     for table in ("item_accept_quests", "accept_quest_effects", "doodad_func_quests", "sphere_accept_quest_quests"):
@@ -184,7 +185,98 @@ def exclusion_holds(exclusion, objective, connection, placements):
     return False, f"The exclusion reason is unknown: {reason}"
 
 
-def audit(compact: Path, client_root: Path, world_data: Path, manifest_path: Path) -> dict:
+def read_zone_worlds(world_files, errors):
+    if not world_files:
+        errors.append("The starter inventory needs the client game/worlds/*/world.xml files.")
+    zone_worlds = defaultdict(set)
+    for path in world_files:
+        world = path.parent.name
+        definition = ET.parse(path).getroot()
+        if definition.tag != "World" or definition.get("name") != world:
+            errors.append(f"The client world definition does not match its directory: {world}")
+            continue
+        for zone in definition.findall("./ZoneList/Zone"):
+            zone_worlds[int(zone.attrib["id"])].add(world)
+    return zone_worlds
+
+
+def starter_inventory(connection, client_root, volumes, placements, errors):
+    world_files = sorted((client_root / "game/worlds").glob("*/world.xml"))
+    zone_worlds = read_zone_worlds(world_files, errors)
+    by_component = defaultdict(list)
+    quest_components = defaultdict(set)
+    for volume in volumes:
+        by_component[volume["component_id"]].append(volume)
+        quest_components[volume["quest_id"]].add(volume["component_id"])
+
+    # The Game looks up the first SphereQuest binding for a quest. The hint file
+    # identifies a component, so several bindings do not identify the individual areas.
+    quest_bindings = defaultdict(set)
+    for quest_id, sphere_id in connection.execute(
+            """SELECT d.quest_id, s.id FROM sphere_quests d JOIN spheres s
+               ON s.sphere_detail_type='SphereQuest' AND s.sphere_detail_id=d.id"""):
+        quest_bindings[quest_id].add(sphere_id)
+
+    components = {}
+    for row in connection.execute(
+            """SELECT q.id quest_id, q.category_id, z.zone_key, z.closed, c.id component_id, a.id act_id,
+                      d.sphere_id, s.sphere_detail_type, sq.quest_id mapped_quest_id
+               FROM quest_acts a JOIN quest_components c ON c.id=a.quest_component_id
+               JOIN quest_contexts q ON q.id=c.quest_context_id
+               LEFT JOIN zones z ON z.id=q.zone_id
+               LEFT JOIN quest_act_con_accept_spheres d ON d.id=a.act_detail_id
+               LEFT JOIN spheres s ON s.id=d.sphere_id
+               LEFT JOIN sphere_quests sq ON s.sphere_detail_type='SphereQuest' AND sq.id=s.sphere_detail_id
+               WHERE a.act_detail_type='QuestActConAcceptSphere' AND c.component_kind_id=2
+               ORDER BY q.id, c.id, a.id"""):
+        quest, component = row["quest_id"], row["component_id"]
+        if component not in components:
+            evidence = starter_evidence(connection, quest, placements)
+            closed = row["closed"]
+            components[component] = {
+                "quest_id": quest, "category_id": row["category_id"], "component_id": component, "acts": [],
+                "quest_zone_key": row["zone_key"],
+                "quest_zone_closed": None if closed is None else closed in (1, "t", "true"),
+                "quest_zone_worlds": sorted(zone_worlds[row["zone_key"]]),
+                "quest_sphere_bindings": sorted(quest_bindings[quest]),
+                "other_accept_acts": [act for act in evidence["acts"]
+                                      if act["act_detail_type"] != "QuestActConAcceptSphere"],
+                "placed_accept_npcs": evidence["placed_npc_ids"], "other_quest_references": evidence["alternate"],
+                "inbound_quests": evidence["inbound_quests"],
+                "other_geometry_components": sorted(quest_components[quest] - {component}),
+            }
+        components[component]["acts"].append({key: row[key] for key in
+                                               ("act_id", "sphere_id", "sphere_detail_type", "mapped_quest_id")})
+        if row["sphere_detail_type"] is None:
+            errors.append(f"The starter act {row['act_id']} has no sphere metadata.")
+
+    for component, result in components.items():
+        matches = []
+        for volume in by_component[component]:
+            if volume["quest_id"] != result["quest_id"]:
+                errors.append(f"The starter geometry quest ID differs from its component: {component}")
+            elif volume["world"] not in zone_worlds[volume["zone_key"]]:
+                errors.append(f"The starter geometry zone does not belong to its world: {volume['source']}")
+            elif valid_volume(volume):
+                matches.append(volume)
+        result["volume_count"] = len(matches)
+        result["geometry_sources"] = sorted({volume["source"] for volume in matches})
+        required_ids = {act["sphere_id"] for act in result["acts"]}
+        if not matches:
+            result["geometry_status"] = "missing"
+        elif len(required_ids) == 1 and required_ids == set(result["quest_sphere_bindings"]):
+            result["geometry_status"] = "single_binding"
+        else:
+            result["geometry_status"] = "component_only"
+
+    return {"act_count": sum(len(row["acts"]) for row in components.values()),
+            "component_count": len(components),
+            "geometry_counts": dict(Counter(row["geometry_status"] for row in components.values())),
+            "world_definitions": input_digest(client_root, world_files), "components": list(components.values())}
+
+
+def audit(compact: Path, client_root: Path, world_data: Path, manifest_path: Path, *,
+          include_starters: bool = False) -> dict:
     errors = []
     manifest = load_json(manifest_path)
     if manifest.get("schema_version") != 1:
@@ -255,7 +347,7 @@ def audit(compact: Path, client_root: Path, world_data: Path, manifest_path: Pat
             errors.append(f"The exclusion no longer matches a live objective: {key}")
         for key in sorted(set(overrides) - used_overrides):
             errors.append(f"The world override no longer matches a live objective: {key}")
-        return {"schema_version": 1, "compact_sha256": file_hash(compact),
+        result = {"schema_version": 1, "compact_sha256": file_hash(compact),
                 "manifest_sha256": file_hash(manifest_path), "objective_count": len(results),
                 "client_geometry": input_digest(client_root, client_root.rglob("quest_sign_sphere.g")),
                 "supplements": input_digest(world_data, world_data.glob("*/quest_spheres.json")),
@@ -264,7 +356,10 @@ def audit(compact: Path, client_root: Path, world_data: Path, manifest_path: Pat
                 "excluded_count": sum(row["status"] == "excluded" for row in results),
                 "client_volume_count": sum(row["source_kind"] == "client" for row in volumes),
                 "supplement_volume_count": sum(row["source_kind"] == "supplement" for row in volumes),
-                "objectives": results, "errors": sorted(set(errors)), "ok": not errors}
+                "objectives": results}
+        if include_starters:
+            result["starter_inventory"] = starter_inventory(connection, client_root, volumes, placements, errors)
+        return dict(result, errors=sorted(set(errors)), ok=not errors)
     finally:
         connection.close()
 
@@ -275,17 +370,24 @@ def main(argv=None) -> int:
     parser.add_argument("--client-root", required=True, type=Path)
     parser.add_argument("--world-data", required=True, type=Path)
     parser.add_argument("--exclusions", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument("--include-starters", action="store_true",
+                        help="Also inventory starter components, their quest references and current geometry.")
     parser.add_argument("--report", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        result = audit(args.compact, args.client_root, args.world_data, args.exclusions)
-    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as error:
+        result = audit(args.compact, args.client_root, args.world_data, args.exclusions,
+                       include_starters=args.include_starters)
+    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, ET.ParseError) as error:
         result = {"schema_version": 1, "ok": False, "errors": [str(error)]}
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
     if result["ok"]:
         print(f"The audit passed: {result['covered_count']} objectives have geometry and "
               f"{result['excluded_count']} objectives have checked exclusions.")
+        if args.include_starters:
+            inventory = result["starter_inventory"]
+            print(f"The starter inventory lists {inventory['act_count']} acts across "
+                  f"{inventory['component_count']} components. Geometry counts: {inventory['geometry_counts']}.")
         return 0
     for error in result["errors"]:
         print(error, file=sys.stderr)

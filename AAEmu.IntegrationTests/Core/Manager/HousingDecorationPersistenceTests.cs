@@ -1,20 +1,33 @@
 using System.Numerics;
 using System.Collections.Concurrent;
 using System.Reflection;
+using AAEmu.Commons.Network;
+using AAEmu.Commons.Network.Core;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.Stream;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
+using AAEmu.Game.Models.Game.Models;
+using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Effects;
+using AAEmu.Game.Models.Game.Skills.Effects.Enums;
+using AAEmu.Game.Models.Game.Skills.Static;
+using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Tasks.Skills;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
 using Moq;
@@ -46,7 +59,20 @@ public sealed partial class PlayerMailSendPersistenceTests
     [InlineData(false, false, "overlap")]
     [InlineData(false, false, "no_support")]
     [InlineData(false, false, "forged_parent")]
-    public void HouseDecoration_OnlyCommitsExactItemAndDoodadTogether(bool stackable, bool coffer, string outcome)
+    public Task HouseDecoration_OnlyCommitsExactItemAndDoodadTogether(bool stackable, bool coffer, string outcome)
+        => CheckDecoration(stackable, coffer, outcome);
+
+    [Theory]
+    [InlineData(31878u, 520u, 7821u, 21490u, 1155u, true)]
+    [InlineData(31878u, 520u, 7821u, 21491u, 1156u, true)]
+    [InlineData(27656u, 335u, 6573u, 17397u, 750u, false)]
+    public Task OwnerCollect_ReloadsPlacedFurnitureAndRecoversTheSameItem(uint itemId, uint designId,
+        uint templateId, uint phase, uint function, bool restore)
+        => CheckDecoration(false, false, "success", new(itemId, designId, templateId, phase, function, restore));
+
+    private sealed record RecoveryCase(uint Item, uint Design, uint Template, uint Phase, uint Function, bool Restore);
+
+    private static async Task CheckDecoration(bool stackable, bool coffer, string outcome, RecoveryCase recovery = null)
     {
         using var graph = new SendGraph();
         using var services = new LaborBuffServices();
@@ -68,15 +94,19 @@ public sealed partial class PlayerMailSendPersistenceTests
             var player = graph.Sender;
             player.InitializeLaborCache(20, DateTime.UtcNow);
             Execute($"INSERT INTO accounts(account_id,labor) VALUES({player.AccountId},20) ON DUPLICATE KEY UPDATE labor=20");
-            var item = stackable ? graph.AddItem(0) : graph.AddEquipment(0);
+            Item AddItem(byte slot) => recovery != null ? graph.AddItem(slot, recovery.Item) :
+                stackable ? graph.AddItem(slot) : graph.AddEquipment(slot);
+            var designId = recovery?.Design ?? 1u;
+            var templateId = recovery?.Template ?? 1u;
+            var item = AddItem(0);
             item.Count = stackable ? 2 : 1;
             // The same template in another slot must never substitute for the requested item identity.
-            var alternative = stackable ? graph.AddItem(1) : graph.AddEquipment(1);
+            var alternative = AddItem(1);
             var alternativeCount = alternative.Count;
             SetField(HousingGameData.Instance, "_housingDecorations", new Dictionary<uint, HousingDecoration>
-                { [1] = new() { Id = 1, DoodadId = 1, AllowOnFloor = true } });
+                { [designId] = new() { Id = designId, DoodadId = templateId, AllowOnFloor = true } });
             SetField(HousingGameData.Instance, "_housingItemHousingDecorations", new List<ItemHousingDecoration>
-                { new() { DesignId = 1, ItemId = item.TemplateId } });
+                { new() { DesignId = designId, ItemId = item.TemplateId, Restore = recovery?.Restore ?? false } });
             if (outcome == "bank")
             {
                 player.Inventory.Bag.Items.Remove(item);
@@ -133,9 +163,19 @@ public sealed partial class PlayerMailSendPersistenceTests
             HousingManager housing = null;
             var doodads = new DoodadManager(objectIds.Object, doodadIds.Object, graph.Items,
                 new Lazy<IHousingManager>(() => housing), null);
-            DoodadTemplate template = coffer ? new DoodadCofferTemplate { Id = 1, Capacity = 10 } : new DoodadTemplate { Id = 1 };
+            DoodadTemplate template = coffer ? new DoodadCofferTemplate { Id = 1, Capacity = 10 } : new DoodadTemplate { Id = templateId };
             template.Model = "cgf://housing-test-decoration.cgf";
-            SetField(doodads, "_templates", new Dictionary<uint, DoodadTemplate> { [1] = template });
+            SetField(doodads, "_templates", new Dictionary<uint, DoodadTemplate> { [templateId] = template });
+            if (recovery != null)
+            {
+                template.FuncGroups.Add(new DoodadFuncGroups { Id = recovery.Phase, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Start });
+                var collect = new DoodadFuncRecoverItem { Id = recovery.Function };
+                SetField(doodads, "_phaseFuncs", new Dictionary<uint, List<DoodadPhaseFunc>>());
+                SetField(doodads, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>> { [recovery.Phase] =
+                    [new() { FuncId = collect.Id, FuncType = nameof(DoodadFuncRecoverItem), NextPhase = -1 }] });
+                SetField(doodads, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
+                    { [nameof(DoodadFuncRecoverItem)] = new() { [collect.Id] = collect } });
+            }
             var oldDoodads = SwapSingleton(doodads);
             housing = new HousingManager(objectIds.Object, Mock.Of<IFactionManager>(), Mock.Of<ILocalizationManager>(),
                 Mock.Of<IWorldManager>(), Mock.Of<ITaskManager>(), Mock.Of<ISkillManager>(), Mock.Of<IHousingIdManager>(),
@@ -160,7 +200,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                 Execute($"CREATE TRIGGER {trigger} AFTER INSERT ON doodads FOR EACH ROW BEGIN IF NEW.id={dbId} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected failure after decoration row'; END IF; END");
             try
             {
-                var result = housing.DecorateHouse(player, house.TlId, outcome == "wrong_design" ? 2u : 1u,
+                var result = housing.DecorateHouse(player, house.TlId, outcome == "wrong_design" ? 2u : designId,
                     outcome == "outside_bounds" ? new Vector3(9.75f, 2, 3) : new Vector3(1, 2, 3),
                     Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 0.5f), outcome == "forged_parent" ? house.ObjId : 0, item.Id);
                 var success = outcome is "success" or "crop_in_last_slot";
@@ -207,7 +247,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                 Assert.Equal(item.Id, reloaded.Id);
                 Assert.Equal(item.Count, reloaded.Count);
                 Assert.Equal(expectedSlot, reloaded.SlotType);
-                if (!stackable)
+                if (!stackable && recovery == null)
                 {
                     var equipment = Assert.IsType<EquipItem>(reloaded);
                     Assert.Equal(753u, equipment.UccId);
@@ -225,6 +265,8 @@ public sealed partial class PlayerMailSendPersistenceTests
                 doodadIds.Verify(ids => ids.GetNextId(), allocated ? Times.Once() : Times.Never());
                 objectIds.Verify(ids => ids.ReleaseId(256), outcome == "failed_commit" ? Times.Once() : Times.Never());
                 doodadIds.Verify(ids => ids.ReleaseId(dbId), outcome == "failed_commit" ? Times.Once() : Times.Never());
+                if (recovery != null)
+                    await CollectAfterReload(graph, house, item, published);
                 if (outcome == "failed_commit")
                 {
                     Execute($"DROP TRIGGER {trigger}");
@@ -250,6 +292,96 @@ public sealed partial class PlayerMailSendPersistenceTests
             SwapSingleton(oldHousingData);
             AppConfiguration.Instance.World = oldWorldConfig;
             containerIdField.SetValue(null, oldContainerIds);
+        }
+    }
+
+    private static async Task CollectAfterReload(SendGraph graph, House house, Item placedItem, Doodad placed)
+    {
+        var items = graph.ReloadLifecycle().Items;
+        var oldItems = SwapSingleton(items);
+        var models = new ModelManager();
+        SetField(models, "_modelTypes", new Dictionary<uint, ModelType>());
+        var oldModels = SwapSingleton(models);
+        var oldGrant = SwapSingleton(new SkillGrantGameData());
+        var oldRequirements = SwapSingleton(new SkillRequirementsGameData());
+        var oldPermissions = SwapSingleton(new PermissionManager(Mock.Of<IAccountManager>()));
+        var fresh = HousingPlacementWorld(house.ParentWorld.Id + 1);
+        try
+        {
+            var owner = graph.Sender;
+            owner.ParentWorld = house.ParentWorld = fresh;
+            owner.ObjId = owner.Id;
+            owner.Hp = owner.Mp = 100;
+            fresh.AddObject(owner);
+            owner.Inventory = new Inventory(owner);
+            owner.Skills = new CharacterSkills(owner);
+            owner.Abilities = new CharacterAbilities(owner);
+            fresh.Regions = new Region[WorldManager.SECTORS_PER_CELL, WorldManager.SECTORS_PER_CELL];
+            var spawner = fresh.SpawnManager = new SpawnManager(fresh);
+            Assert.Equal(1, spawner.SpawnPersistentDoodads(DoodadOwnerType.Housing, (int)house.Id, house, true));
+            var furniture = Assert.Single(fresh.GetAllDoodads());
+            Assert.Equal(placed.DbId, furniture.DbId);
+            Assert.Equal(placed.FuncGroupId, furniture.FuncGroupId);
+            var backing = items.GetItemByItemId(placedItem.Id);
+            Assert.NotSame(placedItem, backing);
+            Assert.Same(owner.Inventory.SystemContainer, backing._holdingContainer);
+            Assert.Equal(backing.Id, furniture.ItemId);
+
+            var template = new SkillTemplate
+            {
+                Id = 11361, TargetType = SkillTargetType.Doodad, TargetSelection = SkillTargetSelection.Target,
+                CastingTime = 1000, MaxRange = 4, CastingDelayable = true, DefaultGcd = true, TargetAlive = true,
+                Effects = [new SkillEffect
+                {
+                    ApplicationMethod = SkillEffectApplicationMethod.Target, StartLevel = 1, EndLevel = 100,
+                    Friendly = true, NonFriendly = true, Front = true, Back = true, Chance = 100,
+                    Template = new InteractionEffect { WorldInteraction = WorldInteractionType.RecoverItem }
+                }]
+            };
+            SetField(SkillManager.Instance, "_comboFollowupSkills", new HashSet<uint>());
+            HousingField<Dictionary<uint, SkillTemplate>>(SkillManager.Instance, "_skills")[template.Id] = template;
+            var session = new Mock<ISession>();
+            var connection = new GameConnection(session.Object) { ActiveChar = owner };
+            owner.Connection = connection;
+            void Collect()
+            {
+                var request = new PacketStream().Write(template.Id).Write((byte)0).WriteBc(owner.ObjId)
+                    .Write((byte)SkillCastTargetType.Doodad).WriteBc(furniture.ObjId).Write((byte)0);
+                new CSStartSkillPacket { Connection = connection }.Read(request);
+            }
+
+            owner.Transform.Local.Position = furniture.Transform.World.Position + Vector3.UnitX * 20;
+            Collect();
+            Assert.Null(owner.SkillTask);
+            Assert.Same(owner.Inventory.SystemContainer, backing._holdingContainer);
+
+            owner.Transform.Local.Position = furniture.Transform.World.Position;
+            Collect();
+            var cast = Assert.IsType<CastTask>(owner.SkillTask);
+            Assert.Same(furniture, cast.Skill.InitialTarget);
+            session.Verify(sender => sender.SendPacket(It.Is<byte[]>(packet => packet[packet.Length - 1] == (byte)SkillResult.TooFarRange)), Times.Once());
+            await Task.Delay(TimeSpan.FromMilliseconds(template.CastingTime + 10));
+            cast.Execute();
+            Assert.Same(backing, owner.Inventory.Bag.GetItemByItemId(placedItem.Id));
+            Assert.Equal(placedItem.TemplateId, backing.TemplateId);
+            Assert.Equal(1, backing.Count);
+            Assert.Empty(fresh.GetAllDoodads());
+
+            using var database = AAEmu.Commons.Utils.DB.MySQL.CreateConnection();
+            using var transaction = database.BeginTransaction();
+            items.Save(database, transaction);
+            transaction.Commit();
+            Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM items WHERE id={placedItem.Id} AND owner={owner.Id} AND slot_type={(int)SlotType.Inventory} AND count=1"));
+            Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM doodads WHERE id={placed.DbId} OR item_id={placedItem.Id}"));
+        }
+        finally
+        {
+            fresh.SpawnManager = null;
+            SwapSingleton(oldPermissions);
+            SwapSingleton(oldRequirements);
+            SwapSingleton(oldGrant);
+            SwapSingleton(oldModels);
+            SwapSingleton(oldItems);
         }
     }
 

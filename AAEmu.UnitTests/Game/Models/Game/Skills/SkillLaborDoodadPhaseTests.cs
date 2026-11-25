@@ -14,8 +14,11 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
+using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Loots;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Skills.Effects;
+using AAEmu.Game.Models.Game.Skills.Effects.Enums;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.World;
 
@@ -23,6 +26,86 @@ namespace AAEmu.UnitTests.Game.Models.Game.Skills;
 
 public sealed partial class SkillLaborTests
 {
+    [Test]
+    [Arguments(0, 27301u, true)]
+    [Arguments(9, 27301u, true)]
+    [Arguments(9, 27301u, false)]
+    [Arguments(9, 17684u, true)]
+    [Arguments(9, 0u, true)]
+    public async Task NuiStatue_ContributesTheWornPackAndLaborTogether(int previous, uint wornItem, bool commitSucceeds)
+    {
+        const uint skillId = 23780;
+        const uint packId = 27301;
+        var skill = new Skill(new SkillTemplate
+        {
+            Id = skillId, TargetType = SkillTargetType.Doodad, ConsumeLaborPower = 25,
+            Effects = [new SkillEffect { ApplicationMethod = SkillEffectApplicationMethod.Target, Chance = 100,
+                EndLevel = 99, Template = new InteractionEffect { WorldInteraction = WorldInteractionType.Use } }]
+        });
+        _owner.InitializeLaborCache(50, DateTime.UtcNow);
+        var spare = AddConstructionPack(2, packId, _owner.Inventory.Bag, 1);
+        var worn = wornItem == 0 ? null : AddConstructionPack(3, wornItem, _owner.Inventory.Equipment, (int)EquipmentItemSlot.Backpack);
+        var manager = new DoodadManager(Mock.Of<IObjectIdManager>().Object, Mock.Of<IDoodadIdManager>().Object,
+            ItemManager.Instance, new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>().Object), Mock.Of<ISusManager>().Object);
+        SetInstance(manager);
+        SetField(SkillManager.Instance, "_skills", new Dictionary<uint, SkillTemplate> { [skillId] = skill.Template });
+        SetField(manager, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>>
+        {
+            [19827] = [new() { GroupId = 19827, FuncId = 57, FuncType = nameof(DoodadFuncInsertCounter), SkillId = skillId, NextPhase = 19888 }]
+        });
+        SetField(manager, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
+        {
+            [nameof(DoodadFuncInsertCounter)] = new() { [57] = new DoodadFuncInsertCounter { Id = 57, Count = 10, ItemId = packId, ItemCount = 1 } }
+        });
+        SetField(manager, "_phaseFuncs", new Dictionary<uint, List<DoodadPhaseFunc>>());
+        var statue = new PhaseRecordingDoodad
+        {
+            ObjId = 301, OwnerId = _owner.Id, TemplateId = 7234, FuncGroupId = 19827,
+            Template = new DoodadTemplate { Id = 7234, InsertCounterSkills = [skillId] },
+            DbId = 301, IsPersistent = true
+        };
+        statue.SetData(previous);
+        var before = statue.PhaseTime;
+        var commitCount = 0;
+        var publishedBeforeCommit = false;
+        skill.CommitLaborBatch = (_, _) =>
+        {
+            commitCount++;
+            publishedBeforeCommit = statue.DataUpdates.Count != 0 || statue.Phases.Count != 0;
+            return commitSucceeds;
+        };
+
+        skill.ApplyEffects(_owner, new SkillCasterUnit(_owner.ObjId), statue, new SkillCastDoodadTarget { ObjId = statue.ObjId }, null);
+        var accepted = wornItem == packId && commitSucceeds;
+        var advanced = accepted && previous == 9;
+        var expectedCount = advanced ? 0 : previous + (accepted ? 1 : 0);
+        await Assert.That(skill.Cancelled).IsEqualTo(!accepted);
+        await Assert.That(commitCount).IsEqualTo(wornItem == packId ? 1 : 0);
+        await Assert.That(statue.Data).IsEqualTo(expectedCount);
+        await Assert.That(statue.FuncGroupId).IsEqualTo(advanced ? 19888u : 19827u);
+        await Assert.That(statue.Phases.Count).IsEqualTo(advanced ? 1 : 0);
+        await Assert.That(publishedBeforeCommit).IsFalse();
+        await Assert.That(statue.DataUpdates).IsEquivalentTo(accepted ? new[] { expectedCount } : Array.Empty<int>());
+        if (!advanced)
+            await Assert.That(statue.PhaseTime).IsEqualTo(before);
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)(accepted ? 25 : 50));
+        await Assert.That(_owner.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack)).IsSameReferenceAs(accepted ? null : worn);
+        await Assert.That(_owner.Inventory.Bag.GetItemBySlot(spare.Slot)).IsSameReferenceAs(spare);
+        await Assert.That(DoodadManager.ChangeDoodadData(_owner, statue, 5)).IsFalse();
+        await Assert.That(statue.Data).IsEqualTo(expectedCount);
+
+        if (advanced)
+        {
+            var lateCast = new Skill(skill.Template);
+            var extraPack = AddConstructionPack(4, packId, _owner.Inventory.Equipment, (int)EquipmentItemSlot.Backpack);
+            var lateResult = SkillLaborBatch.Run(_owner, lateCast, true, () => statue.Use(_owner, skillId));
+            await Assert.That(lateResult).IsFalse();
+            await Assert.That(_owner.LaborPower).IsEqualTo((short)25);
+            await Assert.That(_owner.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack)).IsSameReferenceAs(extraPack);
+            await Assert.That(statue.Phases.Count).IsEqualTo(1);
+        }
+    }
+
     [Test]
     [Arguments(true, true)]
     [Arguments(false, true)]
@@ -156,15 +239,19 @@ public sealed partial class SkillLaborTests
     private sealed class PhaseRecordingDoodad : Doodad
     {
         public List<(uint GroupId, uint TimeLeft)> Phases { get; } = [];
+        public List<int> DataUpdates { get; } = [];
 
         public override void BroadcastPacket(GamePacket packet, bool self)
         {
-            if (packet is not SCDoodadPhaseChangedPacket)
+            if (packet is not (SCDoodadPhaseChangedPacket or SCDoodadChangedPacket))
                 return;
             var stream = packet.Write(new PacketStream());
             stream.Rollback();
             stream.ReadBc();
-            Phases.Add((stream.ReadUInt32(), stream.ReadUInt32()));
+            if (packet is SCDoodadChangedPacket)
+                DataUpdates.Add(stream.ReadInt32());
+            else
+                Phases.Add((stream.ReadUInt32(), stream.ReadUInt32()));
         }
     }
 }

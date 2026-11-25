@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Numerics;
+using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Physics.Util;
@@ -40,17 +41,19 @@ public sealed class ShipWaterfallInteraction
     private sealed class TrackedShip
     {
         public SafePose? LastSafePose;
+        public SafePose? PendingApproach;
         public TransitState? Transit;
         public float RetryCooldown;
     }
 
-    private sealed class SafePose
+    private struct SafePose
     {
         public JVector Position;
         public JQuaternion Orientation;
         public JVector Velocity;
         public JVector AngularVelocity;
         public float Speed;
+        public float WaterlineTolerance;
         public float WaterSurface;
         public Vector3 WaterFlow;
         public float FloorLevel;
@@ -60,10 +63,11 @@ public sealed class ShipWaterfallInteraction
     {
         public required SafePose RecoveryPose;
         public required Vector2 Direction;
-        public required Vector3 ReceivingFlow;
-        public float ReceivingSurface;
-        public float FarEdgeProjection;
-        public float HullRadiusAlongDirection;
+        public float SourceSurface;
+        public float WaterfallBottom;
+        public float ProjectedReceivingSurface;
+        public float LowerPoolProjection;
+        public IReadOnlyList<WaterfallArea>? ClearanceBrushes;
         public float WaterlineCenterOffset;
         public float ElapsedSeconds;
         public float MaximumSeconds;
@@ -98,6 +102,14 @@ public sealed class ShipWaterfallInteraction
         // Defensive cleanup for a removed/reloaded state dictionary.
         ship.WaterfallTransitActive = false;
 
+        // PhysicsManager refreshes the water from the last published Transform before syncing the body.
+        // A moving ship's normal cache can therefore confirm the previous step here.
+        if (tracked.PendingApproach is { } previous)
+        {
+            TryConfirmMeasuredApproach(ship, tracked, previous);
+            tracked.PendingApproach = null;
+        }
+
         var bounds = body.Shapes[0].WorldBoundingBox;
         var nearby = world.Water.GetWaterfallsIntersecting(
             bounds.Min.X - ApproachPaddingMeters,
@@ -116,8 +128,13 @@ public sealed class ShipWaterfallInteraction
         if (tracked.RetryCooldown > 0f)
             return false;
 
+        var position = new Vector3(body.Position.X, body.Position.Z, body.Position.Y);
+        var sourceFlow = ship.CachedWaterFlow;
+        var sourceSurface = ship.MeasuredWaterAndLandPosition == position
+            ? ship.CachedWaterSurface
+            : world.Water.GetWaterSurface(position, out sourceFlow);
         GetUnionBounds(nearby, out var waterfallMin, out var waterfallMax);
-        if (!IsAtSourceLip(ship.CachedWaterSurface, bounds, waterfallMin, waterfallMax))
+        if (!IsAtSourceLip(sourceSurface, bounds, waterfallMin, waterfallMax))
         {
             // Lower pools commonly overlap the waterfall brush's base. They remain ordinary
             // navigable water and must not behave like an invisible barrier after landing.
@@ -125,14 +142,20 @@ public sealed class ShipWaterfallInteraction
             return false;
         }
 
-        if (TryStartTransit(ship, tracked, nearby, bounds))
+        var launch = TryStartTransit(ship, tracked, bounds, nearby, waterfallMin, waterfallMax, sourceSurface, sourceFlow);
+        if (launch == LaunchResult.Launched)
             return true;
+        if (launch == LaunchResult.NavigableApproach)
+        {
+            TryRememberSafePose(ship, tracked, bounds);
+            return false;
+        }
 
         // An unsuitable corridor (no lower pool, too narrow, or a trajectory that would exceed
         // the movement packet range) is treated as a guarded lip, never as permission to enter the
         // bogus heightmap volume under the visual landscape.
-        if (tracked.LastSafePose is not null)
-            Recover(ship, tracked, tracked.LastSafePose, "unsafe waterfall corridor");
+        if (tracked.LastSafePose is { } safe && IsUpperWater(safe.WaterSurface, sourceSurface))
+            Recover(ship, tracked, safe, "unsafe waterfall corridor");
         return false;
     }
 
@@ -145,28 +168,44 @@ public sealed class ShipWaterfallInteraction
     private static void TryRememberSafePose(Slave ship, TrackedShip tracked, JBoundingBox bounds)
     {
         var body = ship.RigidBody!;
-        var hullHeight = MathF.Max(0.25f, bounds.Max.Y - bounds.Min.Y);
-        var nearWaterline = MathF.Abs(body.Position.Y - ship.CachedWaterSurface) <= MathF.Max(3f, hullHeight);
-        var hasWaterDepth = ship.CachedWaterSurface >= ship.CachedFloorLevel + MinimumReceivingDepthMeters;
-        if (!nearWaterline || !hasWaterDepth || ship.GroundContactLatched || !IsFinite(body))
+        if (ship.GroundContactLatched || !IsFinite(body))
             return;
 
-        tracked.LastSafePose = CapturePose(ship);
+        var pose = CapturePose(ship);
+        pose.WaterlineTolerance = MathF.Max(3f, bounds.Max.Y - bounds.Min.Y);
+        if (!TryConfirmMeasuredApproach(ship, tracked, pose))
+            tracked.PendingApproach = pose;
     }
 
-    private static bool TryStartTransit(Slave ship, TrackedShip tracked, IReadOnlyList<WaterfallArea> nearby,
-        JBoundingBox hullBounds)
+    private static bool TryConfirmMeasuredApproach(Slave ship, TrackedShip tracked, SafePose pose)
+    {
+        var p = pose.Position;
+        if (ship.MeasuredWaterAndLandPosition != new Vector3(p.X, p.Z, p.Y) ||
+            !(MathF.Abs(p.Y - ship.CachedWaterSurface) <= pose.WaterlineTolerance) ||
+            !(ship.CachedFloorLevel <= ship.CachedWaterSurface - MinimumReceivingDepthMeters))
+            return false;
+
+        pose.FloorLevel = ship.CachedFloorLevel;
+        pose.WaterSurface = ship.CachedWaterSurface;
+        pose.WaterFlow = ship.CachedWaterFlow;
+        tracked.LastSafePose = pose;
+        return true;
+    }
+
+    private enum LaunchResult
+    {
+        Unsafe,
+        NavigableApproach,
+        Launched
+    }
+
+    private static LaunchResult TryStartTransit(Slave ship, TrackedShip tracked, JBoundingBox hullBounds,
+        IReadOnlyList<WaterfallArea> areas, Vector3 waterfallMin, Vector3 waterfallMax, float sourceSurface, Vector3 sourceFlow)
     {
         var body = ship.RigidBody!;
-        var sourceSurface = ship.CachedWaterSurface;
-
-        GetUnionBounds(nearby, out var waterfallMin, out var waterfallMax);
-        if (!IsAtSourceLip(sourceSurface, hullBounds, waterfallMin, waterfallMax))
-            return false;
-
-        var direction = GetDownstreamDirection(ship, body);
+        var direction = GetDownstreamDirection(sourceFlow, body);
         if (direction.LengthSquared() < 0.99f)
-            return false;
+            return LaunchResult.Unsafe;
 
         var halfX = (hullBounds.Max.X - hullBounds.Min.X) * 0.5f;
         var halfY = (hullBounds.Max.Z - hullBounds.Min.Z) * 0.5f;
@@ -178,7 +217,7 @@ public sealed class ShipWaterfallInteraction
         var corridorWidth = 2f * (MathF.Abs(perpendicular.X) * waterfallHalfX +
                                   MathF.Abs(perpendicular.Y) * waterfallHalfY);
         if (corridorWidth < hullFullBeam + CorridorBeamMarginMeters)
-            return false;
+            return LaunchResult.Unsafe;
 
         var waterfallCenter = new Vector2(
             (waterfallMin.X + waterfallMax.X) * 0.5f,
@@ -190,29 +229,75 @@ public sealed class ShipWaterfallInteraction
         var clearanceToFarEdge = MathF.Max(0.5f,
             farEdgeProjection - Vector2.Dot(bodyCenter, direction) + hullRadiusAlong);
 
-        if (!TryFindReceivingWater(ship, direction, sourceSurface, waterfallMin.Z,
-                clearanceToFarEdge + LandingSearchExtraMeters,
-                out var receivingSurface, out var receivingFlow, out var launchDistance))
-            return false;
-
+        var originalPool = TryFindReceivingWater(ship, direction, sourceSurface, waterfallMin.Z,
+            clearanceToFarEdge + LandingSearchExtraMeters, out var receivingSurface, out var launchDistance);
         var drop = sourceSurface - receivingSurface;
-        var fallTime = ComputeFallTime(drop, LaunchUpwardMetersPerSecond);
-        var requiredSpeed = ComputeRequiredHorizontalSpeed(launchDistance, drop, LaunchUpwardMetersPerSecond);
-        if (!float.IsFinite(requiredSpeed) || requiredSpeed > MaximumReplicableHorizontalSpeed)
-            return false;
+        var requiredSpeed = originalPool
+            ? ComputeRequiredHorizontalSpeed(launchDistance, drop, LaunchUpwardMetersPerSecond)
+            : float.PositiveInfinity;
+
+        IReadOnlyList<WaterfallArea>? clearanceBrushes = null;
+        var lowerPoolProjection = farEdgeProjection - hullRadiusAlong * 0.35f;
+        if (requiredSpeed > MaximumReplicableHorizontalSpeed)
+        {
+            // Only a floating hull can use a newly admitted takeoff. The legacy launch
+            // above still handles its established direct lips and their terrain ridges.
+            if (ship.GroundContactLatched ||
+                !ship.ParentWorld.TryGetHeight(bodyCenter.X, bodyCenter.Y, out var sourceFloor) ||
+                !(sourceFloor <= sourceSurface - MinimumReceivingDepthMeters))
+                return LaunchResult.Unsafe;
+
+            // The union's farthest corner can lie well to the side of the hull's path,
+            // particularly where two angled waterfalls overlap. First clear every actual
+            // brush along the flow, with the entire hull beyond its last boundary.
+            var exit = GetDownstreamHullClearance(areas, hullBounds, direction);
+            if (exit < clearanceToFarEdge &&
+                TryFindReceivingWater(ship, direction, sourceSurface, waterfallMin.Z, exit + LandingSearchExtraMeters,
+                    out var closerSurface, out var closerDistance))
+            {
+                var closerDrop = sourceSurface - closerSurface;
+                var closerSpeed = ComputeRequiredHorizontalSpeed(closerDistance, closerDrop, LaunchUpwardMetersPerSecond);
+                if (closerSpeed < requiredSpeed)
+                {
+                    drop = closerDrop;
+                    receivingSurface = closerSurface;
+                    launchDistance = closerDistance;
+                    requiredSpeed = closerSpeed;
+                    lowerPoolProjection = Vector2.Dot(bodyCenter, direction) + exit;
+                    clearanceBrushes = areas;
+                }
+            }
+
+            if (!float.IsFinite(requiredSpeed))
+                return LaunchResult.Unsafe;
+            if (requiredSpeed > MaximumReplicableHorizontalSpeed)
+            {
+                // Padding can detect the brush before the same lower pool is in range.
+                // Normal propulsion can cover the difference on measured upper water.
+                var range = launchDistance * MaximumReplicableHorizontalSpeed / requiredSpeed;
+                var advance = launchDistance - range;
+                return advance <= range && CanNavigateCloser(ship, bodyCenter, direction, sourceSurface, advance)
+                    ? LaunchResult.NavigableApproach : LaunchResult.Unsafe;
+            }
+        }
 
         requiredSpeed = MathF.Max(requiredSpeed, 4f);
-        var recoveryPose = tracked.LastSafePose ?? CreateFallbackPose(ship, direction, hullRadiusAlong + 2f);
+        var recoveryPose = tracked.LastSafePose;
+        if (recoveryPose is not { } safe || !IsUpperWater(safe.WaterSurface, sourceSurface))
+            recoveryPose = FindFallbackPose(ship, sourceSurface, direction, hullRadiusAlong + 2f);
+        if (recoveryPose is null)
+            return LaunchResult.Unsafe;
         tracked.Transit = new TransitState
         {
-            RecoveryPose = recoveryPose,
+            RecoveryPose = recoveryPose.Value,
             Direction = direction,
-            ReceivingFlow = receivingFlow,
-            ReceivingSurface = receivingSurface,
-            FarEdgeProjection = farEdgeProjection,
-            HullRadiusAlongDirection = hullRadiusAlong,
+            SourceSurface = sourceSurface,
+            WaterfallBottom = waterfallMin.Z,
+            ProjectedReceivingSurface = receivingSurface,
+            LowerPoolProjection = lowerPoolProjection,
+            ClearanceBrushes = clearanceBrushes,
             WaterlineCenterOffset = body.Position.Y - sourceSurface,
-            MaximumSeconds = Math.Clamp(fallTime + 3f, 4f, 9f)
+            MaximumSeconds = Math.Clamp(ComputeFallTime(drop, LaunchUpwardMetersPerSecond) + 3f, 4f, 9f)
         };
 
         ClearGroundState(ship);
@@ -221,12 +306,45 @@ public sealed class ShipWaterfallInteraction
         body.AngularVelocity *= 0.35f;
         body.SetActivationState(true);
         Logger.Debug($"Waterfall launch ship={ship.ObjId} drop={drop:F1}m distance={launchDistance:F1}m speed={requiredSpeed:F1}m/s");
+        return LaunchResult.Launched;
+    }
+
+    private static float GetDownstreamHullClearance(IReadOnlyList<WaterfallArea> areas, JBoundingBox hull, Vector2 direction)
+    {
+        var farthest = 0f;
+        foreach (var area in areas)
+        {
+            // Crossing either far boundary clears this brush. Using the hull's trailing side
+            // includes a rotated or offset mass box. A parallel axis cannot clear the brush.
+            var exitX = direction.X > 0f ? (area.Max.X - hull.Min.X) / direction.X :
+                direction.X < 0f ? (area.Min.X - hull.Max.X) / direction.X : float.PositiveInfinity;
+            var exitY = direction.Y > 0f ? (area.Max.Y - hull.Min.Z) / direction.Y :
+                direction.Y < 0f ? (area.Min.Y - hull.Max.Z) / direction.Y : float.PositiveInfinity;
+            farthest = MathF.Max(farthest, MathF.Min(exitX, exitY));
+        }
+        return farthest;
+    }
+
+    private static bool CanNavigateCloser(Slave ship, Vector2 start, Vector2 downstream,
+        float sourceSurface, float distance)
+    {
+        var world = ship.ParentWorld!;
+        // The start was measured above. Check the rest at the heightmap spacing.
+        const float sampleSpacing = (float)WorldManager.CELL_SIZE / WorldManager.CELL_HMAP_RESOLUTION;
+        var steps = Math.Max(1, (int)MathF.Ceiling(distance / sampleSpacing));
+        for (var step = 1; step <= steps; step++)
+        {
+            var xy = start + downstream * (distance * step / steps);
+            var water = world.Water.GetWaterSurface(new Vector3(xy, sourceSurface), out _);
+            if (!IsUpperWater(water, sourceSurface) || !world.TryGetHeight(xy.X, xy.Y, out var floor) ||
+                !(floor <= water - MinimumReceivingDepthMeters))
+                return false;
+        }
         return true;
     }
 
     private static bool TryFindReceivingWater(Slave ship, Vector2 direction, float sourceSurface,
-        float waterfallBottom, float firstDistance, out float receivingSurface, out Vector3 receivingFlow,
-        out float launchDistance)
+        float waterfallBottom, float firstDistance, out float receivingSurface, out float launchDistance)
     {
         var world = ship.ParentWorld!;
         var body = ship.RigidBody!;
@@ -237,22 +355,27 @@ public sealed class ShipWaterfallInteraction
             var x = body.Position.X + direction.X * distance;
             var y = body.Position.Z + direction.Y * distance;
             var probe = new Vector3(x, y, waterfallBottom);
-            var surface = world.Water.GetWaterSurface(probe, out var flow);
-            var terrain = world.GetHeight(x, y);
-            if (!float.IsFinite(surface) || sourceSurface - surface < MinimumDropMeters ||
-                surface < waterfallBottom - 5f || terrain > surface - MinimumReceivingDepthMeters)
+            if (!TryGetReceivingWater(world, probe, sourceSurface, waterfallBottom, out var surface, out _, out _))
                 continue;
 
             receivingSurface = surface;
-            receivingFlow = flow;
             launchDistance = distance;
             return true;
         }
 
         receivingSurface = 0f;
-        receivingFlow = Vector3.Zero;
         launchDistance = 0f;
         return false;
+    }
+
+    private static bool TryGetReceivingWater(WorldInstance world, Vector3 point, float sourceSurface,
+        float waterfallBottom, out float surface, out Vector3 flow, out float floor)
+    {
+        surface = world.Water.GetWaterSurface(point, out flow);
+        floor = 0f;
+        return float.IsFinite(surface) && sourceSurface - surface >= MinimumDropMeters &&
+               surface >= waterfallBottom - 5f && world.TryGetHeight(point.X, point.Y, out floor) &&
+               floor <= surface - MinimumReceivingDepthMeters;
     }
 
     private static bool AdvanceTransit(Slave ship, TrackedShip tracked, float dt)
@@ -262,30 +385,49 @@ public sealed class ShipWaterfallInteraction
         state.ElapsedSeconds += dt;
 
         if (!IsFinite(body) || state.ElapsedSeconds > state.MaximumSeconds ||
-            body.Position.Y < state.ReceivingSurface - GetRecoveryDepth(ship))
+            body.Position.Y < state.ProjectedReceivingSurface - GetRecoveryDepth(ship))
         {
             Recover(ship, tracked, state.RecoveryPose, "waterfall flight failed");
             return false;
         }
 
         var projection = body.Position.X * state.Direction.X + body.Position.Z * state.Direction.Y;
-        var reachedLowerPool = projection >= state.FarEdgeProjection - state.HullRadiusAlongDirection * 0.35f;
-        if (!ShouldCaptureLowerWater(body.Position.Y, body.Velocity.Y, state.ReceivingSurface,
+        var reachedLowerPool = projection >= state.LowerPoolProjection;
+        // No eligible pool can be higher than the source minus the minimum drop.
+        if (!ShouldCaptureLowerWater(body.Position.Y, body.Velocity.Y, state.SourceSurface - MinimumDropMeters,
                 state.WaterlineCenterOffset, reachedLowerPool))
             return true;
 
-        CaptureLowerWater(ship, tracked, state);
+        // The hull can turn after launch. Its current footprint must also clear
+        // each brush when the shorter, course-specific corridor was used.
+        if (state.ClearanceBrushes is { } brushes)
+        {
+            var hull = body.Shapes[0].WorldBoundingBox;
+            foreach (var brush in brushes)
+                if (hull.Max.X >= brush.Min.X && hull.Min.X <= brush.Max.X &&
+                    hull.Max.Z >= brush.Min.Y && hull.Min.Z <= brush.Max.Y)
+                    return true;
+        }
+
+        // Resolve the water at the hull. The flight can clear an overhang or pass the edge of the projected pool.
+        var arrival = new Vector3(body.Position.X, body.Position.Z, body.Position.Y - state.WaterlineCenterOffset);
+        if (!TryGetReceivingWater(ship.ParentWorld!, arrival, state.SourceSurface, state.WaterfallBottom,
+                out var surface, out var flow, out var floor) ||
+            !AtCaptureHeight(body.Position.Y, surface, state.WaterlineCenterOffset))
+            return true;
+        CaptureLowerWater(ship, tracked, state, surface, flow, floor);
         return false;
     }
 
-    private static void CaptureLowerWater(Slave ship, TrackedShip tracked, TransitState state)
+    private static void CaptureLowerWater(Slave ship, TrackedShip tracked, TransitState state,
+        float surface, Vector3 flow, float floor)
     {
         var body = ship.RigidBody!;
-        var targetCenterY = state.ReceivingSurface + state.WaterlineCenterOffset;
+        var targetCenterY = surface + state.WaterlineCenterOffset;
         if (body.Position.Y < targetCenterY - 0.35f)
             body.Position = body.Position with { Y = targetCenterY - 0.35f };
 
-        var waterVelocity = new JVector(state.ReceivingFlow.X, state.ReceivingFlow.Z, state.ReceivingFlow.Y);
+        var waterVelocity = new JVector(flow.X, flow.Z, flow.Y);
         var relative = body.Velocity - waterVelocity;
         var relativeHorizontal = new JVector(relative.X, 0f, relative.Z) * LandingHorizontalDamping;
         var relativeSpeed = MathF.Sqrt(relativeHorizontal.X * relativeHorizontal.X +
@@ -300,16 +442,17 @@ public sealed class ShipWaterfallInteraction
         body.AngularVelocity *= 0.5f;
         body.SetActivationState(true);
 
-        ship.CachedWaterSurface = state.ReceivingSurface;
-        ship.CachedWaterFlow = state.ReceivingFlow;
-        ship.CachedFloorLevel = ship.ParentWorld!.GetHeight(body.Position.X, body.Position.Z);
+        ship.MeasuredWaterAndLandPosition = null;
+        ship.CachedWaterSurface = surface;
+        ship.CachedWaterFlow = flow;
+        ship.CachedFloorLevel = floor;
         ClearGroundState(ship);
         ship.WaterfallTransitActive = false;
         tracked.Transit = null;
         tracked.RetryCooldown = RecoveryCooldownSeconds;
         ShipShipInteraction.SyncSlaveSpeedFromBowVelocity(ship);
         tracked.LastSafePose = CapturePose(ship);
-        Logger.Debug($"Waterfall capture ship={ship.ObjId} surface={state.ReceivingSurface:F1}");
+        Logger.Debug($"Waterfall capture ship={ship.ObjId} surface={surface:F1}");
     }
 
     private static void Recover(Slave ship, TrackedShip tracked, SafePose pose, string reason)
@@ -321,6 +464,7 @@ public sealed class ShipWaterfallInteraction
         body.AngularVelocity = pose.AngularVelocity;
         body.SetActivationState(true);
         ship.Speed = pose.Speed;
+        ship.MeasuredWaterAndLandPosition = null;
         ship.CachedWaterSurface = pose.WaterSurface;
         ship.CachedWaterFlow = pose.WaterFlow;
         ship.CachedFloorLevel = pose.FloorLevel;
@@ -343,22 +487,43 @@ public sealed class ShipWaterfallInteraction
         FloorLevel = ship.CachedFloorLevel
     };
 
-    private static SafePose CreateFallbackPose(Slave ship, Vector2 downstream, float upstreamDistance)
+    private static bool IsUpperWater(float surface, float sourceSurface) =>
+        MathF.Abs(surface - sourceSurface) <= TopAlignmentToleranceMeters;
+
+    private static SafePose? FindFallbackPose(Slave ship, float sourceSurface, Vector2 downstream, float upstreamDistance)
     {
-        var pose = CapturePose(ship);
-        pose.Position = new JVector(
-            pose.Position.X - downstream.X * upstreamDistance,
-            pose.Position.Y,
-            pose.Position.Z - downstream.Y * upstreamDistance);
-        pose.Velocity = new JVector(0f, 0f, 0f);
-        pose.AngularVelocity = JVector.Zero;
-        pose.Speed = 0f;
-        return pose;
+        var source = CapturePose(ship);
+        // Prefer the historical upstream offset. A ship first observed at the lip can
+        // also use its measured current position. At a false terrain ridge on the lip,
+        // check the same bounded offsets used for the receiving pool, this time upstream.
+        ReadOnlySpan<float> distances = [upstreamDistance, 0f, upstreamDistance + 3f,
+            upstreamDistance + 6f, upstreamDistance + 10f];
+        foreach (var distance in distances)
+        {
+            var x = source.Position.X - downstream.X * distance;
+            var y = source.Position.Z - downstream.Y * distance;
+            var p = new Vector3(x, y, sourceSurface);
+            var surface = ship.ParentWorld.Water.GetWaterSurface(p, out var flow);
+            if (!IsUpperWater(surface, sourceSurface) || !ship.ParentWorld.TryGetHeight(x, y, out var floor) ||
+                !(floor <= surface - MinimumReceivingDepthMeters))
+                continue;
+
+            var pose = source;
+            pose.Position = new JVector(x, source.Position.Y + (surface - sourceSurface), y);
+            pose.Velocity = JVector.Zero;
+            pose.AngularVelocity = JVector.Zero;
+            pose.Speed = 0f;
+            pose.FloorLevel = floor;
+            pose.WaterSurface = surface;
+            pose.WaterFlow = flow;
+            return pose;
+        }
+        return null;
     }
 
-    private static Vector2 GetDownstreamDirection(Slave ship, RigidBody body)
+    private static Vector2 GetDownstreamDirection(Vector3 waterFlow, RigidBody body)
     {
-        var direction = new Vector2(ship.CachedWaterFlow.X, ship.CachedWaterFlow.Y);
+        var direction = new Vector2(waterFlow.X, waterFlow.Y);
         if (direction.LengthSquared() < 0.04f)
             direction = new Vector2(body.Velocity.X, body.Velocity.Z);
         if (direction.LengthSquared() < 0.04f)
@@ -447,6 +612,8 @@ public sealed class ShipWaterfallInteraction
 
     internal static bool ShouldCaptureLowerWater(float bodyHeight, float verticalVelocity,
         float receivingSurface, float waterlineCenterOffset, bool reachedLowerPool) =>
-        reachedLowerPool && verticalVelocity <= 0f &&
-        bodyHeight <= receivingSurface + MathF.Max(0.35f, waterlineCenterOffset + 0.35f);
+        reachedLowerPool && verticalVelocity <= 0f && AtCaptureHeight(bodyHeight, receivingSurface, waterlineCenterOffset);
+
+    private static bool AtCaptureHeight(float bodyHeight, float surface, float waterlineCenterOffset) =>
+        bodyHeight <= surface + MathF.Max(0.35f, waterlineCenterOffset + 0.35f);
 }

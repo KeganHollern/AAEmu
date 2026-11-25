@@ -225,6 +225,39 @@ public sealed class NpcScheduleLifecycleTests
     }
 
     [Test]
+    public async Task WeightedSlot_ExplicitRemovalKeepsTheDeathReservationWhenNoNeighborRemains()
+    {
+        var spawner = CreateSpawner();
+        spawner.Template.Npcs = [new(SpawnerId, 12926) { Weight = .5f }, new(SpawnerId, 4334) { Weight = .5f }];
+        spawner.InitializeSpawnableNpcs(spawner.Template);
+        spawner.SelectSingleNpcByWeight = true;
+        spawner.RespawnTime = 3600;
+        SetHour(1, 4);
+        spawner.Update();
+        var first = spawner.Created.Single();
+        first.Hp = 0;
+        first.DeadTime = DateTime.UtcNow.AddSeconds(-5);
+        spawner.DoDespawn(first);
+        var deadline = first.DeadTime.AddHours(1);
+        await Assert.That(first.Respawn).IsEqualTo(deadline);
+
+        spawner.DespawnWithRespawn(first);
+        _world.SpawnManager.DespawnObject(first);
+        await Assert.That(first.Respawn).IsEqualTo(deadline);
+        await Assert.That(_world.SpawnManager.GetRespawnsReady(deadline).Single()).IsSameReferenceAs(first);
+        _world.SpawnManager.RespawnObject(first);
+        spawner.Update();
+
+        var second = spawner.Created.Last();
+        await Assert.That(second).IsNotSameReferenceAs(first);
+        second.Hp = 0;
+        second.DeadTime = DateTime.UtcNow;
+        spawner.DoDespawn(second);
+        await Assert.That(second.Respawn).IsEqualTo(second.DeadTime.AddHours(1));
+        await Assert.That(Pending("Respawns").Single()).IsSameReferenceAs(second);
+    }
+
+    [Test]
     public async Task PreviousWindowRespawn_CannotReleaseTheCurrentOccurrencesDelay()
     {
         var spawner = CreateSpawner();

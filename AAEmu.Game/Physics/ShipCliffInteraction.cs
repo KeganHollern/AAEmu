@@ -104,7 +104,8 @@ public sealed class ShipCliffInteraction
                 break;
             var sx = cx + ax * s;
             var sz = cz + az * s;
-            var hf = world.GetHeight(sx, sz);
+            if (!world.TryGetHeight(sx, sz, out var hf))
+                continue;
             var wf = world.Water.GetWaterSurface(new Vector3(sx, sz, bodyY), out _);
             if (hf >= wf + minAbove)
             {
@@ -114,6 +115,28 @@ public sealed class ShipCliffInteraction
         }
 
         distanceAlongAscent = 0f;
+        return false;
+    }
+
+    private static bool TryGetSlope(WorldInstance world, float x, float y, float dx, float dy, out float slope)
+    {
+        var hasPlus = world.TryGetHeight(x + dx, y + dy, out var plus);
+        var hasMinus = world.TryGetHeight(x - dx, y - dy, out var minus);
+        const float spacing = CliffObstacleDefaults.GradientSampleMeters;
+        if (hasPlus && hasMinus)
+        {
+            slope = (plus - minus) / (2f * spacing);
+            return true;
+        }
+
+        // At a heightmap edge the center and one measured side still give the slope on that side.
+        if ((hasPlus || hasMinus) && world.TryGetHeight(x, y, out var center))
+        {
+            slope = (hasPlus ? plus - center : center - minus) / spacing;
+            return true;
+        }
+
+        slope = 0f;
         return false;
     }
 
@@ -129,12 +152,8 @@ public sealed class ShipCliffInteraction
         ShipShipInteraction.GetMassBoxCenterXz(body, ma, ship.Scale, out var cx, out var cz);
 
         var d = CliffObstacleDefaults.GradientSampleMeters;
-        var hxp = world.GetHeight(cx + d, cz);
-        var hxm = world.GetHeight(cx - d, cz);
-        var hzp = world.GetHeight(cx, cz + d);
-        var hzm = world.GetHeight(cx, cz - d);
-        var gx = (hxp - hxm) / (2f * d);
-        var gz = (hzp - hzm) / (2f * d);
+        if (!TryGetSlope(world, cx, cz, d, 0f, out var gx) || !TryGetSlope(world, cx, cz, 0f, d, out var gz))
+            return;
         var gLenSq = gx * gx + gz * gz;
         if (gLenSq < CliffObstacleDefaults.MinGradientMagnitude * CliffObstacleDefaults.MinGradientMagnitude)
             return;
@@ -156,7 +175,8 @@ public sealed class ShipCliffInteraction
             CliffObstacleDefaults.EmergedRockProbeMaxDistanceMeters);
         var bx = cx + ax * wallAlong;
         var bz = cz + az * wallAlong;
-        var floorAtWall = world.GetHeight(bx, bz);
+        if (!world.TryGetHeight(bx, bz, out var floorAtWall))
+            return;
         var waterAtWallPoint = world.Water.GetWaterSurface(new Vector3(bx, bz, body.Position.Y), out _);
         if (floorAtWall < waterAtWallPoint + CliffObstacleDefaults.MinRockHeightAboveWaterMeters)
             return;

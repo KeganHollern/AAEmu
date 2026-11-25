@@ -63,16 +63,44 @@ internal sealed class TowerDefenseOccurrenceRepository
         return records;
     }
 
-    public bool Contains(string occurrenceKey)
+    public bool TryCreate(TowerDefenseOccurrence occurrence)
+    {
+        try
+        {
+            Write(occurrence, createOnly: true);
+            return true;
+        }
+        catch (MySqlException exception) when (exception.Number == 1062)
+        {
+            return false;
+        }
+    }
+
+    public void Save(TowerDefenseOccurrence occurrence) => Write(occurrence, createOnly: false);
+
+    public void SaveProgress(TowerDefenseOccurrence occurrence)
     {
         using var connection = MySQL.CreateConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT 1 FROM tower_def_occurrences WHERE occurrence_key = @occurrence_key LIMIT 1";
-        Add(command, "@occurrence_key", occurrenceKey);
-        return command.ExecuteScalar() != null;
+        // A delayed callback cannot overwrite a newer step, a recovered occurrence, or a terminal row.
+        command.CommandText = """
+            UPDATE tower_def_occurrences SET objective_progress = @progress, updated_at = UTC_TIMESTAMP(6)
+             WHERE occurrence_key = @key AND state_generation = @generation AND status = @status
+            """;
+        Add(command, "@key", occurrence.OccurrenceKey);
+        Add(command, "@generation", occurrence.Generation);
+        Add(command, "@status", occurrence.Status.ToString());
+        Add(command, "@progress", SerializeProgress(occurrence));
+        command.ExecuteNonQuery();
     }
 
-    public void Save(TowerDefenseOccurrence occurrence)
+    private static string SerializeProgress(TowerDefenseOccurrence occurrence) => JsonConvert.SerializeObject(new
+    {
+        Step = occurrence.Objectives,
+        Terminal = occurrence.TerminalObjective
+    });
+
+    private static void Write(TowerDefenseOccurrence occurrence, bool createOnly)
     {
         using var connection = MySQL.CreateConnection();
         using var command = connection.CreateCommand();
@@ -87,6 +115,10 @@ internal sealed class TowerDefenseOccurrenceRepository
                  @zone_group_id, @site_key, @status, @state_generation, @current_step,
                  @scheduled_at, @started_at, @step_entered_at, @hard_deadline, @definition_hash,
                  @objective_progress, @terminal_reason, UTC_TIMESTAMP())
+            """;
+        if (!createOnly)
+            command.CommandText += """
+
             ON DUPLICATE KEY UPDATE
                 status = VALUES(status),
                 state_generation = VALUES(state_generation),
@@ -115,7 +147,7 @@ internal sealed class TowerDefenseOccurrenceRepository
             : occurrence.StepEnteredAtUtc.UtcDateTime);
         Add(command, "@hard_deadline", occurrence.HardDeadlineUtc.UtcDateTime);
         Add(command, "@definition_hash", occurrence.DefinitionHash);
-        Add(command, "@objective_progress", JsonConvert.SerializeObject(occurrence.Objectives));
+        Add(command, "@objective_progress", SerializeProgress(occurrence));
         Add(command, "@terminal_reason", (object)occurrence.TerminalReason ?? DBNull.Value);
         command.ExecuteNonQuery();
     }

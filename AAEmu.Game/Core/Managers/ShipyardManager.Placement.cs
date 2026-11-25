@@ -92,7 +92,7 @@ public partial class ShipyardManager
                 bounds => PlacementUnits(world, bounds), utcNow: utcNow);
             var surfacePoint = request.Position - Vector3.UnitZ * ShipyardPlacementRules.PreviewHeight;
             var water = PlacementAssets.GetWater(world.Template).GetWaterLevel(surfacePoint, world.Water.OceanLevel,
-                PlacementAssets.GetPrefabWater(world, houses));
+                PlacementAssets.GetPrefabWater(world, houses), out var oceanWaveSize);
             surface = water;
             var ground = scene.SampleHeight(request.Position.X, request.Position.Y);
             terrain = ground;
@@ -103,7 +103,7 @@ public partial class ShipyardManager
             var neighbors = _shipyard.Values.Where(other => ReferenceEquals(other.ParentWorld, world))
                 .Select(NeighborBox);
             var check = ShipyardPlacementRules.EvaluateGeometry(model.Bounds, request.Position, request.Yaw,
-                template.BuildRadius, water, neighbors, scene.IntersectBox);
+                template.BuildRadius, water, neighbors, scene.IntersectBox, oceanWaveSize);
             return ReportPlacement(owner, request, check.Stage, check.Error, water, ground, check.Intersection);
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or ArgumentException or OverflowException)

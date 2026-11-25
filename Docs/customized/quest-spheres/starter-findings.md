@@ -58,3 +58,54 @@ The following findings need further work:
 
 [Issue 536](https://github.com/KeganHollern/aaemu-cluster/issues/536) records the further geometry work and acceptance criteria.
 No guessed locations or polygon approximations enter the current supplements.
+
+## Starter inventory on release 914
+
+The offline audit joins each start act to its current quest and component.
+The component identifies the client geometry. The compact also gives each act a sphere ID.
+Game looks up a `SphereQuest` binding by quest ID when it registers a starter.
+The start act then compares its own sphere ID with the acceptor ID.
+The report records all candidates for that lookup.
+
+| Geometry status | Components | Acts | Evidence |
+| --- | ---: | ---: | --- |
+| `single_binding` | 2 | 2 | Quest 49 has a client volume and sphere 5. Quest 578 has a source-backed supplement and sphere 149. Each quest has one matching sphere binding. |
+| `component_only` | 9 | 33 | The client has volumes for each tutorial component. Each component uses 2 to 4 sphere IDs. The hint format omits the sphere ID. |
+| `missing` | 419 | 419 | The client hints and Game supplements contain no volume for these components. Other components of the same quest have geometry in 13 cases. |
+| Total | 430 | 454 | All 454 start acts have sphere metadata. |
+
+For example, quest 2585 has 4 hints in zones 129, 179, 184 and 187.
+The 4 sphere names refer to Gweonid, Solzreed, Falconry and Rainbow.
+These area names support a geographical interpretation.
+The compact includes no numeric link between a hint and an individual sphere.
+Other tutorial quests have fewer hint volumes than sphere IDs.
+The audit keeps the full set and gives no credit for an individual binding in these cases.
+
+**World and access.** Of the 419 components with missing geometry, 415 have a quest zone in the main world.
+The others belong to quests with a zone in Hadir Farm (2), Sal Temple (1), or Nachashgar (1).
+For 14 of the 419 components, the compact marks the quest zone closed. These components span 5 closed zones.
+The report records the zone from the quest context. The starter can lie in a different zone.
+A closed quest zone alone cannot establish that the player cannot reach the starter.
+The exploration category accounts for 376 missing components.
+
+**Other ways to start a quest.** Four of the 419 quests have a separate reference in the compact.
+Quest 41 has skill 10637 with accept-quest effect 13.
+NPC 2003 names quest 4392 on combat engagement.
+Item 28620 names quest 5491. Sphere 2236 has a `SphereAcceptQuest` list that names quest 5730.
+Each start component still contains a single `QuestActConAcceptSphere` condition.
+The starter boundary and successful player interaction still need independent evidence.
+Quest 2895 uses sphere 1150, but the sphere binds to quest 5491.
+The current quest lookup supplies no matching `SphereQuest` binding for 2895 or 5730.
+
+**Current open-world evidence.** Quest 340 has a 10-point legacy polygon in zone 133.
+The source repeats the same entity GUID and sets the area height to zero.
+The 3-dimensional sphere test cannot represent that boundary.
+The later centers for quests 815 and 1858 lie within 3 m of current quest objects.
+Their exact r208022 boundaries and trigger behavior still need evidence.
+The 14 legacy locations for quest 41 still lack confirmation.
+These cases remain open. [Source comparison](https://github.com/KeganHollern/aaemu-cluster/issues/536#issuecomment-7123864645).
+
+The run used Game `631604d85cf1ad11cacccb64e55be70262ca1600` as the source baseline.
+The server compact SHA-256 was `636ca9ecfe777bc86542e4b828f930c7861d2b4639b1bcfff670c064fee9c1ac`.
+The 69 client hint files and 18 world definitions matched byte for byte between the pristine and installed r208022 archives.
+Their aggregate SHA-256 values were `687bef70ed4ba11a92a378cc43d01e65d61e644d5af97965a6767fec17ee0390` and `78479b57d0786227095a532a934416e24a2809877d538bdc9cfbed6cfef68bae`, respectively.

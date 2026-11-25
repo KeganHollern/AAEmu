@@ -244,16 +244,16 @@ public class TowerDefGameData : Singleton<TowerDefGameData>, IGameDataLoader
 
             foreach (var target in prog.SpawnTargets)
             {
-                if (target.SpawnTargetType is not (TowerDefTargetType.NpcSpawner or TowerDefTargetType.DoodadAlmighty))
+                if (target.SpawnTargetType != TowerDefTargetType.NpcSpawner)
                     Invalidate(towerDef, "tower_def_prog_spawn_targets", target.Id,
-                        $"tower_def_prog_spawn_target {target.Id} has unsupported type '{target.RawSpawnTargetType}'");
+                        $"tower_def {towerDef.Id} spawn target row {target.Id} has unsupported type '{target.RawSpawnTargetType}'");
             }
 
             foreach (var target in prog.KillTargets)
             {
-                if (target.KillTargetType is not (TowerDefTargetType.Npc or TowerDefTargetType.DoodadAlmighty))
+                if (target.KillTargetType != TowerDefTargetType.Npc)
                     Invalidate(towerDef, "tower_def_prog_kill_targets", target.Id,
-                        $"tower_def_prog_kill_target {target.Id} has unsupported type '{target.RawKillTargetType}'");
+                        $"tower_def {towerDef.Id} kill target row {target.Id} has unsupported type '{target.RawKillTargetType}'");
                 if (target.KillCount == 0)
                     Invalidate(towerDef, "tower_def_prog_kill_targets", target.Id,
                         $"tower_def_prog_kill_target {target.Id} has kill_count 0");

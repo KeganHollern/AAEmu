@@ -55,14 +55,8 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
                 Character.UsedCharacterObjIds.TryAdd(character.Id, character.ObjId);
             }
             // Add to server pool
-            WorldManager.Instance.TryAddCharacter(character);
-
-            var mySlave = Connection.ActiveChar.ParentWorld.SlaveManager.GetActiveSlaveByOwnerObjId(Connection.ActiveChar.ObjId);
-            if (mySlave != null)
-            {
-                Logger.Warn($"{Connection.ActiveChar.Name}: Abort the task of disabling vehicles");
-                mySlave.CancelTokenSource.Cancel();
-            }
+            if (WorldManager.Instance.TryAddCharacter(character))
+                character.ParentWorld.SlaveManager.ResumeSelectedOwnersVehicle(character);
 
             Connection.ActiveChar.Simulation = new Simulation(character);
 

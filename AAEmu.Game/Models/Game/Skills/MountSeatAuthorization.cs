@@ -3,6 +3,7 @@
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World.Transform;
 
 namespace AAEmu.Game.Models.Game.Skills;
 
@@ -18,10 +19,11 @@ internal static class MountSeatAuthorization
         actor.Transform.InstanceId == mount.Transform.InstanceId &&
         actor.Transform.WorldId == mount.Transform.WorldId;
 
-    internal static bool CanEnter(Character actor, Unit mount, Vector3 seatPosition, float range) =>
+    internal static bool CanEnter(Character actor, Unit mount, Vector3 seatPosition, float range, Transform deckSupport = null) =>
         SameLivingWorld(actor, mount) && mount is not Units.Mate { IsDowned: true } &&
         !mount.AttachmentsRetired && actor.AttachedPoint == AttachPointKind.None &&
-        !actor.IsRiding && actor.Transform.Parent == null && actor.Bonding == null &&
+        !actor.IsRiding && actor.Bonding == null &&
+        (actor.Transform.Parent == null || ReferenceEquals(actor.Transform.Parent, deckSupport)) &&
         InRange(actor.Transform.World.Position, seatPosition, range);
 
     internal static bool InRange(Vector3 position, Vector3 seatPosition, float range)

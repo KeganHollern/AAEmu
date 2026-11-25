@@ -17,9 +17,82 @@ namespace AAEmu.Game.Models.Game.Units;
 public class Transfer : Unit
 {
     /// <summary>
-    /// Signed offset along the motor's forward axis for the bounded child (not in client DB; tuned for default carriage pair).
+    /// Signed distance along the default carriage motor's forward axis.
     /// </summary>
     public const float BoundedChildAlongFrontOffsetMeters = -9.24417f;
+
+    // The stock carriage and ghost safari heads have the same model-local $trailed0 socket.
+    private static readonly Vector3 CarriageSocket = new(0, BoundedChildAlongFrontOffsetMeters, 1.2507583f);
+
+    // transfers_cart01.cgf, model 565, places the second rail cart at this socket.
+    private static readonly Vector3 RailCartSocket = new(0, -7.629541f, 0);
+
+    internal Vector3? TrailerSocket
+    {
+        get
+        {
+            if (Template?.TransferBindings.FirstOrDefault() is not { AttachPointId: AttachPointKind.Trailed0 } binding)
+                return null;
+
+            return (ModelId, Template.Id, binding.TransferId) switch
+            {
+                (654, _, 46) or (1463, _, 122) => CarriageSocket,
+                (565, 5, 28) or (565, 26, 42) or (565, 27, 43) => RailCartSocket,
+                _ => null
+            };
+        }
+    }
+
+    // The public airship prefab has its starboard propeller on +X and its tail on -Y.
+    private bool IsPublicAirship => ModelId == 657 && Template is
+        { Id: 51 or 52 or 65 or (>= 110 and <= 114) or (>= 116 and <= 119), TransferBindings.Count: 0 };
+
+    // The Beaktalon cable roller turns about local X. Its normal travel follows local +Y.
+    private bool IsBeaktalonLift => ModelId == 548 && Template is { Id: 68 or 69, TransferBindings.Count: 0 };
+
+    // The unbound cart on tiger02 also uses the +Y model axis.
+    internal bool UsesRoutePose => TrailerSocket.HasValue ||
+        (ModelId == 565 && Template is { Id: 25, TransferBindings.Count: 0 }) || IsPublicAirship || IsBeaktalonLift;
+
+    // The mesh faces +Y. The route angle is measured from +X.
+    private float RouteModelYaw => (float)Angle - MathF.PI / 2;
+
+    internal void InitializeRoutePose(WorldSpawnPosition spawn)
+    {
+        var route = Template.TransferRoads.FirstOrDefault()?.Pos;
+        if (route is { Count: >= 2 })
+        {
+            var start = route[0];
+            var next = route[1];
+            // These routes can start with waypoints inside the ordinary arrival radius.
+            if (IsPublicAirship || IsBeaktalonLift)
+                next = route.Find(point => Vector3.Distance(start.AsPositionVector(), point.AsPositionVector()) >= RangeToCheckPoint) ?? next;
+            Angle = MathUtil.CalculateDirection(start.AsPositionVector(), next.AsPositionVector());
+            Transform.ApplyWorldSpawnPosition(start);
+            Transform.Local.SetZRotation(RouteModelYaw);
+        }
+        else
+            Transform.ApplyWorldSpawnPosition(spawn);
+
+        Rot = Transform.Local.ToQuaternion();
+    }
+
+    internal void PlaceTrailer(Transfer cabin, Vector3 socket, bool moving)
+    {
+        var point = Transform.TransformPoint(socket);
+        var rotation = Transform.World.Rotation;
+        cabin.Rot = Rot;
+        if (moving)
+        {
+            cabin.SetPosition(point.X, point.Y, point.Z, rotation.X, rotation.Y, rotation.Z);
+            cabin.Transform.FinalizeTransform();
+        }
+        else
+        {
+            cabin.Transform.ZoneId = Transform.ZoneId;
+            cabin.Transform.Local.SetPosition(point, rotation);
+        }
+    }
 
     public override UnitTypeFlag TypeFlag { get => UnitTypeFlag.Transfer; }
     public override BaseUnitType BaseUnitType => BaseUnitType.Transfer;
@@ -481,9 +554,19 @@ public class Transfer : Unit
         {
             transfer.AngVel = new Vector3(-MaxVelocityForward, 0, 0);
         }
-        var rot = MathUtil.ConvertRadianToDirectionShort(transfer.Angle);
-        transfer.Transform.World.SetZRotation((float)Angle);
-        transfer.Rot = new Quaternion(rot.X, rot.Z, rot.Y, rot.W);
+        var usesRoutePose = transfer.UsesRoutePose;
+        if (usesRoutePose)
+        {
+            var modelYaw = transfer.RouteModelYaw;
+            transfer.SetPosition(transfer.vPosition.X, transfer.vPosition.Y, transfer.vPosition.Z, 0, 0, modelYaw);
+            transfer.Rot = transfer.Transform.Local.ToQuaternion();
+        }
+        else
+        {
+            var rot = MathUtil.ConvertRadianToDirectionShort(transfer.Angle);
+            transfer.Transform.World.SetZRotation((float)Angle);
+            transfer.Rot = new Quaternion(rot.X, rot.Z, rot.Y, rot.W);
+        }
 
         // update TransfersPath variable
         var moveTypeTr = (TransferData)MoveType.GetType(MoveTypeEnum.Transfer);
@@ -497,8 +580,11 @@ public class Transfer : Unit
 
         // Added so whatever riding this, doesn't clip out of existence when moving
         transfer.Transform.FinalizeTransform();
-        transfer.SetPosition(transfer.vPosition.X, transfer.vPosition.Y, transfer.vPosition.Z, 0, 0, (float)transfer.Angle);
-        transfer.Transform.World.SetPosition(transfer.vPosition, new Vector3(0, 0, (float)transfer.Angle));
+        if (!usesRoutePose)
+        {
+            transfer.SetPosition(transfer.vPosition.X, transfer.vPosition.Y, transfer.vPosition.Z, 0, 0, (float)transfer.Angle);
+            transfer.Transform.World.SetPosition(transfer.vPosition, new Vector3(0, 0, (float)transfer.Angle));
+        }
 
         // Keep bound carriage parts in sync server-side.
         // The client may initially render them attached at the station, but without server-side position updates
@@ -506,15 +592,20 @@ public class Transfer : Unit
         if (transfer.Bounded is not null)
         {
             var child = transfer.Bounded;
-            var (cx, cy) = MathUtil.AddDistanceToFront(BoundedChildAlongFrontOffsetMeters,
-                transfer.vPosition.X,
-                transfer.vPosition.Y,
-                (float)transfer.Angle);
-            var cz = transfer.vPosition.Z;
+            if (transfer.TrailerSocket is { } socket)
+                transfer.PlaceTrailer(child, socket, moving: true);
+            else
+            {
+                var (cx, cy) = MathUtil.AddDistanceToFront(BoundedChildAlongFrontOffsetMeters,
+                    transfer.vPosition.X,
+                    transfer.vPosition.Y,
+                    (float)transfer.Angle);
+                var cz = transfer.vPosition.Z;
 
-            child.SetPosition(cx, cy, cz, 0, 0, (float)transfer.Angle);
-            child.Transform.World.SetPosition(new Vector3(cx, cy, cz), new Vector3(0, 0, (float)transfer.Angle));
-            child.Rot = transfer.Rot;
+                child.SetPosition(cx, cy, cz, 0, 0, (float)transfer.Angle);
+                child.Transform.World.SetPosition(new Vector3(cx, cy, cz), new Vector3(0, 0, (float)transfer.Angle));
+                child.Rot = transfer.Rot;
+            }
 
             var childMove = (TransferData)MoveType.GetType(MoveTypeEnum.Transfer);
             childMove.UseTransferBase(child);

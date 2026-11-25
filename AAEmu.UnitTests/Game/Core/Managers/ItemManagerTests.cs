@@ -817,6 +817,26 @@ public class ItemManagerTests
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task ReleaseConsumedItem_ReleasesTheIdAndKeepsUnconfirmedDeletions(bool acknowledged)
+    {
+        var ids = Mock.Of<IItemIdManager>();
+        var manager = CreateItemManager(mockItemId: ids);
+        var item = CreateTestItem(3000, 100, 0);
+        item.DatabaseDeletionAcknowledged = acknowledged;
+        var pending = new List<ulong> { 3001 };
+        SetPrivateField(manager, "_allItems", new Dictionary<ulong, Item> { [item.Id] = item });
+        SetPrivateField(manager, "_removedItems", pending);
+
+        manager.ReleaseConsumedItem(item);
+
+        await Assert.That(manager.GetItemByItemId(item.Id)).IsNull();
+        await Assert.That(pending).IsEquivalentTo(acknowledged ? new ulong[] { 3001 } : [3001, 3000]);
+        ids.ReleaseId(3000).WasCalled(Times.Once);
+    }
+
+    [Test]
     public async Task ReleaseId_ZeroId_DoesNotAddToRemoved()
     {
         // Arrange

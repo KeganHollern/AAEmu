@@ -16,7 +16,7 @@ using NLog;
 namespace AAEmu.Game.Core.Managers;
 
 // GeoData AiNavigation
-public class AiGeoDataManager(WorldTemplate worldTemplate)
+public partial class AiGeoDataManager(WorldTemplate worldTemplate)
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 

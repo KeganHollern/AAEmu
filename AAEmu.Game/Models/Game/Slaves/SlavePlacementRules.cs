@@ -1,6 +1,7 @@
 using System.Numerics;
 
 using AAEmu.Game.Models.CryEngine.Physics;
+using AAEmu.Game.Models.Game.Housing;
 
 namespace AAEmu.Game.Models.Game.Slaves;
 
@@ -34,10 +35,14 @@ public static class SlavePlacementRules
 
     public static ErrorMessageType CheckGeometry(Vector3 owner, SlavePlacementRequest request,
         CryBounds bounds, bool boat, float terrain, float surface,
-        Func<CryBox, int, CryIntersection> intersect, Func<Vector3, Vector3, CryIntersection> trace)
+        Func<CryBox, int, CryIntersection> intersect, Func<Vector3, Vector3, CryIntersection> trace,
+        float oceanWaveSize = 0)
     {
+        var onSurface = boat
+            ? HousingWaterGeometry.MatchesSurfaceHeight(request.Position.Z, surface, oceanWaveSize)
+            : IsOnSurface(request.Position, surface);
         if (!IsWithinRange(owner, request.Position) || !float.IsFinite(request.Yaw) || !ValidBounds(bounds) ||
-            !float.IsFinite(terrain) || !IsOnSurface(request.Position, surface) ||
+            !float.IsFinite(terrain) || !onSurface ||
             (boat ? terrain > surface : surface - owner.Z > MaximumLandRise))
             return ErrorMessageType.SlaveSpawnErrorInvalidArea;
 

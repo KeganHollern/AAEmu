@@ -46,7 +46,9 @@ public class TransferSpawner : Spawner<Transfer>
         }
 
         transfer.Spawner = this;
-        transfer.Transform.ApplyWorldSpawnPosition(Position, transfer.Transform.InstanceId, true);
+        var usesRoutePose = transfer.UsesRoutePose;
+        if (!usesRoutePose)
+            transfer.Transform.ApplyWorldSpawnPosition(Position, transfer.Transform.InstanceId, true);
         if (transfer.Transform == null)
         {
             Logger.Error("Can't spawn transfer {1} from spawn {0}", Id, UnitId);
@@ -86,9 +88,12 @@ public class TransferSpawner : Spawner<Transfer>
 
                     //transfer.Position.RotationZ = MathUtil.ConvertDegreeToDirection(MathUtil.RadianToDegree(transfer.Angle));
                     //var quat = Quaternion.CreateFromYawPitchRoll((float)transfer.Angle, 0.0f, 0.0f);
-                    var quat = MathUtil.ConvertRadianToDirectionShort(transfer.Angle);
-                    transfer.Rot = new Quaternion(quat.X, quat.Z, quat.Y, quat.W);
-                    transfer.Transform.ApplyWorldSpawnPosition(point, transfer.Transform.InstanceId, true);
+                    if (!usesRoutePose)
+                    {
+                        var quat = MathUtil.ConvertRadianToDirectionShort(transfer.Angle);
+                        transfer.Rot = new Quaternion(quat.X, quat.Z, quat.Y, quat.W);
+                        transfer.Transform.ApplyWorldSpawnPosition(point, transfer.Transform.InstanceId, true);
+                    }
 
                     //Logger.Warn("TransfersPath #" + transfer.TemplateId);
                     //Logger.Warn("New spawn Pos={0}", transfer.Transform.ToString());

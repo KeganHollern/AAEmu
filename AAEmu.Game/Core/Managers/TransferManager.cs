@@ -41,6 +41,8 @@ public class TransferManager
         _initialized = true;
     }
 
+    internal void Stop() => TickManager.Instance.OnTick.UnSubscribe(TransferTick);
+
     private void TransferTick(TimeSpan delta)
     {
         var activeTransfers = GetTransfers();
@@ -107,7 +109,10 @@ public class TransferManager
         owner.Hp = owner.MaxHp;
         owner.Mp = owner.MaxMp;
         owner.Bounded = null;
-        owner.Transform.ApplyWorldSpawnPosition(spawner.Position);
+        if (owner.UsesRoutePose)
+            owner.InitializeRoutePose(spawner.Position);
+        else
+            owner.Transform.ApplyWorldSpawnPosition(spawner.Position);
         owner.Transform.ResetFinalizeTransform();
         owner.Faction = FactionManager.Instance.GetFaction(FactionsEnum.PcFriendly); // formerly set to 164
         owner.Patrol = null;
@@ -142,11 +147,16 @@ public class TransferManager
         transfer.Hp = transfer.MaxHp;
         transfer.Mp = transfer.MaxMp;
         transfer.Transform.ApplyWorldSpawnPosition(spawner.Position);
-        transfer.Transform.Local.AddDistanceToFront(Transfer.BoundedChildAlongFrontOffsetMeters);
-        transfer.Transform.Local.SetHeight(transfer.ParentWorld.Template.GeoData.GetHeight(transfer.Transform.World.Position)); // WorldManager.Instance.GetHeight(transfer.Transform)));
-        transfer.Transform.StickyParent = owner.Transform; // stick it to the driver/motor
-        transfer.Transform.Parent = null;
-        owner.Transform.Parent = transfer.Transform;
+        if (owner.TrailerSocket is { } socket)
+            owner.PlaceTrailer(transfer, socket, moving: false);
+        else
+        {
+            transfer.Transform.Local.AddDistanceToFront(Transfer.BoundedChildAlongFrontOffsetMeters);
+            transfer.Transform.Local.SetHeight(transfer.ParentWorld.Template.GeoData.GetHeight(transfer.Transform.World.Position)); // WorldManager.Instance.GetHeight(transfer.Transform)));
+            transfer.Transform.StickyParent = owner.Transform; // stick it to the driver/motor
+            transfer.Transform.Parent = null;
+            owner.Transform.Parent = transfer.Transform;
+        }
         transfer.Transform.ResetFinalizeTransform();
 
         transfer.Faction = FactionManager.Instance.GetFaction(FactionsEnum.PcFriendly); // used to be 164
@@ -173,6 +183,13 @@ public class TransferManager
             doodad.AttachPoint = doodadBinding.AttachPointId;
             switch (doodadBinding.AttachPointId)
             {
+                // Model 314, transfers_floatship02.cgf: the front and rear benches face each other.
+                case AttachPointKind.Passenger0 when transfer.ModelId == 314:
+                    doodad.Transform.Local.SetPosition(0.02091537f, 5.013110f, 1.463596f, 0, 0, MathF.PI);
+                    break;
+                case AttachPointKind.Passenger1 when transfer.ModelId == 314:
+                    doodad.Transform.Local.SetPosition(0.02785782f, -2.598603f, 1.463596f, 0, 0, 0);
+                    break;
                 case AttachPointKind.Passenger0:
                     doodad.Transform.Local.SetPosition(0.00537476f, 5.7852f, 1.36648f, 0, 0, MathF.PI * 2f);
                     break;

@@ -14,6 +14,7 @@ using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Buffs;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
@@ -35,6 +36,7 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
 
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private WorldInstance World { get; init; } = parentWorldInstance;
+    private SendMySlaveTask _sendMySlaveTask;
     internal Func<Slave, bool> SaveForRemoval { get; set; } = slave => slave.Save();
 
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
@@ -47,6 +49,43 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
             var slaves = World.GetAllSlaves();
             return slaves.FirstOrDefault(slave => slave.Summoner?.ObjId == objId && !slave.IsDead &&
                 slave.ParentObj is not Slave && slave.OwnerType != BaseUnitType.Slave);
+        }
+    }
+
+    internal void ResumeSelectedOwnersVehicle(Character owner)
+    {
+        var slave = GetActiveSlaveByOwnerObjId(owner.ObjId);
+        if (slave == null)
+            return;
+
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (slave.AttachmentSyncRoot)
+        {
+            var previous = slave.Summoner;
+            if (previous == null || previous.Id != owner.Id || previous.AccountId != owner.AccountId ||
+                slave.AttachmentsRetired || slave.IsDead || !ReferenceEquals(GetSlaveByObjId(slave.ObjId), slave) ||
+                !ReferenceEquals(owner.ParentWorld, World) || !ReferenceEquals(slave.ParentWorld, World))
+                return;
+
+            // The character list reloads the Character but reuses its persistent item containers.
+            // Only the original scroll for this saved hull can restore its in-memory owner.
+            if (!ReferenceEquals(previous, owner) && slave.SummoningItem is SummonSlave scroll)
+            {
+                if (previous.Connection is { IsClosed: false } session && ReferenceEquals(session.ActiveChar, previous))
+                    return;
+                if (slave.OwnerType != BaseUnitType.Character || slave.OwnerId != owner.Id || slave.OwnerObjId != owner.ObjId ||
+                    slave.Id == 0 || scroll.SlaveDbId != slave.Id ||
+                    !ReferenceEquals(owner.Inventory?.GetItemById(scroll.Id), scroll))
+                    return;
+
+                slave.Summoner = owner;
+                foreach (var child in slave.AttachedSlaves)
+                {
+                    if (ReferenceEquals(child.ParentObj, slave) && ReferenceEquals(child.Summoner, previous))
+                        child.Summoner = owner;
+                }
+            }
+            slave.CancelTokenSource?.Cancel();
         }
     }
 
@@ -237,7 +276,44 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         Doodad interaction, out Vector3 position) =>
         TryGetSeatPosition(slave, seat, interaction, out position) &&
         !slave.AttachedCharacters.ContainsKey(seat) &&
-        MountSeatAuthorization.CanEnter(character, slave, position, MountSeatAuthorization.SlaveRange);
+        MountSeatAuthorization.CanEnter(character, slave, position, MountSeatAuthorization.SlaveRange,
+            GetShipDeckSupport(character, slave, seat, interaction));
+
+    private static Transform GetShipDeckSupport(Character character, Slave slave, AttachPointKind seat, Doodad wheel)
+    {
+        var support = character.Transform.Parent;
+        if (support == null || seat != AttachPointKind.Driver || character.Transform.StickyParent != null)
+            return null;
+
+        // The operator can stand on the deck or on the installed cannon before taking its Driver seat.
+        if (wheel == null)
+        {
+            const uint harpoonCannonTemplate = 48;
+            if (slave.TemplateId != harpoonCannonTemplate || slave.ParentObj is not Slave hull ||
+                (!ReferenceEquals(support, hull.Transform) && !ReferenceEquals(support, slave.Transform)) ||
+                !ReferenceEquals(slave.Transform.Parent, hull.Transform) || hull.Template?.IsABoat() != true ||
+                hull.IsDead || hull.AttachmentsRetired || !hull.AttachedSlaves.Contains(slave))
+                return null;
+
+            var attachment = (AttachPointKind)slave.AttachPointId;
+            var deckSocket = SlaveGameData.Instance.GetAttachPointsForSlave(hull.ModelId)?.GetValueOrDefault(attachment);
+            if (deckSocket == null || slave.Transform.Local.Position != deckSocket.AsPositionVector())
+                return null;
+
+            return hull.Template.SlaveBindings.Exists(binding => binding.SlaveId == slave.TemplateId &&
+                binding.AttachPointId == attachment) ? support : null;
+        }
+
+        // Standing on a deck or its wheel sets Parent without assigning a seat.
+        if (wheel.AttachPoint != AttachPointKind.Helms || !ReferenceEquals(wheel.Transform.Parent, slave.Transform) ||
+            (!ReferenceEquals(support, slave.Transform) && !ReferenceEquals(support, wheel.Transform)))
+            return null;
+
+        var points = SlaveGameData.Instance.GetAttachPointsForSlave(slave.ModelId);
+        if (points == null || !points.ContainsKey(AttachPointKind.Driver) || !points.TryGetValue(AttachPointKind.Helms, out var socket))
+            return null;
+        return wheel.Transform.Local.Position == socket.AsPositionVector() ? support : null;
+    }
 
     internal static bool TryGetSeatPosition(Slave slave, AttachPointKind seat, Doodad interaction, out Vector3 position)
     {
@@ -297,14 +373,17 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
     private bool DeleteForCleanup(Character owner, uint objId, bool ignoreAttachedItemWarning) =>
         RemoveSlave(owner, GetSlaveByObjId(objId), ignoreAttachedItemWarning, RemovalRequest.Cleanup);
 
-    private bool RemoveSlave(Character owner, Slave slaveInfo, bool ignoreAttachedItemWarning, RemovalRequest request)
+    private bool RemoveSlave(Character owner, Slave slaveInfo, bool ignoreAttachedItemWarning, RemovalRequest request,
+        bool requireCurrentSummoner = false)
     {
         if (slaveInfo == null)
             return false;
         List<Character> passengers;
         lock (slaveInfo.AttachmentSyncRoot)
         {
-            if (slaveInfo.AttachmentsRetired || !ReferenceEquals(GetSlaveByObjId(slaveInfo.ObjId), slaveInfo))
+            if (slaveInfo.AttachmentsRetired || !ReferenceEquals(GetSlaveByObjId(slaveInfo.ObjId), slaveInfo) ||
+                (requireCurrentSummoner && slaveInfo.Id != 0 && slaveInfo.SummoningItem is SummonSlave &&
+                    !ReferenceEquals(slaveInfo.Summoner, owner)))
                 return false;
             if (request != RemovalRequest.Cleanup && !CanPlayerRemove(owner, slaveInfo, request))
                 return false;
@@ -479,6 +558,45 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         return position.Position;
     }
 
+    internal static void PlaceLegacyBoat(PositionAndRotation position, WorldTemplate terrain, WaterBodies water, ShipModelV1 model)
+    {
+        // Keep the initial waterline if no forward probe has sufficient measured depth.
+        position.SetHeight(water.GetWaterSurface(position.Position, out _));
+        var minimumDepth = model.MassBoxSizeZ - model.MassCenterZ + 1f;
+        for (var distance = 0f; distance < 50f + model.MassBoxSizeX; distance += 1f)
+        {
+            var probe = position.Clone();
+            probe.AddDistanceToFront(distance);
+            var point = probe.Position;
+            if (!terrain.TryGetHeight(point.X, point.Y, out var seabed))
+                continue;
+
+            var surface = water.GetWaterSurface(point, out _);
+            if (surface - seabed > minimumDepth)
+            {
+                position.SetPosition(point.X, point.Y, surface);
+                break;
+            }
+        }
+
+        var keelOffset = (model.MassCenterZ < 0f ? model.MassCenterZ / 2f : 0f) - model.KeelHeight;
+        position.SetHeight(position.Position.Z + keelOffset);
+    }
+
+    internal static void ApplyPortalBoatWaterline(PositionAndRotation position, WaterBodies water)
+    {
+        if (water == null)
+            return;
+        var surface = water.GetWaterSurface(position.Position, out _);
+        var densityMultiplier = AAEmu.Game.Physics.Forces.Buoyancy.ShipWaterDensityMul;
+        if (!float.IsFinite(surface) || densityMultiplier <= 0f)
+            return;
+
+        var targetZ = surface - 1f / (AAEmu.Game.Physics.Forces.Buoyancy.BaseWaterDensity * densityMultiplier);
+        if (position.Position.Z < targetZ)
+            position.SetHeight(targetZ);
+    }
+
     internal static bool CanSummonItem(Character owner, Item item, DateTime now)
     {
         if (item is not SummonSlave summonItem)
@@ -524,7 +642,6 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
 
         using var spawnPos = positionOverride?.CloneDetached() ?? new Transform(null);
         spawnPos.InstanceId = World.Id;
-        var spawnOffsetPos = new Vector3();
 
         var dbId = 0u;
         var slaveName = string.Empty;
@@ -596,8 +713,6 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
             // spawnPos.Local.AddDistanceToRight(slaveTemplate.SpawnXOffset);
             if (slaveTemplate.IsABoat())
             {
-                // If we're spawning a boat, put it at the water level regardless of our own height
-                // TODO: if not at ocean level, get actual target location water body height (for example rivers)
                 var world = WorldManager.Instance.GetWorld(spawnPos.InstanceId);
                 if (world == null)
                 {
@@ -605,46 +720,12 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
                     return null;
                 }
 
-                var worldWaterLevel = world.Water.GetWaterSurface(spawnPos.World.Position, out _);
-                spawnPos.Local.SetHeight(worldWaterLevel);
-
-                // temporary grab ship information so that we can use it to find a suitable spot in front to summon it
-                var tempShipModel = ModelManager.Instance.GetShipModel(slaveTemplate.ModelId);
-                var minDepth = tempShipModel.MassBoxSizeZ - tempShipModel.MassCenterZ + 1f;
-
-                // Somehow take into account where the ship will end up related to it's mass center (also check boat physics)
-                spawnOffsetPos.Z += (tempShipModel.MassCenterZ < 0f ? tempShipModel.MassCenterZ / 2f : 0f) -
-                                    tempShipModel.KeelHeight;
-
-                for (var inFront = 0f; inFront < 50f + tempShipModel.MassBoxSizeX; inFront += 1f)
-                {
-                    using var depthCheckPos = spawnPos.CloneDetached();
-                    depthCheckPos.Local.AddDistanceToFront(inFront);
-                    var floorHeight = World.Template.GeoData.GetHeight(depthCheckPos.World.Position);// WorldManager.Instance.GetHeight(depthCheckPos);
-                    if (floorHeight > 0f)
-                    {
-                        var surfaceHeight = world.Water.GetWaterSurface(depthCheckPos.World.Position, out _);
-                        var delta = surfaceHeight - floorHeight;
-                        if (delta > minDepth)
-                        {
-                            // owner.SendMessage("Extra inFront = {0}, required Depth = {1}", inFront, minDepth);
-                            // spawnPos.Dispose();
-
-                            spawnPos.ApplyWorldTransformToLocalPosition(depthCheckPos);
-                            break;
-                        }
-                    }
-                }
-
-                spawnPos.Local.Position += spawnOffsetPos;
+                var shipModel = ModelManager.Instance.GetShipModel(slaveTemplate.ModelId);
+                PlaceLegacyBoat(spawnPos.Local, world.Template, world.Water, shipModel);
             }
-            else
+            else if (World.Template.GeoData?.TryGetGroundSurface(spawnPos.World.Position, out var ground) == true)
             {
-                // If a land vehicle, put it a the ground level of it's target spawn location
-                // TODO: check for maximum height difference for summoning
-                var h = World.Template.GeoData.GetHeight(spawnPos.World.Position);// WorldManager.Instance.GetHeight(spawnPos);
-                if (h > 0f)
-                    spawnPos.Local.SetHeight(h);
+                spawnPos.Local.SetHeight(ground.Height);
             }
 
             // Always spawn horizontal(level) and 90° CCW of the player
@@ -728,18 +809,7 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         if (summonedSlave.Template.IsABoat() && summonedSlave.Template.PortalTime > 0f)
         {
             var spawnWorld = WorldManager.Instance.GetWorld(summonedSlave.Transform.InstanceId);
-            var waterAtFinal = spawnWorld?.Water?.GetWaterSurface(summonedSlave.Transform.World.Position, out _) ?? 0f;
-            if (waterAtFinal > 0f)
-            {
-                var mul = AAEmu.Game.Physics.Forces.Buoyancy.ShipWaterDensityMul;
-                if (mul > 0f)
-                {
-                    var targetSubmerged = 1f / (AAEmu.Game.Physics.Forces.Buoyancy.BaseWaterDensity * mul);
-                    var targetZ = waterAtFinal - targetSubmerged;
-                    if (summonedSlave.Transform.Local.Position.Z < targetZ)
-                        summonedSlave.Transform.Local.SetHeight(targetZ);
-                }
-            }
+            ApplyPortalBoatWaterline(summonedSlave.Transform.Local, spawnWorld?.Water);
         }
 
         summonedSlave.Spawn();
@@ -938,10 +1008,10 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         {
             if (attachPoints.TryGetValue(attachPoint, out var value))
             {
-                baseUnit.Transform = slave.Transform.CloneAttached(baseUnit);
-                baseUnit.Transform.Parent = slave.Transform;
-                baseUnit.Transform.Local.Translate(value.AsPositionVector());
-                baseUnit.Transform.Local.SetRotation(value.Roll, value.Pitch, value.Yaw);
+                // A hull updates the same child transform that it registered at spawn.
+                if (!ReferenceEquals(baseUnit.Transform.Parent, slave.Transform))
+                    baseUnit.Transform = slave.Transform.CloneAttached(baseUnit);
+                baseUnit.Transform.Local.SetPosition(value.X, value.Y, value.Z, value.Roll, value.Pitch, value.Yaw);
                 Logger.Debug($"Model id: {slave.ModelId} attachment {attachPoint} => pos {value} = {baseUnit.Transform}");
                 return;
             }
@@ -952,6 +1022,21 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         {
             Logger.Warn($"Model id: {slave.ModelId} has no attach point information");
         }
+    }
+
+    internal static void RestoreSchoonerRackPosition(Slave ship, Doodad rack)
+    {
+        // Older saves placed the Merchant Schooner's second cargo rack at Box13.
+        if (ship.ModelId != 1205 || rack.TemplateId != 3446 || rack.AttachPoint != AttachPointKind.Box1)
+            return;
+
+        var points = SlaveGameData.Instance.GetAttachPointsForSlave(ship.ModelId);
+        if (points == null || !points.TryGetValue(AttachPointKind.Box1, out var box1) ||
+            !points.TryGetValue(AttachPointKind.Box13, out var box13))
+            return;
+
+        if (Vector3.DistanceSquared(rack.Transform.Local.Position, box13.AsPositionVector()) < 0.000001f)
+            rack.Transform.Local.SetPosition(box1.AsPositionVector());
     }
 
     /// <summary>
@@ -988,8 +1073,14 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
     /// </summary>
     public void Initialize()
     {
-        var sendMySlaveTask = new SendMySlaveTask(World);
-        TaskManager.Instance.Schedule(sendMySlaveTask, TimeSpan.Zero, TimeSpan.FromSeconds(5));
+        _sendMySlaveTask = new SendMySlaveTask(World);
+        TaskManager.Instance.Schedule(_sendMySlaveTask, TimeSpan.Zero, TimeSpan.FromSeconds(5));
+    }
+
+    internal void Stop()
+    {
+        if (_sendMySlaveTask != null)
+            TaskManager.Instance.Cancel(_sendMySlaveTask);
     }
 
     /// <summary>
@@ -1205,7 +1296,8 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
         var activeSlaveInfo = GetActiveSlaveByOwnerObjId(owner.ObjId);
         if (activeSlaveInfo != null)
         {
-            DeleteForCleanup(owner, activeSlaveInfo.ObjId, forceDelete);
+            // A delayed logout callback may still refer to the previous Character object.
+            RemoveSlave(owner, activeSlaveInfo, forceDelete, RemovalRequest.Cleanup, requireCurrentSummoner: true);
         }
 
         ClearSlaveAttachmentState(owner);

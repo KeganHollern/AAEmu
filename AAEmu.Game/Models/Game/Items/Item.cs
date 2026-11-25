@@ -61,8 +61,19 @@ public class Item : PacketMarshaler, IComparable<Item>
     [JsonProperty]
     public ItemFlag ItemFlags { get => _itemFlags; set { _itemFlags = value; _isDirty = true; } }
 
+    internal bool DatabaseDeletionAcknowledged { get; set; }
+
     [JsonProperty]
-    public int Count { get => _count; set { _count = value; _isDirty = true; } }
+    public int Count
+    {
+        get => _count;
+        set
+        {
+            _count = value;
+            _isDirty = true;
+            DatabaseDeletionAcknowledged = false;
+        }
+    }
 
     [JsonProperty]
     public int LifespanMins { get => _lifespanMins; set { _lifespanMins = value; _isDirty = true; } }

@@ -9,6 +9,7 @@ public class GameRuleSet
     public int TimeOpening { get; set; }
     public int TimeEnding { get; set; }
     public int TimePlaying { get; set; }
+    public int EnemyPlayerKillScore { get; set; }
     public int VictoryScore { get; set; }
     public uint BattlefieldId { get; set; }
     // TODO fill out the rest of the fields

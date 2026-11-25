@@ -16,13 +16,13 @@ using AAEmu.Game.Models.Tasks.TowerDefense;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using NLog;
-using GameTask = AAEmu.Game.Models.Tasks.Task;
 
 namespace AAEmu.Game.Core.Managers.TowerDefense;
 
 public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITowerDefenseManager
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+    private static readonly TimeSpan ProgressSnapshotDelay = TimeSpan.FromSeconds(5);
     private readonly object _sync = new();
     private readonly ITimeManager _timeManager;
     private readonly IWorldManager _worldManager;
@@ -288,6 +288,21 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
                     occurrence.TimerCriterionComplete = true;
                     EvaluateStep(occurrence);
                     break;
+                case TowerDefenseTimerKind.ProgressSnapshot:
+                    if (occurrence.ScheduledTasks.RemoveAll(task => task is TowerDefenseCallbackTask
+                            { Kind: TowerDefenseTimerKind.ProgressSnapshot }) == 0)
+                        return;
+                    try
+                    {
+                        _repository.SaveProgress(occurrence);
+                    }
+                    catch (Exception exception)
+                    {
+                        Logger.Error(exception, "Could not save objective progress for tower-defense occurrence {0}.",
+                            occurrence.OccurrenceKey);
+                        QueueProgressSnapshot(occurrence);
+                    }
+                    break;
                 case TowerDefenseTimerKind.HardDeadline:
                     EndOccurrence(occurrence, TowerDefenseOccurrenceStatus.TimedOut, "hard_deadline");
                     break;
@@ -336,8 +351,7 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
         string requestedSiteKey,
         out string message)
     {
-        if (_seenOccurrenceKeys.Contains(occurrenceKey) || _occurrences.ContainsKey(occurrenceKey) ||
-            _repository.Contains(occurrenceKey))
+        if (_seenOccurrenceKeys.Contains(occurrenceKey) || _occurrences.ContainsKey(occurrenceKey))
         {
             message = "Occurrence was already handled.";
             return false;
@@ -409,9 +423,22 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
             DefinitionHash = ComputeDefinitionHash(manifest, definition)
         };
         occurrence.TerminalObjective = CreateTerminalObjective(manifest, definition);
+        try
+        {
+            if (!_repository.TryCreate(occurrence))
+            {
+                message = "Occurrence was already handled.";
+                return false;
+            }
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(exception, "Could not save the initial state for tower-defense occurrence {0}.", occurrenceKey);
+            message = "Could not save the new tower-defense occurrence.";
+            return false;
+        }
         _occurrences.Add(occurrenceKey, occurrence);
         _seenOccurrenceKeys.Add(occurrenceKey);
-        _repository.Save(occurrence);
 
         try
         {
@@ -585,32 +612,49 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
                 return;
             foreach (var child in world.EventSpawnOwnership.GetChildren(victim.ObjId))
                 DespawnOwned(world, child);
-            if (_occurrences.TryGetValue(owned.Token.OccurrenceKey, out var terminalOccurrence) &&
-                terminalOccurrence.TerminalObjective is { } terminalObjective &&
-                terminalObjective.TargetId == victim.TemplateId &&
-                terminalOccurrence.CountedTerminalVictims.Add(victim.ObjId))
-            {
-                terminalOccurrence.TerminalObjective = terminalObjective.Increment();
-                if (terminalOccurrence.TerminalObjective.Current >= terminalOccurrence.TerminalObjective.Required)
-                {
-                    EndOccurrence(terminalOccurrence, TowerDefenseOccurrenceStatus.Succeeded,
-                        "terminal_objective_complete");
-                    return;
-                }
-            }
-            if (!_occurrences.TryGetValue(owned.Token.OccurrenceKey, out var occurrence) ||
-                occurrence.Status != TowerDefenseOccurrenceStatus.StepActive ||
-                occurrence.Generation != owned.Token.Generation ||
-                !occurrence.CountedVictims.Add(victim.ObjId))
+            if (!_occurrences.TryGetValue(owned.Token.OccurrenceKey, out var occurrence))
                 return;
 
-            foreach (var (objectiveId, objective) in occurrence.Objectives.ToList())
+            var generation = occurrence.Generation;
+            var progressChanged = false;
+            if (occurrence.TerminalObjective is { } terminalObjective &&
+                terminalObjective.TargetId == victim.TemplateId &&
+                occurrence.CountedTerminalVictims.Add(victim.ObjId))
             {
-                if (objective.TargetId == victim.TemplateId && objective.Current < objective.Required)
-                    occurrence.Objectives[objectiveId] = objective.Increment();
+                occurrence.TerminalObjective = terminalObjective.Increment();
+                if (occurrence.TerminalObjective.Current >= occurrence.TerminalObjective.Required)
+                {
+                    EndOccurrence(occurrence, TowerDefenseOccurrenceStatus.Succeeded, "terminal_objective_complete");
+                    return;
+                }
+                progressChanged = true;
             }
-            EvaluateStep(occurrence);
+
+            if (occurrence.Status == TowerDefenseOccurrenceStatus.StepActive &&
+                generation == owned.Token.Generation && occurrence.CountedVictims.Add(victim.ObjId))
+            {
+                foreach (var (objectiveId, objective) in occurrence.Objectives.ToList())
+                {
+                    if (objective.TargetId == victim.TemplateId && objective.Current < objective.Required)
+                    {
+                        occurrence.Objectives[objectiveId] = objective.Increment();
+                        progressChanged = true;
+                    }
+                }
+                EvaluateStep(occurrence);
+            }
+            // A step change or terminal transition already saved the new state.
+            if (progressChanged && occurrence.Generation == generation)
+                QueueProgressSnapshot(occurrence);
         }
+    }
+
+    private void QueueProgressSnapshot(TowerDefenseOccurrence occurrence)
+    {
+        if (occurrence.ScheduledTasks.Any(task => task is TowerDefenseCallbackTask
+                { Kind: TowerDefenseTimerKind.ProgressSnapshot }))
+            return;
+        Schedule(occurrence, TowerDefenseTimerKind.ProgressSnapshot, ProgressSnapshotDelay, occurrence.Generation);
     }
 
     private void EndOccurrence(
@@ -686,7 +730,8 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
             delay = TimeSpan.Zero;
         var task = new TowerDefenseCallbackTask(this, occurrence.OccurrenceKey, expectedGeneration, kind);
         occurrence.ScheduledTasks.Add(task);
-        _taskManager.Schedule(task, delay, count: 1);
+        if (!_taskManager.Schedule(task, delay, count: 1))
+            occurrence.ScheduledTasks.Remove(task);
     }
 
     private void CancelStepTasks(TowerDefenseOccurrence occurrence)
@@ -896,6 +941,12 @@ public sealed class TowerDefenseManager : Singleton<TowerDefenseManager>, ITower
                 if (!string.Equals(placement.EventSiteKey, site.Key, StringComparison.OrdinalIgnoreCase))
                 {
                     message = $"Placement '{placementId}' belongs to site '{placement.EventSiteKey}', not '{site.Key}'.";
+                    return false;
+                }
+                if (binding.Equals("initial", StringComparison.OrdinalIgnoreCase) &&
+                    definition.TargetNpcSpawnerId is > 0 && placement.Template?.Id != definition.TargetNpcSpawnerId)
+                {
+                    message = $"Initial placement '{placementId}' uses spawner {placement.Template?.Id}, expected {definition.TargetNpcSpawnerId}.";
                     return false;
                 }
             }
