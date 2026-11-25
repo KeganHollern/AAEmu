@@ -923,10 +923,10 @@ public class WorldManager(
             {
                 if (GetWorldTemplateByZoneKey(zoneId) is { Name: "main_world", GeoData: { } geoData })
                 {
-                    if (geoData.TryFollowStaticFloor(ai.Owner, from, new Vector3(x, y, inclinedTarget.HasValue ? z : from.Z),
+                    if (geoData.TryResolveStaticFloorStep(ai.Owner, from, new Vector3(x, y, inclinedTarget.HasValue ? z : from.Z),
                             source, out var floor, trace, inclinedTarget))
                     {
-                        trace?.Select("StaticFloor");
+                        trace?.Select(floor.HasValue ? "StaticFloor" : "HoldAmbiguousFloor");
                         return floor;
                     }
                 }
@@ -939,6 +939,7 @@ public class WorldManager(
             return finalHeight;
         }
 
+        trace?.Select("HoldWithoutGround");
         return null;
     }
 

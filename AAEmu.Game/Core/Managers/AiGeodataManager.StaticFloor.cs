@@ -21,7 +21,8 @@ public partial class AiGeoDataManager
 
     // A horizontal NPC step can leave a waypoint's region of influence while still on its solid deck.
     // Require continuous static collision between the two feet before replacing the selected ground.
-    internal bool TryFollowStaticFloor(Npc npc, Vector3 from, Vector3 to, GroundSurfaceSource selectedSource, out float floor, NpcStepSurfaceTrace trace = null, Vector3? inclinedTarget = null)
+    // A resolved null height holds a step whose current or next support is ambiguous.
+    internal bool TryResolveStaticFloorStep(Npc npc, Vector3 from, Vector3 to, GroundSurfaceSource selectedSource, out float? floor, NpcStepSurfaceTrace trace = null, Vector3? inclinedTarget = null)
     {
         floor = default;
         var (cellX, cellY) = from.ToCellIndex();
@@ -58,7 +59,7 @@ public partial class AiGeoDataManager
 
         var belowTerrain = separation < 0f;
         var mayLeaveBrush = false;
-        if (TryFollowFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace, inclinedTarget))
+        if (TryResolveStaticFloorInCell(worldTemplate.GetCell(cellX, cellY), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace, inclinedTarget))
             return true;
 
         // A brush belongs to one cell even where its floor extends into the next cell.
@@ -67,18 +68,23 @@ public partial class AiGeoDataManager
         for (var x = cellX - 1; x <= cellX + 1; x++)
         {
             if ((x != cellX || y != cellY) &&
-                TryFollowFloorInCell(worldTemplate.GetCell(x, y), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace, inclinedTarget))
+                TryResolveStaticFloorInCell(worldTemplate.GetCell(x, y), from, to, belowTerrain, ref mayLeaveBrush, out floor, trace, inclinedTarget))
                 return true;
         }
-        return !belowTerrain && mayLeaveBrush && TryCrossPlacedFloorFaces(npc, cellX, cellY, from, to, out floor, trace);
+        if (!belowTerrain && mayLeaveBrush && TryCrossPlacedFloorFaces(npc, cellX, cellY, from, to, out var across, trace))
+        {
+            floor = across;
+            return true;
+        }
+        return false;
     }
 
     private CryWorldObjectIndex GetGroundBrushIndex(WorldCell cell, ObjectsFile objects) =>
         _groundBrushes.GetValue(objects, data => new CryWorldObjectIndex(
             CryWorldObjectIndex.ReadBrushInstances(data, cell.CellX, cell.CellY)));
 
-    private bool TryFollowFloorInCell(WorldCell cell, Vector3 from, Vector3 to, bool belowTerrain,
-        ref bool mayLeaveBrush, out float floor, NpcStepSurfaceTrace trace, Vector3? inclinedTarget)
+    private bool TryResolveStaticFloorInCell(WorldCell cell, Vector3 from, Vector3 to, bool belowTerrain,
+        ref bool mayLeaveBrush, out float? floor, NpcStepSurfaceTrace trace, Vector3? inclinedTarget)
     {
         floor = default;
         if (cell?.LoadedObjectDat is not { HasUnparsedObjects: false } objects)
@@ -124,27 +130,29 @@ public partial class AiGeoDataManager
                     if (part.PhysicsType != 0x1000 || part.Shape is not CryTriangleMesh mesh)
                         continue;
                     trace?.Observe(NoStartFace, cell, brush, index);
-                    if (!TryFloorHit(part, brush.Transform, from, belowTerrain, out var first))
+                    if (!TryFloorHit(part, brush.Transform, from, belowTerrain, out var first, inclinedTarget.HasValue))
                         continue;
                     mayLeaveBrush = true;
                     trace?.Observe(NoEndFace, cell, brush, index, first.TriangleIndex);
-                    if (!TryFloorHit(part, brush.Transform, to, belowTerrain, out var last))
+                    if (!TryFloorHit(part, brush.Transform, to, belowTerrain, out var last, inclinedTarget.HasValue))
                         continue;
 
                     // A height difference along a cave slope can exceed the tolerance for a level step.
                     // A single convex face supporting both feet and the target proves the full segment.
-                    if (inclinedTarget is { } destination && (first.Normal.Z == 1f || first.TriangleIndex != last.TriangleIndex ||
-                        !TryFloorHit(part, brush.Transform, destination, belowTerrain, out var end) || end.TriangleIndex != first.TriangleIndex))
+                    if (inclinedTarget is { } destination &&
+                        !TryGetCommonInclinedFace(part, brush.Transform, from, to, destination, ref first, ref last))
                     {
                         trace?.Observe(TargetOutsideInclinedFace, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
                         continue;
                     }
-                    if (inclinedTarget is { } endFoot &&
+                    // The target can touch another solid beyond this step. The NPC only
+                    // needs a unique support at the feet it will travel between now.
+                    if (inclinedTarget.HasValue &&
                         (HasOtherFootSupport(from, brush, index, first.TriangleIndex) ||
-                         HasOtherFootSupport(endFoot, brush, index, first.TriangleIndex)))
+                         HasOtherFootSupport(to, brush, index, first.TriangleIndex)))
                     {
                         trace?.Observe(AmbiguousInclinedFoot, cell, brush, index, first.TriangleIndex, last.TriangleIndex);
-                        continue;
+                        return true;
                     }
                     if (!CanFollowFloorFaces(mesh,
                             part.Transform * brush.Transform, first.TriangleIndex, last.TriangleIndex, from, to, belowTerrain))
@@ -190,9 +198,11 @@ public partial class AiGeoDataManager
                     var part = asset.Parts[i];
                     if (part.PhysicsType != 0x1000)
                         continue;
-                    var exclude = ReferenceEquals(brush, support) && i == partIndex ? face : -1;
+                    var ownMesh = ReferenceEquals(brush, support) && i == partIndex ? part.Shape as CryTriangleMesh : null;
+                    bool DistinctSupport(int triangle, Vector3 normal) => IsGentlyInclined(normal) &&
+                        (ownMesh == null || triangle != face && !SharesOppositeEdge(ownMesh, face, triangle));
                     if (CryGeometryQueries.Raycast(part, brush.Transform, foot + margin, -Vector3.UnitZ,
-                            StaticFloorPrecision * 2, true, out _, exclude))
+                            StaticFloorPrecision * 2, true, out _, DistinctSupport))
                         return true;
                 }
             }
@@ -215,12 +225,55 @@ public partial class AiGeoDataManager
 
     // The short ray tolerates floating-point roundoff at the accepted foot height. It cannot select another level.
     private static bool TryFloorHit(CryGeometryPart part, Matrix4x4 transform, Vector3 foot,
-        bool belowTerrain, out CryRayHit hit)
+        bool belowTerrain, out CryRayHit hit, bool inclinedPursuit = false)
     {
-        if (!CryGeometryQueries.Raycast(part, transform, foot + Vector3.UnitZ * StaticFloorPrecision,
-                -Vector3.UnitZ, StaticFloorPrecision * 2, true, out hit))
+        if (inclinedPursuit)
+            return TryInclinedFloorHit(part, transform, foot, out hit);
+        return CryGeometryQueries.Raycast(part, transform, foot + Vector3.UnitZ * StaticFloorPrecision,
+                   -Vector3.UnitZ, StaticFloorPrecision * 2, true, out hit) &&
+               (hit.Normal.Z == 1f || belowTerrain && IsGentlyInclined(hit.Normal));
+    }
+
+    private static bool TryInclinedFloorHit(CryGeometryPart part, Matrix4x4 transform, Vector3 foot,
+        out CryRayHit hit, int onlyTriangle = -1) =>
+        CryGeometryQueries.Raycast(part, transform, foot + Vector3.UnitZ * StaticFloorPrecision, -Vector3.UnitZ,
+            StaticFloorPrecision * 2, true, out hit, static (_, normal) => IsGentlyInclined(normal), onlyTriangle);
+
+    private static bool TryGetCommonInclinedFace(CryGeometryPart part, Matrix4x4 transform,
+        Vector3 from, Vector3 to, Vector3 target, ref CryRayHit first, ref CryRayHit last)
+    {
+        if (!TryInclinedFloorHit(part, transform, target, out var end))
             return false;
-        return hit.Normal.Z == 1f || belowTerrain && IsGentlyInclined(hit.Normal);
+        if (first.TriangleIndex == last.TriangleIndex && last.TriangleIndex == end.TriangleIndex)
+            return first.Normal.Z != 1f;
+
+        // An endpoint on a welded seam can hit either triangle first. Test the actual
+        // triangle under each foot before accepting a single plane for the entire pursuit.
+        ReadOnlySpan<int> candidates = [first.TriangleIndex, last.TriangleIndex, end.TriangleIndex];
+        foreach (var face in candidates)
+        {
+            if (!TryInclinedFloorHit(part, transform, from, out var a, face) || a.Normal.Z == 1f ||
+                !TryInclinedFloorHit(part, transform, to, out var b, face) ||
+                !TryInclinedFloorHit(part, transform, target, out _, face))
+                continue;
+            first = a;
+            last = b;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool SharesOppositeEdge(CryTriangleMesh mesh, int support, int other)
+    {
+        var a = mesh.Indices.AsSpan(support * 3, 3);
+        var b = mesh.Indices.AsSpan(other * 3, 3);
+        // Both upward faces already contain the same foot XY. With opposite winding
+        // along their shared edge, they can meet there only on that edge.
+        for (var i = 0; i < 3; i++)
+        for (var j = 0; j < 3; j++)
+            if (a[i] == b[(j + 1) % 3] && a[(i + 1) % 3] == b[j])
+                return true;
+        return false;
     }
 
     internal static bool FitsCaveFloorGrade(Vector3 from, Vector3 destination)

@@ -7,10 +7,10 @@ public static class CryGeometryQueries
 {
     public static bool Raycast(CryGeometryPart part, Matrix4x4 objectTransform, Vector3 origin,
         Vector3 direction, float maximumDistance, bool ignoreBackFaces, out CryRayHit hit) =>
-        Raycast(part, objectTransform, origin, direction, maximumDistance, ignoreBackFaces, out hit, -1);
+        Raycast(part, objectTransform, origin, direction, maximumDistance, ignoreBackFaces, out hit, null);
 
     internal static bool Raycast(CryGeometryPart part, Matrix4x4 objectTransform, Vector3 origin,
-        Vector3 direction, float maximumDistance, bool ignoreBackFaces, out CryRayHit hit, int excludedTriangle)
+        Vector3 direction, float maximumDistance, bool ignoreBackFaces, out CryRayHit hit, Func<int, Vector3, bool> acceptSurface, int onlyTriangle = -1)
     {
         hit = default;
         if (!float.IsFinite(maximumDistance) || maximumDistance < 0 ||
@@ -30,8 +30,10 @@ public static class CryGeometryQueries
         void Accept(float candidate, Vector3 candidateNormal, int candidateTriangle = -1, int candidateMaterial = -1)
         {
             if (candidate < 0 || candidate > distance || !float.IsFinite(candidate) ||
-                (ignoreBackFaces && Vector3.Dot(candidateNormal, localDirection) >= 0) ||
-                (excludedTriangle >= 0 && candidateTriangle == excludedTriangle))
+                (ignoreBackFaces && Vector3.Dot(candidateNormal, localDirection) >= 0))
+                return;
+            if (acceptSurface != null && !acceptSurface(candidateTriangle,
+                    Vector3.Normalize(Vector3.TransformNormal(candidateNormal, Matrix4x4.Transpose(inverse)))))
                 return;
             distance = candidate;
             normal = candidateNormal;
@@ -64,7 +66,9 @@ public static class CryGeometryQueries
                 RayCylinder(localOrigin, localDirection, cylinder, (candidate, candidateNormal) => Accept(candidate, candidateNormal));
                 break;
             case CryTriangleMesh mesh:
-                for (var i = 0; i < mesh.Indices.Length; i += 3)
+                var start = onlyTriangle >= 0 ? onlyTriangle * 3 : 0;
+                var end = onlyTriangle >= 0 ? start + 3 : mesh.Indices.Length;
+                for (var i = start; i < end; i += 3)
                 {
                     var a = mesh.Vertices[mesh.Indices[i]];
                     var b = mesh.Vertices[mesh.Indices[i + 1]];
