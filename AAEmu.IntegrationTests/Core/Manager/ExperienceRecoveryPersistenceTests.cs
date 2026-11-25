@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 
+using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
@@ -55,12 +56,15 @@ public sealed partial class PlayerMailSendPersistenceTests
         Assert.Equal(400, player.RecoverableExp);
         Assert.Equal(savedLoss, player.LastExpLoss);
         var notifications = new List<ushort>();
+        var recoveryPackets = new List<byte[]>();
         var session = new Mock<ISession>();
         player.Connection = new GameConnection(session.Object) { ActiveChar = player };
         session.Setup(value => value.SendPacket(It.IsAny<byte[]>())).Callback<byte[]>(bytes =>
         {
             var type = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(6));
             notifications.Add(type);
+            if (type == SCOffsets.SCRecoverableExpPacket)
+                recoveryPackets.Add(bytes[8..]);
             if (type is SCOffsets.SCExpChangedPacket or SCOffsets.SCRecoverableExpPacket or SCOffsets.SCCharacterLaborPowerChangedPacket)
             {
                 Assert.False(failBeforeCommit);
@@ -92,6 +96,18 @@ public sealed partial class PlayerMailSendPersistenceTests
             if (!paidLabor && !skill.Cancelled)
                 Assert.True(SkillLaborBatch.Current.Inventory.TryConsume(player.Inventory.Bag, scroll, 1));
         }));
+
+        if (failBeforeCommit)
+            Assert.Empty(recoveryPackets);
+        else
+        {
+            var body = new PacketStream(Assert.Single(recoveryPackets));
+            Assert.Equal(player.ObjId, body.ReadBc());
+            Assert.Equal(0, body.ReadInt32());
+            Assert.Equal(0, body.ReadInt32());
+            Assert.Equal(!paidLabor && savedLoss > 0 ? 2 : 1, body.ReadInt32());
+            Assert.Equal(body.Count, body.Pos);
+        }
 
         Assert.Equal(failBeforeCommit ? 20 : restoredExperience, player.Experience);
         Assert.Equal(failBeforeCommit ? 400 : 0, player.RecoverableExp);
