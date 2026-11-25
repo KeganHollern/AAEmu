@@ -211,7 +211,7 @@ public class ShipController(World world, ShipModelV1 shipModel)
     internal static JVector GetEffectiveWaterVelocity(Slave slave, RigidBody rigidBody,
         ShipModelV1? model = null)
     {
-        var grounded = slave.GroundContactLatched || slave.CachedFloorLevel > slave.CachedWaterSurface;
+        var grounded = slave.IsGrounded;
         model ??= slave.ShipController?.ShipModel;
         if (grounded || model is null)
             return JVector.Zero;
@@ -360,10 +360,10 @@ public class ShipController(World world, ShipModelV1 shipModel)
         //
         // Use the latched ground contact from PhysicsManager to avoid shoreline jitter causing
         // abrupt control/velocity changes ("jerks") when transitioning water<->land.
-        var isGrounded = (slave.CachedFloorLevel > slave.CachedWaterSurface) || slave.GroundContactLatched;
+        var waterDepth = slave.CachedWaterDepth;
+        var isGrounded = slave.IsGrounded;
         var shallowDepthForCaps = ShipMotionDefaults.ShallowWaterDepthForGroundSpeedCaps;
         shallowDepthForCaps = MathF.Max(0f, shallowDepthForCaps);
-        var waterDepth = slave.CachedWaterSurface - slave.CachedFloorLevel; // meters
         var isShallowForCaps = waterDepth >= 0f && waterDepth <= shallowDepthForCaps;
         var isGroundedForSpeedCaps = isGrounded || isShallowForCaps;
 

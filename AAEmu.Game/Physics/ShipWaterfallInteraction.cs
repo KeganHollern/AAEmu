@@ -56,7 +56,7 @@ public sealed class ShipWaterfallInteraction
         public float WaterlineTolerance;
         public float WaterSurface;
         public Vector3 WaterFlow;
-        public float FloorLevel;
+        public float? FloorLevel;
     }
 
     private sealed class TransitState

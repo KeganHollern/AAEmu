@@ -658,8 +658,7 @@ public class PhysicsManager
     /// </summary>
     private static float ComputeVisualWavePitchOnWater(Slave slave, RigidBody rigidBody, float dt)
     {
-        var grounded = slave.CachedFloorLevel > slave.CachedWaterSurface || slave.GroundContactLatched;
-        if (grounded)
+        if (slave.IsGrounded)
             return 0f;
 
         var submerged = MathF.Max(0f, slave.CachedWaterSurface - rigidBody.Position.Y);
