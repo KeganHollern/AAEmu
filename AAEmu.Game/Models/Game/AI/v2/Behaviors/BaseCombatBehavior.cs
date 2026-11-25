@@ -27,7 +27,6 @@ public abstract class BaseCombatBehavior : Behavior
     protected uint _phaseType;
     protected DateTime _combatStartTime;
     protected Queue<AiSkill> _skillQueue;
-    private bool _startingSkillAlreadyUsed;
     private DateTime _nextPathRefreshTime = DateTime.MinValue;
 
     public void MoveInRange(BaseUnit target, TimeSpan delta)
@@ -387,18 +386,10 @@ public abstract class BaseCombatBehavior : Behavior
                 aiParams.RestorationOnReturn = selectedSkillList.Restoration;
                 aiParams.GoReturnState = selectedSkillList.GoReturn;
 
-                // add startAiSkill first to the queue if it is available
-                if (selectedSkillList.StartAiSkills.Count > 0 && !_startingSkillAlreadyUsed)
+                foreach (var skill in selectedSkillList.StartAiSkills)
                 {
-                    foreach (var skill in selectedSkillList.StartAiSkills)
-                    {
-                        if (Ai.Owner.Cooldowns.CheckCooldown(skill.SkillId))
-                        {
-                            continue;
-                        }
+                    if (!Ai.Owner.Cooldowns.CheckCooldown(skill.SkillId) && Ai.TryStartPhaseSkill(skill))
                         _skillQueue.Enqueue(skill);
-                        _startingSkillAlreadyUsed = true;
-                    }
                 }
 
                 var availableSkillList = RequestAvailableSkillList(selectedSkillList.SkillLists);
