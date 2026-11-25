@@ -1100,7 +1100,7 @@ public partial class Npc : Unit
         return new Vector3(x, y, z);
     }
 
-    internal float ResolveStepHeight(Vector3 from, Vector3 destination, Vector3 next, NpcStepSurfaceTrace trace = null)
+    internal float? ResolveStepHeight(Vector3 from, Vector3 destination, Vector3 next, NpcStepSurfaceTrace trace = null)
     {
         // A short first step toward another floor can appear level. Check the full destination.
         var unparented = Transform.Parent == null && Transform.StickyParent == null;
@@ -1108,8 +1108,20 @@ public partial class Npc : Unit
         var checkIncline = unparented && !levelStep && AiGeoDataManager.FitsCaveFloorGrade(from, destination);
         if (!levelStep && !checkIncline)
             trace?.Skip("DestinationChangesLayer");
-        return WorldManager.Instance.GetReferenceHeight(Ai, next.X, next.Y, next.Z, Transform.ZoneId,
+        var height = WorldManager.Instance.ResolveReferenceHeight(Ai, next.X, next.Y, next.Z, Transform.ZoneId,
             levelStep || checkIncline ? from : null, trace, checkIncline ? destination : null);
+        if (height.HasValue)
+            return height;
+
+        // In the main world a missing sample does not authorize a step toward the NPC's home height.
+        if (unparented && ParentWorld?.Template?.Name == "main_world" &&
+            (AppConfiguration.Instance.HeightMapsEnable || AppConfiguration.Instance.World?.GeoDataMode == true))
+        {
+            trace?.Select("HoldWithoutGround");
+            return null;
+        }
+        trace?.Select("HomeWithoutGround");
+        return Ai.HomePosition.Z;
     }
 
     /// <summary>
@@ -1127,9 +1139,10 @@ public partial class Npc : Unit
     /// Gait speed this movement represents, used to encode the broadcast velocity. Zero keeps the legacy
     /// fixed velocity used by ad-hoc movement (chasing, roaming, returning home).
     /// </param>
-    /// <returns>True if withing rangeTolerance of other</returns>
+    /// <param name="missingGroundHeight">Fallback for an explicit relocation. Ordinary steps hold when no ground is available.</param>
+    /// <returns>True if within rangeTolerance of other</returns>
     public bool MoveTowards(Vector3 other, float distance, byte actorFlags = 4, float rangeTolerance = 1f,
-        bool authoredPathZ = false, float speedMetersPerSecond = 0f)
+        bool authoredPathZ = false, float speedMetersPerSecond = 0f, float? missingGroundHeight = null)
     {
         if ((ActiveSkillController?.State ?? SkillController.SCState.Ended) == SkillController.SCState.Running)
             return false;
@@ -1175,16 +1188,17 @@ public partial class Npc : Unit
         if (targetDist <= rangeTolerance)
             return true;
 
-        var moveType = (UnitMoveType)MoveType.GetType(MoveTypeEnum.Unit);
-
         var next = GetRequestedStep(oldPosition, other, distance, targetDist);
         // aaemu-cluster#92: on an authored route the recorded waypoint height is authoritative; only
         // ad-hoc movement re-grounds every step through the geodata resolver.
         var targetPositionZ = authoredPathZ
             ? AiUtils.ResolveAuthoredPathHeight(this, next.X, next.Y, next.Z)
-            : ResolveStepHeight(oldPosition, other, next);
-        Transform.Local.SetPosition(next.X, next.Y, targetPositionZ);
+            : ResolveStepHeight(oldPosition, other, next) ?? missingGroundHeight;
+        if (!targetPositionZ.HasValue)
+            return false;
+        Transform.Local.SetPosition(next.X, next.Y, targetPositionZ.Value);
 
+        var moveType = (UnitMoveType)MoveType.GetType(MoveTypeEnum.Unit);
         var angle = MathUtil.CalculateAngleFrom(Transform.Local.Position, other);
         // aaemu-cluster#92: tell the client how fast we actually are, so it plays the matching gait
         // instead of extrapolating a hardcoded ~2 m/s and being snapped back every step.

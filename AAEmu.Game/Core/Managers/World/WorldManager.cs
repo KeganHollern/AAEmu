@@ -871,9 +871,9 @@ public class WorldManager(
     public const float NavigationAnchorTolerance = 1.5f;
 
     public float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId)
-        => GetReferenceHeight(ai, x, y, z, zoneId, null);
+        => ResolveReferenceHeight(ai, x, y, z, zoneId, null) ?? ai.HomePosition.Z;
 
-    internal float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId, Vector3? previousPosition,
+    internal float? ResolveReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId, Vector3? previousPosition,
         NpcStepSurfaceTrace trace = null, Vector3? inclinedTarget = null)
     {
         float finalHeight;
@@ -939,9 +939,7 @@ public class WorldManager(
             return finalHeight;
         }
 
-        trace?.Select("HomeWithoutGround");
-        // 4. Take the default height
-        return ai.HomePosition.Z;
+        return null;
     }
 
     /// <summary>
