@@ -282,11 +282,29 @@ public sealed partial class PlayerMailSendPersistenceTests
         Assert.Equal(commitFirst ? 1 : 0, Scalar($"SELECT COUNT(*) FROM mail_archive_items WHERE item_id={item.Id}"));
     }
 
+    [Fact]
+    public void DeferredAuctionMailFixtureCleanupKeepsOtherFixturesLetters()
+    {
+        using var other = new SendGraph();
+        var (otherMail, _) = CreateLegacyAuctionMail(other);
+        long finishedMailId;
+        using (var finished = new SendGraph())
+        {
+            var (deferred, _) = CreateLegacyAuctionMail(finished);
+            finishedMailId = deferred.Id;
+            Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM mails WHERE id={finishedMailId}"));
+        }
+
+        Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM mails WHERE id={finishedMailId}"));
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM mails WHERE id={otherMail.Id}"));
+    }
+
     private static (BaseMail Source, Item Item) CreateLegacyAuctionMail(SendGraph graph)
     {
         var item = graph.AddEquipment(0);
         Assert.Equal(MailResult.Success, graph.Send(MailType.Express, 0, 0));
         var source = Assert.Single(graph.Mails._allPlayerMails.Values);
+        graph.LegacyAuctionMailId = source.Id;
         source.MailType = MailType.AucBidWin;
         source.Body.RecvDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
         var auction = graph.Items.GetItemContainerForCharacter(graph.Sender.Id, SlotType.Auction, null, 0);

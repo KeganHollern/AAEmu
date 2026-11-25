@@ -286,6 +286,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         private uint _nextMailId;
 
         public ItemManager Items { get; }
+        public long? LegacyAuctionMailId { get; set; }
         public MailManager Mails { get; }
         public SaveManager Save { get; }
         public Character Sender { get; }
@@ -564,6 +565,10 @@ public sealed partial class PlayerMailSendPersistenceTests
             SwapSingleton(_oldItems);
             SwapSingleton(_oldQuests);
             SwapSingleton(_oldWorld);
+            // A guarded archive can deliberately retain this expired letter. The next
+            // fixture starts its own global mail scan in the same disposable schema.
+            if (LegacyAuctionMailId is { } mailId)
+                Execute($"DELETE FROM mails WHERE id={mailId} AND receiver_id={Receiver.Id}");
         }
 
         private static Character Character(uint id, string prefix) => new(new UnitCustomModelParams())
