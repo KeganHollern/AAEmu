@@ -120,15 +120,23 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
                     if (game.RemovePlayer(character))
                     {
                         _log.Trace("[Matchmaking] " + character.Name + " declined arena invitation.");
-                        if (!_queueList.Contains(game))
-                        {
-                            _queueList.Add(game);
-                            _log.Trace("[Matchmaking] Adding game to queue list.");
-                        }
+                        OnInvitationRemoved(game);
                         return;
                     }
                 }
             }
+        }
+    }
+
+    // Called under the persistence lock after the player has left the roster.
+    internal void OnInvitationRemoved(InstantGame game)
+    {
+        lock (_lock)
+        {
+            if (!_instantGames.Contains(game) || game.TryAbandonBeforeEntry())
+                return;
+            if (!_queueList.Contains(game))
+                _queueList.Add(game);
         }
     }
 
@@ -255,6 +263,7 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
 
     public void RemoveGame(InstantGame game)
     {
+        _queueList.Remove(game);
         _instantGames.Remove(game);
     }
 }

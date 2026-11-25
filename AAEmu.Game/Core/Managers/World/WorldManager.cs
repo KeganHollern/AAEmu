@@ -1452,7 +1452,10 @@ public class WorldManager(
     /// <returns></returns>
     public bool TryRemoveCharacter(uint playerObjId)
     {
-        return _characters.TryRemove(playerObjId, out _);
+        if (!_characters.TryRemove(playerObjId, out var character))
+            return false;
+        character.CurrentInstantGame?.CancelPendingInvitation(character);
+        return true;
     }
 
     /// <summary>
