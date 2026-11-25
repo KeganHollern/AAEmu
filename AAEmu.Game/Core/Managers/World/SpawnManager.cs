@@ -34,8 +34,7 @@ public class SpawnManager(WorldInstance parentWorld)
     /// </summary>
     private WorldInstance World { get; } = parentWorld;
 
-    private bool _work = true;
-    private readonly object _lock = new();
+    private volatile bool _work = true;
     private readonly object _lockSpawner = new();
     private HashSet<GameObject> Respawns { get; } = [];
     private HashSet<GameObject> Despawns { get; } = [];
@@ -1100,10 +1099,7 @@ public class SpawnManager(WorldInstance parentWorld)
 
     public void Stop()
     {
-        lock (_lock)
-        {
-            _work = false;
-        }
+        _work = false;
     }
 
     public void AddRespawn(GameObject obj)

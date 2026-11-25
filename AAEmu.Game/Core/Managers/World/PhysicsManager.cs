@@ -49,7 +49,7 @@ public class PhysicsManager
     internal Jitter2.World _physWorld;
 
     internal Buoyancy _buoyancy;
-    internal bool ThreadRunning { get; set; }
+    internal volatile bool ThreadRunning;
 
     /// <summary>
     /// List of Ship controllers (slaveId, controller)

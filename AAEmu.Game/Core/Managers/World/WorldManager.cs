@@ -472,11 +472,10 @@ public class WorldManager(
     {
         // Check if it's a Persistent single Instance like main_world
         // If it's marked as an instance or if it only has 1 zone defined, then it's a "dungeon"
-        var canBeInstanced = worldTemplate.XmlWorld.IsInstance > 0 || worldTemplate.XmlWorld.Zones.Count <= 1;
         // TODO: Add code that if indun_zones.select_channel is set, that it is also a static instance 
 
         // If only one instance is allowed, check if it already exists, if it does, return that instead
-        if (!canBeInstanced)
+        if (!worldTemplate.AllowsMultipleInstances)
         {
             var previousWorld = _worlds.FirstOrDefault(w => w.Value.Template.Id == worldTemplate.Id).Value;
             if (previousWorld != null)
@@ -1435,6 +1434,16 @@ public class WorldManager(
         }
     }
 
+    internal void RemoveArenaWorld(WorldInstance world)
+    {
+        // The allocator can return a shared map. Only the match's dedicated instance belongs to it.
+        if (world.IsFixedInstanceId || !world.Template.AllowsMultipleInstances)
+            return;
+
+        world.StopArenaRuntime();
+        _worlds.TryRemove(new KeyValuePair<uint, WorldInstance>(world.Id, world));
+    }
+
     /// <summary>
     /// Adds a Character to the server list if it isn't already
     /// </summary>
@@ -1452,7 +1461,10 @@ public class WorldManager(
     /// <returns></returns>
     public bool TryRemoveCharacter(uint playerObjId)
     {
-        return _characters.TryRemove(playerObjId, out _);
+        if (!_characters.TryRemove(playerObjId, out var character))
+            return false;
+        character.CurrentInstantGame?.CancelPendingInvitation(character);
+        return true;
     }
 
     /// <summary>

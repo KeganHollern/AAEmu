@@ -36,6 +36,7 @@ public partial class InstantGame
     private readonly TimeProvider _clock;
     private long? _announcedAt;
     private bool _finished;
+    private bool _entryStarted;
 
     public InstantGame(Battlefield battlefield) : this(battlefield,
         WorldManager.Instance.CreateWorldInstance(WorldManager.Instance.GetWorldTemplateByZoneKey(battlefield.ZoneKey), 0),
@@ -110,9 +111,24 @@ public partial class InstantGame
         }
     }
 
+    internal void CancelPendingInvitation(Character character)
+    {
+        lock (SaveManager.PersistenceSyncRoot)
+        {
+            if (IsInvited(character))
+                CancelAdmission(character);
+        }
+    }
+
+    private bool IsInvited(Character character) =>
+        character.CurrentInstantGame == this && !_members.ContainsKey(character) &&
+        (!_entryStarted || character.Transform.InstanceId != _world.Id);
+
     internal void CancelAdmission(Character character)
     {
-        RemovePlayer(character);
+        var invited = IsInvited(character);
+        if (RemovePlayer(character) && invited)
+            InstantGameManager.Instance.OnInvitationRemoved(this);
         if (character.CurrentInstantGame == this)
             character.CurrentInstantGame = null;
         if (_members.Remove(character, out var member))
@@ -122,6 +138,8 @@ public partial class InstantGame
         }
         character.Events.OnKill -= OnKill;
     }
+
+    internal bool IsFinished => _finished;
 
     public bool IsFull => _players.Count == _battlefield.RuleSet.CorpsSize * 2;
 
@@ -164,6 +182,7 @@ public partial class InstantGame
             if (character.CurrentInstantGame != this || !_characterCorps.TryGetValue(character, out var corps))
                 return;
             var spawn = corps == InstantCorps.Corps1 ? _battlefield.Spawns.Corps1Spawn : _battlefield.Spawns.Corps2Spawn;
+            _entryStarted = true;
             MoveCharacterToWorld(character, _battlefield.ZoneKey, spawn.X, spawn.Y, spawn.Z);
         }
     }
@@ -181,6 +200,7 @@ public partial class InstantGame
             }
             if (character.CurrentInstantGame != this || !_characterCorps.TryGetValue(character, out var corps))
                 return;
+            _entryStarted = true;
             character.SendPacket(new SCInstantGameJoinedPacket(_zoneInstanceId, corps, _battlefield.RuleSet));
 
             if (corps == InstantCorps.Corps1)
@@ -274,6 +294,7 @@ public partial class InstantGame
             if (_finished)
                 return;
             _finished = true;
+            InstantGameManager.Instance.StopRefill(this);
             _endGameTokenSource.Cancel();
 
             (_corps1Result.State, _corps2Result.State) = _corps1Result.Score.CompareTo(_corps2Result.Score) switch
@@ -290,6 +311,16 @@ public partial class InstantGame
             DestroyInstantGame();
     }
 
+    internal bool TryAbandonBeforeEntry()
+    {
+        if (_players.Count != 0 || _entryStarted || _announcedAt.HasValue || _finished)
+            return false;
+
+        _finished = true;
+        DestroyInstantGame();
+        return true;
+    }
+
     private void DestroyInstantGame()
     {
         foreach (var character in _players.ToList())
@@ -297,8 +328,7 @@ public partial class InstantGame
             LeaveInstantGame(character);
         }
 
-        // TODO: Unbind all events from characters
-        WorldManager.Instance.RemoveWorld(_world.Id);
+        WorldManager.Instance.RemoveArenaWorld(_world);
         InstantGameManager.Instance.RemoveGame(this);
     }
 
