@@ -88,7 +88,7 @@ public sealed partial class CarriageBoardingTests
         // Earlier waypoints are within the ordinary 1.5 m arrival radius.
         var firstDirection = outbound[id == 68 ? 3 : 2] - start;
         await CheckPoint(lift.Transform.World.Position, start);
-        await CheckObserverHeading(lift, viewer, session, firstDirection);
+        await CheckObserverHeading(lift, firstDirection);
         await Assert.That(lift.TimeLeft).IsGreaterThan(9000u);
         lift.WaitTime = DateTime.MinValue;
 
@@ -105,7 +105,7 @@ public sealed partial class CarriageBoardingTests
             if (travel.LengthSquared() < 0.0001f)
                 continue;
             if (steps == 0)
-                await CheckMovementAndObserver(lift, viewer, session, firstDirection);
+                await CheckMovementAndObserver(lift, session.Packets, firstDirection);
             steps++;
             lastDirection = travel;
         }
@@ -117,7 +117,7 @@ public sealed partial class CarriageBoardingTests
         world.GetRegionByPos(start).RemoveObject(viewer);
         viewer.Transform.Local.SetPosition(dock);
         world.GetRegionByPos(dock).AddObject(viewer);
-        await CheckObserverHeading(lift, viewer, session, lastDirection);
+        await CheckObserverHeading(lift, lastDirection);
         session.Packets.Clear();
         lift.MoveTo(lift);
         await CheckPoint(lift.Transform.World.Position, dock);
@@ -128,6 +128,6 @@ public sealed partial class CarriageBoardingTests
             lift.MoveTo(lift);
         var departure = lift.Transform.World.Position - dock;
         await Assert.That(departure.LengthSquared()).IsGreaterThan(0.5f);
-        await CheckMovementAndObserver(lift, viewer, session, departure);
+        await CheckMovementAndObserver(lift, session.Packets, departure);
     }
 }

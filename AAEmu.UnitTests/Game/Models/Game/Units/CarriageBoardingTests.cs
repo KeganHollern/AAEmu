@@ -287,7 +287,7 @@ public sealed partial class CarriageBoardingTests
         var viewer = new CharacterMock { ObjId = 400, ParentWorld = world, Connection = new GameConnection(session) };
         viewer.Transform.Local.SetPosition(path[0].AsPositionVector());
         world.GetRegionByPos(motor.Transform.World.Position).AddObject(viewer);
-        await CheckObserverHeading(motor, viewer, session, path[1].AsPositionVector() - path[0].AsPositionVector());
+        await CheckObserverHeading(motor, path[1].AsPositionVector() - path[0].AsPositionVector());
 
         var sawForward = false;
         var sawReverse = false;
@@ -301,17 +301,16 @@ public sealed partial class CarriageBoardingTests
             if (travel.LengthSquared() < 0.0001f)
                 continue;
             var direction = motor.Reverse ? -travel : travel;
-            await CheckMovementAndObserver(motor, viewer, session, direction);
+            await CheckMovementAndObserver(motor, session.Packets, direction);
             sawForward |= !motor.Reverse;
             sawReverse |= motor.Reverse;
         }
         await Assert.That(sawForward && sawReverse).IsTrue();
     }
 
-    private static async Task CheckMovementAndObserver(Transfer motor, CharacterMock viewer,
-        TransferVisibilityTests.RecordingSession session, Vector3 direction)
+    private static async Task CheckMovementAndObserver(Transfer motor, IEnumerable<byte[]> packets, Vector3 direction)
     {
-        var packet = session.Packets.Single();
+        var packet = packets.Single();
         await Assert.That(BitConverter.ToUInt16(packet, 6)).IsEqualTo(SCOffsets.SCOneUnitMovementPacket);
         var stream = new PacketStream(packet, 8, packet.Length - 8);
         await Assert.That(stream.ReadBc()).IsEqualTo(motor.ObjId);
@@ -322,14 +321,14 @@ public sealed partial class CarriageBoardingTests
         await Assert.That(Vector3.Distance(new Vector3(movement.X, movement.Y, movement.Z), motor.Transform.World.Position)).IsLessThan(0.02f);
         var facing = Vector3.Transform(Vector3.UnitY, movement.Rot);
         await CheckHeading(direction, facing);
-        await CheckObserverHeading(motor, viewer, session, direction);
+        await CheckObserverHeading(motor, direction);
     }
 
-    private static async Task CheckObserverHeading(Transfer motor, CharacterMock viewer,
-        TransferVisibilityTests.RecordingSession session, Vector3 forward)
+    private static async Task CheckObserverHeading(Transfer motor, Vector3 forward)
     {
-        // Parse the ordinary visibility notification for this unarmed, unparented transfer.
-        session.Packets.Clear();
+        // A new observer gets the initial state independently of the regional movement stream.
+        var session = new TransferVisibilityTests.RecordingSession();
+        var viewer = new CharacterMock { Connection = new GameConnection(session) };
         motor.AddVisibleObject(viewer);
         var packet = session.Packets.Single();
         await Assert.That(BitConverter.ToUInt16(packet, 6)).IsEqualTo(SCOffsets.SCUnitStatePacket);

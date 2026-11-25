@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
@@ -41,11 +42,12 @@ public class TransferVisibilityTests
             SCOffsets.SCUnitStatePacket,
             SCOffsets.SCDoodadsCreatedPacket
         ];
-        await Assert.That(session.Packets.Count).IsEqualTo(expectedOpcodes.Length);
+        var packets = session.Packets.ToArray();
+        await Assert.That(packets.Length).IsEqualTo(expectedOpcodes.Length);
         for (var index = 0; index < expectedOpcodes.Length; index++)
-            await Assert.That(BitConverter.ToUInt16(session.Packets[index], 6))
+            await Assert.That(BitConverter.ToUInt16(packets[index], 6))
                 .IsEqualTo(expectedOpcodes[index]);
-        await Assert.That(session.Packets[2][8]).IsEqualTo((byte)2);
+        await Assert.That(packets[2][8]).IsEqualTo((byte)2);
     }
 
     private static Transfer CreateTransfer(uint objId, uint templateId, AttachPointKind attachPoint, uint bondingObjId)
@@ -88,14 +90,14 @@ public class TransferVisibilityTests
     {
         private readonly Dictionary<string, object> _attributes = [];
 
-        public List<byte[]> Packets { get; } = [];
+        public ConcurrentQueue<byte[]> Packets { get; } = new();
         public IPAddress Ip => IPAddress.Loopback;
         public uint SessionId => 1;
         public Socket Socket => null;
 
         public void SendPacket(byte[] packet)
         {
-            Packets.Add(packet.ToArray());
+            Packets.Enqueue(packet.ToArray());
         }
 
         public void AddAttribute(string name, object attribute)
