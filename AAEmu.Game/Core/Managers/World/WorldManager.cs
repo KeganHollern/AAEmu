@@ -874,7 +874,7 @@ public class WorldManager(
         => GetReferenceHeight(ai, x, y, z, zoneId, null);
 
     internal float GetReferenceHeight(NpcAi ai, float x, float y, float z, uint zoneId, Vector3? previousPosition,
-        NpcStepSurfaceTrace trace = null)
+        NpcStepSurfaceTrace trace = null, Vector3? inclinedTarget = null)
     {
         float finalHeight;
 
@@ -912,12 +912,19 @@ public class WorldManager(
             if (source != GroundSurfaceSource.Terrain)
                 finalHeight = AnchorNavigationSourcedHeight(ai, finalHeight, trace);
 
+            if (inclinedTarget.HasValue && (source != GroundSurfaceSource.Terrain || finalHeight - z <= AiGeoDataManager.StaticFloorPrecision))
+            {
+                trace?.Skip("InclinedStepOutsideCave");
+                return finalHeight;
+            }
+
             if (previousPosition is { } from && (finalHeight < from.Z ||
                 source == GroundSurfaceSource.Terrain && finalHeight - from.Z > AiGeoDataManager.StaticFloorPrecision))
             {
                 if (GetWorldTemplateByZoneKey(zoneId) is { Name: "main_world", GeoData: { } geoData })
                 {
-                    if (geoData.TryFollowStaticFloor(ai.Owner, from, new Vector3(x, y, from.Z), source, out var floor, trace))
+                    if (geoData.TryFollowStaticFloor(ai.Owner, from, new Vector3(x, y, inclinedTarget.HasValue ? z : from.Z),
+                            source, out var floor, trace, inclinedTarget))
                     {
                         trace?.Select("StaticFloor");
                         return floor;

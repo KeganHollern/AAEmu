@@ -1103,11 +1103,13 @@ public partial class Npc : Unit
     internal float ResolveStepHeight(Vector3 from, Vector3 destination, Vector3 next, NpcStepSurfaceTrace trace = null)
     {
         // A short first step toward another floor can appear level. Check the full destination.
-        var levelStep = Transform.Parent == null && Transform.StickyParent == null &&
-            MathF.Abs(destination.Z - from.Z) <= AiGeoDataManager.StaticFloorPrecision;
-        if (!levelStep)
+        var unparented = Transform.Parent == null && Transform.StickyParent == null;
+        var levelStep = unparented && MathF.Abs(destination.Z - from.Z) <= AiGeoDataManager.StaticFloorPrecision;
+        var checkIncline = unparented && !levelStep && AiGeoDataManager.FitsCaveFloorGrade(from, destination);
+        if (!levelStep && !checkIncline)
             trace?.Skip("DestinationChangesLayer");
-        return WorldManager.Instance.GetReferenceHeight(Ai, next.X, next.Y, next.Z, Transform.ZoneId, levelStep ? from : null, trace);
+        return WorldManager.Instance.GetReferenceHeight(Ai, next.X, next.Y, next.Z, Transform.ZoneId,
+            levelStep || checkIncline ? from : null, trace, checkIncline ? destination : null);
     }
 
     /// <summary>
