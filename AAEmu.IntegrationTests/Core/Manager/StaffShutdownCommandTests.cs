@@ -152,7 +152,13 @@ public sealed class StaffShutdownCommandTests
         await shutdown.ExecuteAsync();
         world.Verify(m => m.BroadcastPacketToServer(It.IsAny<GamePacket>()), Times.Never);
 
-        now = now.AddMinutes(minutes).AddSeconds(-nextWarning);
+        var threshold = now.AddMinutes(minutes).AddSeconds(-nextWarning);
+        var reads = 0;
+        clock.Setup(c => c.GetUtcNow()).Returns(() => ++reads <= 2 ? threshold.AddMilliseconds(-1) : threshold);
+        await shutdown.ExecuteAsync();
+        await shutdown.ExecuteAsync();
+        world.Verify(m => m.BroadcastPacketToServer(It.IsAny<GamePacket>()), Times.Never);
+
         await shutdown.ExecuteAsync();
         await shutdown.ExecuteAsync();
         var nextText = nextWarning == 45 ? "45 seconds!" : "4 minutes!";
