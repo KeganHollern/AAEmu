@@ -56,6 +56,14 @@ new color commit together. The color marks the item dirty and survives the
 normal item-details serialization. The client still receives the Dyeing task
 type after success.
 
+## Item locks in r208022
+
+Origins keeps the item lock control disabled in the feature set that Game sends at login. The registered item and equipment lock and unlock handlers only log requests. They do not change an item or start an unlock timer.
+
+Keep the stored `ItemFlag.Secure` and `UnsecureTime` fields. Item persistence and the item update format use these fields. The auction already checks the secure flag when it accepts a listing. The item unwrap action also uses the security update format.
+
+`SCInitialConfigPacketTests.Write_KeepsUnsupportedItemLockDisabled` checks the feature bit that the client receives. Enabling item locks needs a working owner check, lock and unlock actions, enforcement on item transfers, and a durable unlock deadline. [Issue #319](https://github.com/KeganHollern/aaemu-cluster/issues/319)
+
 ## Automated checks
 
 - The Release build completed with no errors.
