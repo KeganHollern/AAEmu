@@ -606,7 +606,7 @@ public sealed class EconomyPersistenceTests
         return (T)owner.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owner)!;
     }
 
-    private sealed class SaveGraph
+    internal sealed class SaveGraph
     {
         public uint Id { get; } = (uint)Interlocked.Add(ref _nextId, 100);
         public Dictionary<ulong, Item> Items { get; } = [];
@@ -621,7 +621,7 @@ public sealed class EconomyPersistenceTests
         public ConcurrentBag<long> AuctionDeletes => (ConcurrentBag<long>)typeof(AuctionManager)
             .GetProperty("DeletedAuctionItemIds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Auction)!;
 
-        public SaveGraph()
+        public SaveGraph(ITaskManager scheduler = null, IZoneManager zones = null)
         {
             var world = new Mock<IWorldManager>();
             world.Setup(manager => manager.GetAllCharacters()).Returns([]);
@@ -641,8 +641,8 @@ public sealed class EconomyPersistenceTests
             Auction = new AuctionManager(items, Mock.Of<INameManager>(), Mock.Of<IAuctionIdManager>(),
                 Mock.Of<ILocalizationManager>(), Mock.Of<ITaskManager>(), Mail,
                 new Lazy<ISaveManager>(() => Save));
-            Save = new SaveManager(Mock.Of<ITaskManager>(), Mock.Of<IHousingManager>(), Mail, items, Auction,
-                Mock.Of<ICrimeManager>(), world.Object, Mock.Of<IZoneManager>());
+            Save = new SaveManager(scheduler ?? Mock.Of<ITaskManager>(), Mock.Of<IHousingManager>(), Mail, items, Auction,
+                Mock.Of<ICrimeManager>(), world.Object, zones ?? Mock.Of<IZoneManager>());
         }
 
         public Item AddItem(uint offset)
