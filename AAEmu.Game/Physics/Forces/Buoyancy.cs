@@ -229,7 +229,7 @@ public class Buoyancy : ForceGenerator
             var depth = waterSurfaceLevel - body.Position.Y;
             if (depth <= 0) continue;
 
-            var grounded = slave.GroundContactLatched || slave.CachedFloorLevel > slave.CachedWaterSurface;
+            var grounded = slave.IsGrounded;
             var waterVelocity = grounded
                 ? JVector.Zero
                 : new JVector(slave.CachedWaterFlow.X, slave.CachedWaterFlow.Z, slave.CachedWaterFlow.Y);

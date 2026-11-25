@@ -1,9 +1,12 @@
 using System.Collections.Concurrent;
 using System.Reflection;
+using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Core.Packets.G2C;
+using ShutdownTask = AAEmu.Game.Models.Tasks.ShutdownTask;
 using Microsoft.Extensions.Hosting;
 using MySql.Data.MySqlClient;
 using AAEmu.Game.Utils.Scripts;
@@ -91,6 +94,44 @@ public sealed class StaffShutdownCommandTests
             SwapSingleton(oldSave);
         }
     }
+
+    [Fact]
+    public async Task OccupiedWorldShowsOneFinalNoticeBeforeTheHostStops()
+    {
+        var lifetime = new Mock<IHostApplicationLifetime>();
+        var world = new Mock<IWorldManager>();
+        world.Setup(m => m.GetAllCharacters()).Returns([new Character(null)]);
+        var shutdown = new ShutdownTask(DateTime.UtcNow.AddSeconds(-1), world.Object, lifetime.Object);
+
+        var pending = shutdown.ExecuteAsync();
+        world.Verify(m => m.BroadcastPacketToServer(It.Is<SCNoticeMessagePacket>(packet => IsImmediateNotice(packet))), Times.Once);
+        Assert.False(shutdown.ChangeShutdownTime(DateTime.UtcNow.AddMinutes(10)));
+        await shutdown.ExecuteAsync(); // A second scheduler tick while the player sees the first notice.
+        await Task.Delay(250);
+        lifetime.Verify(m => m.StopApplication(), Times.Never);
+        await pending.WaitAsync(TimeSpan.FromSeconds(10));
+        world.Verify(m => m.BroadcastPacketToServer(It.Is<SCNoticeMessagePacket>(packet => IsImmediateNotice(packet))), Times.Once);
+        lifetime.Verify(m => m.StopApplication(), Times.Once);
+    }
+
+    [Fact]
+    public async Task AnIndependentHostStopEndsTheFinalNoticeInterval()
+    {
+        using var stopping = new CancellationTokenSource();
+        var lifetime = new Mock<IHostApplicationLifetime>();
+        lifetime.SetupGet(m => m.ApplicationStopping).Returns(stopping.Token);
+        var world = new Mock<IWorldManager>();
+        world.Setup(m => m.GetAllCharacters()).Returns([new Character(null)]);
+        var shutdown = new ShutdownTask(DateTime.UtcNow.AddSeconds(-1), world.Object, lifetime.Object);
+
+        var pending = shutdown.ExecuteAsync();
+        Assert.False(pending.IsCompleted);
+        await stopping.CancelAsync();
+        await pending.WaitAsync(TimeSpan.FromSeconds(1));
+        lifetime.Verify(m => m.StopApplication(), Times.Once);
+    }
+
+    private static bool IsImmediateNotice(SCNoticeMessagePacket packet) => packet.Write(new PacketStream()).ReadByte() == 1;
 
     private static string Command(uint characterId, string argument)
     {

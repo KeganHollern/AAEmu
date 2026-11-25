@@ -140,7 +140,7 @@ public sealed class ShipShoreInteraction
         var groundPitchProbeDistance = ShorePhysicsDefaults.VisualGroundPitchProbeDistance;
         var groundPitchResponse = ShorePhysicsDefaults.VisualGroundPitchResponse;
         var targetGroundPitch = 0f;
-        if ((slave.CachedFloorLevel > slave.CachedWaterSurface || slave.GroundContactLatched) &&
+        if (slave.IsGrounded &&
             TryGetPitchFloors(slave, rigidBody, groundPitchProbeDistance, out var frontH, out var backH))
         {
             var pitchFloorSmoothResponse = ShorePhysicsDefaults.VisualPitchFloorSmoothResponse;

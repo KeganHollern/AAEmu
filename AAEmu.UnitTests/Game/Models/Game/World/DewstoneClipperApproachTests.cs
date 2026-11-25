@@ -10,6 +10,7 @@ using AAEmu.Game.IO;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.CryEngine.Objects;
 using AAEmu.Game.Models.CryEngine.Physics;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Models;
@@ -17,6 +18,8 @@ using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Physics;
+using Jitter2.Dynamics;
+using Jitter2.LinearMath;
 
 namespace AAEmu.UnitTests.Game.Models.Game.World;
 
@@ -25,6 +28,7 @@ public sealed class DewstoneClipperApproachTests
 {
     private const BindingFlags InstanceFields = BindingFlags.Instance | BindingFlags.NonPublic;
     private readonly List<(FieldInfo Field, object Value)> _previous = [];
+    private WorldConfig _previousWorldSettings;
 
     private sealed class Clipper : Slave
     {
@@ -32,11 +36,127 @@ public sealed class DewstoneClipperApproachTests
         public override void BroadcastPacket(GamePacket packet, bool self) { }
     }
 
+    [Before(Test)]
+    public void SetUpWorldSettings()
+    {
+        _previousWorldSettings = AppConfiguration.Instance.World;
+        AppConfiguration.Instance.World ??= new();
+    }
+
     [After(Test)]
     public void RestoreModels()
     {
         foreach (var (field, value) in _previous)
             field.SetValue(null, value);
+        AppConfiguration.Instance.World = _previousWorldSettings;
+    }
+
+    [Test]
+    [Arguments(0, 0f, true)]
+    [Arguments(0, 0.25f, true)]
+    [Arguments(0, -1f, true)]
+    [Arguments(10, 10.25f, true)]
+    [Arguments(10, 14f, false)]
+    [Arguments(5, 4f, true)]
+    public async Task ClipperUsesMeasuredSeabedForShallowHelmControls(int bed, float water, bool capped)
+    {
+        SetUpModels();
+        var template = WorldTemplateTests.CreateWorldTemplate(2, 1);
+        WorldTemplateTests.SetLoadedCell(template, 0, 0, WorldTemplateTests.CreateHeightMap((ushort)bed));
+        var ship = new Clipper
+        {
+            ModelId = 128,
+            Template = new SlaveTemplate { Id = 14, ModelId = 128, SlaveKind = (SlaveKind)3 }
+        };
+        var world = new WorldInstance(template, 0, true, ship.Transform.InstanceId)
+        {
+            Water = new WaterBodies { OceanLevel = water },
+            Regions = new Region[2 * WorldManager.SECTORS_PER_CELL, WorldManager.SECTORS_PER_CELL]
+        };
+        ship.ParentWorld = world;
+        using var physics = new Jitter2.World();
+        var controller = new ShipController(physics, ModelManager.Instance.GetShipModel(128));
+        controller.Build(new JVector(12, water, 12), JQuaternion.Identity);
+        ship.ShipController = controller;
+        ship.RigidBody = controller.Hull;
+
+        async Task CheckHelmAt(float x, bool expectGroundControls)
+        {
+            ship.Transform.Local.SetPosition(x, 12, water);
+            ship.RigidBody.Position = new JVector(x, water, 12);
+            ship.CreateWaterAndLandSurfaceCache();
+            ship.Throttle = ship.ThrottleRequest = 100;
+            ship.Speed = 2f;
+            controller.ApplyForceAndTorque(ship, TimeSpan.FromMilliseconds(40));
+            await Assert.That(ship.GroundedLastTick).IsEqualTo(expectGroundControls);
+            await Assert.That(ship.Throttle < 100).IsEqualTo(expectGroundControls);
+        }
+
+        const float missingCellX = WorldManager.CELL_SIZE + 12f;
+        await CheckHelmAt(missingCellX, false);
+        await CheckHelmAt(12, capped);
+        await CheckHelmAt(missingCellX, false);
+        ship.GroundContactLatched = true;
+        await CheckHelmAt(missingCellX, true);
+        ship.GroundContactLatched = false;
+        await CheckHelmAt(12, capped);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task ClipperInNegativeWaterUsesTheActualCurrentAndGroundContact(bool measuredZero, bool contact)
+    {
+        SetUpModels();
+        const float edge = WorldManager.CELL_SIZE;
+        var position = new Vector3(edge + 1, edge + 1, -1.5f);
+        var terrain = WorldTemplateTests.CreateWorldTemplate(2, 2);
+        // The bow and stern can sample opposite banks while the center cell has no bed.
+        WorldTemplateTests.SetLoadedCell(terrain, 1, 0, WorldTemplateTests.CreateHeightMap(4));
+        WorldTemplateTests.SetLoadedCell(terrain, 0, 1, WorldTemplateTests.CreateHeightMap(8));
+        if (measuredZero)
+            WorldTemplateTests.SetLoadedCell(terrain, 1, 1, WorldTemplateTests.CreateHeightMap());
+        var water = new WaterBodies { OceanLevel = -5 };
+        var current = water.AddSquareArea("local current", new Vector3(position.X, position.Y, -1), 40, 8);
+        current.FlowAxis = Vector2.UnitX;
+        current.FlowSpeedAbs = current.FlowSpeedSigned = 3;
+        var ship = new Clipper
+        {
+            ModelId = 128,
+            Template = new SlaveTemplate { Id = 14, ModelId = 128, SlaveKind = (SlaveKind)3 }
+        };
+        var world = new WorldInstance(terrain, 0, true, ship.Transform.InstanceId)
+        {
+            Water = water,
+            Regions = new Region[2 * WorldManager.SECTORS_PER_CELL, 2 * WorldManager.SECTORS_PER_CELL]
+        };
+        ship.ParentWorld = world;
+        ship.Transform.Local.SetPosition(position, new Vector3(0, 0, MathF.PI / 4));
+        ship.Region = world.GetRegionByPos(position);
+        var manager = new PhysicsManager { SimulationWorld = world };
+        manager.Initialize();
+        using var physics = manager._physWorld;
+        manager.AddShip(ship);
+        ship.CreateWaterAndLandSurfaceCache();
+        ship.GroundContactLatched = contact;
+        await Assert.That(ship.CachedWaterSurface).IsEqualTo(-1f);
+        await Assert.That(ship.CachedWaterFlow.X).IsEqualTo(3f);
+
+        var interval = TimeSpan.FromMilliseconds(40);
+        for (var tick = 0; tick < 3; tick++)
+            physics.Step((float)interval.TotalSeconds, false);
+        var movedWithCurrent = ship.RigidBody.Velocity.X > 0.01f;
+        ship.RigidBody.Velocity = JVector.Zero;
+        ship.ShipController.ApplyForceAndTorque(ship, interval);
+        var helmUsedCurrent = ship.RigidBody.Velocity.X > 0.01f;
+        var sendMovement = typeof(PhysicsManager).GetMethod("SendUpdatedMovementData", InstanceFields)!
+            .CreateDelegate<Action<Slave, RigidBody, TimeSpan>>(manager);
+        sendMovement(ship, ship.RigidBody, interval);
+
+        var grounded = measuredZero || contact;
+        await Assert.That((movedWithCurrent, helmUsedCurrent, ship.WavePitchPhase > 0f, ship.GroundPitchFloorSmoothingSeeded))
+            .IsEqualTo((!grounded, !grounded, !grounded, grounded));
     }
 
     [Test]
@@ -62,8 +182,6 @@ public sealed class DewstoneClipperApproachTests
         ship.AttachedCharacters[AttachPointKind.Driver] = new Character(null);
         ship.ThrottleRequest = (sbyte)throttle;
 
-        var originalSettings = AppConfiguration.Instance.World;
-        AppConfiguration.Instance.World ??= new();
         var manager = new PhysicsManager { SimulationWorld = world };
         manager.Initialize();
         manager.AddShip(ship);
@@ -134,14 +252,13 @@ public sealed class DewstoneClipperApproachTests
                 await Assert.That(cleared).IsTrue();
             }
             await Assert.That(launchSpeed).IsLessThanOrEqualTo(ShipWaterfallInteraction.MaximumReplicableHorizontalSpeed + 0.00001f);
-            await Assert.That(ship.CachedFloorLevel).IsLessThan(99.75f);
+            await Assert.That(ship.CachedFloorLevel < 99.75f).IsTrue();
             await Assert.That(ship.Hp).IsEqualTo(ship.MaxHp);
         }
         finally
         {
             manager.RemoveShip(ship);
             manager.Dispose();
-            AppConfiguration.Instance.World = originalSettings;
         }
     }
 
