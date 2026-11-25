@@ -7,12 +7,14 @@ namespace AAEmu.Game.Models.Game.Char;
 
 public partial class Character
 {
-    internal bool StageExperienceRecovery(short laborCost)
+    internal bool StageExperienceRecovery(short laborCost, bool restoreFullLoss)
     {
         var batch = SkillLaborBatch.For(this);
         if (batch == null)
             return false;
-        if (RecoverableExp <= 0)
+        // Older saves retain only the priest share. Keep that known amount when the full loss is unknown.
+        var amount = restoreFullLoss && LastExpLoss > 0 ? LastExpLoss : RecoverableExp;
+        if (amount <= 0)
         {
             SendErrorMessage(ErrorMessageType.CannotRecoverAllNotEnough);
             return batch.Fail();
@@ -53,7 +55,7 @@ public partial class Character
             return batch.Fail();
 
         // Recovery restores the lost amount. It grants no labor or active ability XP.
-        var publishExperience = PrepareExperienceReward(recoverableBefore, false);
+        var publishExperience = PrepareExperienceReward(amount, false);
         RecoverableExp = 0;
         LastExpLoss = 0;
         batch.AfterCommit(() =>

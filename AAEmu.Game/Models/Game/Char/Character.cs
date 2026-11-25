@@ -2548,6 +2548,13 @@ public partial class Character : Unit, ICharacter
 
     #region Database
 
+    internal void ReadExperience(MySqlDataReader reader)
+    {
+        Experience = reader.GetInt32("experience");
+        RecoverableExp = reader.GetInt32("recoverable_exp");
+        LastExpLoss = reader.GetInt32("last_exp_loss");
+    }
+
     public static Character Load(MySqlConnection connection, uint characterId, uint accountId)
     {
         var accountDetails = AccountManager.Instance.GetAccountDetails(accountId);
@@ -2572,11 +2579,10 @@ public partial class Character : Unit, ICharacter
                         Race = (Race)reader.GetByte("race"),
                         Gender = (Gender)reader.GetByte("gender"),
                         Level = reader.GetByte("level"),
-                        Experience = reader.GetInt32("experience"),
-                        RecoverableExp = reader.GetInt32("recoverable_exp"),
                         Hp = reader.GetInt32("hp"),
                         Mp = reader.GetInt32("mp")
                     };
+                    character.ReadExperience(reader);
                     character._savedHp = character.Hp; // save for later
                     character._savedMp = character.Mp;
                     // character.LaborPower = reader.GetInt16("labor_power");
@@ -2702,9 +2708,7 @@ public partial class Character : Unit, ICharacter
                     character.Race = (Race)reader.GetByte("race");
                     character.Gender = (Gender)reader.GetByte("gender");
                     character.Level = reader.GetByte("level");
-                    character.Experience = reader.GetInt32("experience");
-                    character.RecoverableExp = reader.GetInt32("recoverable_exp");
-                    character.LastExpLoss = 0; // TODO: Not sure if we need to actually store this in the DB
+                    character.ReadExperience(reader);
                     character.Hp = reader.GetInt32("hp");
                     character.Mp = reader.GetInt32("mp");
                     character._savedHp = character.Hp; // save for later
@@ -2998,7 +3002,7 @@ public partial class Character : Unit, ICharacter
                 // ----
                 command.CommandText =
                     "REPLACE INTO `characters` " +
-                    "(`id`,`account_id`,`deleted`,`name`,`race`,`gender`,`unit_model_params`,`level`,`experience`,`recoverable_exp`," +
+                    "(`id`,`account_id`,`deleted`,`name`,`race`,`gender`,`unit_model_params`,`level`,`experience`,`recoverable_exp`,`last_exp_loss`," +
                     "`hp`,`mp`,`consumed_lp`,`ability1`,`ability2`,`ability3`," +
                     "`world_id`,`zone_id`,`x`,`y`,`z`,`roll`,`pitch`,`yaw`," +
                     "`faction_id`,`faction_name`,`expedition_id`,`family`,`dead_count`,`dead_time`,`rez_wait_duration`,`rez_time`,`rez_penalty_duration`,`leave_time`," +
@@ -3009,7 +3013,7 @@ public partial class Character : Unit, ICharacter
                     "`arrest_count`, `accept_guilty_count`, `accept_trial_count`, `not_guilty_count`, `guilty_count`, `evidence_reported_count`, `bot_reported_count`, `reported_as_bot_count`," +
                     "`offline_guilty_time`,`offline_guilty_region`" +
                     ") VALUES (" +
-                    "@id,@account_id,@deleted,@name,@race,@gender,@unit_model_params,@level,@experience,@recoverable_exp," +
+                    "@id,@account_id,@deleted,@name,@race,@gender,@unit_model_params,@level,@experience,@recoverable_exp,@last_exp_loss," +
                     "@hp,@mp,@consumed_lp,@ability1,@ability2,@ability3," +
                     "@world_id,@zone_id,@x,@y,@z,@yaw,@pitch,@roll," +
                     "@faction_id,@faction_name,@expedition_id,@family,@dead_count,@dead_time,@rez_wait_duration,@rez_time,@rez_penalty_duration,@leave_time," +
@@ -3031,6 +3035,7 @@ public partial class Character : Unit, ICharacter
                 command.Parameters.AddWithValue("@level", Level);
                 command.Parameters.AddWithValue("@experience", Experience);
                 command.Parameters.AddWithValue("@recoverable_exp", RecoverableExp);
+                command.Parameters.AddWithValue("@last_exp_loss", LastExpLoss);
                 command.Parameters.AddWithValue("@hp", Hp);
                 command.Parameters.AddWithValue("@mp", Mp);
                 command.Parameters.AddWithValue("@consumed_lp", ConsumedLaborPower);

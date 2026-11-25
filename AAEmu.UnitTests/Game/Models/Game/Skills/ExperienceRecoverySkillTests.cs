@@ -24,7 +24,7 @@ public sealed partial class SkillLaborTests
         skill.Template.ConsumeLaborPower = 0;
         skill.Template.Effects.Add(new SkillEffect
         {
-            EffectId = 39213, Template = new RecoverExpEffect { NeedLaborPower = false },
+            EffectId = 39213, Template = new RecoverExpEffect { Penaltied = true },
             ApplicationMethod = SkillEffectApplicationMethod.SourceOnce,
             Friendly = true, NonFriendly = true, Front = true, Back = true,
             StartLevel = 1, EndLevel = 99, Chance = 100, ConsumeItemCount = 1
@@ -59,13 +59,13 @@ public sealed partial class SkillLaborTests
         _owner.RecoverableExp = 400;
         _owner.LastExpLoss = 500;
         _owner.InitializeLaborCache(0, DateTime.UtcNow);
-        _material.Count = 1;
+        _material.Count = 2;
         _material.Template.UseSkillAsReagent = true;
         var skill = NewSkill();
         skill.Template.ConsumeLaborPower = 0;
         skill.Template.Effects.Add(new SkillEffect
         {
-            EffectId = 39213, Template = new RecoverExpEffect { NeedLaborPower = false },
+            EffectId = 39213, Template = new RecoverExpEffect { Penaltied = true },
             ApplicationMethod = SkillEffectApplicationMethod.SourceOnce,
             Friendly = true, NonFriendly = true, Front = true, Back = true,
             StartLevel = 1, EndLevel = 99, Chance = 100, ConsumeItemCount = 1
@@ -75,8 +75,8 @@ public sealed partial class SkillLaborTests
         skill.CommitLaborBatch = (_, _) =>
         {
             saves++;
-            preparedTogether = _owner.Experience == 400 && _owner.RecoverableExp == 0 &&
-                _owner.LaborPower == 0 && _material.Count == 0;
+            preparedTogether = _owner.Experience == 500 && _owner.RecoverableExp == 0 &&
+                _owner.LastExpLoss == 0 && _owner.LaborPower == 0 && _material.Count == 1;
             return commitSucceeds;
         };
 
@@ -85,16 +85,21 @@ public sealed partial class SkillLaborTests
 
         await Assert.That(saves).IsEqualTo(1);
         await Assert.That(preparedTogether).IsTrue();
-        await Assert.That(_owner.Experience).IsEqualTo(commitSucceeds ? 400 : 0);
+        await Assert.That(_owner.Experience).IsEqualTo(commitSucceeds ? 500 : 0);
         await Assert.That(_owner.RecoverableExp).IsEqualTo(commitSucceeds ? 0 : 400);
         await Assert.That(_owner.LastExpLoss).IsEqualTo(commitSucceeds ? 0 : 500);
         await Assert.That(_owner.LaborPower).IsEqualTo((short)0);
-        await Assert.That(_material.Count).IsEqualTo(commitSucceeds ? 0 : 1);
-
-        skill.ApplyEffects(_owner, new SkillItem(_owner.ObjId, _material.Id, _material.TemplateId),
-            _owner, new SkillCastUnitTarget(_owner.ObjId), null);
-        await Assert.That(saves).IsEqualTo(1);
-        await Assert.That(_owner.Experience).IsEqualTo(commitSucceeds ? 400 : 0);
+        await Assert.That(_material.Count).IsEqualTo(commitSucceeds ? 1 : 2);
+        if (commitSucceeds)
+        {
+            var retry = new Skill(skill.Template) { CommitLaborBatch = skill.CommitLaborBatch };
+            retry.ApplyEffects(_owner, new SkillItem(_owner.ObjId, _material.Id, _material.TemplateId),
+                _owner, new SkillCastUnitTarget(_owner.ObjId), null);
+            await Assert.That(retry.Cancelled).IsTrue();
+            await Assert.That(saves).IsEqualTo(1);
+            await Assert.That(_owner.Experience).IsEqualTo(500);
+            await Assert.That(_material.Count).IsEqualTo(1);
+        }
     }
 
     private sealed class RecoveryExperienceLoader : IExperienceLevelTemplateLoader
