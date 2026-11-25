@@ -152,6 +152,14 @@ public static class MovementValidation
         return false;
     }
 
+    internal static void RecordServerRelocation(Character character)
+    {
+        var arrival = new AcceptedMove(character.Transform.World.Position, DateTime.UtcNow);
+        Movers.AddOrUpdate(character.ObjId, InitialState with { Last = arrival },
+            (_, previous) => previous with { Last = arrival });
+        SusManager.ResetMovementAnalysis(character);
+    }
+
     /// <summary>
     /// Clears tracked state for a unit, e.g. after teleports or despawn.
     /// </summary>
