@@ -1,5 +1,4 @@
-﻿using System.Runtime.InteropServices;
-using AAEmu.Commons.Utils;
+﻿using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
@@ -39,23 +38,15 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
 
             lock (_lock)
             {
-                ref var applicants =
-                    ref CollectionsMarshal.GetValueRefOrAddDefault(_matchmakingQueue, battlefieldId, out var exists);
-
-                if (!exists)
+                if (!_matchmakingQueue.TryGetValue(battlefieldId, out var applicants))
                 {
-                    if (BattlefieldGameData.Instance.GetBattlefield(battlefieldId) is not null)
+                    if (BattlefieldGameData.Instance.GetBattlefield(battlefieldId)?.HasMatchData != true)
                     {
-                        applicants = [];
-                    }
-                    else
-                    {
-                        _log.Warn(
-                            "[Matchmaking] Failed to add player {0} to matchmaking queue for battlefield {1}; battlefield does not exist",
-                            character.Name, battlefieldId);
-                        _matchmakingQueue.Remove(battlefieldId);
+                        _log.Warn("[Matchmaking] Battlefield {0} has no complete match configuration.", battlefieldId);
                         return;
                     }
+                    applicants = [];
+                    _matchmakingQueue.Add(battlefieldId, applicants);
                 }
 
                 if (applicants.Any(applicant => applicant.CharObj == character))
