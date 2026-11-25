@@ -96,7 +96,11 @@ public class Scripts : ICommand
 
                 if (SaveManager.Instance.ShutdownTask != null && doCancel)
                 {
-                    SaveManager.Instance.ShutdownTask.Cancel();
+                    if (!SaveManager.Instance.ShutdownTask.CancelCountdown())
+                    {
+                        CommandManager.SendErrorText(this, messageOutput, "The server is already stopping.");
+                        return;
+                    }
                     CommandManager.SendNormalText(this, messageOutput, $"Shutdown cancelled.");
                     WorldManager.Instance.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Aqua, 10000,
                         "The server shutdown has been cancelled!"));
@@ -112,16 +116,18 @@ public class Scripts : ICommand
 
                 if (SaveManager.Instance.ShutdownTask != null)
                 {
-                    CommandManager.SendNormalText(this, messageOutput,
-                        $"Shutdown was already in progress, changed to {shutdownTimeRemaining.TotalMinutes:F0} minutes from now.");
-                    SaveManager.Instance.ShutdownTask.ChangeShutdownTime(shutdownTime.AddSeconds(1));
+                    if (SaveManager.Instance.ShutdownTask.ChangeShutdownTime(shutdownTime.AddSeconds(1)))
+                        CommandManager.SendNormalText(this, messageOutput,
+                            $"Shutdown was already in progress, changed to {shutdownTimeRemaining.TotalMinutes:F0} minutes from now.");
+                    else
+                        CommandManager.SendErrorText(this, messageOutput, "The server is already stopping.");
                     return;
                 }
 
                 if (SaveManager.Instance.DoSave())
                 {
                     SaveManager.Instance.ShutdownTask =
-                        new ShutdownTask(shutdownTime.AddSeconds(5), -1); // Manual Normal Shutdown (-1)
+                        new ShutdownTask(shutdownTime.AddSeconds(5));
                     TaskManager.Instance.Schedule(SaveManager.Instance.ShutdownTask, null, TimeSpan.FromSeconds(1));
                     CommandManager.SendNormalText(this, messageOutput,
                         $"Shutdown sequence started, shutting down in |nn;{shutdownTimeRemaining.TotalMinutes:F0}|r minutes");

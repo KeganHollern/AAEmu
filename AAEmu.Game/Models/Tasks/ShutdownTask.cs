@@ -1,17 +1,22 @@
 ﻿using System.Drawing;
-using AAEmu.Game.Core.Managers;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using NLog;
 
 namespace AAEmu.Game.Models.Tasks;
 
 public class ShutdownTask : Task
 {
-    // private DateTime _lastCheckTime = DateTime.MinValue;
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+    private readonly IWorldManager _world;
+    private readonly IHostApplicationLifetime _lifetime;
+    private readonly Lock _state = new();
     private bool _alreadyShuttingDown;
     private DateTime _shutdownTime;
     private DateTime _nextTriggerTime = DateTime.MinValue;
-    private readonly int _exitCode;
     // Timings to show a popup, in seconds
     private readonly List<uint> _triggerPoints =
     [
@@ -36,10 +41,16 @@ public class ShutdownTask : Task
         10
     ];
 
-    public ShutdownTask(DateTime shutdownTime, int exitCode)
+    public ShutdownTask(DateTime shutdownTime) : this(shutdownTime, WorldManager.Instance,
+        SingletonContainer.ServiceProvider.GetRequiredService<IHostApplicationLifetime>())
+    {
+    }
+
+    internal ShutdownTask(DateTime shutdownTime, IWorldManager world, IHostApplicationLifetime lifetime)
     {
         _shutdownTime = shutdownTime;
-        _exitCode = exitCode;
+        _world = world;
+        _lifetime = lifetime;
         _nextTriggerTime = CalculateLargestNextTrigger();
     }
 
@@ -56,45 +67,66 @@ public class ShutdownTask : Task
         return DateTime.MaxValue;
     }
 
-    public void ChangeShutdownTime(DateTime shutdownTime)
+    public bool ChangeShutdownTime(DateTime shutdownTime)
     {
-        _shutdownTime = shutdownTime;
-        var remaining = (int)Math.Ceiling((_shutdownTime - DateTime.UtcNow).TotalMinutes);
-        WorldManager.Instance.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Red, 10000, $"Server shutdown has been rescheduled to {remaining} minutes from now!"));
-        _nextTriggerTime = CalculateLargestNextTrigger();
+        lock (_state)
+        {
+            if (Cancelled || _alreadyShuttingDown)
+                return false;
+            _shutdownTime = shutdownTime;
+            var remaining = (int)Math.Ceiling((_shutdownTime - DateTime.UtcNow).TotalMinutes);
+            _world.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Red, 10000, $"Server shutdown has been rescheduled to {remaining} minutes from now!"));
+            _nextTriggerTime = CalculateLargestNextTrigger();
+            return true;
+        }
+    }
+
+    public bool CancelCountdown()
+    {
+        lock (_state)
+            return !_alreadyShuttingDown && Cancel();
     }
 
     public override void Execute()
     {
-        if (_alreadyShuttingDown)
-            return;
-
-        if (_shutdownTime <= DateTime.UtcNow)
+        lock (_state)
         {
+            if (Cancelled || _alreadyShuttingDown)
+                return;
+            if (_shutdownTime > DateTime.UtcNow)
+            {
+                WarnBeforeShutdown();
+                return;
+            }
             _alreadyShuttingDown = true;
-            // Do server shut down now
-
-            // Wipe all BuyBack containers manually, as there will be no trigger for disconnected players
-            try
-            {
-                foreach (var character in WorldManager.Instance.GetAllCharacters())
-                    character.BuyBackItems.Wipe();
-            }
-            catch (Exception)
-            {
-                // Ignore
-            }
-
-            if (SaveManager.Instance.DoSave())
-            {
-                WorldManager.Instance.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Magenta, 15000,
-                    "The server is shutting down right now!"));
-                Environment.Exit(_exitCode); // Manual Shutdown
-            }
-
-            return;
         }
 
+        try
+        {
+            // The normal host disconnect does not clear the merchant buyback container.
+            foreach (var character in _world.GetAllCharacters())
+            {
+                try
+                {
+                    character.BuyBackItems?.Wipe();
+                }
+                catch (Exception exception)
+                {
+                    Logger.Warn(exception, "Could not clear buyback items for character {CharacterId}.", character.Id);
+                }
+            }
+            _world.BroadcastPacketToServer(new SCNoticeMessagePacket(3, Color.Magenta, 15000,
+                "The server is shutting down right now!"));
+        }
+        finally
+        {
+            // The host drains connections and scheduled work before its final database checkpoint.
+            _lifetime.StopApplication();
+        }
+    }
+
+    private void WarnBeforeShutdown()
+    {
         var remainingTime = _shutdownTime - DateTime.UtcNow;
         var remainingSeconds = (int)Math.Ceiling(remainingTime.TotalSeconds);
         if (DateTime.UtcNow < _nextTriggerTime)
@@ -104,7 +136,7 @@ public class ShutdownTask : Task
 
         var showSeconds = remainingSeconds <= 100;
         var showMinutes = remainingSeconds <= 3600 && !showSeconds;
-        var showHours = remainingSeconds > 3600 && !showSeconds; ;
+        var showHours = remainingSeconds > 3600 && !showSeconds;
 
         var shutdownText = "The server is shutting down soon!";
         var popupTime = 3000;
@@ -125,7 +157,7 @@ public class ShutdownTask : Task
             popupTime = 3000;
         }
 
-        WorldManager.Instance.BroadcastPacketToServer(
+        _world.BroadcastPacketToServer(
             new SCNoticeMessagePacket(3,
                 Color.Red,
                 popupTime,
