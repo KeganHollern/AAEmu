@@ -81,6 +81,8 @@ public class WorldTemplate
     /// </summary>
     public XmlWorld XmlWorld { get; set; } = new();
 
+    internal bool AllowsMultipleInstances => XmlWorld.IsInstance > 0 || XmlWorld.Zones.Count <= 1;
+
     /// <summary>
     /// XML Zone data (zoneKey, data)
     /// </summary>
