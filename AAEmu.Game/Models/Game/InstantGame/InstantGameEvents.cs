@@ -27,9 +27,12 @@ public partial class InstantGame
             if (args.Killer is not Character killer || args.Victim is not Character victim)
                 return;
 
-            if (_finished || _startedAt is not { } start)
+            if (_finished || _announcedAt is not { } announcement)
                 return;
-            if (_clock.GetElapsedTime(start) >= PlayingTime)
+            var elapsed = _clock.GetElapsedTime(announcement) - StartCountdown;
+            if (elapsed < TimeSpan.Zero)
+                return;
+            if (elapsed >= PlayingTime)
             {
                 _ = EndGame();
                 return;
@@ -45,7 +48,7 @@ public partial class InstantGame
             memberVictim.Deaths++;
             memberVictim.Killstreak = 0;
 
-            BroadcastPacket(new SCInstantGameKillPacket(_zoneInstanceId, killer, victim, _characterCorps[killer], _characterCorps[victim], (sbyte)memberKiller.Killstreak, memberKiller.Corps.TotalKills, memberVictim.Corps.TotalKills));
+            BroadcastPacket(new SCInstantGameKillPacket(_zoneInstanceId, killer, victim, _characterCorps[killer], _characterCorps[victim], (sbyte)memberKiller.Killstreak, memberKiller.Corps.TotalKills, memberVictim.Corps.TotalDeaths));
             killer.SendPacket(new SCInstantGameKillstreakPacket(_zoneInstanceId, (sbyte)memberKiller.Killstreak, 0, true));
             if (_battlefield.RuleSet.EnemyPlayerKillScore != 0)
                 AddScore(_characterCorps[killer], memberKiller, _battlefield.RuleSet.EnemyPlayerKillScore);

@@ -55,14 +55,14 @@ public sealed class ArenaScoreTests
         using var sql = db.CreateCommand();
         sql.CommandText = """
             CREATE TABLE battle_fields(id INTEGER, zone_key INTEGER);
-            INSERT INTO battle_fields VALUES(7,200),(11,302);
+            INSERT INTO battle_fields VALUES(7,198),(11,302);
             CREATE TABLE game_rule_sets(id INTEGER, battle_field_id INTEGER, corps_size INTEGER, corps1_id INTEGER,
                 corps2_id INTEGER, time_opening INTEGER, time_ending INTEGER, time_playing INTEGER, victory_score INTEGER);
             INSERT INTO game_rule_sets VALUES(22,7,5,159,160,4,1,15,0),(28,11,1,159,160,2,1,10,60);
             CREATE TABLE game_score_rules(id INTEGER, rule_set_id INTEGER, rule_set_corps INTEGER,
                 event_id INTEGER, event_value INTEGER, event_score INTEGER);
             INSERT INTO game_score_rules VALUES(68,22,-1,200,0,3),(93,28,-1,200,0,30),
-                (69,22,-1,201,0,1),(94,28,-1,201,0,10);
+                (67,22,-1,101,2,0),(84,22,-1,202,0,2),(85,22,-1,203,0,2),(86,22,-1,204,0,2);
             CREATE TABLE resurrection_waiting_times(id INTEGER, penalty_duration INTEGER, waiting_time INTEGER, siege_waiting_time INTEGER);
             INSERT INTO resurrection_waiting_times VALUES(1,600,0,0);
             """;
@@ -116,7 +116,8 @@ public sealed class ArenaScoreTests
         Kill(loser, winner);
         await _game.EndGame(); // A timeout notification after the winning kill cannot finish a second time.
         await Assert.That(Packets(SCOffsets.SCInstantGameAddPointPacket).Length).IsEqualTo(3);
-        await Assert.That(Packets(SCOffsets.SCInstantGameKillPacket).Length).IsEqualTo(3);
+        var killTotals = Packets(SCOffsets.SCInstantGameKillPacket).Select(ReadKillTotals).ToArray();
+        await Assert.That(killTotals).IsEquivalentTo([(1, 1), (1, 1), (2, 2)]);
         var end = Packets(SCOffsets.SCInstantGameEndPacket).Single();
         await Assert.That(end.ReadByte()).IsEqualTo((byte)4);
         await CheckTeam(end, blueWins ? 1 : 2, 159, blueWins ? 30 : 60, blueWins ? 1 : 2, blueWins ? 2 : 1);
@@ -124,6 +125,9 @@ public sealed class ArenaScoreTests
         await Assert.That(end.Pos).IsEqualTo(end.Count);
         _clock.Advance(TimeSpan.FromMinutes(1));
         await Assert.That(winner.CurrentInstantGame).IsNull();
+        await Assert.That(loser.CurrentInstantGame).IsNull();
+        await Assert.That(winner.Events.OnKill.GetInvocationList().Any(handler => handler.Target == _game)).IsFalse();
+        await Assert.That(loser.Events.OnKill.GetInvocationList().Any(handler => handler.Target == _game)).IsFalse();
         await Assert.That(Packets(SCOffsets.SCLoadInstancePacket).Length).IsEqualTo(1);
     }
 
@@ -159,6 +163,25 @@ public sealed class ArenaScoreTests
         Kill(_red[0], _blue[0]);
         await Assert.That(Packets(SCOffsets.SCInstantGameAddPointPacket).Length).IsEqualTo(points.Length);
         await Assert.That(Packets(SCOffsets.SCInstantGameEndPacket).Length).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task AdvertisedStart_OpensTheScoreWindowAfterTheCountdown()
+    {
+        Start(11, false);
+        var timing = Packets(SCOffsets.SCInstantGameStartPacket).Single();
+        var sent = timing.ReadUInt32();
+        var start = timing.ReadUInt32();
+        await Assert.That(start - sent).IsEqualTo(20_000u);
+
+        _clock.Advance(TimeSpan.FromMilliseconds(start - sent) - TimeSpan.FromTicks(1));
+        Kill(_blue[0], _red[0]);
+        await Assert.That(Packets(SCOffsets.SCInstantGameAddPointPacket).Length).IsEqualTo(0);
+        await Assert.That(Packets(SCOffsets.SCInstantGameKillPacket).Length).IsEqualTo(0);
+        _clock.Advance(TimeSpan.FromTicks(2));
+        Kill(_blue[0], _red[0]);
+        var point = ReadPoints(Packets(SCOffsets.SCInstantGameAddPointPacket).Single());
+        await Assert.That((point.Red, point.Blue)).IsEqualTo((0, 30));
     }
 
     [Test]
@@ -210,7 +233,7 @@ public sealed class ArenaScoreTests
         await Assert.That((duel.Id, duel.EnemyPlayerKillScore, duel.VictoryScore, duel.TimePlaying)).IsEqualTo((28u, 30, 60, 10));
     }
 
-    private void Start(uint id)
+    private void Start(uint id, bool finishCountdown = true)
     {
         var field = _fields.GetBattlefield(id);
         _game = new InstantGame(field, _world, _clock);
@@ -219,6 +242,8 @@ public sealed class ArenaScoreTests
             _red.Add(Join((uint)i + 1, InstantCorps.Corps1, (FactionsEnum)159));
             _blue.Add(Join((uint)i + 11, InstantCorps.Corps2, (FactionsEnum)160));
         }
+        if (finishCountdown)
+            _clock.Advance(TimeSpan.FromSeconds(20));
     }
 
     private ArenaPlayer Join(uint id, InstantCorps corps, FactionsEnum faction)
@@ -252,6 +277,18 @@ public sealed class ArenaScoreTests
 
     private static (byte Corps, int Award, int Red, int Blue, string Killer) ReadPoints(PacketStream stream) =>
         (stream.ReadByte(), stream.ReadInt32(), stream.ReadInt32(), stream.ReadInt32(), stream.ReadString());
+
+    private static (int KillerTeamKills, int VictimTeamDeaths) ReadKillTotals(PacketStream stream)
+    {
+        stream.ReadUInt32();
+        stream.ReadUInt32();
+        stream.ReadByte();
+        stream.ReadByte();
+        stream.ReadSByte();
+        stream.ReadString();
+        stream.ReadString();
+        return (stream.ReadInt32(), stream.ReadInt32());
+    }
 
     private static async Task CheckTeam(PacketStream stream, int state, uint faction, int score, int kills, int deaths)
     {

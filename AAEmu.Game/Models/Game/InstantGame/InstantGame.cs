@@ -32,8 +32,9 @@ public partial class InstantGame
 
     private readonly CancellationTokenSource _endGameTokenSource;
 
+    private static readonly TimeSpan StartCountdown = TimeSpan.FromSeconds(20);
     private readonly TimeProvider _clock;
-    private long? _startedAt;
+    private long? _announcedAt;
     private bool _finished;
 
     public InstantGame(Battlefield battlefield) : this(battlefield,
@@ -209,12 +210,12 @@ public partial class InstantGame
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
-            if (_startedAt.HasValue || _finished)
+            if (_announcedAt.HasValue || _finished)
                 return;
 
-            _startedAt = _clock.GetTimestamp();
+            _announcedAt = _clock.GetTimestamp();
             var now = (uint)(Environment.TickCount & int.MaxValue);
-            BroadcastPacket(new SCInstantGameStartPacket(_zoneInstanceId, now + 20000, now));
+            BroadcastPacket(new SCInstantGameStartPacket(_zoneInstanceId, now + (uint)StartCountdown.TotalMilliseconds, now));
             _ = ResetPlayersAfterStart();
             _ = EndOnTimeout();
         }
@@ -228,7 +229,7 @@ public partial class InstantGame
 
     private async Task EndOnTimeout()
     {
-        await Task.Delay(PlayingTime, _clock, _endGameTokenSource.Token);
+        await Task.Delay(StartCountdown + PlayingTime, _clock, _endGameTokenSource.Token);
         await EndGame();
     }
 
