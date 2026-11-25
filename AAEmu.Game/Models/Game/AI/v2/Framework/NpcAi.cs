@@ -5,6 +5,7 @@ using AAEmu.Game.Models.Game.AI.AStar;
 using AAEmu.Game.Models.Game.AI.v2.Behaviors.Common;
 using AAEmu.Game.Models.Game.AI.v2.Controls;
 using AAEmu.Game.Models.Game.AI.v2.Params;
+using AAEmu.Game.Models.Game.AI.v2.Params.Almighty;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.StaticValues;
@@ -30,6 +31,10 @@ public abstract partial class NpcAi
     public Vector3 HomePosition { get; set; }
     public AiParams Param { get; set; }
     public PathNode PathNode { get; set; }
+
+    // Each parsed startAiSkill belongs to one authored phase. Keep its use local to this NPC's encounter.
+    private HashSet<AiSkill> _startedPhaseSkills;
+    internal bool TryStartPhaseSkill(AiSkill skill) => (_startedPhaseSkills ??= []).Add(skill);
 
     private readonly Dictionary<BehaviorKind, Behavior> _behaviors;
     private readonly Dictionary<Behavior, List<Transition>> _transitions;
@@ -137,7 +142,10 @@ public abstract partial class NpcAi
         _currentBehavior?.Exit();
         if (behavior is SpawningBehavior or ReturnStateBehavior or DeadBehavior or DespawningBehavior or
             IdleBehavior or HoldPositionBehavior or RoamingBehavior or DoNothingBehavior or DummyBehavior)
+        {
             WeaponCadence.Reset();
+            _startedPhaseSkills = null;
+        }
         _currentBehavior = behavior;
         _currentBehavior?.Enter();
     }
