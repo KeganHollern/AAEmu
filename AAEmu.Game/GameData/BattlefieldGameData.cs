@@ -70,6 +70,9 @@ public class BattlefieldGameData : Singleton<BattlefieldGameData>, IGameDataLoad
                         TimePlaying = reader.GetInt32("time_playing"),
                         ResurrectionDelay = TimeSpan.FromSeconds(reader.GetUInt32("time_resurrection_delay")),
                         EnemyPlayerKillScore = reader.GetInt32("enemy_player_kill_score", 0),
+                        RankWinPoints = reader.GetInt32("rank_win_point"),
+                        RankLossPoints = reader.GetInt32("rank_lose_point"),
+                        RankDrawPoints = reader.GetInt32("rank_draw_point"),
                         VictoryScore = reader.GetInt32("victory_score")
                     };
 

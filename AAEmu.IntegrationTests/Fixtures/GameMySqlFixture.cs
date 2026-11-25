@@ -105,6 +105,13 @@ public sealed class GameMySqlFixture : IAsyncLifetime
             await command.ExecuteNonQueryAsync();
         }
 
+        command.CommandText = "DROP TABLE `gladiator_rank_results`";
+        await command.ExecuteNonQueryAsync();
+        command.CommandText = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "SQL", "updates",
+            "2026-11-25_aaemu_game_gladiator_rank_results.sql"));
+        await command.ExecuteNonQueryAsync();
+        await command.ExecuteNonQueryAsync();
+
         command.CommandText = "DROP TABLE `zone_conflict_states`";
         await command.ExecuteNonQueryAsync();
         var zoneUpdatePath = Path.Combine(AppContext.BaseDirectory, "SQL", "updates",
