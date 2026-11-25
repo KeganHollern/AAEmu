@@ -1,92 +1,59 @@
-﻿using Jitter2.Collision;
+﻿using AAEmu.Game.Models.Game.Units;
+using Jitter2.Collision;
 using Jitter2.Collision.Shapes;
 using Jitter2.Dynamics;
 using Jitter2.LinearMath;
-using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Physics.HeightMaps;
 
-public class HeightmapDetection : IBroadPhaseFilter
+public sealed class HeightmapDetection(Jitter2.World world, HeightmapTester shape) : IBroadPhaseFilter
 {
-    private readonly Jitter2.World _world;
-    private readonly HeightmapTester _shape;
-    private readonly Heightmap _heightmap;
-    private readonly ulong _minIndex;
-
-    public HeightmapDetection(Jitter2.World world, HeightmapTester shape)
-    {
-        _shape = shape;
-        _world = world;
-        _heightmap = shape.Heightmap;
-
-        (_minIndex, _) = Jitter2.World.RequestId(_heightmap.Width * _heightmap.Height * 2);
-    }
+    private readonly Heightmap _heightmap = shape.Heightmap;
+    private readonly ulong _minIndex = Jitter2.World.RequestId(shape.Heightmap.TriangleCount).Item1;
 
     public bool Filter(IDynamicTreeProxy shapeA, IDynamicTreeProxy shapeB)
     {
-        if (shapeA != _shape && shapeB != _shape) return true;
+        if (shapeA != shape && shapeB != shape)
+            return true;
+        var collider = shapeA == shape ? shapeB : shapeA;
+        if (collider is not RigidBodyShape rbs || rbs.RigidBody.Data.MotionType == MotionType.Static || !rbs.RigidBody.Data.IsActive)
+            return false;
 
-        var collider = shapeA == _shape ? shapeB : shapeA;
-
-        if (collider is not RigidBodyShape rbs || rbs.RigidBody.Data.MotionType == MotionType.Static || !rbs.RigidBody.Data.IsActive) return false;
-
-        // A waterfall brush is a visual/static mesh over an overhang. The 2D terrain heightmap
-        // reports the landscape above that corridor and would otherwise pin the falling hull
-        // underneath it. The waterfall controller re-enables terrain on landing or recovery.
+        // A waterfall's terrain can sit above the falling hull. Its controller restores
+        // terrain contacts on landing or recovery.
         if (rbs.RigidBody.Tag is Slave { WaterfallTransitActive: true })
             return false;
 
-        ref var body = ref rbs.RigidBody!.Data;
-
-        var min = collider.WorldBoundingBox.Min;
-        var max = collider.WorldBoundingBox.Max;
-
-        var minX = Math.Max(0, (int)min.X);
-        var minZ = Math.Max(0, (int)min.Z);
-        var maxX = Math.Min(_heightmap.Width - 1, (int)max.X + 1);
-        var maxZ = Math.Min(_heightmap.Height - 1, (int)max.Z + 1);
-
-        for (var x = minX; x < maxX; x++)
+        const int spacing = Heightmap.Spacing;
+        var bounds = collider.WorldBoundingBox;
+        var minX = Math.Max(0, (int)MathF.Floor(bounds.Min.X / spacing));
+        var minZ = Math.Max(0, (int)MathF.Floor(bounds.Min.Z / spacing));
+        var maxX = Math.Min(_heightmap.QuadsX - 1, (int)MathF.Floor(bounds.Max.X / spacing));
+        var maxZ = Math.Min(_heightmap.QuadsZ - 1, (int)MathF.Floor(bounds.Max.Z / spacing));
+        for (var x = minX; x <= maxX; x++)
+        for (var z = minZ; z <= maxZ; z++)
         {
-            for (var z = minZ; z < maxZ; z++)
-            {
-                // First triangle of the quad
-
-                var index = 2 * (ulong)(x * _heightmap.Width + z);
-
-                CollisionTriangle triangle;
-
-                triangle.A = new JVector(x + 0, _heightmap.GetHeight(x + 0, z + 0), z + 0);
-                triangle.B = new JVector(x + 1, _heightmap.GetHeight(x + 1, z + 0), z + 0);
-                triangle.C = new JVector(x + 1, _heightmap.GetHeight(x + 1, z + 1), z + 1);
-
-                var normal = JVector.Normalize((triangle.C - triangle.A) % (triangle.B - triangle.A));
-
-                var hit = NarrowPhase.MprEpa(triangle, rbs, body.Orientation, body.Position, out var pointA, out var pointB, out _, out var penetration);
-
-                if (hit)
-                {
-                    _world.RegisterContact(rbs.ShapeId, _minIndex + index, _world.NullBody, rbs.RigidBody, pointA, pointB, normal);//, penetration);
-                }
-
-                // Second triangle of the quad
-
-                index += 1;
-                triangle.A = new JVector(x + 0, _heightmap.GetHeight(x + 0, z + 0), z + 0);
-                triangle.B = new JVector(x + 1, _heightmap.GetHeight(x + 1, z + 1), z + 1);
-                triangle.C = new JVector(x + 0, _heightmap.GetHeight(x + 0, z + 1), z + 1);
-
-                normal = JVector.Normalize((triangle.C - triangle.A) % (triangle.B - triangle.A));
-
-                hit = NarrowPhase.MprEpa(triangle, rbs, body.Orientation, body.Position, out pointA, out pointB, out _, out penetration);
-
-                if (hit)
-                {
-                    _world.RegisterContact(rbs.ShapeId, _minIndex + index, _world.NullBody, rbs.RigidBody, pointA, pointB, normal);//, penetration);
-                }
-            }
+            var id = _minIndex + (ulong)_heightmap.FirstTriangleIndex(x, z);
+            Register(rbs, x, z, false, id);
+            Register(rbs, x, z, true, id + 1);
         }
-
         return false;
+    }
+
+    private void Register(RigidBodyShape shape, int x, int z, bool upper, ulong id)
+    {
+        if (!_heightmap.TryGetTriangle(x, z, upper, out var triangle))
+            return;
+        var bounds = shape.WorldBoundingBox;
+        if (Math.Min(triangle.A.Y, Math.Min(triangle.B.Y, triangle.C.Y)) > bounds.Max.Y ||
+            Math.Max(triangle.A.Y, Math.Max(triangle.B.Y, triangle.C.Y)) < bounds.Min.Y)
+            return;
+
+        ref var body = ref shape.RigidBody.Data;
+        if (NarrowPhase.MprEpa(triangle, shape, body.Orientation, body.Position, out var pointA, out var pointB, out _, out _))
+        {
+            var normal = JVector.Normalize((triangle.B - triangle.A) % (triangle.C - triangle.A));
+            world.RegisterContact(shape.ShapeId, id, world.NullBody, shape.RigidBody, pointA, pointB, normal);
+        }
     }
 }

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Numerics;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
@@ -77,7 +77,6 @@ public class PhysicsManager
     /// <summary>
     /// Used heightmap tester, saved so it can be edited later
     /// </summary>
-    private HeightmapTester WorldHeightMapTester { get; set; }
 
     /// <summary>
     /// Initialize the Physics engine and creates the ocean water body
@@ -99,54 +98,18 @@ public class PhysicsManager
     }
 
     /// <summary>
-    /// Create terrain data for the physics world (old)
+    /// Register the world terrain with the physics engine. Completed cells are available on the next query.
     /// </summary>
     public void InitializeTerrain()
     {
-        // Add terrain shape based on height map
-        // if (SimulationWorld.Id != WorldManager.DefaultInstanceId) { return; }
-
-        Logger.Debug($"{SimulationWorld.Template.Name} initializing terrain.");
-        try
-        {
-            var dataX = SimulationWorld.Template.CellX * WorldManager.CELL_HMAP_RESOLUTION;
-            var dataZ = SimulationWorld.Template.CellY * WorldManager.CELL_HMAP_RESOLUTION;
-            var hmapTerrain = new float[dataX, dataZ];
-            var cellCountMax = SimulationWorld.Template.CellX * SimulationWorld.Template.CellY * 1f;
-            var cellCount = 0;
-            for (var cellY = 0; cellY < SimulationWorld.Template.CellY; cellY++)
-            {
-                for (var cellX = 0; cellX < SimulationWorld.Template.CellX; cellX++)
-                {
-                    cellCount++;
-                    var cell = SimulationWorld.Template.Cells[cellX, cellY];
-                    if (!cell.Loaded)
-                        continue; // ignore if not loaded
-                    for (var inX = 0; inX < WorldManager.CELL_HMAP_RESOLUTION; inX++)
-                    for (var inY = 0; inY < WorldManager.CELL_HMAP_RESOLUTION; inY++)
-                    {
-                        var x = cellX * WorldManager.CELL_HMAP_RESOLUTION + inX;
-                        var y = cellY * WorldManager.CELL_HMAP_RESOLUTION + inY;
-                        hmapTerrain[x, y] = cell.GetHeightMapDataInCell(x % WorldManager.CELL_HMAP_RESOLUTION,
-                            y % WorldManager.CELL_HMAP_RESOLUTION);
-                    }
-                }
-
-                if (AppConfiguration.Instance.World.PreLoadTerrain)
-                    Logger.Debug($"Loading {SimulationWorld} heightmap data {cellCount / cellCountMax * 100f:F0}%");
-            }
-
-            var heightmap = new Heightmap(hmapTerrain);
-            WorldHeightMapTester = new HeightmapTester(heightmap);
-            _physWorld.BroadPhaseFilter = new HeightmapDetection(_physWorld, WorldHeightMapTester);
-            _physWorld.DynamicTree.AddProxy(WorldHeightMapTester, false);
-        }
-        catch (Exception e)
-        {
-            Logger.Error(e);
-        }
-
-        Logger.Info($"{SimulationWorld.Template.Name} initialized terrain.");
+        var template = SimulationWorld.Template;
+        if (template.Cells is null || template.CellX <= 0 || template.CellY <= 0 ||
+            !double.IsFinite(template.HeightMaxCoefficient) || template.HeightMaxCoefficient <= 0)
+            return;
+        var shape = new HeightmapTester(new Heightmap(template));
+        _physWorld.BroadPhaseFilter = new HeightmapDetection(_physWorld, shape);
+        _physWorld.DynamicTree.AddProxy(shape, false);
+        Logger.Info($"{template.Name} initialized terrain.");
     }
 
     /// <summary>
@@ -917,29 +880,5 @@ public class PhysicsManager
             Z = jq.Z,
             W = jq.W
         };
-    }
-
-    /// <summary>
-    /// Updates heightmap data with the data from the provided WorldCell
-    /// </summary>
-    /// <param name="cell"></param>
-    public void UpdateHeightMapFromCellBody(WorldCell cell)
-    {
-        if (WorldHeightMapTester == null)
-        {
-            return;
-        }
-
-        // Copy over cell's data
-        for (var inX = 0; inX < WorldManager.CELL_HMAP_RESOLUTION; inX++)
-        {
-            for (var inY = 0; inY < WorldManager.CELL_HMAP_RESOLUTION; inY++)
-            {
-                var x = cell.CellX * WorldManager.CELL_HMAP_RESOLUTION + inX;
-                var y = cell.CellY * WorldManager.CELL_HMAP_RESOLUTION + inY;
-                WorldHeightMapTester.Heightmap.RawHeights[x, y] = cell.GetHeightMapDataInCell(inX, inY);
-            }
-        }
-        Logger.Trace($"Post-Loaded {SimulationWorld} Cell {cell.CellX}, {cell.CellY}");
     }
 }
