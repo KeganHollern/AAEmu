@@ -166,18 +166,76 @@ public sealed partial class WorldManagerHeightTests
         await Assert.That(npc.Movements.Single().Z).IsEqualTo(expected).Within(.0001f);
     }
 
-    public enum Overlap { SameMesh, OtherPart, OtherPlacement }
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task MoveTowards_InclinedCaveSeam_ContinuesFromEitherTriangle(bool reverseOrder, bool endAtSeam)
+    {
+        Vector3 Point(float x, float y) => new(x, y, DeckZ + .012f * (x - 111f));
+        var mesh = new CryTriangleMesh([Point(109, 98), Point(113, 98), Point(113, 102), Point(109, 102)],
+            reverseOrder ? [0, 2, 3, 0, 1, 2] : [0, 1, 2, 0, 2, 3], []);
+        var npc = CreateDeckWalker(customMesh: mesh);
+        npc.ParentWorld.Template.ZoneBaiLoader.Clear();
+        SetTerrainHeight(npc.ParentWorld.Template, 18);
+        var seam = Point(111, 100);
+        var interior = Point(112.5f, 100);
+        var (from, target) = endAtSeam ? (interior, seam) : (seam, interior);
+        npc.Transform.Local.SetPosition(from);
+        npc.MoveTowards(target, Step, rangeTolerance: 0f);
+        var next = npc.Transform.Local.Position;
+        await Assert.That(next.X).IsEqualTo(endAtSeam ? 112f : 111.5f).Within(.001f);
+        await Assert.That(next.Z).IsEqualTo(Point(next.X, next.Y).Z).Within(.0001f);
+        await Assert.That(npc.Movements.Count).IsEqualTo(1);
+    }
 
     [Test]
-    [Arguments(Overlap.SameMesh, false)]
-    [Arguments(Overlap.OtherPart, false)]
-    [Arguments(Overlap.OtherPlacement, false)]
-    [Arguments(Overlap.OtherPlacement, true)]
-    public async Task MoveTowards_InclinedCaveTargetOnCloseOverlappingFloor_UsesTerrain(Overlap overlap, bool nearTargetOnly)
+    [Arguments(-.005f, false)]
+    [Arguments(.005f, false)]
+    [Arguments(.005f, true)]
+    public async Task MoveTowards_SteepFaceAtCaveFoot_StillFindsAllWalkableFloors(float contactOffset, bool competingFloor)
+    {
+        Vector3 Point(float x, float y) => new(x, y, DeckZ + .012f * (x - 111f));
+        var baseFace = new[] { Point(106, 98), Point(117, 98), Point(111, 104) };
+        // A steep contact intersects the starting ray, above or below the walking surface.
+        var wall = new[] { new Vector3(110.99f, 99, 5 + contactOffset), new Vector3(111.01f, 99, 7 + contactOffset),
+            new Vector3(111, 102, 6 + contactOffset) };
+        var vertices = baseFace.Concat(wall).ToList();
+        if (competingFloor)
+            vertices.AddRange(baseFace.Select(p => p - Vector3.UnitZ * .007f));
+        var mesh = new CryTriangleMesh(vertices.ToArray(), Enumerable.Range(0, vertices.Count).Select(i => (ushort)i).ToArray(), []);
+        var npc = CreateDeckWalker(customMesh: mesh);
+        npc.ParentWorld.Template.ZoneBaiLoader.Clear();
+        SetTerrainHeight(npc.ParentWorld.Template, 18);
+        var from = Point(111, 100);
+        npc.Transform.Local.SetPosition(from);
+        npc.MoveTowards(Point(113.5f, 100), Step, rangeTolerance: 0);
+        var next = npc.Transform.Local.Position;
+        await Assert.That(next.X).IsEqualTo(competingFloor ? 111f : 111.5f).Within(.001f);
+        await Assert.That(next.Z).IsEqualTo(Point(next.X, next.Y).Z).Within(.0001f);
+        await Assert.That(npc.Movements.Count).IsEqualTo(competingFloor ? 0 : 1);
+    }
+
+    public enum Overlap { SameMesh, OtherPart, OtherPlacement }
+    public enum OverlapRegion { Full, Target, NextFoot }
+
+    [Test]
+    [Arguments(Overlap.SameMesh, OverlapRegion.Full)]
+    [Arguments(Overlap.OtherPart, OverlapRegion.Full)]
+    [Arguments(Overlap.OtherPlacement, OverlapRegion.Full)]
+    [Arguments(Overlap.OtherPlacement, OverlapRegion.Target)]
+    [Arguments(Overlap.OtherPlacement, OverlapRegion.NextFoot)]
+    public async Task MoveTowards_CloseCaveFloors_AdvanceOnlyWithUniqueFootSupport(Overlap overlap, OverlapRegion region)
     {
         Vector3 Point(float x, float y) => new(x, y, DeckZ + .007f * (x - 111f));
         var lower = new[] { Point(101, 98), Point(121, 98), Point(111, 105) };
-        var upperFootprint = nearTargetOnly ? [Point(112, 98), Point(121, 98), Point(114, 105)] : lower;
+        Vector3[] upperFootprint = region switch
+        {
+            OverlapRegion.Target => [Point(112, 98), Point(121, 98), Point(114, 105)],
+            OverlapRegion.NextFoot => [Point(111.1f, 99), Point(112.15f, 99), Point(111.52f, 101)],
+            _ => lower
+        };
         var upper = upperFootprint.Select(p => p + Vector3.UnitZ * .007f).ToArray();
         var mesh = new CryTriangleMesh([.. lower, .. upper], [0, 1, 2, 3, 4, 5], []);
         var npc = CreateDeckWalker(customMesh: mesh);
@@ -207,9 +265,42 @@ public sealed partial class WorldManagerHeightTests
         }
         world.ZoneBaiLoader.Clear();
         SetTerrainHeight(world, 18);
-        npc.Transform.Local.SetPosition(Point(111f, 100f));
-        npc.MoveTowards(Point(113.8f, 100f) + Vector3.UnitZ * .007f, Step, rangeTolerance: 0f);
-        await Assert.That(npc.Movements.Single().Z).IsEqualTo(18f);
+        var start = Point(111f, 100f);
+        var target = Point(113.8f, 100f);
+        if (region != OverlapRegion.NextFoot)
+            target.Z += .007f;
+        npc.Transform.Local.SetPosition(start);
+
+        if (region == OverlapRegion.Target)
+        {
+            // The upper placement begins at X 112.57 on this line. The lower
+            // face still supports three consecutive half-metre steps by itself.
+            for (var step = 1; step <= 3; step++)
+            {
+                npc.MoveTowards(target, Step, rangeTolerance: 0f);
+                var foot = npc.Transform.Local.Position;
+                await Assert.That(foot.X).IsEqualTo(start.X + step * Step).Within(.001f);
+                await Assert.That(foot.Z).IsEqualTo(Point(foot.X, foot.Y).Z).Within(.0001f);
+            }
+        }
+
+        var lastFoot = npc.Transform.Local.Position;
+        var rotation = npc.Transform.Local.Rotation;
+        var sent = npc.Movements.Count;
+        for (var retry = 0; retry < 2; retry++)
+        {
+            var trace = NpcStepSurfaceTrace.DescribeStep(npc, target, Step).ToArray();
+            await Assert.That(trace[1]).Contains("selected=HoldAmbiguousFloor");
+            await Assert.That(npc.MoveTowards(target, Step, rangeTolerance: 0f)).IsFalse();
+            await Assert.That(npc.Transform.Local.Position).IsEqualTo(lastFoot);
+            await Assert.That(npc.Transform.Local.Rotation).IsEqualTo(rotation);
+            await Assert.That(npc.Movements.Count).IsEqualTo(sent);
+        }
+
+        // An explicit authored route still controls its own height.
+        npc.MoveTowards(target, 4f, rangeTolerance: 0f, authoredPathZ: true);
+        await Assert.That(npc.Transform.Local.Position).IsEqualTo(target);
+        await Assert.That(npc.Movements.Count).IsEqualTo(sent + 1);
     }
 
     [Test]

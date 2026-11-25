@@ -1110,16 +1110,11 @@ public partial class Npc : Unit
             trace?.Skip("DestinationChangesLayer");
         var height = WorldManager.Instance.ResolveReferenceHeight(Ai, next.X, next.Y, next.Z, Transform.ZoneId,
             levelStep || checkIncline ? from : null, trace, checkIncline ? destination : null);
-        if (height.HasValue)
+        // In the main world an unresolved step keeps the last accepted foot.
+        if (height.HasValue || unparented && ParentWorld?.Template?.Name == "main_world" &&
+            (AppConfiguration.Instance.HeightMapsEnable || AppConfiguration.Instance.World?.GeoDataMode == true))
             return height;
 
-        // In the main world a missing sample does not authorize a step toward the NPC's home height.
-        if (unparented && ParentWorld?.Template?.Name == "main_world" &&
-            (AppConfiguration.Instance.HeightMapsEnable || AppConfiguration.Instance.World?.GeoDataMode == true))
-        {
-            trace?.Select("HoldWithoutGround");
-            return null;
-        }
         trace?.Select("HomeWithoutGround");
         return Ai.HomePosition.Z;
     }

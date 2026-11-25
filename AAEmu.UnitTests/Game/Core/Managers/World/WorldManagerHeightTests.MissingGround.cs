@@ -3,6 +3,7 @@ using System.Numerics;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game.AI.v2.AiCharacters;
 using AAEmu.Game.Models.Game.AI.v2.Behaviors.Common;
 using AAEmu.Game.Models.Game.AI.v2.Params;
@@ -140,6 +141,36 @@ public sealed partial class WorldManagerHeightTests
         var expected = new Vector3(ai.IdlePosition.X, ai.IdlePosition.Y, hasGround ? 0f : ai.HomePosition.Z);
         await Assert.That(npc.Transform.Local.Position).IsEqualTo(expected);
         await Assert.That(npc.Movements[^1].Z).IsEqualTo(expected.Z);
+    }
+
+    [Test]
+    public async Task CompletedReturn_FromAmbiguousCaveFloor_TeleportsToItsHomeHeight()
+    {
+        Vector3 Point(float x, float y) => new(x, y, DeckZ + .007f * (x - 111f));
+        var lower = new[] { Point(101, 98), Point(121, 98), Point(111, 105) };
+        var mesh = new CryTriangleMesh([.. lower, .. lower.Select(p => p + Vector3.UnitZ * .007f)],
+            [0, 1, 2, 3, 4, 5], []);
+        var world = CreateDeckWalker(customMesh: mesh).ParentWorld;
+        world.Template.ZoneBaiLoader.Clear();
+        SetTerrainHeight(world.Template, 18);
+        var npc = new ReturnWalker { ParentWorld = world, Template = new NpcTemplate { Scale = 1f },
+            DisabledSetPosition = true, Hp = 100, Buffs = Mock.Of<IBuffs>().Object };
+        SetPrivateMember(npc.Transform, "_zoneId", 100u);
+        var home = Point(116, 100) + Vector3.UnitZ * .007f;
+        var ai = new ReturnProbe { Owner = npc, IdlePosition = home, HomePosition = home,
+            Param = new AiParams { AlwaysTeleportOnReturn = true, RestorationOnReturn = false } };
+        npc.Ai = ai;
+        var start = Point(111, 100);
+        npc.Transform.Local.SetPosition(start);
+
+        npc.MoveTowards(home, Step, rangeTolerance: 0f);
+        await Assert.That(npc.Transform.Local.Position).IsEqualTo(start);
+        await Assert.That(npc.Movements).IsEmpty();
+        new ReturnStateBehavior { Ai = ai }.Enter();
+        await Assert.That(ai.Completed).IsTrue();
+        await Assert.That(npc.Transform.Local.Position).IsEqualTo(home);
+        await Assert.That(npc.Movements.Count).IsEqualTo(2); // The return sends the relocation and its stop.
+        await Assert.That(npc.Movements.All(move => move.Z == home.Z)).IsTrue();
     }
 
     private sealed class ReturnWalker : MovementProbeNpc
