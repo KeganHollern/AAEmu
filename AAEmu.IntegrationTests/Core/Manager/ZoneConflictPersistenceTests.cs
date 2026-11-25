@@ -5,6 +5,9 @@ using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.World.Zones;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using ShutdownTask = AAEmu.Game.Models.Tasks.ShutdownTask;
 
 using Moq;
 using MySql.Data.MySqlClient;
@@ -119,7 +122,7 @@ public sealed class ZoneConflictPersistenceTests
         Assert.NotEqual(oldState, newState);
 
         var zoneWrites = new Mock<IZoneManager>();
-        var scheduler = new TaskManager(Mock.Of<ITickManager>());
+        var scheduler = new TaskManager(Mock.Of<ITickManager>(tick => tick.OnTick == new TickManager.TickEventHandler()));
         var graph = new EconomyPersistenceTests.SaveGraph(scheduler, zoneWrites.Object);
         var item = graph.AddItem(1);
         var mail = graph.AddMail(2);
@@ -153,7 +156,7 @@ public sealed class ZoneConflictPersistenceTests
         try
         {
             save.SaveTickStart();
-            failure = await Record.ExceptionAsync(save.StopAsync);
+            failure = await StopFromStaffCountdown(scheduler, save);
         }
         finally
         {
@@ -182,6 +185,45 @@ public sealed class ZoneConflictPersistenceTests
             Assert.Null(failure);
         else
             Assert.IsType<InvalidOperationException>(failure);
+    }
+
+    private static async Task<Exception> StopFromStaffCountdown(TaskManager scheduler, SaveManager save)
+    {
+        var hosted = new Mock<IHostedService>();
+        hosted.Setup(service => service.StartAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        hosted.Setup(service => service.StopAsync(It.IsAny<CancellationToken>())).Returns(() =>
+        {
+            // GameService owns this order. The countdown callback must return before the scheduler can drain.
+            scheduler.Stop();
+            return save.StopAsync();
+        });
+        using var host = new HostBuilder()
+            .ConfigureServices(services => services.AddSingleton(hosted.Object))
+            .Build();
+        await host.StartAsync();
+        var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+        var world = new Mock<IWorldManager>();
+        world.Setup(manager => manager.GetAllCharacters()).Returns([]);
+        var cancelled = new ShutdownTask(DateTime.UtcNow.AddSeconds(-1), world.Object, lifetime);
+        Assert.True(scheduler.Schedule(cancelled, TimeSpan.FromSeconds(1)));
+        Assert.True(cancelled.CancelCountdown(scheduler));
+        cancelled.Execute(); // A callback that the scheduler already collected must respect cancellation.
+        Assert.False(lifetime.ApplicationStopping.IsCancellationRequested);
+
+        var countdown = new ShutdownTask(DateTime.UtcNow.AddMinutes(5), world.Object, lifetime);
+        var completion = host.WaitForShutdownAsync();
+        countdown.Execute();
+        Assert.False(lifetime.ApplicationStopping.IsCancellationRequested);
+
+        Assert.True(countdown.ChangeShutdownTime(DateTime.UtcNow.AddSeconds(-1)));
+        Assert.True(scheduler.Schedule(countdown, TimeSpan.Zero, count: 1));
+        Assert.True(lifetime.ApplicationStopping.IsCancellationRequested);
+        Assert.False(countdown.ChangeShutdownTime(DateTime.UtcNow.AddMinutes(5)));
+        countdown.Execute();
+        var failure = await Record.ExceptionAsync(() => completion.WaitAsync(TimeSpan.FromSeconds(15)));
+        world.Verify(manager => manager.GetAllCharacters(), Times.Once);
+        hosted.Verify(service => service.StopAsync(It.IsAny<CancellationToken>()), Times.Once);
+        return failure;
     }
 
     private static ZoneManager CreateManager(Dictionary<ushort, ZoneConflictSnapshot> states)
