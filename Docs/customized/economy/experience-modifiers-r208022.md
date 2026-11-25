@@ -38,6 +38,12 @@ Paid priest recovery restores the recorded priest share.
 Full XP Restoration scrolls restore the exact XP lost at death.
 Older saves contain only the priest share. A scroll restores that amount when the full loss is unknown.
 
+The r208022 `OnRecoverableExp` handler calls `0x39357150` in the mapped image described below.
+It saves the previous priest share and full loss before replacing both balances.
+Reason 1 reports the previous priest share. Reason 2 reports the previous full loss.
+Both use `RECOVERED_EXP` and the same English `recovered_exp_str` text, which says “through prayer.”
+The Game sends reason 1 when a scroll restores an old balance with no recorded full loss.
+
 ## Native premium field
 
 The exact client image is ArcheAge r208022 `x2game.dll`.

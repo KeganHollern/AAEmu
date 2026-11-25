@@ -13,7 +13,8 @@ public partial class Character
         if (batch == null)
             return false;
         // Older saves retain only the priest share. Keep that known amount when the full loss is unknown.
-        var amount = restoreFullLoss && LastExpLoss > 0 ? LastExpLoss : RecoverableExp;
+        var useFullLoss = restoreFullLoss && LastExpLoss > 0;
+        var amount = useFullLoss ? LastExpLoss : RecoverableExp;
         if (amount <= 0)
         {
             SendErrorMessage(ErrorMessageType.CannotRecoverAllNotEnough);
@@ -65,7 +66,8 @@ public partial class Character
                 Achievements?.Increment(CharRecordKind.SpendLabor, 0, 0, (uint)laborCost);
                 SendPacket(new SCCharacterLaborPowerChangedPacket(-laborCost, 0, 0, 0));
             }
-            SendPacket(new SCRecoverableExpPacket(ObjId, 0, 0, 1));
+            // r208022 reports the previous full loss for reason 2 and the previous priest share for reason 1.
+            SendPacket(new SCRecoverableExpPacket(ObjId, 0, 0, useFullLoss ? 2 : 1));
             publishExperience();
         });
         return true;
