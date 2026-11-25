@@ -408,6 +408,7 @@ public sealed partial class CarriageBoardingTests
     [Arguments(654u, AttachPointKind.Trailed0, 122u)]
     [Arguments(565u, AttachPointKind.Trailed0, 28u)]
     [Arguments(604u, AttachPointKind.System, 30u)]
+    [Arguments(606u, AttachPointKind.Passenger0, 4u)]
     public async Task OtherBindingsKeepTheirPlacement(uint modelId, AttachPointKind point, uint childId)
     {
         var motor = Motor(modelId, point, childId);
@@ -431,7 +432,7 @@ public sealed partial class CarriageBoardingTests
     }
 
     [Test]
-    public async Task MarianopleTram_BothBenchesUseTheCabinModelSockets()
+    public async Task MarianopleTram_BothBenchesCarryTheirRidersFromTheMotorSocket()
     {
         var world = SetUpStation(modelId: 606, vehicleModelId: 20);
         var motorTemplate = Motor(606, AttachPointKind.Trailed0, 4).Template;
@@ -446,17 +447,38 @@ public sealed partial class CarriageBoardingTests
         var cabin = motor.Bounded;
         await Assert.That(cabin.BondingObjId).IsEqualTo(motor.ObjId);
         await Assert.That(cabin.AttachedDoodads.Count).IsEqualTo(2);
-        var passenger = new CharacterMock { Id = 10, ObjId = 100, ParentWorld = world };
-
         var front = cabin.AttachedDoodads.Single(d => d.AttachPoint == AttachPointKind.Passenger0);
         var rear = cabin.AttachedDoodads.Single(d => d.AttachPoint == AttachPointKind.Passenger1);
-        // Compiled nodes $passenger0 and $passenger1 on transfers_floatship02.cgf.
         var frontSocket = new Vector3(0.02091537f, 5.013110f, 1.463596f);
         var rearSocket = new Vector3(0.02785782f, -2.598603f, 1.463596f);
+
+        // Stock $trailed0 on the engine. Route +Y is the direction of travel.
+        var direction = Vector2.Normalize(new Vector2(next.X - start.X, next.Y - start.Y));
+        var right = new Vector2(direction.Y, -direction.X);
+        var offset = new Vector3(right * 0.040920f - direction * 14.04129f, 4.969580f);
+        await CheckPoint(cabin.Transform.World.Position, start.AsPositionVector() + offset);
         await CheckTramBench(front, cabin, frontSocket, -Vector3.UnitY);
         await CheckTramBench(rear, cabin, rearSocket, Vector3.UnitY);
-        await BoardAndLeave(passenger, front);
-        await BoardAndLeave(passenger, rear);
+
+        // Use the public doodad interaction with the actual phase, skill and attachment.
+        var action = new DoodadFunc { FuncKey = 12633, FuncId = 168, FuncType = nameof(DoodadFuncAttachment),
+            GroupId = 15276, SkillId = 15857, NextPhase = -1 };
+        SetField(DoodadManager.Instance, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>> { [15276] = [action] });
+        SetField(DoodadManager.Instance, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
+        {
+            [nameof(DoodadFuncAttachment)] = new() { [168] = new DoodadFuncAttachment
+                { AttachPointId = AttachPointKind.Passenger0, Space = 2, BondKindId = BondKind.BondChairDouble } }
+        });
+        using var movement = new SusManager(WorldManager.Instance);
+        SetSingleton(movement);
+        var firstRider = new CharacterMock { Id = 10, ObjId = 100, ParentWorld = world };
+        var secondRider = new CharacterMock { Id = 11, ObjId = 101, ParentWorld = world };
+        foreach (var (rider, seat) in new[] { (firstRider, front), (secondRider, rear) })
+        {
+            rider.Transform.Local.SetPosition(seat.Transform.World.Position);
+            seat.Use(rider, 15857);
+            await Assert.That(rider.Bonding.GetOwner()).IsSameReferenceAs(seat);
+        }
 
         var parked = cabin.Transform.World.Position;
         motor.WaitTime = DateTime.MinValue;
@@ -464,9 +486,14 @@ public sealed partial class CarriageBoardingTests
         motor.WaitTime = DateTime.MinValue;
         motor.MoveTo(motor);
         await Assert.That(Vector3.Distance(parked, cabin.Transform.World.Position)).IsGreaterThan(0.01f);
+        await CheckPoint(cabin.Transform.World.Position, motor.Transform.World.Position + offset);
         await CheckTramBench(front, cabin, frontSocket, -Vector3.UnitY);
         await CheckTramBench(rear, cabin, rearSocket, Vector3.UnitY);
-        await BoardAndLeave(passenger, rear);
+        foreach (var (rider, seat) in new[] { (firstRider, front), (secondRider, rear) })
+        {
+            await CheckPoint(rider.Transform.World.Position, seat.Transform.World.Position);
+            await LeaveSeat(rider, seat);
+        }
     }
 
     private static async Task CheckTramBench(Doodad bench, Transfer cabin, Vector3 local, Vector3 forward)
@@ -610,6 +637,11 @@ public sealed partial class CarriageBoardingTests
         await Assert.That(passenger.Bonding.GetOwner()).IsSameReferenceAs(seat);
         await Assert.That(passenger.Transform.Parent).IsSameReferenceAs(seat.Transform);
         await CheckPoint(passenger.Transform.World.Position, seat.Transform.World.Position);
+        await LeaveSeat(passenger, seat);
+    }
+
+    private static async Task LeaveSeat(CharacterMock passenger, Doodad seat)
+    {
         var request = new PacketStream();
         request.WriteBc(passenger.ObjId);
         request.WriteBc(seat.ObjId);

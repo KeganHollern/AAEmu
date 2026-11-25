@@ -1,5 +1,7 @@
-﻿using AAEmu.Game.Core.Managers;
-using System.Numerics;
+﻿using System.Numerics;
+using System.Text.Json;
+
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
@@ -17,7 +19,7 @@ public class CharacterPortals(Character owner)
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private Dictionary<uint, VisitedDistrict> VisitedDistricts { get; } = [];
-    private readonly List<uint> _removedVisitedDistricts = [];
+    private List<uint> _loginSubZones;
     private readonly List<uint> _removedPrivatePortals = [];
     private sealed record PendingBoundary(WorldInstance World, Vector3 From, Area[] Areas);
     private volatile PendingBoundary _pendingBoundary;
@@ -34,23 +36,26 @@ public class CharacterPortals(Character owner)
         return PrivatePortals.TryGetValue(id, out var portal) ? portal : null;
     }
 
-    public void RemoveFromBookPortal(Portal portal, bool isPrivate)
+    public void RemoveFromBook(uint id, bool isPrivate)
     {
-        if (isPrivate)
+        lock (SaveManager.PersistenceSyncRoot)
         {
-            if (PrivatePortals.ContainsKey(portal.Id) && PrivatePortals.Remove(portal.Id))
+            if (isPrivate)
             {
-                _removedPrivatePortals.Add(portal.Id);
-                //Owner.SendMessage("Recorded Portal deleted.");
+                if (!PrivatePortals.Remove(id))
+                    return;
+                _removedPrivatePortals.Add(id);
+                return;
             }
-        }
-        else
-        {
-            if (VisitedDistricts.ContainsKey(portal.SubZoneId) && VisitedDistricts.Remove(portal.SubZoneId))
-            {
-                _removedVisitedDistricts.Add(portal.SubZoneId);
-                //Owner.SendMessage("Default Portal deleted.");
-            }
+
+            if (!DistrictPortals.TryGetValue(id, out var portal) ||
+                !VisitedDistricts.TryGetValue(portal.SubZoneId, out var visit) ||
+                id == PortalManager.Instance.GetDistrictReturnPoint(Owner.ReturnDistrictId, Owner.Faction.Id))
+                return;
+
+            DistrictPortals.Remove(id);
+            visit.OmittedPortalIds ??= [];
+            visit.OmittedPortalIds.Add(id);
         }
     }
 
@@ -116,9 +121,22 @@ public class CharacterPortals(Character owner)
 
     private void VisitSubZone(uint subZoneId, Vector3 position)
     {
+        var stayedInArea = Owner.SubZoneId == subZoneId || _loginSubZones?.Contains(subZoneId) == true;
+        _loginSubZones = null;
         Owner.SubZoneId = subZoneId;
-        if (subZoneId == 0 || VisitedDistricts.ContainsKey(subZoneId))
+        if (subZoneId == 0)
             return;
+        if (VisitedDistricts.TryGetValue(subZoneId, out var visit))
+        {
+            if (!stayedInArea && visit.OmittedPortalIds is { Count: > 0 })
+            {
+                // A return to the area discovers its destinations again.
+                visit.OmittedPortalIds = null;
+                PopulateDistrictPortals();
+                Send();
+            }
+            return;
+        }
         var portals = PortalManager.Instance.GetRecallBySubZoneId(subZoneId);
         if (portals == null || portals.Count == 0)
             return;
@@ -227,12 +245,20 @@ public class CharacterPortals(Character owner)
                         SubZone = reader.GetUInt32("subzone"),
                         Owner = reader.GetUInt32("owner")
                     };
+                    if (!reader.IsDBNull(reader.GetOrdinal("omitted_portal_ids")))
+                        template.OmittedPortalIds = JsonSerializer.Deserialize<HashSet<uint>>(reader.GetString("omitted_portal_ids"));
                     VisitedDistricts.Add(template.SubZone, template);
                 }
             }
         }
 
         PopulateDistrictPortals();
+        if (Owner.ParentWorld?.Template is { } world && VisitedDistricts.Values.Any(v => v.OmittedPortalIds is { Count: > 0 }))
+        {
+            // Character selection restores the saved position before it loads the book.
+            // A first notice from that position does not rediscover a deleted destination.
+            _loginSubZones = SubZoneManager.Instance.GetSubZoneByPosition(world, Owner.Transform.World.Position);
+        }
     }
 
     public void Save(MySqlConnection connection, MySqlTransaction transaction)
@@ -247,29 +273,6 @@ public class CharacterPortals(Character owner)
 
     private void Save(MySqlConnection connection, MySqlTransaction transaction, PersistenceSaveContext context)
     {
-        if (_removedVisitedDistricts.Count > 0)
-        {
-            var removedIds = _removedVisitedDistricts.ToArray();
-            using (var command = connection.CreateCommand())
-            {
-                command.Connection = connection;
-                command.Transaction = transaction;
-
-                command.CommandText = "DELETE FROM portal_visited_district WHERE owner = @owner AND subzone IN(" + string.Join(",", removedIds) + ")";
-                command.Parameters.AddWithValue("@owner", Owner.Id);
-                command.Prepare();
-                command.ExecuteNonQuery();
-                if (context == null)
-                    _removedVisitedDistricts.Clear();
-                else
-                    context.AfterCommit(() =>
-                    {
-                        foreach (var id in removedIds)
-                            _removedVisitedDistricts.Remove(id);
-                    });
-            }
-        }
-
         if (_removedPrivatePortals.Count > 0)
         {
             var removedIds = _removedPrivatePortals.ToArray();
@@ -321,9 +324,12 @@ public class CharacterPortals(Character owner)
                 command.Connection = connection;
                 command.Transaction = transaction;
 
-                command.CommandText = "REPLACE INTO portal_visited_district(`id`,`subzone`,`owner`) VALUES (@id, @subzone, @owner)";
+                command.CommandText = "REPLACE INTO portal_visited_district(`id`,`subzone`,`owner`,`omitted_portal_ids`) VALUES (@id, @subzone, @owner, @omitted)";
                 command.Parameters.AddWithValue("@id", value.Id);
                 command.Parameters.AddWithValue("@subzone", value.SubZone);
+                command.Parameters.AddWithValue("@omitted", value.OmittedPortalIds is { Count: > 0 }
+                    ? JsonSerializer.Serialize(value.OmittedPortalIds.Order())
+                    : (object)DBNull.Value);
                 command.Parameters.AddWithValue("@owner", value.Owner);
                 command.ExecuteNonQuery();
             }
@@ -333,21 +339,16 @@ public class CharacterPortals(Character owner)
     private void PopulateDistrictPortals()
     {
         DistrictPortals.Clear();
-        if (VisitedDistricts.Count <= 0) { return; }
-
-        foreach (var subZone in VisitedDistricts)
+        foreach (var visit in VisitedDistricts.Values)
         {
-            var portals = PortalManager.Instance.GetRecallBySubZoneId(subZone.Key);
-
-            //var returnPointsId = PortalManager.Instance.GetDistrictReturnPoint(subZone.Value.Id, Owner.Faction.Id);
-
-            if (portals == null || portals.Count == 0) { continue; }
+            var portals = PortalManager.Instance.GetRecallBySubZoneId(visit.SubZone);
+            if (portals == null)
+                continue;
 
             foreach (var portal in portals)
             {
-                //if (portal.Id != returnPointsId) { continue; }
-
-                DistrictPortals.TryAdd(portal.Id, portal);
+                if (visit.OmittedPortalIds?.Contains(portal.Id) != true)
+                    DistrictPortals.TryAdd(portal.Id, portal);
             }
         }
     }

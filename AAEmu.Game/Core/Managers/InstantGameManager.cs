@@ -1,4 +1,5 @@
 ﻿using AAEmu.Commons.Utils;
+using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
@@ -24,6 +25,45 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
     private readonly List<InstantGame> _queueList = [];
 
     private readonly Lock _lock = new();
+    private readonly Dictionary<GladiatorRankResult, TaskCompletionSource> _pendingRankResults = [];
+
+    // Called under the Game persistence lock. Every published end has a committed result.
+    internal Task RecordRankResult(GladiatorRankResult result)
+    {
+        var saved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingRankResults.Add(result, saved);
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                using var connection = MySQL.CreateConnection();
+                result.Write(connection);
+                lock (SaveManager.PersistenceSyncRoot)
+                    MarkRankSaved(result);
+            }
+            catch (Exception ex)
+            {
+                _log.Error(ex, "Could not save Gladiator result {0}. The next Game checkpoint retries it.", result.MatchId);
+            }
+        });
+        return saved.Task;
+    }
+
+    // The normal save and the host shutdown checkpoint each try pending outcomes once.
+    internal void SavePendingRankResults(PersistenceSaveContext context)
+    {
+        foreach (var result in _pendingRankResults.Keys)
+        {
+            result.Write(context.Connection, context.Transaction);
+            context.AfterCommit(() => MarkRankSaved(result));
+        }
+    }
+
+    private void MarkRankSaved(GladiatorRankResult result)
+    {
+        if (_pendingRankResults.Remove(result, out var saved))
+            saved.TrySetResult();
+    }
 
     public void Initialize()
     {

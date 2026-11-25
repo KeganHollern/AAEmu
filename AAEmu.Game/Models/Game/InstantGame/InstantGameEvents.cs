@@ -12,12 +12,14 @@ public partial class InstantGame
     private void AddScore(InstantCorps corps, InstantGameTeamMember scorer, int score)
     {
         scorer.Score += score;
-        BroadcastPacket(new SCInstantGameAddPointPacket(_zoneInstanceId, corps, score,
-            _corps1Result.Score, _corps2Result.Score, scorer.Character.Name));
+        var points = new SCInstantGameAddPointPacket(_zoneInstanceId, corps, score,
+            _corps1Result.Score, _corps2Result.Score, scorer.Character.Name);
 
         var target = _battlefield.RuleSet.VictoryScore;
         if (target > 0 && scorer.Corps.Score >= target)
-            _ = FinishGame(BattlefieldEndingReason.Score);
+            _ = FinishGame(BattlefieldEndingReason.Score, points);
+        else
+            BroadcastPacket(points);
     }
 
     public void OnKill(object sender, OnKillArgs args)

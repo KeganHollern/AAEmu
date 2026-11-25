@@ -527,6 +527,7 @@ CREATE TABLE IF NOT EXISTS `portal_visited_district` (
   `id` int NOT NULL,
   `subzone` int NOT NULL,
   `owner` int NOT NULL,
+  `omitted_portal_ids` json DEFAULT NULL,
   PRIMARY KEY (`id`,`subzone`,`owner`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='List of visited area for the portal book';
 
@@ -791,6 +792,20 @@ CREATE TABLE IF NOT EXISTS `specialty_demand` (
   `regenerate_at` datetime(6) NOT NULL,
   PRIMARY KEY (`item_id`, `zone_group_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `gladiator_rank_results` (
+  `match_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `completed_at` datetime(6) NOT NULL,
+  `corps1_character_id` int unsigned NOT NULL,
+  `corps1_score` int NOT NULL,
+  `corps1_rank_points` int NOT NULL,
+  `corps2_character_id` int unsigned NOT NULL,
+  `corps2_score` int NOT NULL,
+  `corps2_rank_points` int NOT NULL,
+  PRIMARY KEY (`match_id`),
+  KEY `gladiator_corps1_character` (`corps1_character_id`, `completed_at`),
+  KEY `gladiator_corps2_character` (`corps2_character_id`, `completed_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `house_tax_receipts` (
   `mail_id` bigint NOT NULL,
