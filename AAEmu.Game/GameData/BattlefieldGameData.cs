@@ -61,12 +61,14 @@ public class BattlefieldGameData : Singleton<BattlefieldGameData>, IGameDataLoad
                     {
                         Id = reader.GetUInt32("id"),
                         BattlefieldId = reader.GetUInt32("battle_field_id"),
+                        MinimumLevel = reader.GetUInt32("level_min"),
                         CorpsSize = reader.GetUInt32("corps_size"),
                         Corps1FactionId = reader.GetUInt32("corps1_id"),
                         Corps2FactionId = reader.GetUInt32("corps2_id"),
                         TimeOpening = reader.GetInt32("time_opening"),
                         TimeEnding = reader.GetInt32("time_ending"),
                         TimePlaying = reader.GetInt32("time_playing"),
+                        ResurrectionDelay = TimeSpan.FromSeconds(reader.GetUInt32("time_resurrection_delay")),
                         EnemyPlayerKillScore = reader.GetInt32("enemy_player_kill_score", 0),
                         VictoryScore = reader.GetInt32("victory_score")
                     };

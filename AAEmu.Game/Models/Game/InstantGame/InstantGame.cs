@@ -191,6 +191,11 @@ public partial class InstantGame
 
             if (character.CurrentInstantGame != this || !_characterCorps.TryGetValue(character, out var corps))
                 return;
+            if (!_battlefield.CheckEntryLevel(character))
+            {
+                CancelAdmission(character);
+                return;
+            }
             var spawn = corps == InstantCorps.Corps1 ? _battlefield.Spawns.Corps1Spawn : _battlefield.Spawns.Corps2Spawn;
             _entryStarted = true;
             MoveCharacterToWorld(character, _battlefield.ZoneKey, spawn.X, spawn.Y, spawn.Z);

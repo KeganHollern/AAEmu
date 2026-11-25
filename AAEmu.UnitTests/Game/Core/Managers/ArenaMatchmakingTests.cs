@@ -6,6 +6,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.InstantGame;
 using AAEmu.Game.Models.Game.InstantGame.Static;
 using AAEmu.Game.Models.Game.Units;
@@ -73,12 +74,7 @@ public sealed class ArenaMatchmakingTests
     [Test]
     public async Task StockBattlefields_QueueOnlyTheTwoModesWithBothTeamSpawns()
     {
-        var compact = Environment.GetEnvironmentVariable("AAEMU_COMBAT_TEST_COMPACT");
-        Skip.Unless(!string.IsNullOrEmpty(compact), "Set AAEMU_COMBAT_TEST_COMPACT to the read-only r208022 compact.");
-        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = compact, Mode = SqliteOpenMode.ReadOnly }.ToString());
-        connection.Open();
-        var fields = BattlefieldGameData.Instance;
-        fields.Load(connection);
+        var fields = LoadStockFields();
         var applicant = AddApplicant(1);
         var session = Observe(applicant);
         foreach (var id in new uint[] { 1, 2, 3, 6, 10 })
@@ -468,6 +464,72 @@ public sealed class ArenaMatchmakingTests
         clock.Advance(TimeSpan.FromMinutes(1));
         await teardown;
         await Assert.That(_worlds.GetWorlds().Single().Id).IsEqualTo(42u);
+    }
+
+    [Test]
+    [Arguments(7u, 40)]
+    [Arguments(11u, 50)]
+    public async Task StockLevelLimit_RejectsOneLevelBelowAndAdmitsAtTheLimit(uint mode, int minimum)
+    {
+        LoadStockFields();
+        var player = AddApplicant(1);
+        var observer = Observe(player);
+        player.Level = (byte)(minimum - 1);
+        _queue.ApplyToBattlefield(mode, InstantCorps.Any, player);
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(0);
+        await Assert.That(Messages(observer, SCOffsets.SCErrorMsgPacket)
+            .Any(packet => BitConverter.ToInt16(packet, 8) == (short)ErrorMessageType.InstantGameBadLevel)).IsTrue();
+
+        player.Level = (byte)minimum;
+        _queue.ApplyToBattlefield(mode, InstantCorps.Any, player);
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(1);
+        _queue.WithdrawFromBattlefield(player);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StockLevelLimit_RechecksAtMatchmakingAndAcceptance(bool afterInvitation)
+    {
+        LoadStockFields();
+        var player = AddApplicant(1);
+        var other = AddApplicant(2);
+        var observer = Observe(player);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, other);
+        if (afterInvitation)
+        {
+            _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+            var match = player.CurrentInstantGame;
+            await Assert.That(match).IsNotNull();
+            player.Level = 49;
+            match.PlayerInviteResponse(player, true, 1);
+        }
+        else
+        {
+            player.Level = 49;
+            _queue.BattlefieldTick(TimeSpan.FromSeconds(15));
+            await Assert.That(other.CurrentInstantGame).IsNull();
+        }
+
+        await Assert.That(player.CurrentInstantGame).IsNull();
+        await Assert.That(Messages(observer, SCOffsets.SCLoadInstancePacket).Count()).IsEqualTo(0);
+        await Assert.That(Messages(observer, SCOffsets.SCErrorMsgPacket)
+            .Any(packet => BitConverter.ToInt16(packet, 8) == (short)ErrorMessageType.InstantGameBadLevel)).IsTrue();
+        player.Level = 50;
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(2);
+    }
+
+    private static BattlefieldGameData LoadStockFields()
+    {
+        var compact = Environment.GetEnvironmentVariable("AAEMU_COMBAT_TEST_COMPACT");
+        Skip.Unless(!string.IsNullOrEmpty(compact), "Set AAEMU_COMBAT_TEST_COMPACT to the read-only r208022 compact.");
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = compact, Mode = SqliteOpenMode.ReadOnly }.ToString());
+        connection.Open();
+        var fields = BattlefieldGameData.Instance;
+        fields.Load(connection);
+        return fields;
     }
 
     private static TransferVisibilityTests.RecordingSession Observe(CharacterMock character)

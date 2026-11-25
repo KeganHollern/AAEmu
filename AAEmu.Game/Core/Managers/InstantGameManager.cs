@@ -43,13 +43,17 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
                     _matchmakingQueue.Values.Any(queue => queue.Any(applicant => applicant.CharObj.Id == character.Id)))
                     return;
 
+                var battlefield = BattlefieldGameData.Instance.GetBattlefield(battlefieldId);
+                if (battlefield?.HasMatchData != true)
+                {
+                    _log.Warn("[Matchmaking] Battlefield {0} has no complete match configuration.", battlefieldId);
+                    return;
+                }
+                if (!battlefield.CheckEntryLevel(character))
+                    return;
+
                 if (!_matchmakingQueue.TryGetValue(battlefieldId, out var applicants))
                 {
-                    if (BattlefieldGameData.Instance.GetBattlefield(battlefieldId)?.HasMatchData != true)
-                    {
-                        _log.Warn("[Matchmaking] Battlefield {0} has no complete match configuration.", battlefieldId);
-                        return;
-                    }
                     applicants = [];
                     _matchmakingQueue.Add(battlefieldId, applicants);
                 }
@@ -147,13 +151,13 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
             return;
         }
 
+        var battlefield = BattlefieldGameData.Instance.GetBattlefield(bfId);
         var world = WorldManager.Instance;
         applicants.RemoveAll(applicant =>
             world.GetCharacterByObjId(applicant.CharObj.ObjId) != applicant.CharObj ||
-            !PrisonerAccess.CanEnter(applicant.CharObj, true));
+            !PrisonerAccess.CanEnter(applicant.CharObj, true) || !battlefield.CheckEntryLevel(applicant.CharObj));
 
         _log.Trace("[Matchmaking] Running matchmaking for battlefield " + bfId + "... Queue: " + applicants.Count);
-        var battlefield = BattlefieldGameData.Instance.GetBattlefield(bfId);
         var playersNeeded = games.Count == 0 ? battlefield.RuleSet.CorpsSize * 2 : 1;
         if (applicants.Count < playersNeeded)
         {

@@ -57,8 +57,8 @@ public sealed class ArenaScoreTests
             CREATE TABLE battle_fields(id INTEGER, zone_key INTEGER);
             INSERT INTO battle_fields VALUES(7,198),(11,302);
             CREATE TABLE game_rule_sets(id INTEGER, battle_field_id INTEGER, corps_size INTEGER, corps1_id INTEGER,
-                corps2_id INTEGER, time_opening INTEGER, time_ending INTEGER, time_playing INTEGER, victory_score INTEGER);
-            INSERT INTO game_rule_sets VALUES(22,7,5,159,160,4,1,15,0),(28,11,1,159,160,2,1,10,60);
+                corps2_id INTEGER, time_opening INTEGER, time_ending INTEGER, time_playing INTEGER, victory_score INTEGER, level_min INTEGER, time_resurrection_delay INTEGER);
+            INSERT INTO game_rule_sets VALUES(22,7,5,159,160,4,1,15,0,40,15),(28,11,1,159,160,2,1,10,60,50,5);
             CREATE TABLE game_score_rules(id INTEGER, rule_set_id INTEGER, rule_set_corps INTEGER,
                 event_id INTEGER, event_value INTEGER, event_score INTEGER);
             INSERT INTO game_score_rules VALUES(68,22,-1,200,0,3),(93,28,-1,200,0,30),
@@ -129,6 +129,36 @@ public sealed class ArenaScoreTests
         await Assert.That(winner.Events.OnKill.GetInvocationList().Any(handler => handler.Target == _game)).IsFalse();
         await Assert.That(loser.Events.OnKill.GetInvocationList().Any(handler => handler.Target == _game)).IsFalse();
         await Assert.That(Packets(SCOffsets.SCLoadInstancePacket).Length).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(7u, 15)]
+    [Arguments(11u, 5)]
+    public async Task Resurrection_UsesTheStockDelayAfterAnEnemyKill(uint id, int seconds)
+    {
+        Start(id);
+        var victim = _red[0];
+        var killer = _blue[0];
+        Kill(killer, victim);
+        killer.Hp = 17;
+        _clock.Advance(TimeSpan.FromSeconds(seconds) - TimeSpan.FromTicks(1));
+        await Assert.That(victim.Hp).IsEqualTo(0);
+        await Assert.That(killer.Hp).IsEqualTo(17);
+        _clock.Advance(TimeSpan.FromTicks(1));
+        await Assert.That(victim.Hp).IsEqualTo(victim.MaxHp);
+        await Assert.That(killer.Hp).IsEqualTo(id == 11 ? killer.MaxHp : 17);
+    }
+
+    [Test]
+    public async Task Resurrection_LeavesADepartedPlayerAloneAtTheDeadline()
+    {
+        Start(11);
+        var victim = _red[0];
+        Kill(_blue[0], victim);
+        _game.LeaveInstantGame(victim);
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await Assert.That(victim.Hp).IsEqualTo(0);
+        await Assert.That(victim.CurrentInstantGame).IsNull();
     }
 
     [Test]
@@ -252,6 +282,8 @@ public sealed class ArenaScoreTests
         _fields.Load(connection);
         var camp = _fields.GetBattlefield(7).RuleSet;
         var duel = _fields.GetBattlefield(11).RuleSet;
+        await Assert.That(camp.ResurrectionDelay).IsEqualTo(TimeSpan.FromSeconds(15));
+        await Assert.That(duel.ResurrectionDelay).IsEqualTo(TimeSpan.FromSeconds(5));
         await Assert.That((camp.Id, camp.EnemyPlayerKillScore, camp.VictoryScore, camp.TimePlaying)).IsEqualTo((22u, 3, 0, 15));
         await Assert.That((duel.Id, duel.EnemyPlayerKillScore, duel.VictoryScore, duel.TimePlaying)).IsEqualTo((28u, 30, 60, 10));
     }

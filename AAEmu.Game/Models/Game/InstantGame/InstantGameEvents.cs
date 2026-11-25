@@ -61,7 +61,7 @@ public partial class InstantGame
     private async Task ResetAfterKillDelay(Character killer, Character victim, InstantGameTeamMember expectedKiller,
         InstantGameTeamMember expectedVictim, InstantCorps victimCorps)
     {
-        await Task.Delay(TimeSpan.FromSeconds(6), _clock);
+        await Task.Delay(_battlefield.RuleSet.ResurrectionDelay, _clock);
         ResetAfterKill(killer, victim, expectedKiller, expectedVictim, victimCorps);
     }
 
