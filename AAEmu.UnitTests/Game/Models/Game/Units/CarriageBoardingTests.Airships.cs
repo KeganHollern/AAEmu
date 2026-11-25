@@ -50,12 +50,12 @@ public sealed partial class CarriageBoardingTests
             : AddTransferLeg(template, 595, "air_loka_hasla_1", 138, 90, 0,
                 new(25367.3768f, 9749.2046f, 774.56689f), new(25367.7612f, 9748.9351f, 774.57239f),
                 new(25372.8812f, 9738.27f, 774.50543f));
-        var (ship, observer, session) = await SpawnUnboundTransfer(world, template);
+        var (ship, _, session) = await SpawnUnboundTransfer(world, template);
         var start = points[0];
         var target = points[^1];
         var direction = target.AsPositionVector() - start.AsPositionVector();
         await CheckPoint(ship.Transform.World.Position, start.AsPositionVector());
-        await CheckObserverHeading(ship, observer, session, direction);
+        await CheckObserverHeading(ship, direction);
         await Assert.That(ship.TimeLeft).IsGreaterThan(89000u);
         var parked = ship.Transform.World.Position;
         for (var tick = 0; tick < 5 && ship.Transform.World.Position == parked; tick++)
@@ -65,7 +65,7 @@ public sealed partial class CarriageBoardingTests
             ship.MoveTo(ship);
         }
         await Assert.That(Vector3.Distance(parked, ship.Transform.World.Position)).IsGreaterThan(0.1f);
-        await CheckMovementAndObserver(ship, observer, session, direction);
+        await CheckMovementAndObserver(ship, session.Packets, direction);
     }
 
     [Test]
@@ -77,12 +77,12 @@ public sealed partial class CarriageBoardingTests
             new(10447.2886f, 17331.3718f, 257.89609f), new(10522.9448f, 17317.6331f, 257.79001f));
         var departure = AddTransferLeg(template, 630, "air_mari_carcass_7", 145, 0, 0,
             new(10522.9451f, 17317.6331f, 257.79001f), new(10572.9763f, 17308.4037f, 257.47656f));
-        var (airship, observer, session) = await SpawnUnboundTransfer(world, template);
+        var (airship, _, session) = await SpawnUnboundTransfer(world, template);
         var approach = arrival[0];
         var stop = arrival[1];
         await CheckPoint(airship.Transform.World.Position, approach.AsPositionVector());
         var inbound = stop.AsPositionVector() - approach.AsPositionVector();
-        await CheckObserverHeading(airship, observer, session, inbound);
+        await CheckObserverHeading(airship, inbound);
 
         // Let the initial route enter its first nonzero segment, then walk the real final approach.
         var approachSteps = 0;
@@ -95,7 +95,7 @@ public sealed partial class CarriageBoardingTests
             var travel = airship.Transform.World.Position - before;
             if (travel.LengthSquared() < 0.0001f)
                 continue;
-            await CheckMovementAndObserver(airship, observer, session, inbound);
+            await CheckMovementAndObserver(airship, session.Packets, inbound);
             approachSteps++;
         }
         await Assert.That(approachSteps).IsGreaterThan(70);
@@ -107,7 +107,7 @@ public sealed partial class CarriageBoardingTests
         airship.MoveTo(airship);
         await Assert.That(session.Packets).IsEmpty();
         await CheckPoint(airship.Transform.World.Position, parked);
-        await CheckObserverHeading(airship, observer, session, inbound);
+        await CheckObserverHeading(airship, inbound);
 
         airship.WaitTime = DateTime.MinValue;
         for (var ticks = 0; ticks < 3 && airship.Transform.World.Position == parked; ticks++)
@@ -117,7 +117,7 @@ public sealed partial class CarriageBoardingTests
         }
         var outbound = departure[1].AsPositionVector() - parked;
         await Assert.That(Vector3.Dot(airship.Transform.World.Position - parked, outbound)).IsGreaterThan(0f);
-        await CheckMovementAndObserver(airship, observer, session, outbound);
+        await CheckMovementAndObserver(airship, session.Packets, outbound);
     }
 
     private (WorldInstance World, TransferTemplate Template) CreateAirship(uint id)

@@ -68,10 +68,20 @@ public sealed partial class CarriageBoardingTests
         }
         var direction = motor.Transform.World.Position - initial;
         await Assert.That(direction.Length()).IsGreaterThan(0.1f);
-        // A bound trailer can also receive a movement update on this tick.
-        session.Packets.RemoveAll(p => BitConverter.ToUInt16(p, 6) != SCOffsets.SCOneUnitMovementPacket
-            || new PacketStream(p, 8, p.Length - 8).ReadBc() != motor.ObjId);
-        await CheckMovementAndObserver(motor, viewer, session, direction);
+        // Deliver the same public notice as the seat initializer on the tiger03 regression route.
+        if (id == 26)
+        {
+            var seat = motor.Bounded.AttachedDoodads[0];
+            seat.BroadcastPacket(new SCDoodadPhaseChangedPacket(seat), true);
+            await Assert.That(session.Packets.Any(p => BitConverter.ToUInt16(p, 6) == SCOffsets.SCDoodadPhaseChangedPacket
+                && new PacketStream(p, 8, p.Length - 8).ReadBc() == seat.ObjId)).IsTrue();
+        }
+
+        // The movement observer can receive updates for the trailer and its seats.
+        var motorMoves = session.Packets.Where(p => BitConverter.ToUInt16(p, 6) == SCOffsets.SCOneUnitMovementPacket
+            && new PacketStream(p, 8, p.Length - 8).ReadBc() == motor.ObjId).ToArray();
+        await CheckMovementAndObserver(motor, motorMoves, direction);
+        await Assert.That(session.Packets).Contains(motorMoves.Single());
     }
 
     [Test]
