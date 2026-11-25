@@ -43,6 +43,9 @@ public class VehicleSeat(BaseUnit parentVehicle)
                 if (_seats[seatObjId][i] == character.Id)
                 {
                     _seats[seatObjId][i] = 0; // free up space
+                    // A transfer can carry the rider to another station without any on-foot movement.
+                    if (parentVehicle.Transform.Parent?.GameObject is Transfer && character.Transform.Parent == parentVehicle.Transform)
+                        MovementValidation.RecordServerRelocation(character);
                     character.Transform.StickyParent = null;
                     if (parentVehicle is Transfer transfer)
                         transfer.AttachedCharacters.Remove(character);
