@@ -182,6 +182,9 @@ public partial class InstantGame
 
     internal bool IsFinished => _finished;
 
+    // Each match owns its invitation ID object, even when a world instance number is reused.
+    internal bool CanInvite(MatchmakingApplicant applicant) => !ReferenceEquals(applicant.DeclinedRoom, _zoneInstanceId);
+
     public bool IsFull => _players.Count == _battlefield.RuleSet.CorpsSize * 2;
 
     public uint BattlefieldId => _battlefield.Id;
@@ -212,16 +215,16 @@ public partial class InstantGame
                 CancelAdmission(character);
                 return;
             }
+            if (!IsInvited(character) || !_characterCorps.TryGetValue(character, out var corps))
+                return;
             if (!joins)
             {
-                // Next room, remove from current game then readd to requeue
+                // Next Room keeps the application open for a different match.
                 InstantGameManager.Instance.WithdrawFromBattlefield(character);
-                InstantGameManager.Instance.ApplyToBattlefield(_battlefield.Id, InstantCorps.Any, character);
+                InstantGameManager.Instance.ApplyToBattlefield(_battlefield.Id, InstantCorps.Any, character, _zoneInstanceId);
                 return;
             }
 
-            if (!IsInvited(character) || !_characterCorps.TryGetValue(character, out var corps))
-                return;
             if (!InstantGameManager.PlayerCanEnter(character) || !_battlefield.CheckEntryLevel(character))
             {
                 CancelAdmission(character);

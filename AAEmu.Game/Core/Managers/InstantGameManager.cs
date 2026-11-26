@@ -9,6 +9,7 @@ using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.InstantGame;
 using AAEmu.Game.Models.Game.InstantGame.Static;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.World;
 
 using NLog;
 
@@ -79,7 +80,10 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
         TickManager.Instance.OnTick.Subscribe(BattlefieldTick, TimeSpan.FromSeconds(15));
     }
 
-    public void ApplyToBattlefield(uint battlefieldId, InstantCorps corps, Character character)
+    public void ApplyToBattlefield(uint battlefieldId, InstantCorps corps, Character character) =>
+        ApplyToBattlefield(battlefieldId, corps, character, null);
+
+    internal void ApplyToBattlefield(uint battlefieldId, InstantCorps corps, Character character, ZoneInstanceId declinedRoom)
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
@@ -108,7 +112,7 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
                     _matchmakingQueue.Add(battlefieldId, applicants);
                 }
 
-                applicants.Add(new MatchmakingApplicant(character));
+                applicants.Add(new MatchmakingApplicant(character, declinedRoom));
             }
 
             _log.Trace("[Matchmaking] Added player " + character.Name + " to matchmaking queue for battlefield " +
@@ -194,8 +198,6 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
 
     private void CheckMatchmakingQueue(uint bfId)
     {
-        InstantGame game;
-        var games = _queueList.Where(o => o.BattlefieldId == bfId).ToList();
         if (!_matchmakingQueue.TryGetValue(bfId, out var applicants))
         {
             return;
@@ -208,52 +210,34 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
             !PlayerCanEnter(applicant.CharObj) || !battlefield.CheckEntryLevel(applicant.CharObj));
 
         _log.Trace("[Matchmaking] Running matchmaking for battlefield " + bfId + "... Queue: " + applicants.Count);
-        var playersNeeded = games.Count == 0 ? battlefield.RuleSet.CorpsSize * 2 : 1;
-        if (applicants.Count < playersNeeded)
+        // Give each vacancy to the first waiting player who can enter that room.
+        var game = _queueList.FirstOrDefault(room => room.BattlefieldId == bfId && applicants.Any(room.CanInvite));
+        if (game == null)
         {
-            _log.Trace("[Matchmaking] {0} more players needed for battlefield {1}", playersNeeded - applicants.Count, bfId);
-            return;
-        }
-
-        // Games without sufficient players are prioritized before new games are made.
-        if (games.Count > 0)
-        {
-            _log.Trace("[Matchmaking] Game found without full players.");
-            game = games[0];
-        }
-        else // Create a new game if there is no current one to matchmake for.
-            game = new InstantGame(battlefield);
-
-        // Loop through the matchmaking list to fill current and new games.
-        var queueCount = applicants.Count;
-        for (var i = 0; i < queueCount; i++)
-        {
-            if (game.IsFull)
+            var playersNeeded = battlefield.RuleSet.CorpsSize * 2;
+            if (applicants.Count < playersNeeded)
             {
-                _log.Trace("[Matchmaking] Game is full.");
-                if (_queueList.Remove(game))
-                {
-                    _log.Trace("[Matchmaking] Removing queued game from queueList.");
-                }
-                break; // Matchmaking complete if game is full.
+                _log.Trace("[Matchmaking] {0} more players needed for battlefield {1}", playersNeeded - applicants.Count, bfId);
+                return;
             }
 
-            // Obtain character of player matchmaking and remove them from queue to add them into a game.
-            var playerCharacter = applicants[0].CharObj;
-            applicants.RemoveAt(0);
+            game = new InstantGame(battlefield);
+            _instantGames.Add(game);
+            _log.Trace("[Matchmaking] Instant game created.");
+        }
 
-            // Add player and invite to instant game
+        foreach (var applicant in applicants.Where(game.CanInvite).ToArray())
+        {
+            if (game.IsFull)
+                break;
+
+            applicants.Remove(applicant);
+            var playerCharacter = applicant.CharObj;
             if (world.GetCharacterByObjId(playerCharacter.ObjId) == playerCharacter)
             {
                 game.AddPlayer(playerCharacter, game.GetCorps());
                 _log.Trace("[Matchmaking] Adding player to game: " + playerCharacter.Name);
             }
-        }
-        // Add new arena with paired players if there are no queued games to fill up.
-        if (!_instantGames.Contains(game) && games.Count == 0)
-        {
-            _log.Trace("[Matchmaking] Instant game created.");
-            _instantGames.Add(game);
         }
         if (game.IsFull)
         {
