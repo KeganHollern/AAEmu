@@ -132,8 +132,8 @@ public partial class AiGeoDataManager
     }
 
     private CryWorldObjectIndex GetGroundBrushIndex(WorldCell cell, ObjectsFile objects) =>
-        _groundBrushes.GetValue(objects, data => new CryWorldObjectIndex(
-            CryWorldObjectIndex.ReadBrushInstances(data, cell.CellX, cell.CellY)));
+        _groundBrushes.GetOrAdd(objects, static (data, owner) => new CryWorldObjectIndex(
+            CryWorldObjectIndex.ReadBrushInstances(data, owner.CellX, owner.CellY)), cell);
 
     private bool TryResolveStaticFloorInCell(Npc npc, AcceptedFace previous, WorldCell cell, Vector3 from, Vector3 to, bool belowTerrain,
         ref bool mayLeaveBrush, out float? floor, out AcceptedFace accepted, NpcStepSurfaceTrace trace, Vector3? inclinedTarget)

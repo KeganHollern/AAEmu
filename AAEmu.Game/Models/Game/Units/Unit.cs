@@ -1096,8 +1096,9 @@ public partial class Unit : BaseUnit, IUnit
         }
 
         var position = Transform.World.Position;
-        var grounded = ParentWorld?.Template?.TryGetFallTerrainHeight(position.X, position.Y, out var height) == true &&
-            position.Z <= height + FallMovement.PositionTolerance;
+        var template = ParentWorld?.Template;
+        var grounded = (template?.TryGetFallTerrainHeight(position.X, position.Y, out var height) == true &&
+            position.Z <= height + FallMovement.PositionTolerance) || template?.GeoData?.HasFlatFallSupport(position) == true;
         var impact = FallMovement.Observe(position.Z, time ?? FallMovement.Now, grounded, reportedLanding);
         if (impact > 0)
             DoFallDamage(impact);
