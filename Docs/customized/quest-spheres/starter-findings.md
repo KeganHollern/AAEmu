@@ -51,7 +51,7 @@ The checked legacy records contain no matching volume for the exploration starte
 The following findings need further work:
 
 - Quest 41, sphere 101, has 14 legacy spheres with radius 5 m. Current placement evidence does not establish all 14 locations.
-- Quest 340, sphere 120, uses a 10-point polygon. An exact result needs polygon support.
+- The original review identified the 10-point polygon for quest 340. The later Ambush check below covers it.
 - Quest 815, sphere 211, has a legacy point approximately 1,351 m from the current quest objects.
 - Quest 1858, sphere 204, has a legacy point approximately 2,050 m from its current report NPC.
 - 14 missing starters have same-quest hints on other components. None has an explicit sphere-ID link from the hinted act.
@@ -109,3 +109,27 @@ The run used Game `631604d85cf1ad11cacccb64e55be70262ca1600` as the source basel
 The server compact SHA-256 was `636ca9ecfe777bc86542e4b828f930c7861d2b4639b1bcfff670c064fee9c1ac`.
 The 69 client hint files and 18 world definitions matched byte for byte between the pristine and installed r208022 archives.
 Their aggregate SHA-256 values were `687bef70ed4ba11a92a378cc43d01e65d61e644d5af97965a6767fec17ee0390` and `78479b57d0786227095a532a934416e24a2809877d538bdc9cfbed6cfef68bae`, respectively.
+
+
+## Ambush at Adrian's Farm
+
+Quest 340 starts at component 2541. Act 3867 uses accept-sphere detail 48 and sphere 120.
+Both compacts link `spheres[120]` to `SphereQuest` detail 120 and quest 340.
+The start component needs level 22, mother faction 148 and completion of quest 336, A Crystal Clue.
+Its self skill 11409 uses spawn effect 270 for Assassin 5158. The skill names Adrian's Farm.
+The report component 2543 names Adrian Yatesburg, NPC 5157.
+
+The signed and original files at `game/worlds/main_world/zone/133/mission_mission0.xml` have SHA-256
+`978826bd26afe008d624cdc9040424ac925395e0bd09b22dd52e1ce8e11667ff`.
+Both the Objects and ObjectsSyncless sections contain the same Shape167, GUID `47729991A4CD58C2`.
+Its Area has Group 16, Id 0, value1 120, value2 0 and Height 0.
+The zone origin is (10,10) cells. The Game supplement contains the 10 transformed points once.
+The entity origin supplies the region lookup position. The shared area predicate checks the authored polygon.
+Height 0 gives it the same unbounded vertical extent as the original area proxy.
+The Group 16 binding is a data inference. The typed compact chain, self skill and report NPC independently support this location.
+
+At X11476, the normal foot route starts outside at Y11519, Z129.346.
+It crosses the polygon and reaches Y11527, Z127.619 inside the farm approach.
+Adrian stands 5.72 m outside the nearest edge.
+A point at (11476,11535) lies inside the bounding box and outside the concave polygon.
+The polygon has one starter across both mission copies. The wider starter inventory still lacks 418 component volumes.

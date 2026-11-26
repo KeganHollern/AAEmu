@@ -7,6 +7,7 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Models.Game.World;
@@ -47,9 +48,11 @@ public class SphereQuest
     public float Radius { get; set; }
     public Vector3 Xyz { get; set; } = Vector3.Zero;
 
+    internal Area Polygon { get; init; }
+
     public bool Contains(Vector3 pos)
     {
-        return MathUtil.CalculateDistance(Xyz, pos, true) <= Radius;
+        return Polygon?.Contains(pos) ?? (MathUtil.CalculateDistance(Xyz, pos, true) <= Radius);
     }
 }
 

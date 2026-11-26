@@ -11,7 +11,7 @@
   "manifest_sha256": "dc4eb968057b1ac0a2f02a6218feeeb1c3ae1818150549c193b2f7adb1dc72c6",
   "npc_placements": {
     "file_count": 19,
-    "sha256": "2fd9dadcf26ca4d69be5f257539faaef06cc34e4c221ad37f4c6c016140bde64"
+    "sha256": "8229051ea6d77c6e8c715240d3686c08bb75c1ca0cd84473dfd8ab8a79e19707"
   },
   "objective_count": 126,
   "objectives": [
@@ -1880,9 +1880,9 @@
   ],
   "ok": true,
   "schema_version": 1,
-  "supplement_volume_count": 7,
+  "supplement_volume_count": 8,
   "supplements": {
     "file_count": 2,
-    "sha256": "e041f93061450781595fdf216d8303bcb2a54059c29e1fdf9523636f9b483121"
+    "sha256": "58c89f524684f7b55486b4e662e960783aa19ec8a9384d6aed8b667925a9d36e"
   }
 }
