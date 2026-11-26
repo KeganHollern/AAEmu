@@ -12,6 +12,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
@@ -19,12 +20,14 @@ using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Merchant;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.UnitTests.Utils.Mocks;
+using Microsoft.Data.Sqlite;
 
 namespace AAEmu.UnitTests.Game.Core.Packets.C2G;
 
@@ -58,6 +61,9 @@ public sealed class CSBuyItemsPacketTests
         SetField(items, "_removedItems", new List<ulong>());
         SetField(items, "_templates", new Dictionary<uint, ItemTemplate>
         {
+            [23633] = new() { Id = 23633, MaxCount = 100 },
+            [21166] = new() { Id = 21166, MaxCount = 1, Price = 100000 },
+            [16197] = new() { Id = 16197, MaxCount = 1, Price = 5000 },
             [1000] = new() { Id = 1000, MaxCount = 100, FixedGrade = -1, Price = 10, HonorPrice = 20, LivingPointPrice = 30 },
             [1001] = new() { Id = 1001, MaxCount = 100, FixedGrade = -1, Price = 1 }
         });
@@ -77,6 +83,11 @@ public sealed class CSBuyItemsPacketTests
         _store = new DoodadFuncStoreUi { Id = 14, MerchantPackId = 145 };
         SetField(doodads, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
         {
+            [nameof(DoodadFuncPurchase)] = new()
+            {
+                [25] = new DoodadFuncPurchase { Id = 25, ItemId = 16197, Count = 1 },
+                [134] = new DoodadFuncPurchase { Id = 134, ItemId = 21166, Count = 1, CoinItemId = 23633, CoinCount = 15 }
+            },
             [nameof(DoodadFuncStoreUi)] = new() { [14] = _store }
         });
         Install(doodads);
@@ -151,6 +162,131 @@ public sealed class CSBuyItemsPacketTests
         await Assert.That(item.Count).IsEqualTo(2);
         await Assert.That(item.Grade).IsEqualTo((byte)2);
         await Assert.That(_session.Packets.Any(packet => BitConverter.ToUInt16(packet, 6) == SCOffsets.SCItemTaskSuccessPacket)).IsTrue();
+    }
+
+    private void OpenBlueStatueDisplay()
+    {
+        _shop.TemplateId = 3206;
+        _function.FuncKey = 6542;
+        _function.FuncId = 25;
+        _function.GroupId = 7312;
+        _function.SkillId = 14569;
+        _function.FuncType = nameof(DoodadFuncPurchase);
+        _character.Money = 40000;
+    }
+
+    private void BuyBlueStatue() => SendPurchase(clientShopId: 6542,
+        requests: [new StorePurchaseRequest(16197, 1, ShopCurrencyType.Money)]);
+
+    [Test]
+    [Arguments(1.9f)]
+    [Arguments(4f)]
+    public async Task BlueStatueConfirmation_DebitsTheDisplayedPriceAndGrantsOneItem(float distance)
+    {
+        OpenBlueStatueDisplay();
+        _shop.Transform.Local.SetPosition(distance, 0, 0);
+        BuyBlueStatue();
+
+        await Assert.That(_character.Money).IsEqualTo(35000L);
+        var item = _character.Inventory.Bag.Items.Single();
+        await Assert.That(item.TemplateId).IsEqualTo(16197U);
+        await Assert.That(item.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task BlueStatueConfirmation_GrantsItsStockAchievementOnAcquisition()
+    {
+        var path = Environment.GetEnvironmentVariable("AAEMU_MERCHANT_COMPACT");
+        Skip.Unless(!string.IsNullOrEmpty(path), "Set AAEMU_MERCHANT_COMPACT for the stock statue achievement.");
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            { DataSource = path, Mode = SqliteOpenMode.ReadOnly }.ToString());
+        connection.Open();
+        var data = new AchievementGameData();
+        data.Load(connection);
+        data.PostLoad();
+        var requirements = new UnitRequirementsGameData();
+        requirements.Load(connection);
+        var achievements = new CharacterAchievements(_character, data, TimeProvider.System,
+            persistStateOverride: () => true, unitRequirementsData: requirements);
+        typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(_character, achievements);
+        OpenBlueStatueDisplay();
+
+        BuyBlueStatue();
+
+        await Assert.That(achievements.IsCompleted(203)).IsTrue();
+        await Assert.That(achievements.GetAmount(203)).IsEqualTo(1U);
+        await Assert.That(achievements.IsCompleted(204)).IsFalse();
+    }
+
+    [Test]
+    [Arguments(4999, 5, 2f, ErrorMessageType.NotEnoughMoney)]
+    [Arguments(40000, 0, 2f, ErrorMessageType.BagFull)]
+    [Arguments(40000, 5, 4.1f, ErrorMessageType.TooFarAway)]
+    public async Task BlueStatueConfirmation_PreservesMoneyAndBagOnRefusal(
+        int money, int bagSize, float distance, ErrorMessageType expected)
+    {
+        OpenBlueStatueDisplay();
+        _character.Money = money;
+        _character.Inventory.Bag.ContainerSize = bagSize;
+        _shop.Transform.Local.SetPosition(distance, 0, 0);
+        BuyBlueStatue();
+
+        await Assert.That(_character.Money).IsEqualTo((long)money);
+        await Assert.That(_character.Inventory.Bag.Items).IsEmpty();
+        await AssertSingleError(expected);
+    }
+
+    [Test]
+    public async Task BlueStatueConfirmation_ClosedOfferPreservesTheWalletAndBag()
+    {
+        OpenBlueStatueDisplay();
+        _shop.CurrentFuncs.Clear();
+        BuyBlueStatue();
+
+        await Assert.That(_character.Money).IsEqualTo(40000L);
+        await Assert.That(_character.Inventory.Bag.Items).IsEmpty();
+        await AssertSingleError(ErrorMessageType.StoreHaveProblem);
+    }
+
+    [Test]
+    [Arguments(16198U, 1)]
+    [Arguments(16197U, 2)]
+    public async Task BlueStatueConfirmation_RejectsAQuoteWhenTheActiveItemOrAmountChanged(uint itemId, int count)
+    {
+        OpenBlueStatueDisplay();
+        var offer = (DoodadFuncPurchase)DoodadManager.Instance.GetFuncTemplate(_function.FuncId, _function.FuncType);
+        offer.ItemId = itemId;
+        offer.Count = count;
+
+        BuyBlueStatue();
+
+        await Assert.That(_character.Money).IsEqualTo(40000L);
+        await Assert.That(_character.Inventory.Bag.Items).IsEmpty();
+        await AssertSingleError(ErrorMessageType.StoreInvalidItem);
+    }
+
+    [Test]
+    public async Task CottageDesignDisplay_TakesFifteenGildaStarsThroughItsTokenConfirmation()
+    {
+        _shop.TemplateId = 4729;
+        _function.FuncId = 134;
+        _function.FuncKey = 10262;
+        _function.SkillId = 14569;
+        _function.GroupId = 11691;
+        _function.FuncType = nameof(DoodadFuncPurchase);
+        var byId = new Dictionary<uint, DoodadFunc> { [10262] = _function };
+        SetField(DoodadManager.Instance, "_funcsById", byId);
+        var bag = _character.Inventory.Bag;
+        await Assert.That(bag.AcquireDefaultItem(ItemTaskType.DoodadInteraction, 23633, 15)).IsTrue();
+
+        var confirmation = new PacketStream().WriteBc(_shop.ObjId).Write(_function.FuncKey);
+        new CSBuyCoinItemPacket { Connection = _character.Connection }.Read(new PacketStream(confirmation.GetBytes()));
+
+        await Assert.That(_character.Money).IsEqualTo(1000L);
+        var item = bag.Items.Single();
+        await Assert.That(item.TemplateId).IsEqualTo(21166U);
+        await Assert.That(item.Count).IsEqualTo(1);
     }
 
     [Test]

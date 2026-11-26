@@ -9,6 +9,11 @@ namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
 
 public class DoodadFuncPurchase : DoodadFuncTemplate
 {
+    // Skill 14569 opens the stock display dialog. Its authored reach is four metres.
+    internal const uint DisplaySkillId = 14569;
+    internal const float DisplayReach = 4f;
+    internal bool UsesItemPayment => CoinItemId != 0 && CoinCount > 0;
+
     public uint ItemId { get; set; }
     public int Count { get; set; }
     public uint CoinItemId { get; set; }
@@ -38,7 +43,7 @@ public class DoodadFuncPurchase : DoodadFuncTemplate
             return ErrorMessageType.BackpackOccupied;
         using var mutation = new InventoryMutation(ItemTaskType.DoodadInteraction);
         // r208022 selects item payment only when both authored values are positive.
-        if (CoinItemId != 0 && CoinCount > 0)
+        if (UsesItemPayment)
         {
             if (!InventoryPayment.TryConsume(mutation, character.Inventory.Bag, CoinItemId, CoinCount))
                 return ErrorMessageType.NotEnoughItem;
