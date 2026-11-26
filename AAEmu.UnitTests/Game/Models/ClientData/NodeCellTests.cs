@@ -70,23 +70,34 @@ public class NodeCellTests
             .Within(0.001f);
     }
 
+    [Test]
+    public async Task Read_HoleMaskUsesAllFiveOriginalSurfaceBitsBeforeHeightRescaling()
+    {
+        var node = ReadNode(3, (x, y) => (ushort)(x == 0 && y == 1 ? 31 : 15), 5, true);
+        await Assert.That(node.TerrainHoles[15 * 32 + 16]).IsTrue();
+        await Assert.That(node.TerrainHoles[15 * 32 + 15]).IsFalse();
+        await Assert.That(node.TerrainHoles[16 * 32 + 16]).IsFalse();
+        var solid = ReadNode(33, (_, _) => 15, 5, true);
+        await Assert.That(solid.TerrainHoles).IsNull();
+    }
+
     private static ushort EncodeHeight(int height, int flags)
     {
         return (ushort)((height << 4) | (flags & 0xF));
     }
 
-    private static NodeCell ReadNode(int size, Func<int, int, ushort> createRawHeight)
+    private static NodeCell ReadNode(int size, Func<int, int, ushort> createRawHeight, byte version = 7, bool hasHoles = false)
     {
         using var stream = new MemoryStream();
         using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, true))
         {
-            writer.Write((byte)7); // Version
+            writer.Write(version); // Version
             writer.Write((byte)0); // Dummy
             writer.Write((byte)0); // Flags
             writer.Write((byte)0); // Flags2
             for (var i = 0; i < 6; i++)
                 writer.Write(0f); // BoxHeightmap
-            writer.Write((byte)0); // bHasHoles
+            writer.Write((byte)(hasHoles ? 1 : 0)); // bHasHoles
             writer.Write(0f); // fOffset
             writer.Write(0.003125f); // fRange; produces a five-centimetre integer step
             writer.Write(size);
