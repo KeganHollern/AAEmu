@@ -35,9 +35,14 @@ public partial class Skill
 
         lock (SaveManager.PersistenceSyncRoot)
         {
-            if (!selectedByUse && DoodadManager.Instance.GetFunc(doodad.FuncGroupId, Id)?.FuncType is not
-                    (nameof(DoodadFuncUse) or nameof(DoodadFuncOpenPaper) or nameof(DoodadFuncRemoveItem) or nameof(DoodadFuncBinding)))
-                return true;
+            if (!selectedByUse)
+            {
+                var action = DoodadManager.Instance.GetFunc(doodad.FuncGroupId, Id);
+                // GetFunc can return a skill-less fallback. Only the original use chains can reserve through it.
+                if (action?.SkillId != Id && action?.FuncType is not
+                        (nameof(DoodadFuncUse) or nameof(DoodadFuncOpenPaper) or nameof(DoodadFuncRemoveItem)))
+                    return true;
+            }
             if (GetCastTime(caster) <= 0)
                 return true;
 

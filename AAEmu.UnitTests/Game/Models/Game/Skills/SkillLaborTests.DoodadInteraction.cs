@@ -140,6 +140,41 @@ public sealed partial class SkillLaborTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DoodadCast_SingleUserBuffAndPickupReserveOnlyTheirAuthoredSkill(bool pickup)
+    {
+        var (target, other, _) = SetUpSign(true);
+        target.TemplateId = target.Template.Id = pickup ? 6271u : 6075u;
+        target.FuncGroupId = pickup ? 16601u : 15780u;
+        var template = new SkillTemplate
+        {
+            Id = pickup ? 21112u : 20420u, TargetType = SkillTargetType.Doodad,
+            MaxRange = 3, CastingTime = pickup ? 1000 : 1700
+        };
+        var effect = TargetUse(pickup ? 3609u : 3392u);
+        ((InteractionEffect)effect.Template).WorldInteraction = pickup ? WorldInteractionType.RecoverItem : WorldInteractionType.Use;
+        template.Effects.Add(effect);
+        var func = new DoodadFunc
+        {
+            SkillId = template.Id, GroupId = target.FuncGroupId,
+            FuncType = pickup ? nameof(DoodadFuncRecoverItem) : nameof(DoodadFuncBuff),
+            FuncId = pickup ? 636u : 8u, NextPhase = pickup ? -1 : 15781
+        };
+        SetField(DoodadManager.Instance, "_funcsByGroups",
+            new Dictionary<uint, List<DoodadFunc>> { [target.FuncGroupId] = [func] });
+        await Assert.That(StartReading(new Skill(template), _owner, target)).IsEqualTo(SkillResult.Success);
+        await Assert.That(StartReading(new Skill(template), other, target)).IsEqualTo(SkillResult.Failure);
+        _owner.InterruptSkills();
+        await Assert.That(StartReading(new Skill(template), other, target)).IsEqualTo(SkillResult.Success);
+        other.InterruptSkills();
+
+        func.SkillId = 0;
+        await Assert.That(StartReading(new Skill(template), _owner, target)).IsEqualTo(SkillResult.Success);
+        await Assert.That(StartReading(new Skill(template), other, target)).IsEqualTo(SkillResult.Success);
+    }
+
+    [Test]
     public async Task DoodadCast_SecondReaderGetsNativeErrorBeforeCastAndCanRetryAfterCancellation()
     {
         var (sign, other, session) = SetUpSign(true);
