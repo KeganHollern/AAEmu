@@ -447,6 +447,7 @@ CREATE TABLE IF NOT EXISTS `mails` (
   `open_date` datetime NOT NULL,
   `send_date` datetime NOT NULL,
   `received_date` datetime NOT NULL,
+  `expires_at` datetime(6) NULL DEFAULT NULL,
   `returned` int NOT NULL,
   `extra` bigint NOT NULL,
   `money_amount_1` int NOT NULL,

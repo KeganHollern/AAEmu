@@ -143,6 +143,7 @@ public partial class MailManager(IMailIdManager mailIdManager, INameManager name
             }
             if (!_allPlayerMails.TryAdd(mail.Id, mail))
                 return false;
+            mail.StartDeliveryRetention();
             NotifyNewMailByNameIfOnline(mail, targetName);
             return true;
         }
@@ -232,6 +233,7 @@ public partial class MailManager(IMailIdManager mailIdManager, INameManager name
                             Id = reader.GetInt32("id"), Title = reader.GetString("title"), MailType = (MailType)reader.GetInt32("type"),
                             ReceiverName = reader.GetString("receiver_name"),
                             OpenDate = reader.GetDateTime("open_date"),
+                            ExpiresAt = reader.IsDBNull(reader.GetOrdinal("expires_at")) ? null : reader.GetDateTime("expires_at"),
                             Header =
                             {
                                 Status = (MailStatus)reader.GetInt32("status"),
@@ -363,19 +365,20 @@ public partial class MailManager(IMailIdManager mailIdManager, INameManager name
                 command.Transaction = transaction;
                 command.CommandText = "REPLACE INTO mails(" +
                     "`id`,`type`,`status`,`title`,`text`,`sender_id`,`sender_name`," +
-                    "`attachment_count`,`receiver_id`,`receiver_name`,`open_date`,`send_date`,`received_date`," +
+                    "`attachment_count`,`receiver_id`,`receiver_name`,`open_date`,`send_date`,`received_date`,`expires_at`," +
                     "`returned`,`extra`,`money_amount_1`,`money_amount_2`,`money_amount_3`," +
                     "`attachment0`,`attachment1`,`attachment2`,`attachment3`,`attachment4`,`attachment5`," +
                     "`attachment6`,`attachment7`,`attachment8`,`attachment9`" +
                     ") VALUES (" +
                     "@id, @type, @status, @title, @text, @senderId, @senderName, " +
-                    "@attachment_count, @receiverId, @receiverName, @openDate, @sendDate, @receivedDate, " +
+                    "@attachment_count, @receiverId, @receiverName, @openDate, @sendDate, @receivedDate, @expiresAt, " +
                     "@returned, @extra, @money1, @money2, @money3," +
                     "@attachment0, @attachment1, @attachment2, @attachment3, @attachment4, @attachment5, " +
                     "@attachment6, @attachment7, @attachment8, @attachment9" +
                     ")";
 
                 command.Parameters.AddWithValue("@id", mtbs.Value.Id);
+                command.Parameters.AddWithValue("@expiresAt", (object)mtbs.Value.ExpiresAt ?? DBNull.Value);
                 command.Parameters.AddWithValue("@openDate", mtbs.Value.Header.OpenDate);
                 command.Parameters.AddWithValue("@type", (byte)mtbs.Value.Header.Type);
                 command.Parameters.AddWithValue("@status", mtbs.Value.Header.Status);

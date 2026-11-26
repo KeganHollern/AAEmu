@@ -25,6 +25,8 @@ public class BaseMail
 
     // Local helpers
     public bool IsDelivered { get; set; }
+    // A null deadline preserves the original retention for old and specialized mail.
+    internal DateTime? ExpiresAt { get; set; }
     internal bool HasUnresolvedAttachments { get; set; }
     public bool IsDirty { get => _isDirty; set => _isDirty = value; }
 
@@ -33,6 +35,26 @@ public class BaseMail
         Header = new MailHeader(this);
         Body = new MailBody(this);
         IsDelivered = false;
+    }
+
+    internal void StartDeliveryRetention()
+    {
+        ExpiresAt = MailType switch
+        {
+            MailType.Normal or MailType.Express when Header.SenderId != 0 => Body.RecvDate.AddDays(30),
+            MailType.Normal or MailType.Express or MailType.Admin or MailType.SysExpress => Body.RecvDate.AddDays(90),
+            _ => null
+        };
+    }
+
+    internal void UpdateEmptyLetterExpiry(DateTime now)
+    {
+        if (ExpiresAt.HasValue && !HasUnresolvedAttachments && GetTotalAttachmentCount() == 0)
+        {
+            var since = Header.Status == MailStatus.Read && OpenDate > now ? OpenDate : now;
+            ExpiresAt = since.AddDays(5);
+            IsDirty = true;
+        }
     }
 
     public bool Send()

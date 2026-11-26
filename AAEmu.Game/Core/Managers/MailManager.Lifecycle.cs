@@ -16,7 +16,9 @@ public partial class MailManager
     internal Func<uint, bool?> ActiveMailSender { get; set; } = MailLifecycleStore.IsActiveSender;
 
     internal static bool IsExpired(BaseMail mail, DateTime now) =>
-        mail.Body.RecvDate <= now && now - mail.Body.RecvDate >= MailExpireDelay;
+        mail.Body.RecvDate <= now && (mail.ExpiresAt is { } deadline
+            ? now >= deadline
+            : now - mail.Body.RecvDate >= MailExpireDelay);
 
     public bool ReturnMail(Character receiver, long id)
     {
@@ -126,6 +128,8 @@ public partial class MailManager
                     BillingAmount = source.Body.BillingAmount, MoneyAmount2 = source.Body.MoneyAmount2,
                     SendDate = now, RecvDate = now }
             };
+            if (source.ExpiresAt.HasValue)
+                returned.StartDeliveryRetention();
             if (source.Body.Attachments.Count > 0)
             {
                 var destination = itemManager.GetItemContainerForCharacter(returned.Header.ReceiverId, SlotType.Mail, null, 0);

@@ -43,7 +43,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         Assert.Equal(MailResult.Success, graph.Send(type, 123, 0));
         var source = Assert.Single(graph.Mails._allPlayerMails.Values);
         var now = new DateTime(2026, 9, 12, 12, 0, 0, DateTimeKind.Utc);
-        source.Body.RecvDate = now - MailManager.MailExpireDelay;
+        SetLegacyDelivery(source, now - MailManager.MailExpireDelay);
         source.Header.Status = status;
         source.OpenDate = now.AddDays(-1); // Reading never extends the delivery-based deadline.
         Assert.True(graph.Save.TryCommitEconomy([graph.Sender, graph.Receiver]));
@@ -99,7 +99,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         source.Body.BillingAmount = 53;
         source.Body.MoneyAmount2 = 67;
         source.Header.Attachments = source.GetTotalAttachmentCount();
-        source.Body.RecvDate = DateTime.UtcNow.AddDays(-15);
+        SetLegacyDelivery(source, DateTime.UtcNow.AddDays(-15));
         item.Count = 1;
         item.SetFlag(ItemFlag.SoulBound);
         Assert.True(graph.Save.TryCommitEconomy([graph.Sender, graph.Receiver]));
@@ -135,7 +135,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         var mail = Assert.Single(graph.Mails._allPlayerMails.Values);
         mail.MailType = type;
         mail.Header.Status = status;
-        mail.Body.RecvDate = DateTime.UtcNow.AddDays(-15);
+        SetLegacyDelivery(mail, DateTime.UtcNow.AddDays(-15));
         graph.Mails.CheckAllMailTimings();
         Assert.Empty(graph.Mails._allPlayerMails);
         Assert.Equal(3, Scalar($"SELECT outcome FROM mail_lifecycle WHERE mail_id={mail.Id}"));
@@ -151,7 +151,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         var item = graph.AddItem(0);
         Assert.Equal(MailResult.Success, graph.Send(MailType.Express, 99, 0));
         var source = Assert.Single(graph.Mails._allPlayerMails.Values);
-        source.Body.RecvDate = DateTime.UtcNow.AddDays(-15);
+        SetLegacyDelivery(source, DateTime.UtcNow.AddDays(-15));
         Assert.True(graph.Save.TryCommitEconomy([graph.Sender, graph.Receiver]));
         var originalCommit = graph.Mails.CommitLifecycle;
         if (saveFailure) graph.Mails.CommitLifecycle = _ => false;
@@ -178,7 +178,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         var item = graph.AddItem(0);
         Assert.Equal(MailResult.Success, graph.Send(MailType.Express, 123, 0));
         var mail = Assert.Single(graph.Mails._allPlayerMails.Values);
-        mail.Body.RecvDate = DateTime.UtcNow.AddDays(-15);
+        SetLegacyDelivery(mail, DateTime.UtcNow.AddDays(-15));
         if (archive) mail.MailType = MailType.Demolish;
         Assert.True(graph.Save.TryCommitEconomy([graph.Sender, graph.Receiver]));
         var trigger = $"mail_lifecycle_fail_{mail.Id}";
@@ -300,6 +300,13 @@ public sealed partial class PlayerMailSendPersistenceTests
         Assert.Equal(0, body.LeftBytes);
     }
 
+    // These fixtures represent letters that already existed when the new retention policy began.
+    private static void SetLegacyDelivery(BaseMail mail, DateTime received)
+    {
+        mail.Body.RecvDate = received;
+        mail.ExpiresAt = null;
+    }
+
     private static string TextScalar(string sql)
     {
         using var connection = MySQL.CreateConnection();
@@ -337,7 +344,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         }
         else item.OwnerId = graph.Sender.Id;
         Assert.False(graph.Mails.ReturnMail(graph.Receiver, source.Id));
-        source.Body.RecvDate = DateTime.UtcNow.AddDays(-15);
+        SetLegacyDelivery(source, DateTime.UtcNow.AddDays(-15));
         source.MailType = MailType.SysExpress;
         graph.Mails.CheckAllMailTimings();
         Assert.True(graph.Mails._allPlayerMails.ContainsKey(source.Id));
@@ -372,7 +379,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         Execute($"UPDATE characters SET deleted=1 WHERE id={graph.Sender.Id}");
         Assert.Equal(graph.Sender.Id, NameManager.Instance.GetCharacterId(graph.Sender.Name));
         Assert.False(graph.Mails.ReturnMail(graph.Receiver, mail.Id));
-        mail.Body.RecvDate = DateTime.UtcNow.AddDays(-15);
+        SetLegacyDelivery(mail, DateTime.UtcNow.AddDays(-15));
         graph.Mails.CheckAllMailTimings();
         Assert.Equal(2, Scalar($"SELECT outcome FROM mail_lifecycle WHERE mail_id={mail.Id}"));
         Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM items WHERE id={item.Id}"));
@@ -387,7 +394,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         using var graph = new SendGraph();
         Assert.Equal(MailResult.Success, graph.Send(MailType.Normal, 77));
         var mail = Assert.Single(graph.Mails._allPlayerMails.Values);
-        mail.Body.RecvDate = expired ? DateTime.UtcNow.AddDays(-15) : DateTime.UtcNow.AddDays(1);
+        SetLegacyDelivery(mail, expired ? DateTime.UtcNow.AddDays(-15) : DateTime.UtcNow.AddDays(1));
         Assert.False(graph.Mails.ReturnMail(graph.Receiver, mail.Id));
         Assert.True(mail.ReturnToSender());
         var returned = Assert.Single(graph.Mails._allPlayerMails.Values);
@@ -402,7 +409,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         using var graph = new SendGraph();
         Assert.Equal(MailResult.Success, graph.Send(MailType.Express, 77));
         var mail = Assert.Single(graph.Mails._allPlayerMails.Values);
-        mail.Body.RecvDate = DateTime.UtcNow.AddDays(-15);
+        SetLegacyDelivery(mail, DateTime.UtcNow.AddDays(-15));
         graph.Mails.ActiveMailSender = _ => null;
         graph.Mails.CheckAllMailTimings();
         Assert.Same(mail, Assert.Single(graph.Mails._allPlayerMails.Values));
@@ -417,7 +424,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         using var graph = new SendGraph();
         Assert.Equal(MailResult.Success, graph.Send(MailType.Express, 77));
         var mail = Assert.Single(graph.Mails._allPlayerMails.Values);
-        mail.Body.RecvDate = DateTime.UtcNow.AddDays(-15);
+        SetLegacyDelivery(mail, DateTime.UtcNow.AddDays(-15));
         Execute($"UPDATE characters SET deleted={(initiallyDeleted ? 1 : 0)} WHERE id={graph.Sender.Id}");
         var commit = graph.Mails.CommitLifecycle;
         graph.Mails.CommitLifecycle = write =>

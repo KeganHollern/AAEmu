@@ -65,11 +65,16 @@ public sealed partial class AuctionMailClaimStoreTests : IAsyncLifetime
     {
         var plan = CreateSalePlan();
         await SeedMailAsync(plan.Mail);
+        // The claim store replaces the mail row. It must preserve any stored deadline on that row.
+        plan.Mail.ExpiresAt = ClaimTime.AddDays(30);
+        await ExecuteAsync($"UPDATE mails SET expires_at='{plan.Mail.ExpiresAt:yyyy-MM-dd HH:mm:ss.ffffff}' WHERE id=20001");
+
         var achievements = LoadAchievements(plan.Character);
         await ResetDurableAchievementAsync();
         var store = new MySqlAuctionMailClaimStore();
 
         Assert.Equal(AuctionMailClaimPersistenceResult.Created, store.Persist(plan, achievements));
+        Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM mails WHERE id=20001 AND expires_at='{plan.Mail.ExpiresAt:yyyy-MM-dd HH:mm:ss.ffffff}'"));
         Assert.Equal(1250, await ScalarAsync("SELECT `money` FROM `characters` WHERE `id`=7"));
         Assert.Equal(9, await ScalarAsync("SELECT `labor` FROM `accounts` WHERE `account_id`=3"));
         Assert.Equal(1, await ScalarAsync("SELECT `consumed_lp` FROM `characters` WHERE `id`=7"));

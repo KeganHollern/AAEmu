@@ -42,7 +42,7 @@ internal static class MailLifecycleStore
         sender_id = mail.Header.SenderId, sender_name = mail.Header.SenderName,
         receiver_id = mail.Header.ReceiverId, receiver_name = mail.ReceiverName,
         attachment_count = mail.Header.Attachments, open_date = mail.OpenDate,
-        send_date = mail.Body.SendDate, received_date = mail.Body.RecvDate,
+        send_date = mail.Body.SendDate, received_date = mail.Body.RecvDate, expires_at = mail.ExpiresAt,
         returned = mail.Header.Returned, extra = mail.Header.Extra,
         money_amount_1 = mail.Body.CopperCoins, money_amount_2 = mail.Body.BillingAmount,
         money_amount_3 = mail.Body.MoneyAmount2,

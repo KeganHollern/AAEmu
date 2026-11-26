@@ -9,7 +9,7 @@ namespace AAEmu.Game.Models.Game.Mails;
 public sealed class MailMutation : IDisposable
 {
     private readonly MailManager _manager;
-    private readonly List<(BaseMail Mail, byte Attachments, bool Dirty)> _added = [];
+    private readonly List<(BaseMail Mail, byte Attachments, bool Dirty, DateTime? ExpiresAt)> _added = [];
     private readonly List<(BaseMail Mail, bool QueuedDeletion)> _removed = [];
     private bool _failed;
     private bool _finished;
@@ -41,7 +41,10 @@ public sealed class MailMutation : IDisposable
             mail.IsDirty = dirty;
             return Fail();
         }
-        _added.Add((mail, attachments, dirty));
+        _added.Add((mail, attachments, dirty, mail.ExpiresAt));
+        // A return already carries the policy of the source letter.
+        if (!mail.Header.Returned)
+            mail.StartDeliveryRetention();
         return true;
     }
 
@@ -70,7 +73,7 @@ public sealed class MailMutation : IDisposable
         // a newly issued mail in the same server lifetime.
         foreach (var (mail, _) in _removed)
             _manager.NotifyDeleteMailByNameIfOnline(mail, mail.ReceiverName);
-        foreach (var (mail, _, _) in _added)
+        foreach (var (mail, _, _, _) in _added)
             _manager.NotifyNewMailByNameIfOnline(mail, mail.ReceiverName);
         return true;
     }
@@ -87,12 +90,13 @@ public sealed class MailMutation : IDisposable
         if (_finished)
             return;
         _finished = true;
-        foreach (var (mail, attachments, dirty) in _added)
+        foreach (var (mail, attachments, dirty, expiresAt) in _added)
         {
             _manager._allPlayerMails.TryRemove(mail.Id, out _);
             _manager.ReleaseReservedMailId(checked((uint)mail.Id));
             mail.Id = 0;
             mail.Header.Attachments = attachments;
+            mail.ExpiresAt = expiresAt;
             mail.IsDirty = dirty;
         }
         foreach (var (mail, queuedDeletion) in _removed)

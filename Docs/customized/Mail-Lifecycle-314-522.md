@@ -21,8 +21,12 @@ The user approved database archive retention on 2026-09-11 UTC.
 Archived mail leaves the active mailbox. Its contents remain in SQL.
 This batch does not add a staff recovery interface or automatic archive deletion.
 
-The deadline is `received_date + 14 days`, with an inclusive expiry boundary.
-Read status and `open_date` do not extend this deadline.
+New player correspondence expires 30 days after delivery. New staff letters and mailed quest or achievement rewards expire after 90 days.
+The first read of an empty letter sets its deadline to 5 days after that read.
+A letter with unclaimed items or money keeps the full delivery period. The successful final claim gives the empty letter 5 days from that claim.
+A repeated read or an empty claim keeps the recorded deadline. For example, a letter first read on day 1 and emptied on day 20 expires on day 25.
+The nullable `mails.expires_at` column stores the absolute UTC deadline. An old letter or a specialized envelope, including shop, tax, and auction mail, keeps its original 14 days from delivery.
+The boundary is inclusive for both policies. [Mail retention decision](https://github.com/KeganHollern/aaemu-cluster/issues/781).
 The delivery notification flag does not determine expiry or return eligibility.
 The task uses one UTC time snapshot for each scan.
 
@@ -38,7 +42,7 @@ The task uses one UTC time snapshot for each scan.
 
 All 3 amount fields count as contents when nonzero.
 Billing amounts remain billing metadata. The archive does not convert them to currency.
-Returned mail gets a new ID, an unread state, `returned=true`, and a fresh 14-day deadline.
+Returned mail gets a new ID, an unread state and `returned=true`. Its period starts at return. It is 30 days for new player mail and 14 days for legacy mail.
 Normal and Express returns arrive immediately. A returned mail cannot return again.
 The sender ID determines the destination, even if the sender changed the character name.
 The SQL `deleted` field determines whether the sender remains active.
