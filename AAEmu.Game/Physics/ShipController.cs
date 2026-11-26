@@ -23,6 +23,7 @@ public class ShipController(World world, ShipModelV1 shipModel)
 {
     private readonly World _world = world ?? throw new ArgumentNullException(nameof(world));
 
+    // PhysicsManager removes a live hull on the physics thread. The world owns its lifetime.
     public RigidBody Hull { get; private set; } = null!;
     public ShipModelV1 ShipModel { get; init; } = shipModel ?? throw new ArgumentNullException(nameof(shipModel));
 
@@ -292,28 +293,11 @@ public class ShipController(World world, ShipModelV1 shipModel)
         };
     }
 
-    ~ShipController()
-    {
-        try
-        {
-            Hull?.World.Remove(Hull);
-        }
-        catch (Exception e)
-        {
-            Logger.Error($"Failed to remove hull RigidBody from Physics world: {e}");
-        }
-    }
-
     /// <summary>
     /// Создает корпус корабля.
     /// </summary>
     public void Build(JVector initialPosition, JQuaternion initialOrientation)
     {
-        // New object
-        Hull = _world.CreateRigidBody();
-        // Set starting position and rotation
-        Hull.Position = initialPosition;
-        Hull.Orientation = initialOrientation;
         // Ship shape
         // Interpretation:
         // - MassBoxSizeY = length (forward/back)
@@ -328,13 +312,23 @@ public class ShipController(World world, ShipModelV1 shipModel)
         var shipBoxShape = new BoxShape(ShipModel.MassBoxSizeX, sizeZ, ShipModel.MassBoxSizeY);
         // Center offset
         var shipCenterPoint = new TransformedShape(shipBoxShape, new JVector(ShipModel.MassCenterX, centerZ, ShipModel.MassCenterY));
-        // Add shape
-        Hull.AddShape(shipCenterPoint);
-        // Set Mass
-        Hull.SetMassInertia(ShipModel.Mass);
-        Hull.DeactivationTime = TimeSpan.MaxValue;
-        Hull.MotionType = MotionType.Dynamic;
-        Hull.SetActivationState(true);
+        var hull = _world.CreateRigidBody();
+        try
+        {
+            hull.Position = initialPosition;
+            hull.Orientation = initialOrientation;
+            hull.AddShape(shipCenterPoint);
+            hull.SetMassInertia(ShipModel.Mass);
+            hull.DeactivationTime = TimeSpan.MaxValue;
+            hull.MotionType = MotionType.Dynamic;
+            hull.SetActivationState(true);
+            Hull = hull;
+        }
+        catch
+        {
+            _world.Remove(hull);
+            throw;
+        }
     }
 
     /// <summary>
