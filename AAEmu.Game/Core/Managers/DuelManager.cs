@@ -218,19 +218,10 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
             flagPosition.Y = resolved.Y;
             flagPosition.Z = resolved.Z;
             return new DoodadSpawner { ParentWorld = challenged.ParentWorld, UnitId = 5014, Position = flagPosition }.Spawn(0);
-        }, () =>
-        {
-            duel.SendPacketsBoth(new SCAreaChatBubblePacket(true, duel.Challenger.ObjId, 543));
-            duel.SendPacketsBoth(new SCDuelStatePacket(duel.Challenger.ObjId, duel.DuelFlag.ObjId));
-            duel.SendPacketsBoth(new SCDuelStatePacket(challenged.ObjId, duel.DuelFlag.ObjId));
-            duel.SendPacketChallenger(new SCDoodadPhaseChangedPacket(duel.DuelFlag));
-            duel.SendPacketsBoth(new SCDuelStartCountdownPacket());
-            duel.DuelStartTask = new DuelStartTask(duel);
-            TaskManager.Instance.Schedule(duel.DuelStartTask, TimeSpan.FromSeconds(3));
         });
     }
 
-    internal void CreateFlag(Duel duel, Func<Doodad> createFlag, Action publishCountdown)
+    internal void CreateFlag(Duel duel, Func<Doodad> createFlag)
     {
         // Doodad spawn takes the persistence lock. It must not run under the
         // duel lock: item effects can acquire those locks in the reverse order.
@@ -256,7 +247,11 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
                 duel.Challenger.IsInDuel = true;
                 duel.Challenged.IsInDuel = true;
                 accepted = true;
-                publishCountdown();
+                duel.SendPacketsBoth(new SCAreaChatBubblePacket(true, duel.Challenger.ObjId, 543));
+                duel.SendPacketChallenger(new SCDoodadPhaseChangedPacket(duel.DuelFlag));
+                duel.SendPacketsBoth(new SCDuelStartCountdownPacket());
+                duel.DuelStartTask = new DuelStartTask(duel);
+                TaskManager.Instance.Schedule(duel.DuelStartTask, TimeSpan.FromSeconds(3));
             }
         }
         if (!accepted)
@@ -291,6 +286,9 @@ public class DuelManager : Singleton<DuelManager>, IDuelManager
             {
                 duel.Active = true;
                 duel.DuelStartTask = null;
+                // The native countdown replaces the local flag on each client.
+                duel.SendPacketsBoth(new SCDuelStatePacket(duel.Challenger.ObjId, duel.DuelFlag.ObjId));
+                duel.SendPacketsBoth(new SCDuelStatePacket(duel.Challenged.ObjId, duel.DuelFlag.ObjId));
                 duel.SendPacketsBoth(new SCDuelStartedPacket(duel.Challenger.ObjId, duel.Challenged.ObjId));
                 duel.SendPacketsBoth(new SCCombatEngagedPacket(duel.Challenger.ObjId));
                 duel.SendPacketsBoth(new SCCombatEngagedPacket(duel.Challenged.ObjId));

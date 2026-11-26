@@ -1,10 +1,14 @@
-﻿using System.Reflection;
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
 using AAEmu.Game.Models;
 using AAEmu.Commons.Network;
+using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
@@ -136,6 +140,79 @@ public sealed class DuelRulesTests
         _manager.Stop(oldDuel, DuelDetType.Draw);
         await Assert.That(_manager.IsCurrent(newDuel)).IsTrue();
         await Assert.That(newDuel.DuelStarted).IsFalse();
+    }
+
+    [Test]
+    [Arguments(DuelDetType.Win)]
+    [Arguments(DuelDetType.Surrender)]
+    [Arguments(DuelDetType.Draw)]
+    public async Task Countdown_StartAndEndPublishTheActivePairToBothPlayers(DuelDetType result)
+    {
+        Install(new TaskManager(null));
+        Install(new TeamManager(null, null, null));
+        var factions = new FactionManager(null);
+        typeof(FactionManager).GetField("_systemFactions", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(factions, new Dictionary<FactionsEnum, SystemFaction>());
+        factions.AddFaction(new SystemFaction { Id = FactionsEnum.Neutral });
+        Install(factions);
+        var first = Player(10, 44424);
+        var second = Player(9, 38664);
+        var bystander = Player(11);
+        second.Faction = bystander.Faction = first.Faction;
+        var firstClient = Connect(first);
+        var secondClient = Connect(second);
+        var otherClient = Connect(bystander);
+        var clients = new[] { firstClient, secondClient };
+        _manager.TryCreateDuel(first, second, 30, out var duel);
+        _manager.TryAccept(second, first.Id, out _);
+        var flag = new TestFlag { ObjId = 50140, ParentWorld = _world };
+        _manager.CreateFlag(duel, () => flag);
+
+        foreach (var client in clients)
+        {
+            await Assert.That(client.Countdowns).IsEqualTo(1);
+            await Assert.That(client.HasSharedFlag(first.ObjId, second.ObjId)).IsFalse();
+        }
+        await Assert.That(first.CanAttack(second)).IsFalse();
+        await Assert.That(second.CanAttack(first)).IsFalse();
+
+        duel.DuelStartTask.Execute();
+
+        foreach (var client in clients)
+        {
+            await Assert.That(client.SharedFlagAtStart).IsTrue();
+            await Assert.That(client.Flags[first.ObjId]).IsEqualTo(flag.ObjId);
+            await Assert.That(client.Flags[second.ObjId]).IsEqualTo(flag.ObjId);
+        }
+        await Assert.That(first.CanAttack(second)).IsTrue();
+        await Assert.That(second.CanAttack(first)).IsTrue();
+        await Assert.That(otherClient.Flags).IsEmpty();
+        await Assert.That(first.CanAttack(bystander)).IsFalse();
+        await Assert.That(bystander.CanAttack(second)).IsFalse();
+
+        if (result == DuelDetType.Win)
+        {
+            first.ReduceCurrentHp(second, 5);
+            await Assert.That(first.Hp).IsEqualTo(95);
+            second.ReduceCurrentHp(first, 120);
+            await Assert.That(second.Hp).IsEqualTo(1);
+        }
+        else if (result == DuelDetType.Surrender)
+        {
+            first.Transform.World.SetPosition(80, 0, 0);
+            _manager.CheckDistance(duel);
+        }
+        else
+            _manager.EndTimer(duel);
+
+        await Assert.That(_manager.IsCurrent(duel)).IsFalse();
+        foreach (var client in clients)
+        {
+            await Assert.That(client.Flags[first.ObjId]).IsEqualTo(0u);
+            await Assert.That(client.Flags[second.ObjId]).IsEqualTo(0u);
+        }
+        await Assert.That(first.CanAttack(second)).IsFalse();
+        await Assert.That(second.CanAttack(first)).IsFalse();
     }
 
     [Test]
@@ -374,7 +451,7 @@ public sealed class DuelRulesTests
             if (!release.Wait(TimeSpan.FromSeconds(5)))
                 throw new TimeoutException("Test flag factory did not receive its release");
             return null;
-        }, () => { }));
+        }));
         await Assert.That(entered.Wait(TimeSpan.FromSeconds(2))).IsTrue();
         try
         {
@@ -397,15 +474,15 @@ public sealed class DuelRulesTests
         _manager.TryAccept(second, first.Id, out _);
         Duel next = null;
         var flag = new TestFlag { ParentWorld = _world };
-        var published = false;
+        var session = Connect(first);
         _manager.CreateFlag(old, () =>
         {
             _manager.CancelForCharacter(first);
             _manager.TryCreateDuel(first, second, 30, out next);
             return flag;
-        }, () => published = true);
+        });
         await Assert.That(flag.Deleted).IsTrue();
-        await Assert.That(published).IsFalse();
+        await Assert.That(session.Countdowns).IsEqualTo(0);
         await Assert.That(_manager.IsCurrent(next)).IsTrue();
         await Assert.That(first.IsInDuel).IsFalse();
     }
@@ -441,17 +518,17 @@ public sealed class DuelRulesTests
         }
     }
 
-    private TestCharacter Player(uint id)
+    private TestCharacter Player(uint id, uint? objId = null)
     {
         var player = new TestCharacter
         {
-            Id = id, ObjId = id, Hp = 100, ParentWorld = _world,
+            Id = id, ObjId = objId ?? id, Hp = 100, ParentWorld = _world,
             Faction = new SystemFaction { Id = FactionsEnum.Friendly }
         };
         typeof(Character).GetField("<IsOnline>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(player, true);
         var objects = (ConcurrentDictionary<uint, GameObject>)typeof(WorldInstance)
             .GetField("_objects", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_world)!;
-        objects[id] = player;
+        objects[player.ObjId] = player;
         return player;
     }
 
@@ -461,6 +538,53 @@ public sealed class DuelRulesTests
         var previous = field.GetValue(null);
         _restore.Add(() => field.SetValue(null, previous));
         field.SetValue(null, value);
+    }
+
+    private static DuelSession Connect(Character player)
+    {
+        var session = new DuelSession(player.ObjId);
+        player.Connection = new GameConnection(session) { ActiveChar = player };
+        return session;
+    }
+
+    private sealed class DuelSession(uint localObjId) : ISession
+    {
+        public Dictionary<uint, uint> Flags { get; } = [];
+        public int Countdowns { get; private set; }
+        public bool SharedFlagAtStart { get; private set; }
+        public IPAddress Ip => IPAddress.Loopback;
+        public uint SessionId => localObjId;
+        public Socket Socket => null;
+
+        public bool HasSharedFlag(uint firstObjId, uint secondObjId)
+        {
+            var flag = Flags.GetValueOrDefault(firstObjId);
+            return flag != 0 && flag != uint.MaxValue && flag == Flags.GetValueOrDefault(secondObjId);
+        }
+
+        public void SendPacket(byte[] packet)
+        {
+            var body = new PacketStream(packet) { Pos = 6 };
+            switch (body.ReadUInt16())
+            {
+                case SCOffsets.SCDuelStartCountdownPacket:
+                    // r208022 replaces only this client's local flag at countdown.
+                    Flags[localObjId] = uint.MaxValue;
+                    Countdowns++;
+                    break;
+                case SCOffsets.SCDuelStatePacket:
+                    Flags[body.ReadBc()] = body.ReadBc();
+                    break;
+                case SCOffsets.SCDuelStartedPacket:
+                    SharedFlagAtStart = HasSharedFlag(body.ReadBc(), body.ReadBc());
+                    break;
+            }
+        }
+
+        public void AddAttribute(string name, object attribute) { }
+        public object GetAttribute(string name) => null;
+        public void ClearAttribute(string name) { }
+        public void Close() { }
     }
 
     private sealed class TestFlag : Doodad
