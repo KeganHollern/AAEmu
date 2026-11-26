@@ -34,7 +34,7 @@ public sealed class HousingGeometryAssets
         Func<uint, uint, IReadOnlyList<string>> modelPaths)
     {
         _openFile = openFile;
-        _resolver = new CryGeometryResolver(openFile);
+        _resolver = new CryGeometryResolver(openFile, StockDoodadFloorModel.IncludesFile);
         _staticResolver = new CryWorldGeometryResolver(Load);
         _modelPaths = modelPaths;
     }

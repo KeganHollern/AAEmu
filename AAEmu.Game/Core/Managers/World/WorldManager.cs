@@ -1114,8 +1114,14 @@ public class WorldManager(
         var currentRegion = obj.Region; // Current region of the object
 
         // Ignore if region did not change
-        if (region == null || currentRegion != null && currentRegion.Equals(region))
+        if (region == null)
             return;
+        if (currentRegion != null && currentRegion.Equals(region))
+        {
+            if (obj is Doodad doodad)
+                region.RefreshDoodadFloor(doodad);
+            return;
+        }
 
         if (currentRegion == null)
         {
