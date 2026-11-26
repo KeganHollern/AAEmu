@@ -162,20 +162,22 @@ public sealed partial class PlayerMailSendPersistenceTests
         }
 
         [Theory]
-        [InlineData(57, 100, 100)]
-        [InlineData(71, 100, 71)]
-        [InlineData(0, 29, 0)]
-        public void CargoWreck_TransfersTheStoredPackToMeasuredHeightAndReloadsTheSameItem(int floor, int water, int expected)
+        [InlineData(57, 100, 100, 100)]
+        [InlineData(71, 100, 71, 100)]
+        [InlineData(0, 29, 0, 100)]
+        [InlineData(57, 100, 100, 1020)]
+        [InlineData(71, 100, 71, 1020)]
+        public void CargoWreck_TransfersTheStoredPackToMeasuredHeightAndReloadsTheSameItem(int floor, int water, int expected, int vehicleX)
         {
             using var fixture = new ShipyardGraph();
             fixture.EnableSalvage();
             var graph = fixture.Graph;
             var world = fixture.World;
-            AddCargoCoast(world, (ushort)floor, water);
+            AddCargoCoast(world, (ushort)floor, water, vehicleX);
             ConfigureCargoBindings();
             var owner = graph.Sender;
             var vehicle = new Slave { Id = owner.Id + 87, ObjId = owner.Id + 86, ParentWorld = world, TemplateId = 75 };
-            vehicle.Transform.Local.SetPosition(100, 100, water);
+            vehicle.Transform.Local.SetPosition(vehicleX, 100, water);
             var objectIds = new ObjectIdManager();
             Assert.True(objectIds.Initialize());
             var idField = typeof(ObjectIdManager).GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -197,7 +199,7 @@ public sealed partial class PlayerMailSendPersistenceTests
                 Assert.Equal(item.UccId, drop.UccId);
                 Assert.Null(drop.Transform.Parent);
                 var point = drop.Transform.World.Position;
-                Assert.InRange(point.X, 102f, 104f);
+                Assert.InRange(point.X, vehicleX + 2f, vehicleX + 4f);
                 Assert.InRange(point.Y, 104f, 106f);
                 Assert.Equal(84f, world.Template.GeoData.GetHeight(point));
                 Assert.True(world.TryGetHeight(point.X, point.Y, out var seabed));
@@ -342,13 +344,14 @@ public sealed partial class PlayerMailSendPersistenceTests
             }
         }
 
-        private static void AddCargoCoast(WorldInstance world, ushort seabed, float water)
+        private static void AddCargoCoast(WorldInstance world, ushort seabed, float water, int vehicleX)
         {
             world.Water.OceanLevel = water;
             var template = world.Template;
             template.HeightMaxCoefficient = 1;
-            var map = new ushort[WorldManager.CELL_HMAP_RESOLUTION, WorldManager.CELL_HMAP_RESOLUTION];
-            for (var x = 48; x <= 54; x++)
+            const int last = WorldManager.CELL_HMAP_RESOLUTION;
+            var map = new ushort[last + 1, last + 1];
+            for (var x = vehicleX / 2; x <= Math.Min((vehicleX + 8) / 2, last); x++)
             for (var y = 48; y <= 54; y++)
                 map[x, y] = seabed;
             var cell = new WorldCell(0, 0, template);
@@ -359,7 +362,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             var bai = new BaseBaiLoader(template);
             var nodes = new NetMissionReader(Stream.Null, 10);
             nodes.NodeDescriptorList.TryAdd(1, new NodeDescriptor(nodes)
-                { Id = 1, Pos = new Vector3(103, 105, 84), NavigationType = BaiNavigationType.Triangular });
+                { Id = 1, Pos = new Vector3(vehicleX + 3f, 105, 84), NavigationType = BaiNavigationType.Triangular });
             bai.NetMissionReaders.Add(nodes);
             template.ZoneBaiLoader.Add(10, bai);
             template.GeoData = new AiGeoDataManager(template);

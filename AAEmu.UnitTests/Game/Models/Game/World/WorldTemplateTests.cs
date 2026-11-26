@@ -456,6 +456,21 @@ public class WorldTemplateTests
     }
 
     [Test]
+    public async Task MeasuredNeighborKeepsItsSharedHeightWhenTheEndpointsDiffer()
+    {
+        const int last = WorldManager.CELL_HMAP_RESOLUTION;
+        var template = CreateWorldTemplate(2, 1);
+        var west = new ushort[last + 1, last + 1];
+        west[last - 1, 0] = 10;
+        west[last, 0] = 20;
+        SetLoadedCell(template, 0, 0, west);
+        SetLoadedCell(template, 1, 0, CreateHeightMap(42));
+
+        await Assert.That(template.TryGetHeight(1023f, 0f, out var height)).IsTrue();
+        await Assert.That(height).IsEqualTo(26f);
+    }
+
+    [Test]
     public async Task TryGetHeight_FinalOuterStripWithoutEndpoint_ReturnsUnavailable()
     {
         var template = CreateWorldTemplate(CreateHeightMap(10));
@@ -595,10 +610,10 @@ public class WorldTemplateTests
         var vehicle = CreateDropVehicle(template, 100);
 
         await Assert.That(template.GeoData.GetHeight(point)).IsEqualTo(84f);
-        await Assert.That(vehicle.GetCargoDropHeight(point)).IsEqualTo(expected);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Cargo).Z).IsEqualTo(expected);
         // Stock wreck chest 1327 goes to the floor. Floating debris 1330 uses the water.
-        await Assert.That(vehicle.GetDebrisDropHeight(point, false)).IsEqualTo((float)floor);
-        await Assert.That(vehicle.GetDebrisDropHeight(point, true)).IsEqualTo(100f);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Floor).Z).IsEqualTo((float)floor);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Water).Z).IsEqualTo(100f);
     }
 
     [Test]
@@ -614,9 +629,9 @@ public class WorldTemplateTests
 
         await Assert.That(template.TryGetHeight(point.X, point.Y, out var floor)).IsTrue();
         await Assert.That(floor).IsEqualTo(0f);
-        await Assert.That(vehicle.GetCargoDropHeight(point)).IsEqualTo(expected);
-        await Assert.That(vehicle.GetDebrisDropHeight(point, false)).IsEqualTo(0f);
-        await Assert.That(vehicle.GetDebrisDropHeight(point, true)).IsEqualTo(water);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Cargo).Z).IsEqualTo(expected);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Floor).Z).IsEqualTo(0f);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Water).Z).IsEqualTo(water);
     }
 
     [Test]
@@ -627,8 +642,8 @@ public class WorldTemplateTests
         AddNetMissionBai(template, point, BaiNavigationType.WaypointHuman);
         var vehicle = CreateDropVehicle(template, 70);
 
-        await Assert.That(vehicle.GetCargoDropHeight(point)).IsEqualTo(90f);
-        await Assert.That(vehicle.GetDebrisDropHeight(point, false)).IsEqualTo(90f);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Cargo).Z).IsEqualTo(90f);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Floor).Z).IsEqualTo(90f);
     }
 
     [Test]
@@ -639,24 +654,59 @@ public class WorldTemplateTests
         var point = new Vector3(10, 10, 105);
         vehicle.ParentWorld.Water.AddSquareArea("raised water", point, 4, 45);
 
-        await Assert.That(vehicle.GetCargoDropHeight(point)).IsEqualTo(105f);
-        await Assert.That(vehicle.GetDebrisDropHeight(point, true)).IsEqualTo(105f);
-        await Assert.That(vehicle.GetCargoDropHeight(new Vector3(25, 25, 105))).IsEqualTo(70f);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Cargo).Z).IsEqualTo(105f);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Water).Z).IsEqualTo(105f);
+        var outside = new Vector3(25, 25, 105);
+        await Assert.That(vehicle.ResolveWreckDrop(outside, outside, Slave.WreckDropSurface.Cargo).Z).IsEqualTo(70f);
     }
 
     [Test]
-    [Arguments(20f, 0f)]
-    [Arguments(90f, 90f)]
-    public async Task CargoDropWithoutAnyFloorKeepsThePreviousPlacement(float water, float expected)
+    [Arguments(20f)]
+    [Arguments(90f)]
+    public async Task WreckWithoutMeasuredGroundKeepsTheOriginalPackAndChestPositions(float water)
     {
-        var template = CreateWorldTemplate(1, 1);
-        var vehicle = CreateDropVehicle(template, water);
-        var point = new Vector3(12, 12, 40);
+        var vehicle = CreateDropVehicle(CreateWorldTemplate(1, 1), water);
+        var origin = new Vector3(12, 12, 40);
+        var scatter = origin + Vector3.UnitX;
 
-        await Assert.That(template.GeoData.TryGetGroundSurface(point, out _)).IsFalse();
-        await Assert.That(vehicle.GetCargoDropHeight(point)).IsEqualTo(expected);
-        await Assert.That(vehicle.GetDebrisDropHeight(point, false)).IsEqualTo(0f);
-        await Assert.That(vehicle.GetDebrisDropHeight(point, true)).IsEqualTo(water);
+        await Assert.That(vehicle.ResolveWreckDrop(origin, scatter, Slave.WreckDropSurface.Cargo)).IsEqualTo(origin);
+        await Assert.That(vehicle.ResolveWreckDrop(origin, scatter, Slave.WreckDropSurface.Floor)).IsEqualTo(origin);
+        await Assert.That(vehicle.ResolveWreckDrop(origin, scatter, Slave.WreckDropSurface.Water))
+            .IsEqualTo(new Vector3(scatter.X, scatter.Y, water));
+    }
+
+    [Test]
+    public async Task WreckScatterOffTheMeasuredMapUsesTheFloorAtTheWreck()
+    {
+        var vehicle = CreateDropVehicle(CreateWorldTemplate(CreateHeightMap(7)), 100f);
+        var origin = new Vector3(1022f, 100f, 99f);
+        var scatter = new Vector3(1024.5f, 100f, 99f);
+
+        await Assert.That(vehicle.ResolveWreckDrop(origin, scatter, Slave.WreckDropSurface.Floor))
+            .IsEqualTo(new Vector3(origin.X, origin.Y, 7f));
+        await Assert.That(vehicle.ResolveWreckDrop(origin, scatter, Slave.WreckDropSurface.Cargo))
+            .IsEqualTo(new Vector3(origin.X, origin.Y, 100f));
+    }
+
+    [Test]
+    [Arguments(1023f, 0f, 20f)]
+    [Arguments(0f, 1023f, 40f)]
+    [Arguments(1023.5f, 1023.5f, 30f)]
+    public async Task WreckMeasuresTheOwningCellsFinalTerrainTriangle(float x, float y, float expected)
+    {
+        const int last = WorldManager.CELL_HMAP_RESOLUTION;
+        var map = new ushort[last + 1, last + 1];
+        map[last, 0] = 40;
+        map[0, last] = 80;
+        map[last, last] = 60;
+        var template = CreateWorldTemplate(map);
+        var point = new Vector3(x, y, 100f);
+        AddNetMissionBai(template, new Vector3(x, y, 95f), BaiNavigationType.Triangular);
+        var vehicle = CreateDropVehicle(template, 100f);
+        await Assert.That(template.TryGetHeight(x, y, out var measured)).IsTrue();
+        await Assert.That(measured).IsEqualTo(expected);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Floor).Z).IsEqualTo(expected);
+        await Assert.That(vehicle.ResolveWreckDrop(point, point, Slave.WreckDropSurface.Cargo).Z).IsEqualTo(100f);
     }
 
     private static Slave CreateDropVehicle(WorldTemplate template, float water)

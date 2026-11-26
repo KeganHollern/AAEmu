@@ -147,7 +147,7 @@ public class WorldCell
             return true;
         }
 
-        HeightMap = new ushort[WorldManager.CELL_HMAP_RESOLUTION, WorldManager.CELL_HMAP_RESOLUTION];
+        HeightMap = new ushort[WorldManager.CELL_HMAP_RESOLUTION + 1, WorldManager.CELL_HMAP_RESOLUTION + 1];
 
         // Logger.Debug($"Loading {heightMapFile}");
 
@@ -173,21 +173,24 @@ public class WorldCell
 
         MinHeight = float.MaxValue;
         MaxHeight = 0f;
-        for (ushort sectorX = 0; sectorX < WorldManager.SECTORS_PER_CELL; sectorX++) // 16x16 sectors / cell
-        for (ushort sectorY = 0; sectorY < WorldManager.SECTORS_PER_CELL; sectorY++)
-        for (ushort unitX = 0; unitX < WorldManager.SECTOR_HMAP_RESOLUTION; unitX++) // sector = 32x32 unit size
-        for (ushort unitY = 0; unitY < WorldManager.SECTOR_HMAP_RESOLUTION; unitY++)
+        // The last sector includes the endpoint of the final triangle in the cell.
+        const int sectorUnits = WorldManager.SECTOR_HMAP_RESOLUTION;
+        const int sectorCount = WorldManager.SECTORS_PER_CELL;
+        for (var x = 0; x <= WorldManager.CELL_HMAP_RESOLUTION; x++)
         {
-            var node = sortedNodes[sectorX * WorldManager.SECTORS_PER_CELL + sectorY];
-            var oX = sectorX * WorldManager.SECTOR_HMAP_RESOLUTION + unitX;
-            var oY = sectorY * WorldManager.SECTOR_HMAP_RESOLUTION + unitY;
-
-            var height = node.GetHeightAtUnit(unitX, unitY);
-            var value = (ushort)(height * Template.HeightMaxCoefficient);
-
-            HeightMap[oX, oY] = value;
-            MinHeight = MathF.Min((float)(value / Template.HeightMaxCoefficient), MinHeight);
-            MaxHeight = MathF.Max((float)(value / Template.HeightMaxCoefficient), MaxHeight);
+            var sectorX = Math.Min(x / sectorUnits, sectorCount - 1);
+            var unitX = (ushort)(x - sectorX * sectorUnits);
+            for (var y = 0; y <= WorldManager.CELL_HMAP_RESOLUTION; y++)
+            {
+                var sectorY = Math.Min(y / sectorUnits, sectorCount - 1);
+                var unitY = (ushort)(y - sectorY * sectorUnits);
+                var node = sortedNodes[sectorX * sectorCount + sectorY];
+                var value = (ushort)(node.GetHeightAtUnit(unitX, unitY) * Template.HeightMaxCoefficient);
+                HeightMap[x, y] = value;
+                var height = (float)(value / Template.HeightMaxCoefficient);
+                MinHeight = MathF.Min(height, MinHeight);
+                MaxHeight = MathF.Max(height, MaxHeight);
+            }
         }
         #endregion
 
@@ -227,15 +230,23 @@ public class WorldCell
     /// <returns></returns>
     public float GetHeightMapDataInCell(int heightMapDataX, int heightMapDataY)
     {
-        if (HeightMap == null ||
-            heightMapDataX < 0 || heightMapDataX >= HeightMap.GetLength(0) ||
-            heightMapDataY < 0 || heightMapDataY >= HeightMap.GetLength(1) ||
-            !double.IsFinite(Template.HeightMaxCoefficient) || Template.HeightMaxCoefficient <= 0d)
-        {
-            return 0f; // out of bounds or not loaded
-        }
+        return TryGetHeightMapSample(heightMapDataX, heightMapDataY, out var height) ? height : 0f;
+    }
 
-        return (float)(HeightMap[heightMapDataX, heightMapDataY] / Template.HeightMaxCoefficient);
+    internal bool TryGetHeightMapSample(int x, int y, out float height)
+    {
+        height = 0f;
+        if (!Loaded || HeightMap == null || (uint)x >= HeightMap.GetLength(0) ||
+            (uint)y >= HeightMap.GetLength(1) || !double.IsFinite(Template.HeightMaxCoefficient) ||
+            Template.HeightMaxCoefficient <= 0d)
+            return false;
+
+        var sample = (float)(HeightMap[x, y] / Template.HeightMaxCoefficient);
+        if (!float.IsFinite(sample))
+            return false;
+
+        height = sample;
+        return true;
     }
 
     /// <summary>
