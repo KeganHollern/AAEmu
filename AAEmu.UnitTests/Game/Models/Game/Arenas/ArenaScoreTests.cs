@@ -140,6 +140,62 @@ public sealed class ArenaScoreTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DrillCamp_DamageAssistsDecideTheTimeoutForEitherTeam(bool blueWins)
+    {
+        Start(7);
+        var (winners, losers) = blueWins ? (_blue, _red) : (_red, _blue);
+        var friends = new FriendMananger();
+        Set(friends, "_allFriends", new Dictionary<uint, FriendTemplate>());
+        Install(friends);
+        foreach (var player in _red.Concat(_blue))
+            player.IsOnline = true;
+        var killer = winners[0];
+        var victim = losers[0];
+        Kill(victim, winners[1]);
+        Kill(victim, winners[2]);
+        _clock.Advance(TimeSpan.FromSeconds(15));
+
+        victim.Hp = 100;
+        victim.ReduceCurrentHp(winners[1], 1, KillReason.PvpBattleField);
+        victim.ReduceCurrentHp(winners[2], 15, KillReason.PvpBattleField);
+        victim.ReduceCurrentHp(winners[2], 30, KillReason.PvpBattleField);
+        victim.ReduceCurrentHp(losers[1], 2, KillReason.PvpBattleField);
+        victim.ReduceCurrentHp(winners[4], 2, KillReason.PvpBattleField);
+        _game.LeaveInstantGame(winners[4]);
+        killer.RecordPvpHealFrom(winners[2]);
+        killer.RecordPvpHealFrom(winners[3]);
+        victim.ReduceCurrentHp(killer, 1, KillReason.PvpBattleField);
+        var credited = victim.CollectAssists(killer);
+        await Assert.That(credited.SetEquals([winners[1].Id, winners[2].Id, winners[3].Id, winners[4].Id, losers[1].Id])).IsTrue();
+        victim.ReduceCurrentHp(killer, victim.Hp, KillReason.PvpBattleField);
+        victim.ReduceCurrentHp(killer, 1, KillReason.PvpBattleField);
+
+        var points = Packets(SCOffsets.SCInstantGameAddPointPacket).Select(ReadPoints).ToArray();
+        await Assert.That(points.Length).IsEqualTo(5);
+        var corps = (byte)(blueWins ? InstantCorps.Corps2 : InstantCorps.Corps1);
+        await Assert.That(points.Where(p => p.Corps == corps).Select(p => (p.Scorer, p.Award)).ToArray())
+            .IsEquivalentTo([(killer.Name, 3), (winners[1].Name, 2), (winners[2].Name, 2)]);
+        await Assert.That((points[^1].Red, points[^1].Blue)).IsEqualTo(blueWins ? (6, 7) : (7, 6));
+
+        _clock.Advance(TimeSpan.FromMinutes(15));
+        await _game.EndGame();
+        var end = Packets(SCOffsets.SCInstantGameEndPacket).Single();
+        await Assert.That(end.ReadByte()).IsEqualTo((byte)BattlefieldEndingReason.Timeout);
+        var results = new Dictionary<uint, (int Score, ushort Assists)>
+        {
+            [killer.Id] = (3, 0),
+            [winners[1].Id] = (2, 1),
+            [winners[2].Id] = (2, 1),
+            [victim.Id] = (6, 0)
+        };
+        await CheckTeam(end, blueWins ? 1 : 2, 159, blueWins ? 6 : 7, blueWins ? 2 : 1, blueWins ? 1 : 2, results);
+        await CheckTeam(end, blueWins ? 2 : 1, 160, blueWins ? 7 : 6, blueWins ? 1 : 2, blueWins ? 2 : 1, results);
+        await Assert.That(end.Pos).IsEqualTo(end.Count);
+    }
+
+    [Test]
     [Arguments(7u, 15)]
     [Arguments(11u, 5)]
     public async Task Resurrection_UsesTheStockDelayAfterAnEnemyKill(uint id, int seconds)
@@ -301,6 +357,7 @@ public sealed class ArenaScoreTests
         _fields.Load(connection);
         var camp = _fields.GetBattlefield(7).RuleSet;
         var duel = _fields.GetBattlefield(11).RuleSet;
+        await Assert.That((camp.EnemyPlayerDamageAssistScore, duel.EnemyPlayerDamageAssistScore)).IsEqualTo((2, 0));
         await Assert.That(camp.ResurrectionDelay).IsEqualTo(TimeSpan.FromSeconds(15));
         await Assert.That(duel.ResurrectionDelay).IsEqualTo(TimeSpan.FromSeconds(5));
         await Assert.That((camp.RankWinPoints, camp.RankLossPoints, camp.RankDrawPoints)).IsEqualTo((0, 0, 0));
@@ -546,7 +603,7 @@ public sealed class ArenaScoreTests
         .Where(bytes => bytes.Length >= 8 && BitConverter.ToUInt16(bytes, 6) == opcode)
         .Select(bytes => new PacketStream(bytes) { Pos = 16 }).ToArray();
 
-    private static (byte Corps, int Award, int Red, int Blue, string Killer) ReadPoints(PacketStream stream) =>
+    private static (byte Corps, int Award, int Red, int Blue, string Scorer) ReadPoints(PacketStream stream) =>
         (stream.ReadByte(), stream.ReadInt32(), stream.ReadInt32(), stream.ReadInt32(), stream.ReadString());
 
     private static (int KillerTeamKills, int VictimTeamDeaths) ReadKillTotals(PacketStream stream)
@@ -561,7 +618,8 @@ public sealed class ArenaScoreTests
         return (stream.ReadInt32(), stream.ReadInt32());
     }
 
-    private static async Task CheckTeam(PacketStream stream, int state, uint faction, int score, int kills, int deaths)
+    private static async Task CheckTeam(PacketStream stream, int state, uint faction, int score, int kills, int deaths,
+        IReadOnlyDictionary<uint, (int Score, ushort Assists)> expectedMembers = null)
     {
         var actual = (stream.ReadByte(), stream.ReadUInt32(), stream.ReadInt32(), stream.ReadInt16(), stream.ReadInt16());
         await Assert.That(actual).IsEqualTo(((byte)state, faction, score, (short)kills, (short)deaths));
@@ -569,16 +627,19 @@ public sealed class ArenaScoreTests
         var personalScores = 0;
         for (var i = 0; i < members; i++)
         {
-            stream.ReadUInt32();
+            var id = stream.ReadUInt32();
             stream.ReadString();
-            personalScores += stream.ReadInt32();
-            stream.ReadInt32(); // Honor is checked for each recipient in the completed match tests.
+            var memberScore = stream.ReadInt32();
+            personalScores += memberScore;
+            stream.ReadInt32(); // The completed match tests check each recipient's Honor.
             var expectedBadge = state switch { 2 => 1u, 1 => 16u, _ => 0u };
             await Assert.That(stream.ReadUInt32()).IsEqualTo(expectedBadge);
             stream.ReadUInt16();
             stream.ReadUInt16();
+            var assists = stream.ReadUInt16();
             stream.ReadUInt16();
-            stream.ReadUInt16();
+            if (expectedMembers != null)
+                await Assert.That((memberScore, assists)).IsEqualTo(expectedMembers.GetValueOrDefault(id));
         }
         await Assert.That(personalScores).IsEqualTo(score);
     }

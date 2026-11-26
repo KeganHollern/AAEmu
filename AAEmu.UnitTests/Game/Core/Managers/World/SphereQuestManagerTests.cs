@@ -206,10 +206,10 @@ public sealed partial class SphereQuestManagerTests
         owner.Transform.Local.Position = new Vector3(20, 0, 0);
         var starters = AddStarters(world, owner, new Vector3(0, 0, 0), new Vector3(1, 0, 0));
         var entries = new List<SphereQuestStarter>();
-        world.SphereQuestManager.TickQuestStarters((_, sphere, _) => entries.Add(sphere));
+        world.SphereQuestManager.TickEntrySpheres((_, sphere, _) => entries.Add(sphere));
         owner.Transform.Local.Position = Vector3.Zero;
-        world.SphereQuestManager.TickQuestStarters((_, sphere, _) => entries.Add(sphere));
-        world.SphereQuestManager.TickQuestStarters((_, sphere, _) => entries.Add(sphere));
+        world.SphereQuestManager.TickEntrySpheres((_, sphere, _) => entries.Add(sphere));
+        world.SphereQuestManager.TickEntrySpheres((_, sphere, _) => entries.Add(sphere));
 
         await Assert.That(entries.Count).IsEqualTo(2);
         await Assert.That(entries.Contains(starters[0]) && entries.Contains(starters[1])).IsTrue();
@@ -222,8 +222,8 @@ public sealed partial class SphereQuestManagerTests
         var owner = CreateCharacter(world, 7);
         AddStarters(world, owner, Vector3.Zero);
         var entries = 0;
-        world.SphereQuestManager.TickQuestStarters((_, _, _) => entries++);
-        world.SphereQuestManager.TickQuestStarters((_, _, _) => entries++);
+        world.SphereQuestManager.TickEntrySpheres((_, _, _) => entries++);
+        world.SphereQuestManager.TickEntrySpheres((_, _, _) => entries++);
 
         await Assert.That(entries).IsEqualTo(1);
     }
@@ -261,13 +261,13 @@ public sealed partial class SphereQuestManagerTests
         var owner = CreateCharacter(world, 7);
         AddStarters(world, owner, Vector3.Zero);
         var entered = 0;
-        world.SphereQuestManager.TickQuestStarters((_, _, _) => entered++);
+        world.SphereQuestManager.TickEntrySpheres((_, _, _) => entered++);
         world.SphereQuestManager.RemoveSphereQuestTriggers(owner.Id, 0);
-        world.SphereQuestManager.TickQuestStarters((_, _, _) => entered++);
+        world.SphereQuestManager.TickEntrySpheres((_, _, _) => entered++);
         owner.Transform.InstanceId = 2;
-        world.SphereQuestManager.TickQuestStarters((_, _, _) => entered++);
+        world.SphereQuestManager.TickEntrySpheres((_, _, _) => entered++);
         owner.Transform.InstanceId = 1;
-        world.SphereQuestManager.TickQuestStarters((_, _, _) => entered++);
+        world.SphereQuestManager.TickEntrySpheres((_, _, _) => entered++);
 
         await Assert.That(entered).IsEqualTo(3);
     }
@@ -305,11 +305,11 @@ public sealed partial class SphereQuestManagerTests
         starter.Region = region;
         var entered = new List<SphereQuestStarter>();
         owner.Transform.Local.Position = starter.Sphere.Xyz + new Vector3(5.01f, 0, 0);
-        world.SphereQuestManager.TickQuestStarters((_, sphere, _) => entered.Add(sphere));
+        world.SphereQuestManager.TickEntrySpheres((_, sphere, _) => entered.Add(sphere));
         await Assert.That(entered.Count).IsEqualTo(0);
         owner.Transform.Local.Position = starter.Sphere.Xyz + new Vector3(5f, 0, 0);
-        world.SphereQuestManager.TickQuestStarters((_, sphere, _) => entered.Add(sphere));
-        world.SphereQuestManager.TickQuestStarters((_, sphere, _) => entered.Add(sphere));
+        world.SphereQuestManager.TickEntrySpheres((_, sphere, _) => entered.Add(sphere));
+        world.SphereQuestManager.TickEntrySpheres((_, sphere, _) => entered.Add(sphere));
         await Assert.That(entered.Count).IsEqualTo(1);
         var quest = CreateQuest(owner);
         quest.QuestAcceptorType = QuestAcceptorType.Sphere;

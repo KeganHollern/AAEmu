@@ -2,9 +2,12 @@
 
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
+using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
@@ -77,6 +80,19 @@ public class SpawnDoodad : SpecialEffectAction
         if (!ZoneSkillRestrictions.CanApply(caster, skill, casterObj, placementPosition))
             return;
 
+        // The two wind effects share a cast, but each has its own one-second publication delay.
+        if (skill?.Template.Id == 11592 && caster is Character player && doodadId is 679 or 1203 && delay == 1000)
+        {
+            var pose = new PositionAndRotation(placementPosition, target.Transform.World.Rotation);
+            var task = new WindSpawnTask(caster.ParentWorld, player, (uint)doodadId, placementSource.Transform.ZoneId, pose);
+            void Schedule() => TaskManager.Instance.Schedule(task, TimeSpan.FromMilliseconds(delay));
+            if (SkillLaborBatch.Current is { } batch)
+                batch.AfterCommit(Schedule);
+            else
+                Schedule();
+            return;
+        }
+
         var doodad = DoodadManager.Instance.Create(caster.ParentWorld, 0, (uint)doodadId, caster, true);
         if (doodad == null)
         {
@@ -88,6 +104,24 @@ public class SpawnDoodad : SpecialEffectAction
         doodad.Transform = placementSource.Transform.CloneDetached(doodad);
         doodad.Transform.Local.SetPosition(placementPosition.X, placementPosition.Y, placementPosition.Z, rpy.X, rpy.Y, rpy.Z);
         DoodadCreation.InitializeAndSpawnTemporary(doodad, delay);
+    }
+
+    private sealed class WindSpawnTask(WorldInstance world, Character caster, uint templateId, uint zoneId, PositionAndRotation pose) : Tasks.Task
+    {
+        public override void Execute()
+        {
+            lock (SaveManager.PersistenceSyncRoot)
+            {
+                if (!WorldManager.Instance.IsRegistered(world) || caster.ParentWorld != world || world.GetUnit(caster.ObjId) != caster)
+                    return;
+                var doodad = DoodadManager.Instance.Create(world, 0, templateId, caster, true);
+                if (doodad == null)
+                    return;
+                doodad.Transform = new Transform(doodad, null, zoneId, world.Id, pose);
+                doodad.Spawn();
+                doodad.InitDoodad();
+            }
+        }
     }
 
     internal static bool TryResolvePlacement(AiGeoDataManager geoData, Vector3 sourcePosition, float yawDegrees,

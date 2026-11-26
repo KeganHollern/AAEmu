@@ -159,10 +159,13 @@ public class SphereQuestTrigger
 /// <summary>
 /// Global quest starter triggers
 /// </summary>
-public class SphereQuestStarter
+public class SphereQuestStarter : IWorldEntrySphere
 {
     public SphereQuest Sphere { get; set; }
     public uint QuestTemplateId { get; set; }
     public uint SphereId { get; set; }
     public Region Region { get; set; }
+    Vector3 IWorldEntrySphere.Center => Sphere.Xyz;
+    Spheres.Spheres IWorldEntrySphere.Definition => Sphere.DbSphere;
+    bool IWorldEntrySphere.Contains(Vector3 position) => Sphere.Contains(position);
 }

@@ -63,8 +63,25 @@ public partial class InstantGame
 
             BroadcastPacket(new SCInstantGameKillPacket(_zoneInstanceId, killer, victim, _characterCorps[killer], _characterCorps[victim], (sbyte)memberKiller.Killstreak, memberKiller.Corps.TotalKills, memberVictim.Corps.TotalDeaths));
             killer.SendPacket(new SCInstantGameKillstreakPacket(_zoneInstanceId, (sbyte)memberKiller.Killstreak, 0, true));
+            var corps = _characterCorps[killer];
             if (_battlefield.RuleSet.EnemyPlayerKillScore != 0)
-                AddScore(_characterCorps[killer], memberKiller, _battlefield.RuleSet.EnemyPlayerKillScore);
+                AddScore(corps, memberKiller, _battlefield.RuleSet.EnemyPlayerKillScore);
+
+            var assistScore = _battlefield.RuleSet.EnemyPlayerDamageAssistScore;
+            if (_battlefield.Id == (uint)InstantGameType.DrillCamp && assistScore != 0)
+            {
+                var assistants = victim.CollectAssists(killer, damageOnly: true);
+                foreach (var teammate in _members.Values)
+                {
+                    if (teammate.Corps != memberKiller.Corps || !teammate.Character.IsOnline ||
+                        teammate.Character.CurrentInstantGame != this ||
+                        !assistants.Contains(teammate.Character.Id))
+                        continue;
+
+                    teammate.Assists++;
+                    AddScore(corps, teammate, assistScore);
+                }
+            }
 
             if (!_finished)
                 _ = ResetAfterKillDelay(killer, victim, memberKiller, memberVictim, _characterCorps[victim]);

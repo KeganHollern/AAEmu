@@ -21,7 +21,7 @@ using Microsoft.Extensions.Time.Testing;
 namespace AAEmu.UnitTests.Game.Models.Game.DoodadObj;
 
 [NotInParallel]
-public sealed class DoodadPhaseTaskOwnershipTests
+public sealed partial class DoodadPhaseTaskOwnershipTests
 {
     private const uint NextPhase = 200;
     private readonly Dictionary<FieldInfo, object> _previousInstances = [];
@@ -31,7 +31,10 @@ public sealed class DoodadPhaseTaskOwnershipTests
     public void SetUp()
     {
         _previousInstances.Clear();
-        var doodads = new DoodadManager(Mock.Of<IObjectIdManager>().Object,
+        var objectIds = Mock.Of<IObjectIdManager>();
+        uint nextId = 1000;
+        objectIds.GetNextId().Returns(() => nextId++);
+        var doodads = new DoodadManager(objectIds.Object,
             Mock.Of<IDoodadIdManager>().Object, Mock.Of<IItemManager>().Object,
             new Lazy<IHousingManager>(() => Mock.Of<IHousingManager>().Object), Mock.Of<ISusManager>().Object);
         _phaseEffect = new RecordingPhaseFunc { Id = 1 };
