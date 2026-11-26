@@ -10,37 +10,45 @@ namespace AAEmu.Game.Core.Managers;
 
 public partial class AiGeoDataManager
 {
-    private readonly ConditionalWeakTable<CryWorldObjectInstance, LevelFace[]> _fallFaces = new();
-    private readonly record struct LevelFace(Vector3 A, Vector3 B, Vector3 C);
+    private readonly ConditionalWeakTable<CryWorldObjectInstance, BrushFaces> _fallFaces = new();
+    private readonly record struct LevelFace(Vector3 A, Vector3 B, Vector3 C)
+    {
+        public bool Covers(Vector3 foot) => SideOfEdge(A, B, foot) >= 0 && SideOfEdge(B, C, foot) >= 0 && SideOfEdge(C, A, foot) >= 0;
+    }
+    private readonly record struct InclinedFace(LevelFace Face, Vector2 Gradient);
+    private sealed record InclinedGroup(CryBounds Bounds, InclinedFace[] Faces);
+    private sealed record BrushFaces(LevelFace[] Level, InclinedGroup[] Inclined);
 
-    // The observer can confirm contact on a level, upward solid face at the reported feet.
+    // All r208022 playable models use a minimum fall angle of 50 degrees.
+    private static readonly float PlayerFallNormalZ = MathF.Cos(50f * MathF.PI / 180f);
+
     // Use only already loaded static placements. A brush can overhang its own world cell.
-    internal bool HasFlatFallSupport(Vector3 foot)
+    internal bool HasBrushFallSupport(Vector3 foot, bool playerInclines = false)
     {
         if (!float.IsFinite(foot.X) || !float.IsFinite(foot.Y) || !float.IsFinite(foot.Z))
             return false;
         var (cellX, cellY) = foot.ToCellIndex();
         if (worldTemplate.Cells is not { } cells || (uint)cellX >= cells.GetLength(0) || (uint)cellY >= cells.GetLength(1))
             return false;
-        if (HasContactInCell(worldTemplate.GetCell(cellX, cellY), foot))
+        if (HasContactInCell(worldTemplate.GetCell(cellX, cellY), foot, playerInclines))
             return true;
         for (var y = cellY - 1; y <= cellY + 1; y++)
         for (var x = cellX - 1; x <= cellX + 1; x++)
         {
-            if ((x != cellX || y != cellY) && HasContactInCell(worldTemplate.GetCell(x, y), foot))
+            if ((x != cellX || y != cellY) && HasContactInCell(worldTemplate.GetCell(x, y), foot, playerInclines))
                 return true;
         }
         return false;
     }
 
-    private bool HasContactInCell(WorldCell cell, Vector3 foot)
+    private bool HasContactInCell(WorldCell cell, Vector3 foot, bool playerInclines)
     {
         if (cell?.LoadedObjectDat is not { HasUnparsedObjects: false } objects)
             return false;
         try
         {
-            return GetGroundBrushIndex(cell, objects).AnyAt(foot, FallMovement.PositionTolerance, this,
-                static (ground, brush, position) => ground.HasContactOnBrush(brush, position));
+            return GetGroundBrushIndex(cell, objects).AnyAt(foot, FallMovement.PositionTolerance, (Ground: this, Player: playerInclines),
+                static (state, brush, position) => state.Ground.HasContactOnBrush(brush, position, state.Player));
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException or NotSupportedException or OverflowException)
         {
@@ -49,7 +57,7 @@ public partial class AiGeoDataManager
         }
     }
 
-    private bool HasContactOnBrush(CryWorldObjectInstance brush, Vector3 foot)
+    private bool HasContactOnBrush(CryWorldObjectInstance brush, Vector3 foot, bool playerInclines)
     {
         if (!_fallFaces.TryGetValue(brush, out var faces))
         {
@@ -59,24 +67,93 @@ public partial class AiGeoDataManager
             // A failed read supplies no geometry. A later successful read can still establish contact.
             if (asset == null || asset.Parts.Count == 0)
                 return false;
-            faces = _fallFaces.GetOrAdd(brush, static (placement, model) => ReadLevelFaces(placement.Transform, model), asset);
+            faces = _fallFaces.GetOrAdd(brush, static (placement, model) =>
+            {
+                var inclined = new List<InclinedFace>();
+                var level = ReadLevelFaces(placement.Transform, model, inclined);
+                return new BrushFaces(level, GroupInclines(inclined));
+            }, asset);
         }
-        return TouchesLevelFace(faces, foot - brush.Transform.Translation);
+        var local = foot - brush.Transform.Translation;
+        if (TouchesLevelFace(faces.Level, local))
+            return true;
+        if (!playerInclines)
+            return false;
+        var horizontalRounding = new Vector2(TruncatedSpan(foot.X), TruncatedSpan(foot.Y));
+        foreach (var group in faces.Inclined)
+        {
+            if (!group.Bounds.Contains(local))
+                continue;
+            foreach (ref readonly var slope in group.Faces.AsSpan())
+            {
+                var delta = local - slope.Face.A;
+                var dz = delta.Z - (delta.X * slope.Gradient.X + delta.Y * slope.Gradient.Y);
+                if (TouchesIncline(slope, local, horizontalRounding, dz))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    // The stock movement position truncates positive X and Y to 8/4096 m. At large
+    // world coordinates, adjacent floats can be as widely spaced as that whole interval.
+    private static float TruncatedSpan(float coordinate)
+    {
+        const float step = 1f / 512f;
+        if (coordinate < 0 || coordinate * 512f != MathF.Truncate(coordinate * 512f))
+            return 0;
+        return MathF.Max(0, MathF.BitDecrement(coordinate + step) - coordinate);
+    }
+
+    private static bool TouchesIncline(in InclinedFace slope, Vector3 local, Vector2 rounding, float dz)
+    {
+        var missing = MathF.Abs(dz) - FallMovement.PositionTolerance;
+        if (missing <= 0)
+            return slope.Face.Covers(local);
+
+        // Project only the possible horizontal error that can account for this signed gap.
+        // Both the reported foot and the inferred contact must lie on the actual triangle.
+        var dx = dz * slope.Gradient.X > 0 ? rounding.X : 0;
+        var dy = dz * slope.Gradient.Y > 0 ? rounding.Y : 0;
+        var available = MathF.Abs(slope.Gradient.X * dx + slope.Gradient.Y * dy);
+        if (available < missing || !slope.Face.Covers(local))
+            return false;
+        var fraction = missing / available;
+        return slope.Face.Covers(local + new Vector3(dx * fraction, dy * fraction, 0));
+    }
+
+    // Dense rock meshes can contribute hundreds of faces in a single broad-phase placement.
+    private static InclinedGroup[] GroupInclines(List<InclinedFace> slopes)
+    {
+        if (slopes.Count == 0)
+            return [];
+        slopes.Sort(static (a, b) => a.Face.A.Z.CompareTo(b.Face.A.Z));
+        return slopes.Chunk(16).Select(group =>
+        {
+            var min = group[0].Face.A;
+            var max = min;
+            foreach (var slope in group)
+            {
+                var (a, b, c) = slope.Face;
+                min = Vector3.Min(min, Vector3.Min(a, Vector3.Min(b, c)));
+                max = Vector3.Max(max, Vector3.Max(a, Vector3.Max(b, c)));
+            }
+            var margin = Vector3.UnitZ * FallMovement.PositionTolerance;
+            return new InclinedGroup(new(min - margin, max + margin), group);
+        }).ToArray();
     }
 
     private static bool TouchesLevelFace(LevelFace[] faces, Vector3 local)
     {
         foreach (var face in faces)
         {
-            if (MathF.Abs(local.Z - face.A.Z) <= FallMovement.PositionTolerance &&
-                SideOfEdge(face.A, face.B, local) >= 0 && SideOfEdge(face.B, face.C, local) >= 0 &&
-                SideOfEdge(face.C, face.A, local) >= 0)
+            if (MathF.Abs(local.Z - face.A.Z) <= FallMovement.PositionTolerance && face.Covers(local))
                 return true;
         }
         return false;
     }
 
-    private static LevelFace[] ReadLevelFaces(Matrix4x4 placement, CryGeometryAsset asset)
+    private static LevelFace[] ReadLevelFaces(Matrix4x4 placement, CryGeometryAsset asset, List<InclinedFace> inclined = null)
     {
         if (asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
             return [];
@@ -86,9 +163,13 @@ public partial class AiGeoDataManager
         var result = new List<LevelFace>();
         foreach (var part in asset.Parts)
         {
-            if (part.PhysicsType != 0x1000 || part.Shape is not CryTriangleMesh mesh)
+            if (part.PhysicsType != 0x1000)
                 continue;
             var transform = part.Transform * offset;
+            if (part.Shape is CryBox box && inclined != null)
+                AddInclinedBoxFaces(inclined, box, transform);
+            if (part.Shape is not CryTriangleMesh mesh)
+                continue;
             var mirrored = transform.GetDeterminant() < 0;
             for (var n = 0; n < mesh.Indices.Length; n += 3)
             {
@@ -98,14 +179,52 @@ public partial class AiGeoDataManager
                 // Resolve height at world precision. The horizontal projection stays in the
                 // placement's local frame so a real edge or a gap between triangles stays open.
                 var z = placement.Translation.Z;
-                if (a.Z + z != b.Z + z || a.Z + z != c.Z + z)
-                    continue;
                 if (mirrored)
                     (b, c) = (c, b);
-                if (Vector3.Normalize(Vector3.Cross(b - a, c - a)).Z == 1f)
-                    result.Add(new LevelFace(a, b, c));
+                var level = a.Z + z == b.Z + z && a.Z + z == c.Z + z;
+                if (!level && inclined == null)
+                    continue;
+                var normal = Vector3.Normalize(Vector3.Cross(b - a, c - a));
+                if (level)
+                {
+                    if (normal.Z == 1f)
+                        result.Add(new LevelFace(a, b, c));
+                }
+                else if (inclined != null && normal.Z > PlayerFallNormalZ)
+                    inclined.Add(new InclinedFace(new(a, b, c), new(-normal.X / normal.Z, -normal.Y / normal.Z)));
             }
         }
         return result.ToArray();
+    }
+
+    // For each pair of opposite box faces, only the upward face can support a player.
+    private static void AddInclinedBoxFaces(List<InclinedFace> faces, CryBox box, Matrix4x4 transform)
+    {
+        var center = Vector3.Transform(box.Center, transform);
+        var axes = box.Orientation * transform;
+        var x = Vector3.TransformNormal(Vector3.UnitX * box.HalfSize.X, axes);
+        var y = Vector3.TransformNormal(Vector3.UnitY * box.HalfSize.Y, axes);
+        var z = Vector3.TransformNormal(Vector3.UnitZ * box.HalfSize.Z, axes);
+        AddSide(x, y, z);
+        AddSide(y, z, x);
+        AddSide(z, x, y);
+
+        void AddSide(Vector3 u, Vector3 v, Vector3 axis)
+        {
+            if (u.Z == 0 && v.Z == 0)
+                return;
+            var normal = Vector3.Normalize(Vector3.Cross(u, v));
+            if (normal.Z < 0)
+            {
+                (u, v) = (v, u);
+                normal = -normal;
+            }
+            if (!(normal.Z > PlayerFallNormalZ))
+                return;
+            var middle = center + (Vector3.Dot(normal, axis) > 0 ? axis : -axis);
+            var gradient = new Vector2(-normal.X / normal.Z, -normal.Y / normal.Z);
+            faces.Add(new InclinedFace(new(middle - u - v, middle + u - v, middle + u + v), gradient));
+            faces.Add(new InclinedFace(new(middle - u - v, middle + u + v, middle - u + v), gradient));
+        }
     }
 }
