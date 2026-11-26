@@ -374,12 +374,27 @@ public partial class CharacterQuests(Character owner, IGameScheduleManager sched
         if (!QuestInteraction.CanInteractWithNpc(Owner, npc))
             return RejectQuestAcceptor(questId, QuestAcceptorType.Npc, npcObjId, npc.TemplateId, "source_unavailable");
 
+        return StartQuestWithNpc(questId, npc);
+    }
+
+    internal void OnNpcCombatEngagement(Npc npc)
+    {
+        var questId = npc.Template.EngageCombatGiveQuestId;
+        if (HasQuest(questId) || IsQuestComplete(questId))
+            return;
+        // The first combat event identifies this NPC. A ranged attack can land outside dialogue range.
+        if (ReferenceEquals(Owner.ParentWorld?.GetNpc(npc.ObjId), npc) && QuestInteraction.IsVisibleSource(Owner, npc))
+            StartQuestWithNpc(questId, npc);
+    }
+
+    private bool StartQuestWithNpc(uint questId, Npc npc)
+    {
         var template = QuestManager.Instance.GetTemplate(questId);
         if (template == null)
             return AddQuest(questId, false, QuestAcceptorType.Npc, npc.TemplateId);
 
         if (!IsValidQuestAcceptor(template, QuestAcceptorType.Npc, npc.TemplateId))
-            return RejectQuestAcceptor(questId, QuestAcceptorType.Npc, npcObjId, npc.TemplateId, "template_mismatch");
+            return RejectQuestAcceptor(questId, QuestAcceptorType.Npc, npc.ObjId, npc.TemplateId, "template_mismatch");
 
         Owner.CurrentTarget = npc;
         return AddQuest(questId, false, QuestAcceptorType.Npc, npc.TemplateId, npc);

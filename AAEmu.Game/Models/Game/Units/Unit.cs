@@ -1908,10 +1908,8 @@ public partial class Unit : BaseUnit, IUnit
         var player = unit as Character;
         if (added)
         {
-            if (sourceEffect && npc?.Template.EngageCombatGiveQuestId > 0 && player != null &&
-                !player.Quests.IsQuestComplete(npc.Template.EngageCombatGiveQuestId) &&
-                !player.Quests.HasQuest(npc.Template.EngageCombatGiveQuestId))
-                player.Quests.AddQuestFromNpc(npc.Template.EngageCombatGiveQuestId, npc.ObjId);
+            if (sourceEffect && npc?.Template.EngageCombatGiveQuestId > 0 && player != null)
+                player.Quests.OnNpcCombatEngagement(npc);
 
             // A quest callback can remove its giver. Do not restore combat after that cleanup.
             if (npc is { Despawned: true } or { CombatRetired: true } || !AggroTable.TryGetValue(unit.ObjId, out current) ||
