@@ -18,14 +18,7 @@ public class DoodadFuncLootPack : DoodadFuncTemplate
             return;
 
         var actAbility = SkillManager.Instance.GetSkillActAbility(skillId);
-
         var lootPack = LootGameData.Instance.GetPack(LootPackId);
-        var lootPackContents = lootPack.GeneratePack(character, actAbility);
-
-        var freeSlots = character.Inventory.Bag.FreeSlotCount;
-        owner.ToNextPhase = lootPack.GiveLootPack(character, actAbility, ItemTaskType.DoodadInteraction, lootPackContents);
-        // Keep the original Bag warning on failure. The grant accounts for compatible stacks and rolls back the whole pack.
-        if (!owner.ToNextPhase && freeSlots < lootPackContents.Count)
-            character.SendErrorMessage(ErrorMessageType.BagFull);
+        owner.ToNextPhase = lootPack.GiveLootPack(character, actAbility, ItemTaskType.DoodadInteraction);
     }
 }

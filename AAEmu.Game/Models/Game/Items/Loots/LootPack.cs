@@ -523,6 +523,12 @@ public class LootPack
                 return Fail();
             using var ownMutation = batch == null ? new InventoryMutation(taskType) : null;
             var mutation = batch?.Inventory ?? ownMutation;
+            bool FailPlacement()
+            {
+                if (taskType == ItemTaskType.DoodadInteraction && mutation.FullContainer == character.Inventory.Bag)
+                    character.SendErrorMessage(ErrorMessageType.BagFull);
+                return Fail();
+            }
             if (coins > 0 && !mutation.TryChangeMoney(character, (int)coins))
                 return Fail();
             foreach (var (itemId, count, grade, _) in generatedList)
@@ -538,11 +544,11 @@ public class LootPack
                     destination = character.Inventory.Equipment;
                     var backpack = destination.GetItemBySlot((int)EquipmentItemSlot.Backpack);
                     if (backpack != null && !mutation.TryMove(backpack, character.Inventory.Bag))
-                        return Fail();
+                        return FailPlacement();
                 }
                 var actualGrade = template.FixedGrade > 0 ? template.FixedGrade : grade > 1 ? grade : -1;
                 if (!mutation.TryGrant(destination, itemId, count, actualGrade))
-                    return Fail();
+                    return FailPlacement();
             }
             void Notify()
             {

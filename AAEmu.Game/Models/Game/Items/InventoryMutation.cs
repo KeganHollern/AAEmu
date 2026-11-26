@@ -38,6 +38,7 @@ public sealed class InventoryMutation : IDisposable
 
     public IReadOnlyList<Item> RemovedItems => _removed;
     internal bool HasFailed => _failed;
+    internal ItemContainer FullContainer { get; private set; }
     internal bool HasChanges => _containers.Count > 0 || _wallets.Count > 0;
 
     public bool TryChangeMoney(Character character, int delta, SlotType location = SlotType.Inventory)
@@ -429,7 +430,12 @@ public sealed class InventoryMutation : IDisposable
         if (!_moved.Add(item))
             return Fail();
         var slot = FindSlot(destination, item, preferredSlot);
-        if (slot < 0 || !destination.CanAccept(item, slot))
+        if (slot < 0)
+        {
+            FullContainer = destination;
+            return Fail();
+        }
+        if (!destination.CanAccept(item, slot))
             return Fail();
         Capture(destination);
         Capture(item);

@@ -245,6 +245,50 @@ public sealed partial class SkillLaborTests
     }
 
     [Test]
+    public async Task PageLoot_FullBagAndOwnedPageReportsOnlyThePickupLimit()
+    {
+        const uint page = 23216;
+        var manager = new DoodadManager(null, null, null, null, null);
+        SetInstance(manager);
+        SetField(SkillManager.Instance, "_skills", new Dictionary<uint, SkillTemplate>());
+        SetField(manager, "_phaseFuncs", new Dictionary<uint, List<DoodadPhaseFunc>>());
+        var function = new DoodadFunc { FuncId = 217, GroupId = 11107, FuncType = nameof(DoodadFuncLootPack), NextPhase = 11108 };
+        SetField(manager, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>> { [11107] = [function] });
+        SetField(manager, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
+        {
+            [function.FuncType] = new() { [217] = new DoodadFuncLootPack { Id = 217, LootPackId = 6660 } }
+        });
+        // Select one possible reward from this stock page pack.
+        SetHarvestPack(6660, [new Loot { ItemId = page, MinAmount = 1, MaxAmount = 1, AlwaysDrop = true }]);
+        var pages = new Doodad { TemplateId = 4531, Template = new DoodadTemplate { Id = 4531 }, FuncGroupId = 11107 };
+        var item = new ItemTemplate { Id = page, MaxCount = 1, PickupLimit = 1 };
+        SetField(ItemManager.Instance, "_templates", new Dictionary<uint, ItemTemplate> { [page] = item });
+        _material.TemplateId = page;
+        _material.Template = item;
+        _material.Count = 1;
+        _owner.Inventory.Bag.ContainerSize = 1;
+        var session = new RankFeedbackSession();
+        _owner.Connection = new GameConnection(session) { ActiveChar = _owner };
+        var priorWorld = AppConfiguration.Instance.World;
+        try
+        {
+            AppConfiguration.Instance.World = new WorldConfig { LootRate = 1 };
+            pages.Use(_owner);
+        }
+        finally
+        {
+            AppConfiguration.Instance.World = priorWorld;
+        }
+        var errors = session.Packets.Where(packet => BitConverter.ToUInt16(packet, 6) == SCOffsets.SCErrorMsgPacket)
+            .Select(packet => (ErrorMessageType)BitConverter.ToInt16(packet, 8)).ToArray();
+        await Assert.That(errors.SequenceEqual(new[] { ErrorMessageType.ItemPickupLimit })).IsTrue();
+        await Assert.That(pages.FuncGroupId).IsEqualTo(11107u);
+        await Assert.That(_owner.Inventory.Bag.Items.Single()).IsSameReferenceAs(_material);
+        await Assert.That(_material.Count).IsEqualTo(1);
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)20);
+    }
+
+    [Test]
     public async Task CommittedPhase_PrecedesALaterDeletionWithoutReplayingWorldState()
     {
         var doodad = CreateMiningDoodad();
@@ -298,16 +342,7 @@ public sealed partial class SkillLaborTests
         });
         if (rewards.Length == 0)
             rewards = [new Loot { ItemId = 200, MinAmount = 1, MaxAmount = 1, AlwaysDrop = true }];
-        var lootData = new LootGameData();
-        SetField(lootData, "_lootPacks", new Dictionary<uint, LootPack>
-        {
-            [6359] = new()
-            {
-                Id = 6359, Loots = [.. rewards], Groups = [], ActabilityGroups = [],
-                LootsByGroupNo = rewards.GroupBy(row => row.Group).ToDictionary(group => group.Key, group => group.ToList())
-            }
-        });
-        SetInstance(lootData);
+        SetHarvestPack(6359, rewards);
         var world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, 1);
         var doodad = new PhaseRecordingDoodad
         {
@@ -315,6 +350,20 @@ public sealed partial class SkillLaborTests
         };
         typeof(GameObject).GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(doodad, world);
         return doodad;
+    }
+
+    private void SetHarvestPack(uint packId, Loot[] rewards)
+    {
+        var lootData = new LootGameData();
+        SetField(lootData, "_lootPacks", new Dictionary<uint, LootPack>
+        {
+            [packId] = new()
+            {
+                Id = packId, Loots = [.. rewards], Groups = [], ActabilityGroups = [],
+                LootsByGroupNo = rewards.GroupBy(row => row.Group).ToDictionary(group => group.Key, group => group.ToList())
+            }
+        });
+        SetInstance(lootData);
     }
 
     private sealed class PhaseRecordingDoodad : Doodad
