@@ -456,6 +456,23 @@ public class WorldTemplateTests
     }
 
     [Test]
+    [Arguments(1024f, 6f)]
+    [Arguments(6f, 1024f)]
+    [Arguments(1024f, 1024f)]
+    public async Task ExactBoundaryUsesTheLastAuthoredVertexWithoutExtendingIntoUnmappedSpace(float x, float y)
+    {
+        const int last = WorldManager.CELL_HMAP_RESOLUTION;
+        var template = CreateWorldTemplate(2, 2);
+        var map = new ushort[last + 1, last + 1];
+        map[(int)x / 2, (int)y / 2] = 17;
+        SetLoadedCell(template, 0, 0, map);
+
+        await Assert.That(template.TryGetHeight(x, y, out var height)).IsTrue();
+        await Assert.That(height).IsEqualTo(17f);
+        await Assert.That(template.TryGetHeight(x + 0.25f, y + 0.25f, out _)).IsFalse();
+    }
+
+    [Test]
     public async Task MeasuredNeighborKeepsItsSharedHeightWhenTheEndpointsDiffer()
     {
         const int last = WorldManager.CELL_HMAP_RESOLUTION;

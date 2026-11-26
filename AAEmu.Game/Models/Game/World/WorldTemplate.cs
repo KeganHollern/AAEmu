@@ -140,7 +140,8 @@ public class WorldTemplate
     {
         try
         {
-            return GetCell(x / WorldManager.CELL_SIZE, y / WorldManager.CELL_SIZE)?.VerifyCellLoaded();
+            var cell = GetCell(x / WorldManager.CELL_SIZE, y / WorldManager.CELL_SIZE)?.VerifyCellLoaded();
+            return cell is { Loaded: true, HeightMap: not null } ? cell : null;
         }
         catch (Exception ex)
         {
@@ -184,8 +185,20 @@ public class WorldTemplate
             return false;
 
         var cell = LoadHeightCell((int)x, (int)y);
-        if (cell?.HeightMap == null || !cell.Loaded)
-            return false;
+        if (cell == null)
+        {
+            // A point exactly on an internal boundary can still lie on the preceding cell's edge.
+            bool west = x > 0f && x % WorldManager.CELL_SIZE == 0f;
+            bool south = y > 0f && y % WorldManager.CELL_SIZE == 0f;
+            if (west)
+                cell = LoadHeightCell((int)x - 1, (int)y);
+            if (cell == null && south)
+                cell = LoadHeightCell((int)x, (int)y - 1);
+            if (cell == null && west && south)
+                cell = LoadHeightCell((int)x - 1, (int)y - 1);
+            if (cell == null)
+                return false;
+        }
 
         // Get bordering points
         var border = FindNearestSignificantPoints((int)Math.Floor(x), (int)Math.Floor(y));
