@@ -857,11 +857,10 @@ public class Slave : Unit
             return position;
         }
 
-        var geometry = ParentWorld.Template.GeoData;
-        if (!geometry.TryGetGroundSurface(position, out var floor))
+        if (!TryMeasureWreckFloor(position, out var floor))
         {
             // Scatter can cross the edge of the authored world. Try the original position.
-            if (position == origin || !geometry.TryGetGroundSurface(origin, out floor))
+            if (position == origin || !TryMeasureWreckFloor(origin, out floor))
                 return origin;
             position = origin;
         }
@@ -877,6 +876,13 @@ public class Slave : Unit
         }
         position.Z = floor.Height;
         return position;
+    }
+
+    private bool TryMeasureWreckFloor(Vector3 position, out GroundSurfaceResult floor)
+    {
+        // Outdoor navigation nodes can be far above the seabed. Keep genuine walkable layers.
+        return ParentWorld.Template.GeoData.TryGetGroundSurface(position, out floor) &&
+            floor.Decision != GroundSurfaceDecision.TerrainUnavailableFallback;
     }
 
     /// <summary>

@@ -706,6 +706,24 @@ public class WorldTemplateTests
     }
 
     [Test]
+    public async Task OutdoorNavigationAcrossAnUnmappedEdgeCannotMoveWreckLootAboveWater()
+    {
+        var template = CreateWorldTemplate(2, 1);
+        SetLoadedCell(template, 1, 0, CreateHeightMap(4));
+        var origin = new Vector3(1024.2f, 100f, 99f);
+        var scatter = new Vector3(1023.8f, 100f, 99f);
+        AddNetMissionBai(template, new Vector3(scatter.X, scatter.Y, 161f), BaiNavigationType.Triangular);
+        var vehicle = CreateDropVehicle(template, 100f);
+        await Assert.That(template.GeoData.TryGetGroundSurface(scatter, out var coarse)).IsTrue();
+        await Assert.That(coarse.Decision).IsEqualTo(GroundSurfaceDecision.TerrainUnavailableFallback);
+        await Assert.That(vehicle.ResolveWreckDrop(origin, scatter, Slave.WreckDropSurface.Floor))
+            .IsEqualTo(new Vector3(origin.X, origin.Y, 4f));
+        await Assert.That(vehicle.ResolveWreckDrop(origin, scatter, Slave.WreckDropSurface.Cargo))
+            .IsEqualTo(new Vector3(origin.X, origin.Y, 100f));
+        await Assert.That(vehicle.ResolveWreckDrop(scatter, scatter, Slave.WreckDropSurface.Floor)).IsEqualTo(scatter);
+    }
+
+    [Test]
     [Arguments(1023f, 0f, 20f)]
     [Arguments(0f, 1023f, 40f)]
     [Arguments(1023.5f, 1023.5f, 30f)]
