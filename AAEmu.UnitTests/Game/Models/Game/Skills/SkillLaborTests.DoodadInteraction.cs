@@ -93,6 +93,87 @@ public sealed partial class SkillLaborTests
     private static SkillResult StartReading(Skill skill, Character who, Doodad sign, bool bypassGcd = true) =>
         skill.Use(who, new SkillCasterUnit(who.ObjId), new SkillCastDoodadTarget { ObjId = sign.ObjId }, null, bypassGcd, out _);
 
+    private (Doodad tome, ExecutionCharacter other, RankFeedbackSession session, SkillTemplate binding)
+        SetUpMemoryTome(bool singleUser)
+    {
+        var (tome, other, session) = SetUpSign(singleUser);
+        tome.TemplateId = tome.Template.Id = singleUser ? 7425u : 5041u;
+        tome.FuncGroupId = singleUser ? 20340u : 13066u;
+        var binding = new SkillTemplate
+        {
+            Id = 14602, TargetType = SkillTargetType.Doodad, MaxRange = 4, CastingTime = 3000
+        };
+        binding.Effects.Add(TargetUse(1266));
+        SetField(SkillManager.Instance, "_skills", new Dictionary<uint, SkillTemplate> { [binding.Id] = binding });
+        var function = new DoodadFunc
+        {
+            GroupId = tome.FuncGroupId, FuncId = singleUser ? 132u : 102u, FuncType = nameof(DoodadFuncBinding),
+            SkillId = binding.Id, NextPhase = singleUser ? 20346 : 13067
+        };
+        SetField(DoodadManager.Instance, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>> { [tome.FuncGroupId] = [function] });
+        SetField(DoodadManager.Instance, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
+        {
+            [nameof(DoodadFuncBinding)] = new() { [function.FuncId] = new DoodadFuncBinding { DistrictId = singleUser ? 367u : 318u } }
+        });
+        return (tome, other, session, binding);
+    }
+
+    [Test]
+    public async Task DoodadCast_MemoryTomeRejectsSecondBindingUntilFirstCastStops()
+    {
+        var (tome, other, session, binding) = SetUpMemoryTome(true);
+        await Assert.That(StartReading(new Skill(binding), _owner, tome)).IsEqualTo(SkillResult.Success);
+        await Assert.That(StartReading(new Skill(binding), other, tome)).IsEqualTo(SkillResult.Failure);
+        var error = session.Packets.Single(packet => BitConverter.ToUInt16(packet, 6) == SCOffsets.SCErrorMsgPacket);
+        await Assert.That(BitConverter.ToInt16(error, 8)).IsEqualTo((short)ErrorMessageType.AlreadyInteractingSomeoneElse);
+        await Assert.That(other.SkillTask).IsNull();
+        _owner.InterruptSkills();
+        await Assert.That(StartReading(new Skill(binding), other, tome)).IsEqualTo(SkillResult.Success);
+    }
+
+    [Test]
+    public async Task DoodadCast_SharedMemoryTomeAcceptsBothBindings()
+    {
+        var (tome, other, _, binding) = SetUpMemoryTome(false);
+        await Assert.That(StartReading(new Skill(binding), _owner, tome)).IsEqualTo(SkillResult.Success);
+        await Assert.That(StartReading(new Skill(binding), other, tome)).IsEqualTo(SkillResult.Success);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DoodadCast_SingleUserBuffAndPickupReserveOnlyTheirAuthoredSkill(bool pickup)
+    {
+        var (target, other, _) = SetUpSign(true);
+        target.TemplateId = target.Template.Id = pickup ? 6271u : 6075u;
+        target.FuncGroupId = pickup ? 16601u : 15780u;
+        var template = new SkillTemplate
+        {
+            Id = pickup ? 21112u : 20420u, TargetType = SkillTargetType.Doodad,
+            MaxRange = 3, CastingTime = pickup ? 1000 : 1700
+        };
+        var effect = TargetUse(pickup ? 3609u : 3392u);
+        ((InteractionEffect)effect.Template).WorldInteraction = pickup ? WorldInteractionType.RecoverItem : WorldInteractionType.Use;
+        template.Effects.Add(effect);
+        var func = new DoodadFunc
+        {
+            SkillId = template.Id, GroupId = target.FuncGroupId,
+            FuncType = pickup ? nameof(DoodadFuncRecoverItem) : nameof(DoodadFuncBuff),
+            FuncId = pickup ? 636u : 8u, NextPhase = pickup ? -1 : 15781
+        };
+        SetField(DoodadManager.Instance, "_funcsByGroups",
+            new Dictionary<uint, List<DoodadFunc>> { [target.FuncGroupId] = [func] });
+        await Assert.That(StartReading(new Skill(template), _owner, target)).IsEqualTo(SkillResult.Success);
+        await Assert.That(StartReading(new Skill(template), other, target)).IsEqualTo(SkillResult.Failure);
+        _owner.InterruptSkills();
+        await Assert.That(StartReading(new Skill(template), other, target)).IsEqualTo(SkillResult.Success);
+        other.InterruptSkills();
+
+        func.SkillId = 0;
+        await Assert.That(StartReading(new Skill(template), _owner, target)).IsEqualTo(SkillResult.Success);
+        await Assert.That(StartReading(new Skill(template), other, target)).IsEqualTo(SkillResult.Success);
+    }
+
     [Test]
     public async Task DoodadCast_SecondReaderGetsNativeErrorBeforeCastAndCanRetryAfterCancellation()
     {
