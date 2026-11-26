@@ -462,19 +462,19 @@ public partial class InstantGame
 
             RemovePlayer(character);
             RemoveDepartedMember(character);
-            character.DisabledSetPosition = true;
-
             if (character.MainWorldPosition == null)
             {
                 _log.Warn($"Character {character.Name} ({character.Id}) does not have MainWorldPosition when leaving instant game!");
                 return;
             }
 
+            LeaveWorldForTransfer(character);
             character.Transform = character.MainWorldPosition.Clone();
             character.Transform.InstanceId = WorldManager.DefaultInstanceId;
+            character.ParentWorld?.AddObject(character);
             character.SendPacket(
                 new SCLoadInstancePacket(
-                    character.MainWorldPosition.WorldId,
+                    WorldManager.DefaultInstanceId,
                     character.MainWorldPosition.ZoneId,
                     character.MainWorldPosition.World.Position.X,
                     character.MainWorldPosition.World.Position.Y,
@@ -490,11 +490,22 @@ public partial class InstantGame
 
     private void MoveCharacterToWorld(Character character, uint zoneId, float x, float y, float z)
     {
-        character.DisabledSetPosition = true;
         if (character.Transform.InstanceId == WorldManager.DefaultInstanceId || character.MainWorldPosition == null)
             character.MainWorldPosition = character.Transform.CloneDetached(character);
+        LeaveWorldForTransfer(character);
         character.Transform.ApplyWorldSpawnPosition(new WorldSpawnPosition { ZoneId = zoneId, X = x, Y = y, Z = z }, _world.Id);
+        _world.AddObject(character);
         character.SendPacket(new SCLoadInstancePacket(_world.Id, zoneId, x, y, z, 0, 0, 0));
+    }
+
+    private static void LeaveWorldForTransfer(Character character)
+    {
+        character.DisabledSetPosition = true;
+        // Attached objects stay in the old world when the player leaves its visible region.
+        character.Transform.StickyParent = null;
+        character.Transform.DetachAll();
+        WorldManager.RemoveVisibleObject(character);
+        character.ParentWorld?.RemoveObject(character);
     }
 
     public void BroadcastPacket(GamePacket packet)
