@@ -66,10 +66,18 @@ def objective_rows(connection: sqlite3.Connection) -> list[dict]:
 
 
 def valid_volume(volume: dict) -> bool:
+    def finite(value):
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
     try:
-        values = [volume[key] for key in ("x", "y", "z", "radius")]
-        return all(isinstance(value, (int, float)) and not isinstance(value, bool)
-                   and math.isfinite(value) for value in values) and volume["radius"] > 0
+        if not all(finite(volume[key]) for key in ("x", "y", "z")):
+            return False
+        if "polygon" in volume:
+            polygon = volume["polygon"]
+            return (finite(polygon["Height"]) and polygon["Height"] >= 0
+                    and len(polygon["Points"]) >= 3
+                    and all(finite(point[key]) for point in polygon["Points"] for key in ("X", "Y", "Z")))
+        return finite(volume["radius"]) and volume["radius"] > 0
     except (KeyError, TypeError):
         return False
 
@@ -108,13 +116,14 @@ def read_volumes(client_root: Path, world_data: Path, errors: list[str]):
                 volumes.append({"world": path.parent.name, "zone_key": row["ZoneId"],
                                 "quest_id": row["QuestId"], "component_id": row["ComponentId"],
                                 "x": row["X"], "y": row["Y"], "z": row["Z"],
-                                "radius": row["Radius"], "source": relative,
+                                **({"polygon": row["Polygon"]} if "Polygon" in row else {"radius": row["Radius"]}),
+                                "source": relative,
                                 "source_kind": "supplement", "record": index})
             except (KeyError, TypeError):
                 errors.append(f"The supplement record lacks a required field: {relative}[{index}]")
     for volume in volumes:
         if not valid_volume(volume):
-            errors.append(f"The volume must have finite coordinates and a positive radius: "
+            errors.append(f"The volume needs finite coordinates and a valid sphere radius or polygon: "
                           f"{volume['source']}[{volume['record']}]")
     return volumes
 

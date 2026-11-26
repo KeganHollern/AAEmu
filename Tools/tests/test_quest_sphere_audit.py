@@ -120,6 +120,15 @@ class QuestSphereAuditTests(unittest.TestCase):
         self.write_supplement(world="arena")
         self.assertTrue(self.run_audit()["ok"])
 
+    def test_polygon_supplement_validates_vertices_and_height(self):
+        self.missing_geometry()
+        points = [{"X": 1, "Y": 2, "Z": 3}, {"X": 2, "Y": 2, "Z": 4}, {"X": 1, "Y": 3, "Z": 5}]
+        for height, vertices, expected in ((0, points, True), (-1, points, False),
+                                           (0, points[:2], False), (0, points[:2] + [{"X": 3}], False)):
+            with self.subTest(height=height, vertices=vertices):
+                self.write_supplement(Polygon={"Height": height, "Points": vertices})
+                self.assertEqual(expected, self.run_audit()["ok"])
+
     def test_nonfinite_and_nonpositive_volumes_fail_even_with_valid_coverage(self):
         for changes in ({"Radius": 0}, {"Radius": -1}, {"Radius": float("nan")}, {"X": float("inf")}):
             with self.subTest(changes=changes):
