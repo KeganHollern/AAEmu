@@ -148,6 +148,7 @@ public class Doodad : BaseUnit
 
                     CurrentFuncs = DoodadManager.Instance.GetFuncsForGroup(_funcGroupId);
                     CurrentPhaseFuncs = DoodadManager.Instance.GetPhaseFunc(_funcGroupId);
+                    Region?.RefreshDoodadFloor(this);
 
                     // Register new ToD triggers (if any)
                     CurrentToDTriggers.Clear();
@@ -396,6 +397,7 @@ public class Doodad : BaseUnit
     public void SetScale(float scale)
     {
         _scale = scale;
+        Region?.RefreshDoodadFloor(this);
     }
 
     /*
@@ -1267,6 +1269,7 @@ public class Doodad : BaseUnit
             OwnerId = ownerId;
             OwnerDbId = ownerDbId;
             _scale = scale;
+            Region?.RefreshDoodadFloor(this);
         };
     }
 

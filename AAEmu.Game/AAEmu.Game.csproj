@@ -80,6 +80,8 @@
     <Folder Include="Models\ClientData" />
     <EmbeddedResource Include="Models\Game\Char\Data\r208022-face-slider-limits.json"
                       LogicalName="AAEmu.Game.CharacterFaceSliderLimits.json" />
+    <EmbeddedResource Include="Models\Game\World\Data\r208022-doodad-floor-bounds.json"
+                      LogicalName="AAEmu.Game.StockDoodadFloorBounds.json" />
     <EmbeddedResource Include="Models\Game\Quests\Data\r208022-doodad-interactions.json"
                       LogicalName="AAEmu.Game.QuestDoodadInteractionShapes.json" />
   </ItemGroup>

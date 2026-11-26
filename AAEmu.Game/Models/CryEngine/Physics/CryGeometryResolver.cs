@@ -7,7 +7,7 @@ using System.Xml.Linq;
 namespace AAEmu.Game.Models.CryEngine.Physics;
 
 /// <summary>Loads authored r208022 collision proxies without replacing them with render triangles.</summary>
-public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> openFile)
+public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> openFile, Func<string, bool> needsSourceHash = null)
 {
     private readonly ConcurrentDictionary<string, CryGeometryAsset> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, CryCharacterAnimation> _animations = new(StringComparer.OrdinalIgnoreCase);
@@ -76,7 +76,11 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
         {
             using var buffer = new MemoryStream();
             stream.CopyTo(buffer);
-            asset = ReadCgf(buffer.ToArray(), AssetPath(path));
+            var bytes = buffer.ToArray();
+            var file = AssetPath(path);
+            asset = ReadCgf(bytes, file);
+            if (needsSourceHash?.Invoke(file) == true)
+                asset = asset with { SourceSha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)) };
             if (asset.CharacterBones.Count > 0)
                 asset = LoadCharacterLodBounds(path, asset);
         }

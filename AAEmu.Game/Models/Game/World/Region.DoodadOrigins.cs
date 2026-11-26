@@ -29,6 +29,28 @@ public partial class Region
         next[index] = new DoodadOrigin(doodad, origin);
         old[index..].CopyTo(next.AsSpan(index + 1));
         Volatile.Write(ref _doodadOrigins, next);
+        _worldInstance.DoodadFloors.Update(doodad, this);
+    }
+
+    internal void RefreshDoodadFloor(Doodad doodad)
+    {
+        if (doodad.Spawner?.Position == null)
+            return;
+        // Region can still point here during despawn. Only a registered origin can update the grid.
+        lock (_objectsLock)
+        {
+            var origin = doodad.Spawner.Position.X;
+            foreach (var entry in DoodadOriginsFrom(origin))
+            {
+                if (entry.Position.X > origin)
+                    break;
+                if (ReferenceEquals(entry.Doodad, doodad))
+                {
+                    _worldInstance.DoodadFloors.Update(doodad, this);
+                    break;
+                }
+            }
+        }
     }
 
     private void RemoveDoodadOrigin(Doodad doodad)
@@ -42,6 +64,7 @@ public partial class Region
             old[..i].CopyTo(next);
             old[(i + 1)..].CopyTo(next.AsSpan(i));
             Volatile.Write(ref _doodadOrigins, next);
+            _worldInstance.DoodadFloors.Remove(doodad, this);
             return;
         }
     }

@@ -15,7 +15,7 @@ namespace AAEmu.Game.Core.Managers;
 
 public partial class AiGeoDataManager
 {
-    private sealed record DoodadFloor(uint Phase, Vector3 Rotation, float Scale, LevelFace[] Faces, long RetryAfter);
+    private sealed record DoodadFloor(uint Phase, Vector3 Rotation, float Scale, LevelFace[] Faces, long RetryAfter, bool StockModel);
     private readonly ConditionalWeakTable<Doodad, DoodadFloor> _doodadFloors = new();
 
     internal bool HasStaticDoodadFallSupport(Unit actor, Vector3 foot)
@@ -49,10 +49,19 @@ public partial class AiGeoDataManager
                     return true;
             }
         }
+        foreach (var entry in world.DoodadFloors.At(foot))
+        {
+            if (!entry.Bounds.Contains(foot) || Vector3.DistanceSquared(entry.Origin, foot) <= radius * radius)
+                continue;
+            var doodad = entry.Doodad;
+            if (ReferenceEquals(doodad.ParentWorld, world) && doodad.IsVisible && Region.IsStaticDoodadCandidate(doodad) &&
+                doodad.Transform.World.Position == entry.Origin && HasDoodadFace(doodad, foot - entry.Origin, stockOnly: true))
+                return true;
+        }
         return false;
     }
 
-    private bool HasDoodadFace(Doodad doodad, Vector3 relativeFoot)
+    private bool HasDoodadFace(Doodad doodad, Vector3 relativeFoot, bool stockOnly = false)
     {
         var phase = doodad.FuncGroupId;
         var rotation = doodad.Transform.World.Rotation;
@@ -60,16 +69,17 @@ public partial class AiGeoDataManager
             floor.Rotation != rotation || floor.Scale != doodad.Scale ||
             (floor.RetryAfter != 0 && Environment.TickCount64 >= floor.RetryAfter))
         {
-            var faces = ReadDoodadFaces(doodad, phase, out var retry);
-            floor = new DoodadFloor(phase, rotation, doodad.Scale, faces, retry);
+            var faces = ReadDoodadFaces(doodad, phase, out var retry, out var stockModel);
+            floor = new DoodadFloor(phase, rotation, doodad.Scale, faces, retry, stockModel);
             _doodadFloors.AddOrUpdate(doodad, floor);
         }
-        return TouchesLevelFace(floor.Faces, relativeFoot);
+        return (!stockOnly || floor.StockModel) && TouchesLevelFace(floor.Faces, relativeFoot);
     }
 
-    private static LevelFace[] ReadDoodadFaces(Doodad doodad, uint phase, out long retry)
+    private static LevelFace[] ReadDoodadFaces(Doodad doodad, uint phase, out long retry, out bool stockModel)
     {
         retry = 0;
+        stockModel = false;
         if (phase == 0 || !doodad.Template.FuncGroups.Any(group => group.Id == phase &&
                 group.GroupKindId != DoodadFuncGroups.DoodadFuncGroupKind.End) ||
             DoodadManager.Instance.GetPhaseFunc(phase).Any(func => func.FuncType != nameof(DoodadFuncTimer)))
@@ -85,6 +95,7 @@ public partial class AiGeoDataManager
                 var asset = HousingManager.Instance.GeometryAssets.Load(path);
                 if (asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
                     return [];
+                stockModel = asset.SourceSha256 != null && StockDoodadFloorModel.Find(path)?.Sha256 == asset.SourceSha256;
                 var placement = HousingGeometryAssets.Transform(doodad);
                 var faces = new List<LevelFace>(ReadLevelFaces(placement, asset));
                 placement.Translation = Vector3.Zero;

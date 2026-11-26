@@ -97,6 +97,7 @@ public partial class WorldInstance(WorldTemplate template, uint channelId, bool 
     /// Manager that handles spawns for this instance
     /// </summary>
     public SpawnManager SpawnManager { get; set; }
+    internal DoodadFloorIndex DoodadFloors { get; } = new();
     /// <summary>
     /// Data-driven world event scripts for this instance (aaemu-cluster#92);
     /// null when the world template ships no dungeon_scripts.json

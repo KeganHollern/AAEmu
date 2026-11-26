@@ -54,6 +54,7 @@ public sealed record CryGeometryPart(CryPhysicsShape Shape, Matrix4x4 Transform,
 public sealed record CryGeometryAsset(CryBounds Bounds, IReadOnlyList<CryGeometryPart> Parts)
 {
     public IReadOnlyList<CryPrefabWaterVolume> WaterVolumes { get; init; } = [];
+    internal string SourceSha256 { get; init; }
     public bool HasModelBounds { get; init; } = true;
     public IReadOnlyList<CryGeometryHelper> Helpers { get; init; } = [];
     public IReadOnlyList<CryGeometryPoseRequirement> PoseRequirements { get; init; } = [];
