@@ -1,10 +1,14 @@
 ﻿using System.Reflection;
 using System.Collections.Concurrent;
+using System.Xml;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.IO;
+using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -16,6 +20,8 @@ namespace AAEmu.UnitTests.Game.Models.Game.Units;
 [NotInParallel]
 public sealed class FallDamageTests
 {
+    private ClientSource _stockSource;
+    private WorldConfig _previousConfig;
     private FieldInfo _managerField;
     private object _previousManager;
     private FieldInfo _worldManagerField;
@@ -41,6 +47,12 @@ public sealed class FallDamageTests
     [After(Test)]
     public void TearDown()
     {
+        if (_stockSource != null)
+        {
+            AppConfiguration.Instance.World = _previousConfig;
+            ((IList<ClientSource>)ClientFileManager.Sources).Remove(_stockSource);
+            _stockSource.Close();
+        }
         _managerField.SetValue(null, _previousManager);
         _worldManagerField.SetValue(null, _previousWorldManager);
     }
@@ -205,6 +217,74 @@ public sealed class FallDamageTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StockDryHole_ShortJumpUsesOneLandingReport(bool delayed)
+    {
+        var world = CreateStockWorld();
+        const float x = 22416.2f, y = 10020.2f, rock = 392.323f;
+        await Assert.That(world.GetHeight(x, y)).IsGreaterThan(rock + 1.3f);
+        var actor = new FallUnit { Hp = 4026, MaxHp = 4026, ParentWorld = world };
+        void Move(float z, double time, bool landing = false)
+        {
+            actor.Transform.Local.SetPosition(x, y, z);
+            actor.ObserveFallMovement(landing, time);
+        }
+        Move(rock, 0);
+        Move(rock + 0.975f, 0.16);
+        Move(rock + 1.3f, 0.32);
+        Move(rock + 0.975f, 0.48);
+        Move(rock, 0.64, !delayed);
+        if (delayed)
+        {
+            await Assert.That(actor.Impacts).IsEmpty();
+            Move(rock, 0.74, true);
+        }
+        Move(rock, 0.75, true);
+        await Assert.That(actor.Impacts).IsEquivalentTo(new ushort[] { 3120 });
+        await Assert.That(actor.Hp).IsEqualTo(4026);
+    }
+
+    [Test]
+    public async Task StockTerrain_FallHeightUsesTheSquareOnEachSideOfABoundary()
+    {
+        var world = CreateStockWorld();
+        // Adjacent surface-31 and solid squares across sector X, cell X, and the corner of four cells.
+        foreach (var (x, y, solid) in new[]
+        {
+            (5823.875f, 12756.125f, false), (5824f, 12756.125f, true),
+            (7167.875f, 11482.125f, false), (7168f, 11482.125f, true),
+            (6143.875f, 8192.125f, true), (6144.125f, 8191.875f, true), (6144f, 8192f, false)
+        })
+        {
+            await Assert.That(world.TryGetHeight(x, y, out var elevation)).IsTrue();
+            await Assert.That(world.Template.TryGetFallTerrainHeight(x, y, out var height)).IsEqualTo(solid);
+            if (solid)
+                await Assert.That(height).IsEqualTo(elevation);
+        }
+    }
+
+    private WorldInstance CreateStockWorld()
+    {
+        var archive = Environment.GetEnvironmentVariable("AAEMU_HOUSING_GAME_PAK");
+        Skip.Unless(!string.IsNullOrEmpty(archive), "Set AAEMU_HOUSING_GAME_PAK to check the stock terrain.");
+        if (!ClientFileManager.AddSource(archive))
+            throw new IOException("Could not open the stock terrain archive.");
+        _stockSource = ClientFileManager.Sources[^1];
+        _previousConfig = AppConfiguration.Instance.World;
+        AppConfiguration.Instance.World = new() { GeoDataMode = false };
+        var template = new WorldTemplate { Name = "main_world" };
+        using var input = _stockSource.GetFileStream("game/worlds/main_world/world.xml");
+        var xml = new XmlDocument();
+        xml.Load(input);
+        template.XmlWorld.ReadNode(xml.DocumentElement, template);
+        var world = new WorldInstance(template, 0, true, 0);
+        world.Water.OceanLevel = 100;
+        _worlds[0] = world;
+        return world;
+    }
+
+    [Test]
     public async Task DeadMovement_DiscardsHistoryBeforeRevival()
     {
         var unit = new FallUnit { Hp = 1000, MaxHp = 1000 };
@@ -296,6 +376,13 @@ public sealed class FallDamageTests
 
     private sealed class FallUnit : Unit
     {
+        public List<ushort> Impacts { get; } = [];
+        public override int DoFallDamage(ushort fallVel)
+        {
+            Impacts.Add(fallVel);
+            return base.DoFallDamage(fallVel);
+        }
+
         public KillReason Reason { get; private set; }
         public int Packets { get; private set; }
         public override void ReduceCurrentHp(BaseUnit attacker, int value, KillReason killReason = KillReason.Damage)

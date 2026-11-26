@@ -1,4 +1,6 @@
-﻿namespace AAEmu.Game.Models.ClientData;
+﻿using System.Collections;
+
+namespace AAEmu.Game.Models.ClientData;
 
 public class NodeCell
 {
@@ -16,6 +18,8 @@ public class NodeCell
     public float fRange { get; set; }
     public int nSize { get; set; }
     public ushort[] pHMData { get; set; }
+
+    internal BitArray TerrainHoles { get; private set; }
 
     private int iOffset;
     private int iRange;
@@ -56,6 +60,22 @@ public class NodeCell
         br.ReadSingle();
 
         br.ReadBytes(36 + unkCount);
+
+        // Surface 31 removes the square. Height rescaling below retains only four of its five bits.
+        if (bHasHoles != 0 && nSize > 1)
+        {
+            for (var x = 0; x < FullResolution; x++)
+            for (var y = 0; y < FullResolution; y++)
+            {
+                var sourceX = x * (nSize - 1) / FullResolution;
+                var sourceY = y * (nSize - 1) / FullResolution;
+                if ((pHMData[sourceX * nSize + sourceY] & 31) != 31)
+                    continue;
+
+                TerrainHoles ??= new BitArray(FullResolution * FullResolution);
+                TerrainHoles[x * FullResolution + y] = true;
+            }
+        }
 
         Init();
         if (!disabledReCalc && Version < 7)

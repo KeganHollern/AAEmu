@@ -175,7 +175,11 @@ public class WorldTemplate
     /// <summary>
     /// Tries to get height at the target position using the terrain mesh's triangle interpolation.
     /// </summary>
-    public bool TryGetHeight(float x, float y, out float height)
+    public bool TryGetHeight(float x, float y, out float height) => TryGetHeight(x, y, out height, false);
+
+    internal bool TryGetFallTerrainHeight(float x, float y, out float height) => TryGetHeight(x, y, out height, true);
+
+    private bool TryGetHeight(float x, float y, out float height, bool requireSolidTerrain)
     {
         height = 0f;
         if (!float.IsFinite(x) || !float.IsFinite(y) || x < 0f || y < 0f || Cells is null)
@@ -199,6 +203,9 @@ public class WorldTemplate
             if (cell == null)
                 return false;
         }
+
+        if (requireSolidTerrain && cell.IsTerrainHole(x, y))
+            return false;
 
         // Get bordering points
         var border = FindNearestSignificantPoints((int)Math.Floor(x), (int)Math.Floor(y));

@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.Collections;
+using System.Numerics;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models.ClientData;
@@ -21,6 +22,7 @@ public class WorldCell
     private readonly Lock _loadLock = new();
     private Vector3 CellOffset { get; set; }
     internal ushort[,] HeightMap { get; private set; }
+    private BitArray[] _terrainHoles;
     private float MinHeight { get; set; }
     private float MaxHeight { get; set; }
 
@@ -168,6 +170,9 @@ public class WorldCell
             .Where(x => x.pHMData.Length > 0)
             .ToList();
 
+        if (sortedNodes.Any(node => node.TerrainHoles != null))
+            _terrainHoles = sortedNodes.Select(node => node.TerrainHoles).ToArray();
+
         // Read nodes into heightmap array
         #region ReadNodes
 
@@ -231,6 +236,20 @@ public class WorldCell
     public float GetHeightMapDataInCell(int heightMapDataX, int heightMapDataY)
     {
         return TryGetHeightMapSample(heightMapDataX, heightMapDataY, out var height) ? height : 0f;
+    }
+
+    internal bool IsTerrainHole(float worldX, float worldY)
+    {
+        if (_terrainHoles == null)
+            return false;
+
+        // The owning square at a retained outer edge is the last square in this cell.
+        const int unitCount = WorldManager.CELL_HMAP_RESOLUTION;
+        const int sectorUnits = WorldManager.SECTOR_HMAP_RESOLUTION;
+        var x = Math.Clamp(((int)worldX - CellX * WorldManager.CELL_SIZE) / 2, 0, unitCount - 1);
+        var y = Math.Clamp(((int)worldY - CellY * WorldManager.CELL_SIZE) / 2, 0, unitCount - 1);
+        var sector = _terrainHoles[x / sectorUnits * WorldManager.SECTORS_PER_CELL + y / sectorUnits];
+        return sector?[x % sectorUnits * sectorUnits + y % sectorUnits] == true;
     }
 
     internal bool TryGetHeightMapSample(int x, int y, out float height)
