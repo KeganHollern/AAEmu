@@ -21,7 +21,7 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
         var npc = npcObjId == 0 ? null : character.ParentWorld.GetNpc(npcObjId);
         var doodadObjId = stream.ReadBc();
         var doodad = doodadObjId == 0 ? null : character.ParentWorld.GetDoodad(doodadObjId);
-        var storeType = stream.ReadUInt32(); // Native field "type"; the normal r208022 store writes zero.
+        var storeType = stream.ReadUInt32(); // Normal shops write zero. A gold display writes its active doodad function key.
         var buyCount = stream.ReadByte();
         var buyBackCount = stream.ReadByte();
 
@@ -71,12 +71,20 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
             else if (doodadObjId != 0)
             {
                 // StoreUi opens locally in r208022. No server interaction session precedes this request.
+                var display = doodad?.CurrentFuncs.FirstOrDefault(func => func.FuncKey == storeType &&
+                    func.SkillId == DoodadFuncPurchase.DisplaySkillId && func.FuncType == nameof(DoodadFuncPurchase));
                 if (doodad == null || doodad.Despawn > DateTime.MinValue ||
-                    !ServiceInteraction.CanReach(character, doodad, 3f))
+                    !ServiceInteraction.CanReach(character, doodad, display == null ? 3f : DoodadFuncPurchase.DisplayReach))
                 {
                     character.SendErrorMessage(ErrorMessageType.TooFarAway);
                     return;
                 }
+                if (display != null)
+                {
+                    ConfirmDisplayPurchase(character, doodad, display, requests, buyBackCount);
+                    return;
+                }
+
                 var store = doodad.CurrentFuncs.FirstOrDefault(func => func.FuncType == nameof(DoodadFuncStoreUi));
                 if (store == null || DoodadManager.Instance.GetFuncTemplate(store.FuncId, store.FuncType)
                     is not DoodadFuncStoreUi storeTemplate)
@@ -131,6 +139,29 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
                 remotePurchase,
                 npc != null);
         }
+    }
+
+    private static void ConfirmDisplayPurchase(Character character, Doodad doodad, DoodadFunc display,
+        List<StorePurchaseRequest> requests, int buyBackCount)
+    {
+        if (!DoodadPermissionRules.Allows(character, doodad, display.PermId))
+        {
+            character.SendErrorMessage(ErrorMessageType.InteractionPermissionDeny);
+            return;
+        }
+
+        if (DoodadManager.Instance.GetFuncTemplate(display.FuncId, display.FuncType) is not DoodadFuncPurchase purchase ||
+            purchase.UsesItemPayment || purchase.CurrencyId != 0 || buyBackCount != 0 ||
+            requests is not [{ Currency: ShopCurrencyType.Money } line] ||
+            line.ItemId != purchase.ItemId || line.Count != purchase.Count)
+        {
+            character.SendErrorMessage(ErrorMessageType.StoreInvalidItem);
+            return;
+        }
+
+        var result = purchase.TryPurchase(character);
+        if (result != ErrorMessageType.NoErrorMessage)
+            character.SendErrorMessage(result);
     }
 
     private void SendPurchaseError(StorePurchaseError error)
