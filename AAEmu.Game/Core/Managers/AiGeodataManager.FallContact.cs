@@ -198,7 +198,10 @@ public partial class AiGeoDataManager
                 continue;
             var transform = part.Transform * offset;
             if (part.Shape is CryBox box && inclined != null)
+            {
+                AddLevelBoxFace(result, box, transform);
                 AddInclinedBoxFaces(inclined, box, transform);
+            }
             if (part.Shape is not CryTriangleMesh mesh)
                 continue;
             var mirrored = transform.GetDeterminant() < 0;

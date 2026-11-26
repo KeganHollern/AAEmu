@@ -8,6 +8,32 @@ namespace AAEmu.UnitTests.Game.Models.Game.Units;
 public sealed partial class FallDamageTests
 {
     [Test]
+    [Arguments(22133.559f, 8469.82f, 480.49075f, 22137.559f)] // Tigerspine bridge above the rail bed.
+    [Arguments(10655.814f, 14765.314f, 300.90854f, 10656.814f)] // Wooden crate beside the bank.
+    public async Task StockLevelBox_PlayerLandsOnceOnTheTopFace(float x, float y, float top, float outsideX)
+    {
+        var world = CreateStockWorld();
+        world.Template.GetCell((int)x / 1024, (int)y / 1024).VerifyCellLoaded();
+        var ground = world.Template.GeoData;
+        var foot = new Vector3(x, y, top);
+        await Assert.That(ground.HasBrushFallSupport(foot + Vector3.UnitZ * 0.01f, true)).IsFalse();
+        await Assert.That(ground.HasBrushFallSupport(foot - Vector3.UnitZ * 0.01f, true)).IsFalse();
+        await Assert.That(ground.HasBrushFallSupport(new(outsideX, y, top), true)).IsFalse();
+
+        var actor = new InclinePlayer { ParentWorld = world, Hp = 9516 };
+        actor.Transform.Local.SetPosition(foot + Vector3.UnitZ * 1.3f);
+        actor.ObserveFallMovement(false, 0);
+        actor.Transform.Local.SetPosition(foot + Vector3.UnitZ * 0.975f);
+        actor.ObserveFallMovement(false, 0.16);
+        await Assert.That(actor.Impacts).IsEmpty();
+        actor.Transform.Local.SetPosition(foot);
+        actor.ObserveFallMovement(false, 0.32);
+        await Assert.That(actor.Impacts).IsEquivalentTo(new ushort[] { 3120 });
+        actor.ObserveFallMovement(true, 0.42);
+        await Assert.That(actor.Impacts.Count).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(22245.4f, 8624.9f, 565.23505f)] // Wooden bridge, rotated solid box.
     [Arguments(22260.2f, 8655.7f, 600.51587f)] // Rail mesh, upward triangle 4.
     public async Task StockTigerspineIncline_ConfirmsThePlayersJumpBeforeTheLandingNotice(float x, float y, float floor)
