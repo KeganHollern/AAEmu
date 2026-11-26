@@ -176,7 +176,10 @@ public class LootPack
     /// <param name="actabilityType">AbilityType used to initiate the loot generation (used to calculate bonus)</param>
     /// <param name="inheritedGrade">Grade to inherit (Optional)</param>
     /// <returns></returns>
-    public List<(uint itemId, int count, byte grade, uint lootGroupOrigin)> GeneratePackNewV2(float lootDropRate, float lootGoldRate, Character player, ActabilityType actabilityType, byte? inheritedGrade = null)
+    public List<(uint itemId, int count, byte grade, uint lootGroupOrigin)> GeneratePackNewV2(float lootDropRate, float lootGoldRate, Character player, ActabilityType actabilityType, byte? inheritedGrade = null) =>
+        GeneratePackNewV2(lootDropRate, lootGoldRate, player, actabilityType, inheritedGrade, Random.Shared);
+
+    internal List<(uint itemId, int count, byte grade, uint lootGroupOrigin)> GeneratePackNewV2(float lootDropRate, float lootGoldRate, Character player, ActabilityType actabilityType, byte? inheritedGrade, Random random)
     {
         var items = new List<(uint itemId, int count, byte grade, uint lootGroupOrigin)>();
 
@@ -199,7 +202,7 @@ public class LootPack
 
                     // Roll each item
                     var requiresDice = (long)Math.Floor(loot.DropRate * lootDropRate * AppConfiguration.Instance.World.LootRate);
-                    var dice = (long)Random.Shared.Next(0, 10_000_000);
+                    var dice = (long)random.Next(0, 10_000_000);
                     if (dice < requiresDice || loot.AlwaysDrop)
                     {
                         if (!selectedItemsByGroup.ContainsKey(loot.Group))
@@ -212,16 +215,27 @@ public class LootPack
             {
                 // Roll group
                 var requiresDice = (long)Math.Floor(10_000_000f * groupRate * lootDropRate * AppConfiguration.Instance.World.LootRate);
-                var dice = (long)Random.Shared.Next(0, 10_000_000);
+                var dice = (long)random.Next(0, 10_000_000);
                 if (dice < requiresDice)
                 {
                     var tmpSelectedItemsByGroup = new Dictionary<uint, List<Loot>>();
                     var tmpSelectedQuestItemsByGroup = new Dictionary<uint, List<Loot>>();
                     var normalizedRate = 0u;
+                    var chooseUniformly = lootDropRate * AppConfiguration.Instance.World.LootRate > 1 &&
+                        groupLootList.Count > 1 && groupLootList[0].DropRate > 1;
                     // Sort mixed quest / non-quest items
                     foreach (var loot in groupLootList)
                     {
                         var itemTemplate = ItemManager.Instance.GetTemplate(loot.ItemId);
+                        if (chooseUniformly)
+                        {
+                            // The group roll already used the boost. Only equal, optional rewards
+                            // with the same quantity and grade can share a uniform item roll.
+                            var first = groupLootList[0];
+                            chooseUniformly = loot.DropRate == first.DropRate && !loot.AlwaysDrop && loot.ItemId != Item.Coins &&
+                                itemTemplate is { LootQuestId: 0 } &&
+                                loot.MinAmount == first.MinAmount && loot.MaxAmount == first.MaxAmount && loot.GradeId == first.GradeId;
+                        }
                         // Check for questS itemS in group
                         if (itemTemplate?.LootQuestId > 0 && player != null)
                         {
@@ -240,7 +254,7 @@ public class LootPack
                             var actGroup = ActabilityGroups.Values.FirstOrDefault(g => g.GroupId == loot.Group);
                             if (actGroup != null)
                             {
-                                var actDice = (long)Random.Shared.Next(0, 10_000);
+                                var actDice = (long)random.Next(0, 10_000);
                                 // Use generic loot multiplier for the ActGroups ?
                                 actDice = (long)Math.Floor(actDice / (lootDropRate * AppConfiguration.Instance.World.LootRate));
 
@@ -263,23 +277,13 @@ public class LootPack
                             tmpSelectedItemsByGroup[groupNo].Add(loot);
                         }
                     }
-                    // Roll item (from best chance item to lower chance item) with cumulative rate
-                    if (tmpSelectedItemsByGroup.Count > 0)
+                    if (tmpSelectedItemsByGroup.TryGetValue(groupNo, out var eligible))
                     {
-                        var cumulativeRate = 0f;
-                        var roll = (long)Random.Shared.Next(0, normalizedRate);
-                        foreach (var loot in tmpSelectedItemsByGroup[groupNo])
-                        {
-                            var itemRate = loot.DropRate > 1 ? loot.DropRate / (float)normalizedRate : 1f;
-                            cumulativeRate += (long)Math.Floor(normalizedRate * itemRate * lootDropRate * AppConfiguration.Instance.World.LootRate);
-                            if (roll < cumulativeRate)
-                            {
-                                if (!selectedItemsByGroup.ContainsKey(loot.Group))
-                                    selectedItemsByGroup.Add(loot.Group, []);
-                                selectedItemsByGroup[loot.Group].Add(loot);
-                                break;
-                            }
-                        }
+                        var reward = chooseUniformly
+                            ? eligible[random.Next(eligible.Count)]
+                            : RollWeightedReward(eligible, normalizedRate, lootDropRate, random);
+                        if (reward != null)
+                            selectedItemsByGroup[groupNo] = [reward];
                     }
                     // Merge quests items in selected items
                     if (tmpSelectedQuestItemsByGroup.Count > 0)
@@ -301,7 +305,7 @@ public class LootPack
                 foreach (var loot in loots)
                 {
                     // Roll amount
-                    var countToAddNow = Random.Shared.Next(loot.MinAmount, loot.MaxAmount + 1);
+                    var countToAddNow = random.Next(loot.MinAmount, loot.MaxAmount + 1);
                     // Item Coin
                     if (loot.ItemId == Item.Coins)
                         countToAddNow = (int)Math.Round(countToAddNow * lootGoldRate * AppConfiguration.Instance.World.GoldLootMultiplier);
@@ -315,6 +319,20 @@ public class LootPack
             }
         }
         return items;
+    }
+
+    private static Loot RollWeightedReward(List<Loot> eligible, uint normalizedRate, float lootDropRate, Random random)
+    {
+        var cumulativeRate = 0f;
+        var roll = (long)random.Next(0, normalizedRate);
+        foreach (var loot in eligible)
+        {
+            var itemRate = loot.DropRate > 1 ? loot.DropRate / (float)normalizedRate : 1f;
+            cumulativeRate += (long)Math.Floor(normalizedRate * itemRate * lootDropRate * AppConfiguration.Instance.World.LootRate);
+            if (roll < cumulativeRate)
+                return loot;
+        }
+        return null;
     }
 
     /// <summary>
