@@ -254,7 +254,8 @@ public partial class InstantGame
                 CancelAdmission(character);
                 return;
             }
-            if (character.CurrentInstantGame != this || !_characterCorps.TryGetValue(character, out var corps))
+            if (character.CurrentInstantGame != this || _members.ContainsKey(character) ||
+                !_characterCorps.TryGetValue(character, out var corps))
                 return;
             _entryStarted = true;
             character.SendPacket(new SCInstantGameJoinedPacket(_zoneInstanceId, corps, _battlefield.RuleSet));

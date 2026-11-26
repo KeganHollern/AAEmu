@@ -105,6 +105,21 @@ public sealed class ArenaScoreTests
     }
 
     [Test]
+    public async Task Gladiator_EntryCompletionRunsOncePerMember()
+    {
+        Start(11);
+        var player = _red[0];
+        _game.OnEnterWorld(player, 0);
+        Kill(player, _blue[0]);
+
+        await Assert.That(Packets(SCOffsets.SCInstantGameJoinedPacket).Length).IsEqualTo(1);
+        await Assert.That(Packets(SCOffsets.SCInstantGameStartPacket).Length).IsEqualTo(1);
+        var points = ReadPoints(Packets(SCOffsets.SCInstantGameAddPointPacket).Single());
+        await Assert.That(points).IsEqualTo(((byte)0, 30, 30, 0, player.Name));
+        await Assert.That(_matchResults).IsEmpty();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Gladiator_TwoEnemyKillsReachSixty_OneResultForEitherWinningTeam(bool blueWins)
