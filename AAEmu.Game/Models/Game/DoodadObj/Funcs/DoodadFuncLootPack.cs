@@ -3,7 +3,6 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items.Actions;
-using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
@@ -23,14 +22,10 @@ public class DoodadFuncLootPack : DoodadFuncTemplate
         var lootPack = LootGameData.Instance.GetPack(LootPackId);
         var lootPackContents = lootPack.GeneratePack(character, actAbility);
 
-        if (character.Inventory.Bag.FreeSlotCount >= lootPackContents.Count)
-        {
-            owner.ToNextPhase = lootPack.GiveLootPack(character, actAbility, ItemTaskType.DoodadInteraction, lootPackContents);
-
-            return;
-        }
-        owner.ToNextPhase = false;
-        SkillLaborBatch.For(character)?.Fail();
-        character.SendErrorMessage(ErrorMessageType.BagFull);
+        var freeSlots = character.Inventory.Bag.FreeSlotCount;
+        owner.ToNextPhase = lootPack.GiveLootPack(character, actAbility, ItemTaskType.DoodadInteraction, lootPackContents);
+        // Keep the original Bag warning on failure. The grant accounts for compatible stacks and rolls back the whole pack.
+        if (!owner.ToNextPhase && freeSlots < lootPackContents.Count)
+            character.SendErrorMessage(ErrorMessageType.BagFull);
     }
 }
