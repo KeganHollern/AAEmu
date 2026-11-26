@@ -219,6 +219,40 @@ public sealed class ArenaMatchmakingTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NextRoom_AfterAcceptanceKeepsThePlayerInTheSameMatch(bool enteredWorld)
+    {
+        var player = AddApplicant(1);
+        var opponent = AddApplicant(2);
+        var observer = Observe(player);
+        foreach (var member in new[] { player, opponent })
+        {
+            member.Faction = new() { Id = (FactionsEnum)101 };
+            member.OriginFaction = member.Faction;
+            _queue.ApplyToBattlefield(11, InstantCorps.Any, member);
+        }
+        var tick = TimeSpan.FromSeconds(15);
+        _queue.BattlefieldTick(tick);
+        var match = player.CurrentInstantGame;
+        Set(match, "_clock", new FakeTimeProvider());
+        match.PlayerInviteResponse(player, true, 1);
+        if (enteredWorld)
+        {
+            match.OnEnterWorld(player, 1);
+            match.PlayerInviteResponse(opponent, true, 1);
+            match.OnEnterWorld(opponent, 1);
+        }
+
+        match.PlayerInviteResponse(player, false, 1);
+        match.PlayerInviteResponse(player, false, 1);
+        await Assert.That(player.CurrentInstantGame).IsSameReferenceAs(match);
+        _queue.BattlefieldTick(tick);
+        await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(1);
+        await Assert.That(Messages(observer, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task NextRoom_UsesAnotherOpenRoomWhenTheFirstRoomHasNoEligibleApplicant()
     {
         var tick = TimeSpan.FromSeconds(15);

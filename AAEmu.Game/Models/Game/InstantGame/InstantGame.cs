@@ -215,6 +215,8 @@ public partial class InstantGame
                 CancelAdmission(character);
                 return;
             }
+            if (!IsInvited(character) || !_characterCorps.TryGetValue(character, out var corps))
+                return;
             if (!joins)
             {
                 // Next Room keeps the application open for a different match.
@@ -223,8 +225,6 @@ public partial class InstantGame
                 return;
             }
 
-            if (!IsInvited(character) || !_characterCorps.TryGetValue(character, out var corps))
-                return;
             if (!InstantGameManager.PlayerCanEnter(character) || !_battlefield.CheckEntryLevel(character))
             {
                 CancelAdmission(character);
