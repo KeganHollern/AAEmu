@@ -292,13 +292,7 @@ public sealed class CryTerrainGrid
             var sy = Math.Min(y / step, size - 2);
             var fx = x / (float)step - sx;
             var fy = y / (float)step - sy;
-            var h00 = HeightBits(sx, sy);
-            var h10 = HeightBits(sx + 1, sy);
-            var h01 = HeightBits(sx, sy + 1);
-            var h11 = HeightBits(sx + 1, sy + 1);
-            // Native interpolation precedes the float range and offset conversion.
-            var height = offset + (((h10 * fx + h00 * (1 - fx)) * (1 - fy) +
-                h01 * (1 - fx) * fy) + h11 * fx * fy) * range;
+            var height = InterpolateNativeHeight(packed, size, sx, sy, fx, fy, offset, range);
             if (!Finite(height))
                 throw new InvalidDataException("Non-finite terrain height.");
             var index = (x0 + x) * GridSize + y0 + y;
@@ -308,9 +302,17 @@ public sealed class CryTerrainGrid
             if (x < nodeUnits && y < nodeUnits)
                 _surfaces[SurfaceIndex(x0 + x, y0 + y)] = (byte)(packed[sx * size + sy] & 0x1f);
         }
-        return;
+    }
 
-        float HeightBits(int x, int y) => packed[x * size + y] & 0xffe0;
+    internal static float InterpolateNativeHeight(ushort[] packed, int size, int x, int y,
+        float fx, float fy, float offset, float range)
+    {
+        var i = x * size + y;
+        float h00 = packed[i] & 0xffe0, h10 = packed[i + size] & 0xffe0;
+        float h01 = packed[i + 1] & 0xffe0, h11 = packed[i + size + 1] & 0xffe0;
+        // Native interpolation precedes the float range and offset conversion.
+        return offset + (((h10 * fx + h00 * (1 - fx)) * (1 - fy) +
+            h01 * (1 - fx) * fy) + h11 * fx * fy) * range;
     }
 
     private bool TryLocate(float x, float y, out int cellX, out int cellY, out float fx, out float fy)

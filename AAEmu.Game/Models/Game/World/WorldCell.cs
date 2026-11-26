@@ -22,6 +22,10 @@ public class WorldCell
     private readonly Lock _loadLock = new();
     private Vector3 CellOffset { get; set; }
     internal ushort[,] HeightMap { get; private set; }
+    private TerrainHeightSector[] _terrain;
+    private float[] _nativeEdgeJunctions;
+    internal bool HasNativeTerrain => _nativeEdgeJunctions != null;
+    internal bool HasHeightMap => _terrain != null || HeightMap != null;
     private BitArray[] _terrainHoles;
     private float MinHeight { get; set; }
     private float MaxHeight { get; set; }
@@ -149,61 +153,17 @@ public class WorldCell
             return true;
         }
 
-        HeightMap = new ushort[WorldManager.CELL_HMAP_RESOLUTION + 1, WorldManager.CELL_HMAP_RESOLUTION + 1];
-
         // Logger.Debug($"Loading {heightMapFile}");
 
         // Read the cell hmap data
         using var br = new BinaryReader(stream);
         var hmap = new Hmap();
 
-        if (hmap.Read(br, false) < 0)
+        if (hmap.Read(br, true) < 0 || !TryReadTerrainHeightMap(hmap))
         {
             Logger.Error($"Error reading {heightMapFile}");
             return false;
         }
-
-        // Sort nodes by position
-        var sortedNodes = hmap.Nodes
-            .OrderBy(cell => cell.BoxHeightmap.Min.X)
-            .ThenBy(cell => cell.BoxHeightmap.Min.Y)
-            .Where(x => x.pHMData.Length > 0)
-            .ToList();
-
-        if (sortedNodes.Any(node => node.TerrainHoles != null))
-            _terrainHoles = sortedNodes.Select(node => node.TerrainHoles).ToArray();
-
-        // Read nodes into heightmap array
-        #region ReadNodes
-
-        MinHeight = float.MaxValue;
-        MaxHeight = 0f;
-        // The last sector includes the endpoint of the final triangle in the cell.
-        const int sectorUnits = WorldManager.SECTOR_HMAP_RESOLUTION;
-        const int sectorCount = WorldManager.SECTORS_PER_CELL;
-        for (var x = 0; x <= WorldManager.CELL_HMAP_RESOLUTION; x++)
-        {
-            var sectorX = Math.Min(x / sectorUnits, sectorCount - 1);
-            var unitX = (ushort)(x - sectorX * sectorUnits);
-            for (var y = 0; y <= WorldManager.CELL_HMAP_RESOLUTION; y++)
-            {
-                var sectorY = Math.Min(y / sectorUnits, sectorCount - 1);
-                var unitY = (ushort)(y - sectorY * sectorUnits);
-                var node = sortedNodes[sectorX * sectorCount + sectorY];
-                var value = (ushort)(node.GetHeightAtUnit(unitX, unitY) * Template.HeightMaxCoefficient);
-                HeightMap[x, y] = value;
-                var height = (float)(value / Template.HeightMaxCoefficient);
-                MinHeight = MathF.Min(height, MinHeight);
-                MaxHeight = MathF.Max(height, MaxHeight);
-            }
-        }
-        #endregion
-
-        // Update bounding box
-        BoundingBox = new JBoundingBox(
-            new JVector(CellOffset.X, MinHeight, CellOffset.Y), 
-            new JVector(CellOffset.X + WorldManager.CELL_SIZE, MaxHeight, CellOffset.Y + WorldManager.CELL_SIZE)
-        );
 
         var cellFolder = Path.Combine("game", "worlds", Template.Name, "cells", cellFileName);
 
@@ -224,6 +184,87 @@ public class WorldCell
         foreach (var worldInstance in WorldManager.Instance.GetWorldsByTemplate(Template.Id))
             worldInstance.Water.AddFromCellData(this);
 
+        return true;
+    }
+
+    internal bool TryReadTerrainHeightMap(Hmap hmap)
+    {
+        // Sort nodes by position
+        var sortedNodes = hmap.Nodes
+            .OrderBy(cell => cell.BoxHeightmap.Min.X)
+            .ThenBy(cell => cell.BoxHeightmap.Min.Y)
+            .Where(x => x.pHMData.Length > 0)
+            .ToList();
+
+        const int sectorUnits = WorldManager.SECTOR_HMAP_RESOLUTION;
+        const int sectorCount = WorldManager.SECTORS_PER_CELL;
+        const int sectorMetres = WorldManager.REGION_SIZE;
+        if (sortedNodes.Count != sectorCount * sectorCount)
+            return false;
+        // The file origin can be nonzero. Each of the 256 leaf slots must occupy its own square.
+        var origin = hmap.Nodes[0].pHMData.Length == 0 ? hmap.Nodes[0].BoxHeightmap.Min : sortedNodes[0].BoxHeightmap.Min;
+        for (var i = 0; i < sortedNodes.Count; i++)
+        {
+            var box = sortedNodes[i].BoxHeightmap;
+            var x = origin.X + i / sectorCount * sectorMetres;
+            var y = origin.Y + i % sectorCount * sectorMetres;
+            if (box.Min.X != x || box.Min.Y != y || box.Max.X != x + sectorMetres || box.Max.Y != y + sectorMetres)
+                return false;
+        }
+        var holes = sortedNodes.Any(node => node.TerrainHoles != null)
+            ? sortedNodes.Select(node => node.TerrainHoles).ToArray() : null;
+
+        var minimum = float.MaxValue;
+        var maximum = 0f;
+        var nativeFormat = hmap.Version == 24 && (hmap.Flags & 1) == 0 && hmap.UnitSizeInMeters == 2 &&
+            hmap.SectorSizeInMeters == sectorMetres && hmap.SectorsTableSizeInSectors >= sectorCount &&
+            hmap.HeightMapSizeInUnits == (long)hmap.SectorsTableSizeInSectors * sectorUnits &&
+            sortedNodes.All(TerrainHeightSector.SupportsNativeNode);
+        var junctions = nativeFormat ? new float[2 * (sectorCount - 1)] : null;
+        if (nativeFormat)
+        {
+            // At a junction on the outer cell edge neither of its two sectors owns the vertex.
+            // The native grid keeps the first one in file order. Save those 30 original corners
+            // before converting the node arrays for the legacy heightmap.
+            for (var i = 1; i < sectorCount; i++)
+            {
+                var east = (sectorCount - 1) * sectorCount + i;
+                var north = i * sectorCount + sectorCount - 1;
+                junctions[i - 1] = ReadEdgeCorner(sortedNodes[east - 1], sortedNodes[east], true);
+                junctions[sectorCount - 1 + i - 1] =
+                    ReadEdgeCorner(sortedNodes[north - sectorCount], sortedNodes[north], false);
+            }
+        }
+
+        float ReadEdgeCorner(NodeCell previous, NodeCell next, bool east)
+        {
+            var first = hmap.Nodes.IndexOf(previous) < hmap.Nodes.IndexOf(next) ? previous : next;
+            var offset = first.pHMData.Length - 1;
+            if (first == next)
+                offset = east ? (first.nSize - 1) * first.nSize : first.nSize - 1;
+            return first.fOffset + (first.pHMData[offset] & 0xffe0) * first.fRange;
+        }
+
+        var terrain = new TerrainHeightSector[sectorCount * sectorCount];
+        for (var sx = 0; sx < sectorCount; sx++)
+        for (var sy = 0; sy < sectorCount; sy++)
+        {
+            var index = sx * sectorCount + sy;
+            var width = sectorUnits + (sx == sectorCount - 1 ? 1 : 0);
+            var height = sectorUnits + (sy == sectorCount - 1 ? 1 : 0);
+            terrain[index] = new TerrainHeightSector(sortedNodes[index], Template.HeightMaxCoefficient, width, height, nativeFormat,
+                out var low, out var high);
+            minimum = MathF.Min(minimum, low);
+            maximum = MathF.Max(maximum, high);
+        }
+
+        _terrainHoles = holes;
+        _nativeEdgeJunctions = junctions;
+        _terrain = terrain;
+        MinHeight = minimum;
+        MaxHeight = maximum;
+        BoundingBox = new JBoundingBox(new JVector(CellOffset.X, MinHeight, CellOffset.Y),
+            new JVector(CellOffset.X + WorldManager.CELL_SIZE, MaxHeight, CellOffset.Y + WorldManager.CELL_SIZE));
         return true;
     }
 
@@ -252,15 +293,46 @@ public class WorldCell
         return sector?[x % sectorUnits * sectorUnits + y % sectorUnits] == true;
     }
 
-    internal bool TryGetHeightMapSample(int x, int y, out float height)
+    internal bool TryGetHeightMapSample(int x, int y, out float height, bool native = false)
     {
         height = 0f;
-        if (!Loaded || HeightMap == null || (uint)x >= HeightMap.GetLength(0) ||
-            (uint)y >= HeightMap.GetLength(1) || !double.IsFinite(Template.HeightMaxCoefficient) ||
-            Template.HeightMaxCoefficient <= 0d)
+        if (!Loaded || !double.IsFinite(Template.HeightMaxCoefficient) || Template.HeightMaxCoefficient <= 0d)
             return false;
-
-        var sample = (float)(HeightMap[x, y] / Template.HeightMaxCoefficient);
+        float sample;
+        if (_terrain != null)
+        {
+            if ((uint)x > WorldManager.CELL_HMAP_RESOLUTION || (uint)y > WorldManager.CELL_HMAP_RESOLUTION)
+                return false;
+            const int units = WorldManager.SECTOR_HMAP_RESOLUTION;
+            const int sectors = WorldManager.SECTORS_PER_CELL;
+            const int last = WorldManager.CELL_HMAP_RESOLUTION;
+            if (native && _nativeEdgeJunctions != null)
+            {
+                if (x == last && y > 0 && y < last && y % units == 0)
+                {
+                    height = _nativeEdgeJunctions[y / units - 1];
+                    return float.IsFinite(height);
+                }
+                if (y == last && x > 0 && x < last && x % units == 0)
+                {
+                    height = _nativeEdgeJunctions[sectors - 1 + x / units - 1];
+                    return float.IsFinite(height);
+                }
+            }
+            var sx = Math.Min(x / units, sectors - 1);
+            var sy = Math.Min(y / units, sectors - 1);
+            var section = _terrain[sx * sectors + sy];
+            var localX = x - sx * units;
+            var localY = y - sy * units;
+            sample = native && HasNativeTerrain ? section.NativeHeight(localX, localY)
+                : (float)(section.LegacyHeight(localX, localY, Template.HeightMaxCoefficient) / Template.HeightMaxCoefficient);
+        }
+        else
+        {
+            if (HeightMap == null || (uint)x >= HeightMap.GetLength(0) || (uint)y >= HeightMap.GetLength(1))
+                return false;
+            sample = (float)(HeightMap[x, y] / Template.HeightMaxCoefficient);
+        }
         if (!float.IsFinite(sample))
             return false;
 

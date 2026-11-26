@@ -21,11 +21,8 @@ public class NodeCell
 
     internal BitArray TerrainHoles { get; private set; }
 
-    private int iOffset;
-    private int iRange;
-    private int iStep;
-    private float fMin;
-    private float fMax;
+    internal float LegacyBaseHeight { get; private set; }
+    internal int LegacyStep { get; private set; }
 
     public void Read(BinaryReader br, bool disabledReCalc = false)
     {
@@ -78,13 +75,13 @@ public class NodeCell
         }
 
         Init();
-        if (!disabledReCalc && Version < 7)
-            RescaleToInt();
+        if (!disabledReCalc)
+            RescaleForLegacyHeightMap();
     }
 
     public float RawDataToHeight(uint data)
     {
-        return 0.05f * iOffset + (data >> 4) * iStep * 0.05f;
+        return DecodeLegacyHeight(data >> 4, LegacyBaseHeight, LegacyStep);
     }
 
     public ushort RawDataByIndex(uint i)
@@ -150,27 +147,32 @@ public class NodeCell
 
     private void Init()
     {
-        fMin = fOffset;
-        fMax = fMin + 0xFFF0 * fRange;
-
-        iOffset = (int)(fMin * Inv5Cm);
-        iRange = (int)((fMax - fMin) * Inv5Cm);
-        iStep = (int)(iRange > 0 ? (iRange + Mask12Bit - 1) / Mask12Bit : 1);
+        var maximum = fOffset + 0xfff0 * fRange;
+        var range = (int)((maximum - fOffset) * Inv5Cm);
+        LegacyBaseHeight = 0.05f * (int)(fOffset * Inv5Cm);
+        LegacyStep = (int)(range > 0 ? (range + Mask12Bit - 1) / Mask12Bit : 1);
     }
 
-    private void RescaleToInt()
+    internal void RescaleForLegacyHeightMap()
     {
+        if (Version >= 7)
+            return;
         for (var i = 0; i < pHMData.Length; i++)
         {
-            var hraw = pHMData[i];
-
-            var height = fMin + (0xFFF0 & hraw) * fRange;
-            var hdec = (ushort)((int)((height - fMin) * Inv5Cm) / iStep);
-
-            var res = (hraw & 0xF) | (hdec << 4);
-            pHMData[i] = (ushort)res;
+            var raw = pHMData[i];
+            pHMData[i] = (ushort)((raw & 0xfu) | (GetLegacyBin(raw, fOffset, fRange, LegacyStep) << 4));
         }
     }
+
+    internal static uint GetLegacyBin(ushort sample, float offset, float range, int step)
+    {
+        var height = offset + (sample & 0xfff0) * range;
+        var distance = (int)((height - offset) * Inv5Cm);
+        return (uint)(step == 1 ? distance : distance / step) & Mask12Bit;
+    }
+
+    internal static float DecodeLegacyHeight(uint bin, float baseHeight, int step) =>
+        baseHeight + bin * step * 0.05f;
 
     private static float Lerp(float s, float e, float t)
     {
