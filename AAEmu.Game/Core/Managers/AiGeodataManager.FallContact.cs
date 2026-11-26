@@ -59,9 +59,13 @@ public partial class AiGeoDataManager
             // A failed read supplies no geometry. A later successful read can still establish contact.
             if (asset == null || asset.Parts.Count == 0)
                 return false;
-            faces = _fallFaces.GetOrAdd(brush, static (placement, model) => ReadLevelFaces(placement, model), asset);
+            faces = _fallFaces.GetOrAdd(brush, static (placement, model) => ReadLevelFaces(placement.Transform, model), asset);
         }
-        var local = foot - brush.Transform.Translation;
+        return TouchesLevelFace(faces, foot - brush.Transform.Translation);
+    }
+
+    private static bool TouchesLevelFace(LevelFace[] faces, Vector3 local)
+    {
         foreach (var face in faces)
         {
             if (MathF.Abs(local.Z - face.A.Z) <= FallMovement.PositionTolerance &&
@@ -72,12 +76,12 @@ public partial class AiGeoDataManager
         return false;
     }
 
-    private static LevelFace[] ReadLevelFaces(CryWorldObjectInstance brush, CryGeometryAsset asset)
+    private static LevelFace[] ReadLevelFaces(Matrix4x4 placement, CryGeometryAsset asset)
     {
         if (asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
             return [];
 
-        var offset = brush.Transform;
+        var offset = placement;
         offset.Translation = Vector3.Zero;
         var result = new List<LevelFace>();
         foreach (var part in asset.Parts)
@@ -93,7 +97,7 @@ public partial class AiGeoDataManager
                 var c = Vector3.Transform(mesh.Vertices[mesh.Indices[n + 2]], transform);
                 // Resolve height at world precision. The horizontal projection stays in the
                 // placement's local frame so a real edge or a gap between triangles stays open.
-                var z = brush.Transform.Translation.Z;
+                var z = placement.Translation.Z;
                 if (a.Z + z != b.Z + z || a.Z + z != c.Z + z)
                     continue;
                 if (mirrored)

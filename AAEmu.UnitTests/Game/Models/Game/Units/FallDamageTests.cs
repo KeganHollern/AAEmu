@@ -11,6 +11,7 @@ using AAEmu.Game.IO;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -404,6 +405,105 @@ public sealed class FallDamageTests
         actor.ObserveFallMovement(true, 0.42);
         await Assert.That(actor.Impacts.Count).IsEqualTo(1);
         await Assert.That(actor.Hp).IsEqualTo(4026);
+    }
+
+    [Test]
+    public async Task FinishedCottage_ObservesOneLandingOnItsPlacedFloorUntilRemoval()
+    {
+        var world = CreateStockWorld();
+        world.Regions = new Region[world.Template.Cells.GetLength(0) * WorldManager.SECTORS_PER_CELL,
+            world.Template.Cells.GetLength(1) * WorldManager.SECTORS_PER_CELL];
+        const string prefab = "prefab://prefabs/housing_big.xml/nuia_housing_small.nuia_small_";
+        var missingModelReads = 0;
+        var manager = new HousingManager(null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+        {
+            GeometryAssets = new HousingGeometryAssets(
+                path => _stockSource.FileExists(path) ? _stockSource.GetFileStream(path) : null,
+                (id, _) =>
+                {
+                    if (id == 1116)
+                        return [prefab + "floor01", prefab + "wall01", prefab + "roof01"];
+                    missingModelReads++;
+                    throw new InvalidDataException("Test model cannot be read.");
+                })
+        };
+        var singleton = typeof(Singleton<HousingManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previous = singleton.GetValue(null);
+        var zoneSingleton = typeof(Singleton<ZoneManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousZones = zoneSingleton.GetValue(null);
+        var zones = new ZoneManager(null, null);
+        typeof(ZoneManager).GetField("_zones", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(zones, new Dictionary<uint, AAEmu.Game.Models.Game.World.Zones.Zone>());
+        zoneSingleton.SetValue(null, zones);
+        singleton.SetValue(null, manager);
+        try
+        {
+            var house = new House
+            {
+                Id = 13, OwnerId = 1, ParentWorld = world, ObjId = 268,
+                Template = new HousingTemplate { Id = 172, MainModelId = 1116, AutoZ = true, AutoZOffsetZ = 1 }
+            };
+            house.SetInitialConstructionStep();
+            house.Transform.Local.SetPosition(new(12532, 15664, 164.126342773f), new(0, 0, 0.0989478f));
+            var region = world.GetRegionByPos(house.Transform.World.Position);
+            var unreadable = new HousingTemplate { Id = 1, MainModelId = 2 };
+            var foundation = new HousingTemplate { Id = 3, MainModelId = 1116 };
+            foundation.BuildSteps.Add(0, new HousingBuildStep { ModelId = 1116 });
+            foreach (var template in new[] { unreadable, unreadable, foundation })
+            {
+                var neighbor = new House { OwnerId = 1, Template = template, ParentWorld = world };
+                neighbor.SetInitialConstructionStep();
+                neighbor.Transform.Local.SetPosition(house.Transform.Local.Position, house.Transform.Local.Rotation);
+                region.AddObject(neighbor);
+            }
+            region.AddObject(house);
+            var actor = new FallUnit { ParentWorld = world, Region = region, Hp = 9516, MaxHp = 9516 };
+            var foot = new Vector3(12534, 15663.5f, 164.78697f);
+            void Observe(float offset, double time, bool nativeLanding = false)
+            {
+                actor.Transform.Local.SetPosition(foot + Vector3.UnitZ * offset);
+                actor.ObserveFallMovement(nativeLanding, time);
+            }
+
+            Observe(1.155f, 0);
+            Observe(0.6f, 0.15);
+            Observe(0.01f, 0.3);
+            await Assert.That(actor.Impacts).IsEmpty();
+            Observe(0, 0.4);
+            await Assert.That(actor.Impacts.Count).IsEqualTo(1);
+            Observe(0, 0.6, true);
+            await Assert.That(actor.Impacts.Count).IsEqualTo(1);
+            await Assert.That(actor.Hp).IsEqualTo(9516);
+
+            // A real foot near the edge and a foot in midair must stay distinct.
+            var geometry = world.Template.GeoData;
+            await Assert.That(geometry.HasFinishedHouseFallSupport(actor, foot + new Vector3(0, 0, 0.004f))).IsFalse();
+            await Assert.That(geometry.HasFinishedHouseFallSupport(actor, foot - new Vector3(0, 0, 0.004f))).IsFalse();
+            await Assert.That(geometry.HasFinishedHouseFallSupport(actor, foot + new Vector3(12, 0, 0))).IsFalse();
+            house.OwnerId = 0;
+            await Assert.That(geometry.HasFinishedHouseFallSupport(actor, foot)).IsFalse();
+            house.OwnerId = 1;
+            var origin = house.Transform.Local.Position;
+            house.Transform.Local.SetPosition(origin + new Vector3(0, 0, 4));
+            await Assert.That(geometry.HasFinishedHouseFallSupport(actor, foot)).IsFalse();
+            await Assert.That(geometry.HasFinishedHouseFallSupport(actor, foot + new Vector3(0, 0, 4))).IsTrue();
+            house.Transform.Local.SetPosition(origin);
+            await Assert.That(geometry.HasFinishedHouseFallSupport(actor, foot)).IsTrue();
+
+            region.RemoveObject(house);
+            Observe(1.155f, 1);
+            Observe(0.6f, 1.15);
+            Observe(0, 1.4);
+            await Assert.That(actor.Impacts.Count).IsEqualTo(1);
+            Observe(0, 1.6, true);
+            await Assert.That(actor.Impacts.Count).IsEqualTo(2);
+            await Assert.That(missingModelReads).IsEqualTo(1);
+        }
+        finally
+        {
+            singleton.SetValue(null, previous);
+            zoneSingleton.SetValue(null, previousZones);
+        }
     }
 
     private WorldInstance CreateStockWorld()
