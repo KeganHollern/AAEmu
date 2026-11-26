@@ -15,6 +15,15 @@ public partial class Quest
     private readonly Dictionary<uint, (Npc Npc, NpcAi Ai)> _followNpcs = [];
     private bool _npcControlEventsAttached;
 
+    // Only these two shipped guards have replacement paths measured against the Main world.
+    private static bool UsesEscortPath(QuestComponentTemplate component) =>
+        component.NpcAiId == QuestNpcAiName.FollowPath &&
+        (component.ParentQuestTemplate.Id, component.Id, component.NpcId, component.AiPathName) is
+            (3656, 15273, 9846, "AIPath_141_clay02_580") or (1313, 6547, 3138, "q1313_anci");
+
+    private static bool ControlsEscort(QuestComponentTemplate component) =>
+        component.NpcAiId == QuestNpcAiName.FollowUnit || UsesEscortPath(component);
+
     internal void RecordAcceptedNpc(Npc npc)
     {
         _acceptedNpc = npc;
@@ -23,7 +32,7 @@ public partial class Quest
     internal bool RememberNpcControlSource(QuestAct act, OnTalkMadeArgs args)
     {
         var component = act.QuestComponent;
-        if (component.Template.NpcAiId != QuestNpcAiName.FollowUnit)
+        if (!ControlsEscort(component.Template))
             return true;
         if (IsRestoringLoadedState || args.QuestId != TemplateId ||
             args.QuestComponentId != component.Template.Id || args.QuestActId != act.Id ||
@@ -42,15 +51,22 @@ public partial class Quest
         _componentNpcSources[component.Template.Id] = npc;
 
         // A new validated talk can restore a lost lease. Do not replay the component's skill or rewards.
+        if (UsesEscortPath(component.Template))
+            return TryApplyNpcControl(component.Template);
         return !AppliedComponentEffectIds.Contains(component.Template.Id) || TryApplyNpcControl(component.Template);
     }
 
     internal bool TryApplyNpcControl(QuestComponentTemplate component)
     {
-        if (component.NpcAiId != QuestNpcAiName.FollowUnit)
+        if (!ControlsEscort(component))
             return true;
-        if (Step is not (QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress) ||
-            IsRestoringLoadedState || Owner is not Character owner)
+        return Step is QuestComponentKind.Start or QuestComponentKind.Supply or QuestComponentKind.Progress &&
+            TryClaimNpcControl(component);
+    }
+
+    private bool TryClaimNpcControl(QuestComponentTemplate component)
+    {
+        if (IsRestoringLoadedState || Owner is not Character owner)
             return false;
 
         if (_followNpcs.TryGetValue(component.Id, out var bound))
@@ -60,8 +76,10 @@ public partial class Quest
         if (npc == null && QuestAcceptorType == QuestAcceptorType.Npc &&
             AcceptorId == component.NpcId && _acceptedNpc?.TemplateId == component.NpcId)
             npc = _acceptedNpc;
-        if (!IsAvailableControlNpc(npc) || npc.Ai == null ||
-            !npc.Ai.TryStartQuestFollow(this, owner, OnNpcControlLost))
+        if (!IsAvailableControlNpc(npc) || npc.Ai == null)
+            return false;
+        var escortPath = UsesEscortPath(component) ? AiPathsManager.Instance.LoadAiPathPoints(component.AiPathName) : null;
+        if (!npc.Ai.TryStartQuestFollow(this, owner, OnNpcControlLost, escortPath))
             return false;
 
         _followNpcs.Add(component.Id, (npc, npc.Ai));
@@ -91,7 +109,7 @@ public partial class Quest
     internal bool HasFollowNpcTemplate(uint npcTemplateId)
     {
         return npcTemplateId != 0 && Template.Components.Values.Any(component =>
-            component.NpcAiId == QuestNpcAiName.FollowUnit && component.NpcId == npcTemplateId);
+            ControlsEscort(component) && component.NpcId == npcTemplateId);
     }
 
     internal bool TryGetFollowNpc(uint npcTemplateId, out Npc npc)

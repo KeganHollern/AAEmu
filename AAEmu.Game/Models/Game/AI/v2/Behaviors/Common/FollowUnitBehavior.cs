@@ -30,6 +30,9 @@ public class FollowUnitBehavior : BaseCombatBehavior
         if (CheckAlert())
             return;
 
+        if (Ai.MoveAlongQuestEscortPath(delta))
+            return;
+
         if (target == null || target.Hp <= 0 || target.IsDead || target.ParentWorld != owner.ParentWorld ||
             target.Transform.WorldId != owner.Transform.WorldId || target.Transform.InstanceId != owner.Transform.InstanceId)
         {

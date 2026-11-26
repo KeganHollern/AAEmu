@@ -227,7 +227,7 @@ $"Trying to set Npc {Owner.TemplateId}:{Owner.ObjId} current behavior, but it is
     {
         return PathHandler.AiPathPoints.Count > 0 ||
                PathHandler.AiPathPointsRemaining.Count > 0 ||
-               AiFollowUnitObj != null ||
+               AiFollowUnitObj != null || _questEscortPath != null ||
                AiCommandsQueue.Count > 0;
     }
 

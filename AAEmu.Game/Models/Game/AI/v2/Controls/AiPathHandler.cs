@@ -42,7 +42,7 @@ public class AiPathHandler(NpcAi aiOwner)
     /// Smallest horizontal radius that counts as "reached this waypoint". Small NPCs have a Scale below
     /// the distance a single step covers, which used to make waypoint advance unreachable.
     /// </summary>
-    private const float MinWaypointArrivalRadius = 0.5f;
+    internal const float MinWaypointArrivalRadius = 0.5f;
 
     /// <summary>
     /// Does path movement and dequeuing as needed

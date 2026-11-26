@@ -1,5 +1,7 @@
 ﻿using System.Numerics;
 
+using AAEmu.Game.Models.Game.AI.Utils;
+using AAEmu.Game.Models.Game.AI.v2.Controls;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Units;
@@ -15,18 +17,29 @@ public abstract partial class NpcAi
     private Vector3 _questFollowIdlePosition;
     private int _questFollowRestorePending;
 
-    internal bool TryStartQuestFollow(object owner, Unit target, Action onLost)
+    private volatile QuestEscortPath _questEscortPath;
+
+    internal bool TryStartQuestFollow(object owner, Unit target, Action onLost, IReadOnlyList<AiPathPoint> path = null)
     {
         lock (_questFollowSyncRoot)
         {
             if (_questFollowOwner != null)
                 return IsQuestFollowOwner(owner) && ReferenceEquals(_questFollowTarget, target);
-            if (owner == null || !IsValidFollowTarget(target) || AiFollowUnitObj != null ||
+            if (owner == null || _questEscortPath != null || !IsValidFollowTarget(target) || AiFollowUnitObj != null ||
                 !_behaviors.ContainsKey(BehaviorKind.FollowUnit) ||
                 AiCurrentCommand != null || AiCommandsQueue.Count > 0 ||
                 (_currentBehavior != null && _currentBehavior == GetBehavior(BehaviorKind.FollowPath)))
                 return false;
 
+            if (path != null)
+            {
+                if (path.Count < 2 || Owner.ParentWorld.Template.Name != "main_world" ||
+                    Vector3.Distance(HomePosition, path[0].Position) > Owner.Template.Scale ||
+                    !AiUtils.HasReachedPathWaypoint(Owner.Transform.World.Position, path[0].Position,
+                        Math.Max(Owner.Template.Scale, AiPathHandler.MinWaypointArrivalRadius)))
+                    return false;
+                _questEscortPath = new QuestEscortPath(this, path);
+            }
             _questFollowOwner = owner;
             _questFollowTarget = target;
             _questFollowLost = onLost;
@@ -75,6 +88,13 @@ public abstract partial class NpcAi
     {
         lock (_questFollowSyncRoot)
         {
+            if (_questEscortPath is { ReturnRequested: true } && AiFollowUnitObj == null &&
+                Owner is { IsDead: false, Despawned: false, CombatRetired: false, IsInPatrol: false } &&
+                AiCurrentCommand == null && AiCommandsQueue.Count == 0)
+            {
+                GoToFollowUnit();
+                return true;
+            }
             if (_questFollowOwner == null || !ReferenceEquals(AiFollowUnitObj, _questFollowTarget) ||
                 !IsValidFollowTarget(_questFollowTarget) || AiCurrentCommand != null || AiCommandsQueue.Count > 0)
                 return false;
@@ -106,15 +126,14 @@ public abstract partial class NpcAi
             return;
         lock (_questFollowSyncRoot)
         {
-            if (_questFollowOwner != null || AiFollowUnitObj != null ||
+            if (_questEscortPath != null || _questFollowOwner != null || AiFollowUnitObj != null ||
                 _currentBehavior != GetBehavior(BehaviorKind.FollowUnit) ||
                 AiCurrentCommand != null || AiCommandsQueue.Count > 0 ||
                 Owner is not { IsDead: false, Despawned: false, CombatRetired: false, IsInPatrol: false, Hp: > 0 } npc ||
                 !ReferenceEquals(npc.Ai, this))
                 return;
+            GoToIdle();
         }
-        // Cleanup queues restoration for the owning AI tick, which checks current control.
-        GoToIdle();
     }
 
     private void CancelQuestFollowForControl()
@@ -122,6 +141,7 @@ public abstract partial class NpcAi
         Action onLost;
         lock (_questFollowSyncRoot)
         {
+            _questEscortPath = null;
             if (_questFollowOwner == null)
                 return;
             onLost = _questFollowLost;
@@ -145,6 +165,14 @@ public abstract partial class NpcAi
             if (restoreIdle)
                 IdlePosition = _questFollowIdlePosition;
         }
+        if (_questEscortPath != null)
+        {
+            if (restoreIdle && ownsTarget && npc is { IsDead: false, Despawned: false, CombatRetired: false, Hp: > 0 } &&
+                ReferenceEquals(npc.Ai, this))
+                _questEscortPath.RequestReturn();
+            else
+                _questEscortPath = null;
+        }
         _questFollowOwner = null;
         _questFollowTarget = null;
         _questFollowLost = null;
@@ -153,6 +181,25 @@ public abstract partial class NpcAi
         if (restoreIdle && ownsTarget && npc is { IsDead: false, Despawned: false, CombatRetired: false, Hp: > 0 } &&
             ReferenceEquals(npc.Ai, this) && _currentBehavior == GetBehavior(BehaviorKind.FollowUnit))
             Interlocked.Exchange(ref _questFollowRestorePending, 1);
+    }
+
+    internal bool MoveAlongQuestEscortPath(TimeSpan delta)
+    {
+        var path = _questEscortPath;
+        if (path == null)
+            return false;
+        if (path.Follow(delta))
+        {
+            lock (_questFollowSyncRoot)
+            {
+                if (!ReferenceEquals(path, _questEscortPath))
+                    return true;
+                IdlePosition = _questFollowIdlePosition;
+                _questEscortPath = null;
+                GoToIdle();
+            }
+        }
+        return true;
     }
 
     private void OnQuestFollowNpcDied(object sender, OnDeathArgs args)
