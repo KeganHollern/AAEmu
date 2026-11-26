@@ -382,7 +382,15 @@ public partial class CharacterQuests(Character owner, IGameScheduleManager sched
         var questId = npc.Template.EngageCombatGiveQuestId;
         if (HasQuest(questId) || IsQuestComplete(questId))
             return;
-        // The first combat event identifies this NPC. A ranged attack can land outside dialogue range.
+        // Only self-referencing start components delegate acceptance to the combat event.
+        var start = QuestManager.Instance.GetTemplate(questId)?.GetComponents(QuestComponentKind.Start);
+        if (start is not { Length: > 0 } || !start.All(component => component.ActTemplates.Any(act =>
+                act is QuestActConAcceptComponent trigger && trigger.QuestContextId == questId)))
+        {
+            AddQuestFromNpc(questId, npc.ObjId);
+            return;
+        }
+
         if (ReferenceEquals(Owner.ParentWorld?.GetNpc(npc.ObjId), npc) && QuestInteraction.IsVisibleSource(Owner, npc))
             StartQuestWithNpc(questId, npc);
     }

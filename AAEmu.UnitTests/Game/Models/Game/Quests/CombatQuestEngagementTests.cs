@@ -75,6 +75,28 @@ public sealed partial class QuestFollowUnitTests
         await Assert.That(_saved).IsEmpty();
     }
 
+    [Test]
+    public async Task CombatQuest_DragonfireElementalDoesNotReplaceItsSphereStartAtRange()
+    {
+        const uint questId = 4392;
+        var template = new QuestTemplate { Id = questId };
+        var start = new QuestComponentTemplate(template) { Id = 19100, KindId = QuestComponentKind.Start };
+        start.ActTemplates.Add(new QuestActConAcceptSphere(start) { ActId = 30676, DetailId = 652, SphereId = 1526 });
+        template.Components.Add(start.Id, start);
+        Register(template);
+        var previousTarget = CreateNpc(80, 2000);
+        _owner.CurrentTarget = previousTarget;
+        var elemental = CreateNpc(81, 2003);
+        elemental.Template.EngageCombatGiveQuestId = questId;
+        elemental.Transform.Local.Position = _owner.Transform.Local.Position + new Vector3(18f, 0, 0);
+
+        elemental.OnDamageReceived(_owner, 1);
+
+        await Assert.That(_owner.Quests.HasQuest(questId)).IsFalse();
+        await Assert.That(_owner.CurrentTarget).IsSameReferenceAs(previousTarget);
+        await Assert.That(_saved).IsEmpty();
+    }
+
     private QuestTemplate RegisterButcherBasher()
     {
         const uint questId = 2432;
