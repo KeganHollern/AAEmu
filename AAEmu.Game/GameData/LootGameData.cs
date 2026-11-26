@@ -37,7 +37,7 @@ public class LootGameData : Singleton<LootGameData>, IGameDataLoader
         // table 'loots'
         using (var command = connection.CreateCommand())
         {
-            command.CommandText = "SELECT id, `group`, item_id, CASE WHEN drop_rate > 1 THEN drop_rate WHEN drop_rate <= 1 THEN 10000000 END as drop_rate, min_amount, max_amount, loot_pack_id, grade_id, always_drop FROM loots ORDER BY `group` ASC, loot_pack_id ASC, drop_rate DESC";
+            command.CommandText = "SELECT id, `group`, item_id, drop_rate = 1 AS unit_weight, CASE WHEN drop_rate > 1 THEN drop_rate WHEN drop_rate <= 1 THEN 10000000 END as drop_rate, min_amount, max_amount, loot_pack_id, grade_id, always_drop FROM loots ORDER BY `group` ASC, loot_pack_id ASC, drop_rate DESC";
             command.Prepare();
             using (var sqliteReader = command.ExecuteReader())
             using (var reader = new SQLiteWrapperReader(sqliteReader))
@@ -50,6 +50,7 @@ public class LootGameData : Singleton<LootGameData>, IGameDataLoader
                         Group = reader.GetUInt32("group"),
                         ItemId = reader.GetUInt32("item_id"),
                         DropRate = reader.GetUInt32("drop_rate"),
+                        HasUnitWeight = reader.GetBoolean("unit_weight"),
                         MinAmount = reader.GetInt32("min_amount"),
                         MaxAmount = reader.GetInt32("max_amount"),
                         LootPackId = reader.GetUInt32("loot_pack_id"),

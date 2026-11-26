@@ -6,6 +6,7 @@ public class Loot : IComparable<Loot>
     public uint Group { get; set; }
     public uint ItemId { get; set; }
     public uint DropRate { get; set; }
+    internal bool HasUnitWeight { get; init; }
     public int MinAmount { get; set; }
     public int MaxAmount { get; set; }
     public uint LootPackId { get; set; }
