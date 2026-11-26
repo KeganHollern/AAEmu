@@ -54,7 +54,10 @@ The native duel request predicate is `0x3903b2f0`.
 It checks target type, death, duel state, and relevant player states. It contains no distance test.
 `SCDuelState` at `0x391d6e50` stores the duel flag at unit offset `0x3bac`.
 `SCDuelStarted` calls `0x3903b480` for client feedback. It does not change faction.
-The native opponent predicate at `0x39358ab0` needs different owners and the same nonzero duel flag.
+The countdown handler at `0x391d6ce0` calls `0x3903af40`. It writes `0xffffffff` to the local unit's duel flag and starts a 3,000 ms countdown.
+The native opponent check at `0x39358ab0` needs different owners and a shared flag. It rejects both zero and the countdown value.
+Game sends the two unit flags to both participants when the duel becomes active, before the start notice.
+Two r208022 clients on Game 0742fe1d received the start notice but could not attack in the earlier order. [Field result and normal retest](https://github.com/KeganHollern/aaemu-cluster/issues/1010).
 Its flag getter supports Character and Mate. It does not support Slave.
 The previous research record, `issue-284-peace-combat.md`, confirms the same predicate in native attack eligibility.
 
