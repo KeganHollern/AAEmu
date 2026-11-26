@@ -53,7 +53,7 @@ public class SphereGameData : Singleton<SphereGameData>, IGameDataLoader
                     {
                         Id = reader.GetUInt32("id"),
                         Name = reader.GetString("name"),
-                        EnterOrLeave = reader.GetBoolean("enter_or_leave"),
+                        EnterOrLeave = reader.GetBoolean("enter_or_leave", true),
                         SphereDetailId = reader.GetUInt32("sphere_detail_id"),
                         SphereDetailType = reader.GetString("sphere_detail_type"),
                         TriggerConditionId = (AreaSphereTriggerCondition)reader.GetUInt32("trigger_condition_id"),
@@ -321,6 +321,17 @@ public class SphereGameData : Singleton<SphereGameData>, IGameDataLoader
                 return res.Id;
         }
         return 0;
+    }
+
+    internal uint GetGuaranteedEntrySkill(Spheres sphere)
+    {
+        if (sphere is not { SphereDetailType: "SphereSkill", EnterOrLeave: true,
+                TriggerConditionId: AreaSphereTriggerCondition.None, TriggerConditionTime: 0 })
+            return 0;
+
+        return _sphereSkills.GetValueOrDefault(sphere.SphereDetailId) is { MinRate: 100, MaxRate: 100 } detail
+            ? detail.SkillId
+            : 0;
     }
 
     public Spheres GetSphere(uint sphereId)
