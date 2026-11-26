@@ -12,6 +12,7 @@ public class GameRuleSet
     public int TimePlaying { get; set; }
     public TimeSpan ResurrectionDelay { get; set; }
     public int EnemyPlayerKillScore { get; set; }
+    public int EnemyPlayerDamageAssistScore { get; set; }
     public int RankWinPoints { get; set; }
     public int RankLossPoints { get; set; }
     public int RankDrawPoints { get; set; }
