@@ -83,6 +83,61 @@ public sealed partial class SphereQuestManagerTests
         await Assert.That(requirements.GetFailedRequirement(skill, SkillTargetType.Self, [], caster, caster)).IsEqualTo(2u);
     }
 
+    [Test]
+    public async Task ExactCompact_GroundGustCreatesTwoTimedDoodadsAndTwoBuffTimeouts()
+    {
+        var path = Environment.GetEnvironmentVariable("AAEMU_COMBAT_TEST_COMPACT");
+        Skip.Unless(!string.IsNullOrEmpty(path), "Set AAEMU_COMBAT_TEST_COMPACT to the r208022 compact.");
+        using var db = new SqliteConnection(new SqliteConnectionStringBuilder
+        { DataSource = path, Mode = SqliteOpenMode.ReadOnly }.ToString());
+        db.Open();
+        using var command = db.CreateCommand();
+        command.CommandText = """
+            SELECT spawn.value1, spawn.value2, clout.duration, clout.tick, shape.value1, COALESCE(aoe.effect_id, 0)
+            FROM skill_effects se
+            JOIN effects e ON e.id = se.effect_id AND e.actual_type = 'SpecialEffect'
+            JOIN special_effects spawn ON spawn.id = e.actual_id AND spawn.special_effect_type_id = 15
+            JOIN doodad_func_groups g ON g.doodad_almighty_id = spawn.value1 AND g.doodad_func_group_kind_id = 1
+            JOIN doodad_phase_funcs phase ON phase.doodad_func_group_id = g.id AND phase.actual_func_type = 'DoodadFuncClout'
+            JOIN doodad_func_clouts clout ON clout.id = phase.actual_func_id
+            JOIN aoe_shapes shape ON shape.id = clout.aoe_shape_id AND shape.kind_id = 1
+            LEFT JOIN doodad_func_clout_effects aoe ON aoe.doodad_func_clout_id = clout.id
+            WHERE se.skill_id = 11592 AND clout.buff_id IS NULL AND clout.use_origin_source = 't'
+            ORDER BY spawn.value1
+            """;
+        using (var reader = command.ExecuteReader())
+        {
+            var rows = new List<(int Doodad, int Delay, int Lifetime, int Tick, float Radius, int Effect)>();
+            while (reader.Read())
+                rows.Add((reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3),
+                    reader.GetFloat(4), reader.GetInt32(5)));
+            await Assert.That(rows.SequenceEqual([(679, 1000, 500, 300, 5f, 1935), (1203, 1000, 6500, 0, 10f, 0)])).IsTrue();
+        }
+
+        command.CommandText = """
+            WITH RECURSIVE chain(n, effect_id) AS (
+                SELECT 1, 1935
+                UNION ALL
+                SELECT n + 1, t.effect_id FROM chain
+                JOIN effects e ON e.id = chain.effect_id AND e.actual_type = 'BuffEffect'
+                JOIN buff_effects be ON be.id = e.actual_id
+                JOIN buff_triggers t ON t.buff_id = be.buff_id AND t.event_id = 6 AND t.effect_on_source = 't'
+                WHERE n < 4
+            )
+            SELECT b.id, b.duration, COALESCE(b.skill_controller_id, 0)
+            FROM chain JOIN effects e ON e.id = chain.effect_id AND e.actual_type = 'BuffEffect'
+            JOIN buff_effects be ON be.id = e.actual_id AND be.chance = 100
+            JOIN buffs b ON b.id = be.buff_id ORDER BY chain.n
+            """;
+        using (var reader = command.ExecuteReader())
+        {
+            var rows = new List<(int Buff, int Duration, int Controller)>();
+            while (reader.Read())
+                rows.Add((reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2)));
+            await Assert.That(rows.SequenceEqual([(613, 300, 0), (413, 6000, 5815), (415, 15000, 0)])).IsTrue();
+        }
+    }
+
     private void SeedGroundWindSphere()
     {
         SetField(_sphereData, "_spheres", new Dictionary<uint, Spheres>
