@@ -857,10 +857,10 @@ public class Slave : Unit
             return position;
         }
 
-        if (!TryMeasureWreckFloor(position, out var floor))
+        if (!SlaveManager.TryMeasureWreckFloor(ParentWorld, position, out var floor))
         {
             // Scatter can cross the edge of the authored world. Try the original position.
-            if (position == origin || !TryMeasureWreckFloor(origin, out floor))
+            if (position == origin || !SlaveManager.TryMeasureWreckFloor(ParentWorld, origin, out floor))
                 return origin;
             position = origin;
         }
@@ -868,21 +868,14 @@ public class Slave : Unit
         if (surface == WreckDropSurface.Cargo && water != null)
         {
             var waterHeight = water.GetWaterSurface(position, out _);
-            if (waterHeight - floor.Height >= 30f)
+            if (waterHeight - floor >= 30f)
             {
                 position.Z = waterHeight;
                 return position;
             }
         }
-        position.Z = floor.Height;
+        position.Z = floor;
         return position;
-    }
-
-    private bool TryMeasureWreckFloor(Vector3 position, out GroundSurfaceResult floor)
-    {
-        // Outdoor navigation nodes can be far above the seabed. Keep genuine walkable layers.
-        return ParentWorld.Template.GeoData.TryGetGroundSurface(position, out floor) &&
-            floor.Decision != GroundSurfaceDecision.TerrainUnavailableFallback;
     }
 
     /// <summary>

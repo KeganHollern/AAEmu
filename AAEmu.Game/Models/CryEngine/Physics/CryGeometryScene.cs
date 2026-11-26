@@ -39,7 +39,7 @@ public sealed class CryGeometryScene(Func<CryBounds, IEnumerable<CryGeometryInst
         return found ? CryIntersection.Intersects : CryIntersection.Clear;
     }
 
-    private static bool HasUnresolvedCollisionPose(CryGeometryAsset asset) =>
+    internal static bool HasUnresolvedCollisionPose(CryGeometryAsset asset) =>
         asset.PoseRequirements.Any(pose => pose.Playing && pose.Physicalized && pose.AffectsCollision);
 
     private IEnumerable<CryGeometryPart> SelectParts(CryGeometryInstance instance, CryGeometryQueryUsage usage)

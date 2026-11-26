@@ -41,6 +41,64 @@ public partial class SlaveManager
         return Create(owner, skillData, false, position);
     }
 
+    internal static bool TryMeasureWreckFloor(WorldInstance world, Vector3 position, out float height)
+    {
+        height = default;
+        var assets = world.SlaveManager?.PlacementAssets;
+        var template = world.Template;
+        try
+        {
+            var cellX = (int)MathF.Floor(position.X / WorldManager.CELL_SIZE);
+            var cellY = (int)MathF.Floor(position.Y / WorldManager.CELL_SIZE);
+            if (assets?.GetTerrain(template, cellX, cellY)?.IsHole(position.X, position.Y) == true)
+                return TryGetHoleFloor(assets, template, position, out height);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+            NotSupportedException or ArgumentException or OverflowException)
+        {
+            Logger.Warn(exception, $"Cannot measure wreck support at {position} in {template.Name}");
+            return false;
+        }
+
+        if (!template.GeoData.TryGetGroundSurface(position, out var ground) ||
+            ground.Decision == GroundSurfaceDecision.TerrainUnavailableFallback)
+            return false;
+        height = ground.Height;
+        return true;
+    }
+
+    private static bool TryGetHoleFloor(HousingGeometryAssets assets, WorldTemplate world, Vector3 position, out float height)
+    {
+        // The raw terrain and navigation can both describe empty space inside a cutout.
+        // Inspect higher bounds first so objects entirely below the measured support need no geometry.
+        height = float.NegativeInfinity;
+        var bottom = new Vector3(position.X, position.Y, float.MinValue);
+        foreach (var instance in assets.GetWorld(world).Query(bottom, position).OrderByDescending(x => x.Max.Z))
+        {
+            if (instance.Max.Z <= height)
+                break;
+            var asset = assets.LoadStatic(instance);
+            if (!asset.Parts.Any(part => part.PhysicsType == CryGeometryLayerRules.Solid))
+                continue;
+            if (CryGeometryScene.HasUnresolvedCollisionPose(asset))
+                return false;
+
+            var transform = CryVegetationGeometry.ResolveTransform(instance, (x, y) =>
+                assets.GetTerrain(world, (int)MathF.Floor(x / WorldManager.CELL_SIZE),
+                    (int)MathF.Floor(y / WorldManager.CELL_SIZE))?.SampleHeight(x, y) ?? float.NaN);
+            foreach (var part in asset.Parts)
+            {
+                if (part.PhysicsType != CryGeometryLayerRules.Solid)
+                    continue;
+                var length = position.Z - Math.Max(height, instance.Min.Z);
+                if (CryGeometryQueries.Raycast(part, transform, position, -Vector3.UnitZ, MathF.BitIncrement(length),
+                    true, out var hit) && hit.Normal.Z > 0f)
+                    height = Math.Max(height, hit.Position.Z);
+            }
+        }
+        return float.IsFinite(height);
+    }
+
     internal ErrorMessageType CheckPlacement(Character owner, SkillItem skillData, SlavePlacementRequest request,
         out SlaveTemplate template)
     {
