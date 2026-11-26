@@ -128,39 +128,26 @@ public class WorldTemplate
     public bool TryGetRawHeightMapHeight(int x, int y, out float height)
     {
         height = 0f;
-        if (x < 0 || y < 0 || Cells is null || !double.IsFinite(HeightMaxCoefficient) || HeightMaxCoefficient <= 0d)
+        if (x < 0 || y < 0)
             return false;
 
-        var cellX = x / WorldManager.CELL_SIZE;
-        var cellY = y / WorldManager.CELL_SIZE;
-        if (cellX >= Cells.GetLength(0) || cellY >= Cells.GetLength(1))
-            return false;
+        var cell = LoadHeightCell(x, y);
+        return cell != null && cell.TryGetHeightMapSample(x % WorldManager.CELL_SIZE / 2,
+            y % WorldManager.CELL_SIZE / 2, out height);
+    }
 
-        WorldCell cell;
+    private WorldCell LoadHeightCell(int x, int y)
+    {
         try
         {
-            cell = Cells[cellX, cellY]?.VerifyCellLoaded();
+            var cell = GetCell(x / WorldManager.CELL_SIZE, y / WorldManager.CELL_SIZE)?.VerifyCellLoaded();
+            return cell is { Loaded: true, HeightMap: not null } ? cell : null;
         }
         catch (Exception ex)
         {
             Logger.Debug(ex, $"Failed to load terrain height at ({x}, {y}) in world {Name ?? "unknown"}");
-            return false;
+            return null;
         }
-
-        if (cell is null || !cell.Loaded || cell.HeightMap is null)
-            return false;
-
-        var sx = x % WorldManager.CELL_SIZE / 2;
-        var sy = y % WorldManager.CELL_SIZE / 2;
-        if (sx >= cell.HeightMap.GetLength(0) || sy >= cell.HeightMap.GetLength(1))
-            return false;
-
-        height = (float)(cell.HeightMap[sx, sy] / HeightMaxCoefficient);
-        if (float.IsFinite(height))
-            return true;
-
-        height = 0f;
-        return false;
     }
 
     /// <summary>
@@ -197,6 +184,22 @@ public class WorldTemplate
         if (x >= Cells.GetLength(0) * WorldManager.CELL_SIZE || y >= Cells.GetLength(1) * WorldManager.CELL_SIZE)
             return false;
 
+        var cell = LoadHeightCell((int)x, (int)y);
+        if (cell == null)
+        {
+            // A point exactly on an internal boundary can still lie on the preceding cell's edge.
+            bool west = x > 0f && x % WorldManager.CELL_SIZE == 0f;
+            bool south = y > 0f && y % WorldManager.CELL_SIZE == 0f;
+            if (west)
+                cell = LoadHeightCell((int)x - 1, (int)y);
+            if (cell == null && south)
+                cell = LoadHeightCell((int)x, (int)y - 1);
+            if (cell == null && west && south)
+                cell = LoadHeightCell((int)x - 1, (int)y - 1);
+            if (cell == null)
+                return false;
+        }
+
         // Get bordering points
         var border = FindNearestSignificantPoints((int)Math.Floor(x), (int)Math.Floor(y));
 
@@ -207,18 +210,18 @@ public class WorldTemplate
         // Interpolate on that same surface so the server agrees with the terrain visible to clients.
         if (offX + offY < 1f)
         {
-            if (!TryGetWeightedHeight(border.Left, border.Top, 1f - offX - offY, out var heightX0Y0) ||
-                !TryGetWeightedHeight(border.Right, border.Top, offX, out var heightX1Y0) ||
-                !TryGetWeightedHeight(border.Left, border.Bottom, offY, out var heightX0Y1))
+            if (!TryGetWeightedHeight(cell, border.Left, border.Top, 1f - offX - offY, out var heightX0Y0) ||
+                !TryGetWeightedHeight(cell, border.Right, border.Top, offX, out var heightX1Y0) ||
+                !TryGetWeightedHeight(cell, border.Left, border.Bottom, offY, out var heightX0Y1))
                 return false;
 
             height = heightX0Y0 * (1f - offX - offY) + heightX1Y0 * offX + heightX0Y1 * offY;
         }
         else
         {
-            if (!TryGetWeightedHeight(border.Right, border.Bottom, offX + offY - 1f, out var heightX1Y1) ||
-                !TryGetWeightedHeight(border.Left, border.Bottom, 1f - offX, out var heightX0Y1) ||
-                !TryGetWeightedHeight(border.Right, border.Top, 1f - offY, out var heightX1Y0))
+            if (!TryGetWeightedHeight(cell, border.Right, border.Bottom, offX + offY - 1f, out var heightX1Y1) ||
+                !TryGetWeightedHeight(cell, border.Left, border.Bottom, 1f - offX, out var heightX0Y1) ||
+                !TryGetWeightedHeight(cell, border.Right, border.Top, 1f - offY, out var heightX1Y0))
                 return false;
 
             height = heightX1Y1 * (offX + offY - 1f) + heightX0Y1 * (1f - offX) + heightX1Y0 * (1f - offY);
@@ -231,10 +234,21 @@ public class WorldTemplate
         return false;
     }
 
-    private bool TryGetWeightedHeight(int x, int y, float weight, out float height)
+    private bool TryGetWeightedHeight(WorldCell cell, int x, int y, float weight, out float height)
     {
         height = 0f;
-        return weight <= 0f || TryGetRawHeightMapHeight(x, y, out height);
+        if (weight <= 0f)
+            return true;
+
+        var sampleX = (x - cell.CellX * WorldManager.CELL_SIZE) / 2;
+        var sampleY = (y - cell.CellY * WorldManager.CELL_SIZE) / 2;
+        // Keep the shared vertex from the next cell when it exists. At the edge of mapped
+        // terrain the current cell still contains the endpoint of its own final triangle.
+        if ((sampleX == WorldManager.CELL_HMAP_RESOLUTION || sampleY == WorldManager.CELL_HMAP_RESOLUTION) &&
+            TryGetRawHeightMapHeight(x, y, out height))
+            return true;
+
+        return cell.TryGetHeightMapSample(sampleX, sampleY, out height);
     }
 
     /// <summary>

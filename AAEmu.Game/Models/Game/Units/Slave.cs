@@ -772,10 +772,9 @@ public class Slave : Unit
                         newDoodad.IsPersistent = true;
                         newDoodad.Transform = doodad.Transform.CloneDetached();
                         // Add a bit of randomness to the dropped doodad
-                        newDoodad.Transform.Local.Translate(
-                            Random.Shared.NextSingle() * 2f - 1f,
-                            Random.Shared.NextSingle() * 2f - 1f,
-                            0f);
+                        var origin = newDoodad.Transform.World.Position;
+                        var scatter = new Vector3(Random.Shared.NextSingle() * 2f - 1f, Random.Shared.NextSingle() * 2f - 1f, 0f);
+                        newDoodad.Transform.Local.SetPosition(ResolveWreckDrop(origin, origin + scatter, WreckDropSurface.Cargo));
                         newDoodad.AttachPoint = AttachPointKind.None;
                         newDoodad.ItemId = droppedItem.Id;
                         newDoodad.ItemTemplateId = droppedItem.TemplateId;
@@ -783,8 +782,6 @@ public class Slave : Unit
                         newDoodad.SetScale(1f);
                         newDoodad.PlantTime = DateTime.UtcNow;
                         newDoodad.Faction = FactionManager.Instance.GetFaction(FactionsEnum.Friendly);
-
-                        newDoodad.Transform.Local.SetHeight(GetCargoDropHeight(newDoodad.Transform.World.Position));
 
                         // Save new doodad
                         newDoodad.InitDoodad();
@@ -839,9 +836,8 @@ public class Slave : Unit
                 var rng = new Vector3(Random.Shared.NextSingle() * 2f - 1f, Random.Shared.NextSingle() * 2f - 1f, 0);
                 rng = Vector3.Normalize(rng);
                 rng *= Random.Shared.NextSingle() * dropDoodad.Radius;
-                pos += rng;
-                doodad.Transform.Local.SetPosition(pos);
-                doodad.Transform.Local.SetHeight(GetDebrisDropHeight(pos, dropDoodad.OnWater));
+                var surface = dropDoodad.OnWater ? WreckDropSurface.Water : WreckDropSurface.Floor;
+                doodad.Transform.Local.SetPosition(ResolveWreckDrop(pos, pos + rng, surface));
                 doodad.Transform.Local.Rotate(0, 0, (float)(Random.Shared.NextDouble() * Math.PI * 2f));
                 doodad.InitDoodad();
                 doodad.Spawn();
@@ -849,25 +845,44 @@ public class Slave : Unit
         }
     }
 
-    internal float GetCargoDropHeight(Vector3 position)
+    internal enum WreckDropSurface { Cargo, Floor, Water }
+
+    internal Vector3 ResolveWreckDrop(Vector3 origin, Vector3 position, WreckDropSurface surface)
     {
-        var floor = GetDropFloor(position);
-        var surface = ParentWorld.Water?.GetWaterSurface(position, out _) ?? 0f;
-        return surface - floor < 30f ? floor : surface;
+        var water = ParentWorld.Water;
+        if (surface == WreckDropSurface.Water)
+        {
+            if (water != null)
+                position.Z = water.GetWaterSurface(position, out _);
+            return position;
+        }
+
+        if (!TryMeasureWreckFloor(position, out var floor))
+        {
+            // Scatter can cross the edge of the authored world. Try the original position.
+            if (position == origin || !TryMeasureWreckFloor(origin, out floor))
+                return origin;
+            position = origin;
+        }
+
+        if (surface == WreckDropSurface.Cargo && water != null)
+        {
+            var waterHeight = water.GetWaterSurface(position, out _);
+            if (waterHeight - floor.Height >= 30f)
+            {
+                position.Z = waterHeight;
+                return position;
+            }
+        }
+        position.Z = floor.Height;
+        return position;
     }
 
-    internal float GetDebrisDropHeight(Vector3 position, bool onWater)
+    private bool TryMeasureWreckFloor(Vector3 position, out GroundSurfaceResult floor)
     {
-        return onWater ? ParentWorld.Water.GetWaterSurface(position, out _) : GetDropFloor(position);
-    }
-
-    private float GetDropFloor(Vector3 position)
-    {
-        if (ParentWorld.Template.GeoData.TryGetGroundSurface(position, out var ground))
-            return ground.Height;
-
-        // Preserve the previous placement when neither terrain nor navigation supplies a floor.
-        return 0f;
+        // Outdoor navigation nodes can be far above the seabed. Keep genuine walkable layers.
+        return ParentWorld.Template.GeoData.TryGetGroundSurface(position, out floor) &&
+            floor.Decision != GroundSurfaceDecision.TerrainUnavailableFallback;
     }
 
     /// <summary>

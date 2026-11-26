@@ -40,9 +40,8 @@ public sealed class TerrainPhysicsTests
                 Template.Cells[x, z] = new WorldCell(x, z, Template);
         }
 
-        public void Publish(int x, int z, Func<int, int, ushort> sample)
+        public void Publish(int x, int z, Func<int, int, ushort> sample, int size = WorldManager.CELL_HMAP_RESOLUTION)
         {
-            const int size = WorldManager.CELL_HMAP_RESOLUTION;
             var cell = Template.Cells[x, z];
             if (sample != null)
             {
@@ -110,6 +109,55 @@ public sealed class TerrainPhysicsTests
     }
 
     [Test]
+    public async Task MeasuredCellCompletesMissingEdgesAndPreservesPublishedNeighborHeights()
+    {
+        using var scene = new Scene(2, 2);
+        scene.Publish(0, 0, (x, z) => (ushort)((x == 512 ? 8 : 0) + (z == 512 ? 12 : 0)), 513);
+        scene.Start();
+
+        foreach (var (x, z, expected) in new[] { (1023f, 30f, 4f), (30f, 1023f, 6f),
+                     (1022.5f, 1022.5f, 5f), (1023.5f, 1023.5f, 15f) })
+        {
+            await Assert.That(scene.GroundRay(x, z, out var floor)).IsTrue();
+            await Assert.That(Math.Abs(floor - expected)).IsLessThan(.002f);
+        }
+
+        scene.Publish(1, 0, (_, _) => 40, 513);
+        await Assert.That(scene.GroundRay(1023f, 30f, out var sharedEdge)).IsTrue();
+        await Assert.That(Math.Abs(sharedEdge - 20f)).IsLessThan(.002f);
+        await Assert.That(scene.GroundRay(1025f, 30f, out var neighbor)).IsTrue();
+        await Assert.That(Math.Abs(neighbor - 40f)).IsLessThan(.002f);
+        await Assert.That(scene.GroundRay(30f, 1025f, out _)).IsFalse();
+        await Assert.That(scene.Template.Cells[0, 1].Loaded).IsFalse();
+    }
+
+    [Test]
+    public async Task FinalWorldSquareSupportsABodyAtMeasuredZero()
+    {
+        using var scene = new Scene(1, 1);
+        scene.Publish(0, 0, (_, _) => 0, 513);
+        scene.Start();
+
+        await Assert.That(scene.GroundRay(1023.3f, 1023.3f, out var height)).IsTrue();
+        await Assert.That(Math.Abs(height)).IsLessThan(.002f);
+        await Assert.That(Math.Abs(scene.Drop(1023.3f, 0, 1023.3f) - .39f)).IsLessThan(.1f);
+        await Assert.That(scene.GroundRay(1024.3f, 1023.3f, out _)).IsFalse();
+    }
+
+    [Test]
+    public async Task NeighboringEndpointsCannotCreateATriangleInsideAnAbsentCell()
+    {
+        using var scene = new Scene(2, 2);
+        scene.Publish(1, 0, (_, _) => 20, 513);
+        scene.Publish(0, 1, (_, _) => 20, 513);
+        scene.Publish(1, 1, (_, _) => 20, 513);
+        scene.Start();
+
+        await Assert.That(scene.GroundRay(1023.5f, 1023.5f, out _)).IsFalse();
+        await Assert.That(scene.Template.Cells[0, 0].Loaded).IsFalse();
+    }
+
+    [Test]
     public async Task WaterfallTransitSkipsTheOverheadTerrainUntilNormalContactsResume()
     {
         using var scene = new Scene(1, 1);
@@ -141,7 +189,7 @@ public sealed class TerrainPhysicsTests
         await Assert.That(grid.FirstTriangleIndex(0, 0)).IsZero();
         await Assert.That(grid.FirstTriangleIndex(1, 0)).IsEqualTo(grid.FirstTriangleIndex(0, grid.QuadsZ - 1) + 2);
         await Assert.That(last).IsEqualTo(grid.TriangleCount - 1);
-        await Assert.That((long)grid.TriangleCount).IsEqualTo(2L * (35 * 512 - 1) * (38 * 512 - 1));
+        await Assert.That((long)grid.TriangleCount).IsEqualTo(2L * (35 * 512) * (38 * 512));
     }
 
     [Test]
