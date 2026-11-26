@@ -3,6 +3,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Gimmicks;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Units;
 
@@ -14,6 +15,9 @@ public class Region(WorldInstance worldInstance, int x, int y, uint zoneKey)
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
     private readonly object _objectsLock = new();
     private GameObject[] _objects;
+    // Houses enter and leave infrequently. Movement reads this snapshot without copying every nearby object.
+    private House[] _houses = [];
+    internal ReadOnlySpan<House> Houses => Volatile.Read(ref _houses);
     private int _objectsSize, _charactersSize;
     private Region[] _neighbors;
     private int _playerCount;
@@ -41,6 +45,8 @@ public class Region(WorldInstance worldInstance, int x, int y, uint zoneKey)
                 _objects = temp;
             }
 
+            if (obj is House house)
+                Volatile.Write(ref _houses, [.. _houses, house]);
             _objects[_objectsSize] = obj;
             _objectsSize++;
         }
@@ -74,6 +80,9 @@ public class Region(WorldInstance worldInstance, int x, int y, uint zoneKey)
         {
             if (_objects == null || _objectsSize == 0)
                 return;
+
+            if (obj is House house)
+                Volatile.Write(ref _houses, _houses.Where(entry => entry != house).ToArray());
 
             if (_objectsSize > 1)
             {
