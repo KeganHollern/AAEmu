@@ -33,6 +33,7 @@ public class DoodadTemplate
     public FactionsEnum FactionId { get; set; }
     public int GrowthTime { get; set; }
     public bool DespawnOnCollision { get; set; }
+    public bool LoadModelFromWorld { get; set; }
     public bool NoCollision { get; set; }
     public uint RestrictZoneId { get; set; }
 

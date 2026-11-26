@@ -113,7 +113,7 @@ public sealed class HousingGeometryAssets
         return string.IsNullOrEmpty(path) ? null : Load(path);
     }
 
-    private static string DoodadModelPath(DoodadTemplate template, uint phase)
+    internal static string DoodadModelPath(DoodadTemplate template, uint phase)
     {
         var path = phase == 0 ? null : template.FuncGroups.FirstOrDefault(group => group.Id == phase)?.Model;
         if (string.IsNullOrEmpty(path))

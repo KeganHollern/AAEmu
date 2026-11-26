@@ -9,7 +9,7 @@ using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.World;
 
-public class Region(WorldInstance worldInstance, int x, int y, uint zoneKey)
+public partial class Region(WorldInstance worldInstance, int x, int y, uint zoneKey)
 {
     private readonly WorldInstance _worldInstance = worldInstance;
     // ReSharper disable once ChangeFieldTypeToSystemThreadingLock
@@ -47,6 +47,8 @@ public class Region(WorldInstance worldInstance, int x, int y, uint zoneKey)
 
             if (obj is House house)
                 Volatile.Write(ref _houses, [.. _houses, house]);
+            if (obj is Doodad doodad && IsStaticDoodadCandidate(doodad))
+                AddDoodadOrigin(doodad);
             _objects[_objectsSize] = obj;
             _objectsSize++;
         }
@@ -83,6 +85,9 @@ public class Region(WorldInstance worldInstance, int x, int y, uint zoneKey)
 
             if (obj is House house)
                 Volatile.Write(ref _houses, _houses.Where(entry => entry != house).ToArray());
+
+            if (obj is Doodad doodad)
+                RemoveDoodadOrigin(doodad);
 
             if (_objectsSize > 1)
             {
