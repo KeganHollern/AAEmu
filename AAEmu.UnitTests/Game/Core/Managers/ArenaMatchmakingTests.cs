@@ -228,7 +228,7 @@ public sealed class ArenaMatchmakingTests
         var observer = Observe(player);
         foreach (var member in new[] { player, opponent })
         {
-            member.Faction = new() { Id = (FactionsEnum)101 };
+            member.Faction = new() { Id = member == player ? (FactionsEnum)159 : (FactionsEnum)160 };
             member.OriginFaction = member.Faction;
             _queue.ApplyToBattlefield(11, InstantCorps.Any, member);
         }
