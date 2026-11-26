@@ -50,7 +50,7 @@ The checked legacy records contain no matching volume for the exploration starte
 
 The following findings need further work:
 
-- Quest 41, sphere 101, has 14 legacy spheres with radius 5 m. Current placement evidence does not establish all 14 locations.
+- Quest 41 has 14 airborne starters. The Of Wind and Storms check below identifies their paired gusts.
 - The original review identified the 10-point polygon for quest 340. The later Ambush check below covers it.
 - Quest 815, sphere 211, has a legacy point approximately 1,351 m from the current quest objects.
 - Quest 1858, sphere 204, has a legacy point approximately 2,050 m from its current report NPC.
@@ -102,8 +102,7 @@ The source repeats the same entity GUID and sets the area height to zero.
 The 3-dimensional sphere test cannot represent that boundary.
 The later centers for quests 815 and 1858 lie within 3 m of current quest objects.
 Their exact r208022 boundaries and trigger behavior still need evidence.
-The 14 legacy locations for quest 41 still lack confirmation.
-These cases remain open. [Source comparison](https://github.com/KeganHollern/aaemu-cluster/issues/536#issuecomment-7123864645).
+The Of Wind and Storms check below covers quest 41. [Source comparison](https://github.com/KeganHollern/aaemu-cluster/issues/536#issuecomment-7123864645).
 
 The run used Game `631604d85cf1ad11cacccb64e55be70262ca1600` as the source baseline.
 The server compact SHA-256 was `636ca9ecfe777bc86542e4b828f930c7861d2b4639b1bcfff670c064fee9c1ac`.
@@ -133,3 +132,19 @@ It crosses the polygon and reaches Y11527, Z127.619 inside the farm approach.
 Adrian stands 5.72 m outside the nearest edge.
 A point at (11476,11535) lies inside the bounding box and outside the concave polygon.
 The polygon has one starter across both mission copies. The wider starter inventory still lacks 418 component volumes.
+
+## Of Wind and Storms
+
+Quest 41 starts on entry to sphere 101. Act 2511 belongs to component 814 and uses accept-sphere detail 35.
+The component needs level 31 and mother faction 148. Report act 801 names Memorist Limion, NPC 593.
+The r208022 mission in `game/worlds/main_world/zone/129/mission_mission0.xml` contains 14 distinct Group 16 entities with value 101 and radius 5 m.
+Each has a separate ground sphere with value 303 and radius 3 m. The signed terrain matches all 14 lower centers within 0.0002 m.
+The upper centers sit 5.626 to 10.254 m above their partners.
+
+Both compacts bind ground sphere 303 to skill 11592, which spawns Gust 679 and Squall Effect 1203.
+Gust's phase 456 applies Elemental's Trap 613. Its timeout grants the 6-second Gust buff 413, which names Floating controller 5815.
+The upper volume accepts the quest. A ground-level circle at the same XY gives a different result on foot.
+
+The mission uses the zone 129 origin at (9, 14) cells. In the same archive, `world.xml` assigns all 14 upper sectors to zone key 182.
+The supplement keeps their original world positions and registers each GUID once. This leaves 417 starter components without geometry.
+[Paired volumes and stock bindings](https://github.com/KeganHollern/aaemu-cluster/issues/536#issuecomment-7191141255).
