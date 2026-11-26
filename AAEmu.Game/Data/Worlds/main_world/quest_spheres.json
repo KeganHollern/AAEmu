@@ -72,5 +72,145 @@
                 {"X": 11441.7666, "Y": 11524.0059, "Z": 123.561554}
             ]
         }
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 41DDBAF66783BD6C",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11141.649,
+        "Y": 14815.65015,
+        "Z": 195.32587,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 41F7F06AD3663C58",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11192.3901,
+        "Y": 14657.64914,
+        "Z": 181.83481,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 421489D62AED2D3B",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11177.1764,
+        "Y": 14711.14456,
+        "Z": 184.35379,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 45801DDE1FE6A76F",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11140.0494,
+        "Y": 14855.62964,
+        "Z": 193.50159,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 47E24CC04DAD1E61",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11132.3687,
+        "Y": 14733.83051,
+        "Z": 194.26453,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 488825582C6C37B9",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11147.7061,
+        "Y": 14660.64389,
+        "Z": 193.67845,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 4ACB984A6B740E42",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11227.9763,
+        "Y": 14749.01215,
+        "Z": 173.96381,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 4BBC32A1254662F8",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11182.7299,
+        "Y": 14740.27133,
+        "Z": 178.66949,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 4C7971A7CDE99AF5",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11097.5825,
+        "Y": 14700.07056,
+        "Z": 209.13196,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 4D55DE8AE209DEDC",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11214.3767,
+        "Y": 14639.21924,
+        "Z": 177.90424,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 4DDE77AB0B5E4789",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11108.4525,
+        "Y": 14764.43427,
+        "Z": 201.4261,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 4DF0887C66D0B783",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11154.829,
+        "Y": 14775.78833,
+        "Z": 188.59517,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 4E3B0DCCC56B3770",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11220.446,
+        "Y": 14693.62634,
+        "Z": 174.25691,
+        "Radius": 5.0
+    },
+    {
+        "Name": "Of Wind and Storms, Gweonid Forest mission area 4EE8E267562950D4",
+        "QuestId": 41,
+        "ComponentId": 814,
+        "ZoneId": 182,
+        "X": 11191.1013,
+        "Y": 14842.1618,
+        "Z": 175.14592,
+        "Radius": 5.0
     }
 ]
