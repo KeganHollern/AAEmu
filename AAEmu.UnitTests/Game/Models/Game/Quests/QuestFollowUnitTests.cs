@@ -567,6 +567,7 @@ public sealed partial class QuestFollowUnitTests
 
     private sealed class ProbeNpc : MovementProbeNpc
     {
+        public override int MaxHp { get; set; } = 100;
         public List<uint> Skills { get; } = [];
         public List<(uint Action, bool Active)> PostureChanges { get; } = [];
 
