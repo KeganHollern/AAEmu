@@ -52,6 +52,48 @@ public sealed class DewstoneClipperApproachTests
     }
 
     [Test]
+    public async Task InvalidHullMassLeavesThePhysicsWorldUnchanged()
+    {
+        using var physics = new Jitter2.World();
+        var initialBodyCount = physics.RigidBodies.Count;
+        var controller = new ShipController(physics, new ShipModelV1
+        {
+            MassBoxSizeX = 2, MassBoxSizeY = 4, MassBoxSizeZ = 1, Mass = 0
+        });
+        Assert.Throws<ArgumentException>(() => controller.Build(JVector.Zero, JQuaternion.Identity));
+        await Assert.That(controller.Hull).IsNull();
+        await Assert.That(physics.RigidBodies.Count).IsEqualTo(initialBodyCount);
+    }
+
+    [Test]
+    public async Task RemovingOneClipperTwiceKeepsTheOtherHullInItsWorld()
+    {
+        SetUpModels();
+        var template = WorldTemplateTests.CreateWorldTemplate(1, 1);
+        var world = new WorldInstance(template, 0, true, 0);
+        var manager = new PhysicsManager { SimulationWorld = world };
+        manager.Initialize();
+        using var physics = manager._physWorld;
+        var initialBodyCount = physics.RigidBodies.Count;
+        var first = new Clipper { Id = 1, ModelId = 128, ParentWorld = world };
+        var second = new Clipper { Id = 2, ModelId = 128, ParentWorld = world };
+        manager.AddShip(first);
+        manager.AddShip(second);
+        var otherHull = second.RigidBody;
+        await Assert.That(physics.RigidBodies.Count).IsEqualTo(initialBodyCount + 2);
+
+        manager.RemoveShip(first);
+        manager.RemoveShip(first);
+        await Assert.That(first.ShipController).IsNull();
+        await Assert.That(first.RigidBody).IsNull();
+        await Assert.That(second.ShipController.Hull).IsSameReferenceAs(otherHull);
+        await Assert.That(physics.RigidBodies.Count).IsEqualTo(initialBodyCount + 1);
+
+        manager.RemoveShip(second);
+        await Assert.That(physics.RigidBodies.Count).IsEqualTo(initialBodyCount);
+    }
+
+    [Test]
     [Arguments(0, 0f, true)]
     [Arguments(0, 0.25f, true)]
     [Arguments(0, -1f, true)]
