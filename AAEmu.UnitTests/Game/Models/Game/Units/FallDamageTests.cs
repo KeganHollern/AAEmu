@@ -317,6 +317,95 @@ public sealed class FallDamageTests
         }
     }
 
+    [Test]
+    [Arguments(15160.5f, 13603f, 103.925f)] // Ezna shipyard deck, rounded native feet.
+    [Arguments(15359f, 13719.5f, 157.33038f)] // Ezna castle wall.
+    public async Task StockFlatBrush_ShortJumpCompletesAtTheSurface(float x, float y, float foot)
+    {
+        var world = CreateStockWorld();
+        world.Template.GetCell(14, 13).VerifyCellLoaded();
+        world.Template.GetCell(15, 13).VerifyCellLoaded();
+        var actor = new FallUnit { Hp = 4026, MaxHp = 4026, ParentWorld = world };
+        void Move(float offset, double time, bool reported = false)
+        {
+            actor.Transform.Local.SetPosition(x, y, foot + offset);
+            actor.ObserveFallMovement(reported, time);
+        }
+        Move(0, 0);
+        Move(0.975f, 0.16);
+        Move(1.3f, 0.32);
+        Move(0.975f, 0.48);
+        await Assert.That(actor.Impacts).IsEmpty();
+        Move(0, 0.64);
+        await Assert.That(actor.Impacts).IsEquivalentTo(new ushort[] { 3120 });
+        Move(0, 0.74, true);
+        Move(0, 60);
+        await Assert.That(actor.Impacts).IsEquivalentTo(new ushort[] { 3120 });
+        await Assert.That(actor.Hp).IsEqualTo(4026);
+    }
+
+    [Test]
+    public async Task StockEznaDeck_OnlyTheSolidTopFinishesAnObservedFall()
+    {
+        var world = CreateStockWorld();
+        var geometry = world.Template.GeoData;
+        const float x = 15160.5f, y = 13603f, top = 103.92549f;
+        await Assert.That(world.GetHeight(x, y)).IsEqualTo(98.11868f).Within(0.0001f);
+        await Assert.That(world.Template.TryGetFallTerrainHeight(x, y, out var terrain)).IsTrue();
+        await Assert.That(terrain).IsEqualTo(98.18010f).Within(0.0001f);
+        await Assert.That(geometry.HasFlatFallSupport(new(x, y, top))).IsTrue();
+        await Assert.That(geometry.HasFlatFallSupport(new(x, y, top + 0.003f))).IsFalse();
+        await Assert.That(geometry.HasFlatFallSupport(new(x, y, 103.2611f))).IsFalse(); // Downward face 377.
+        await Assert.That(geometry.HasFlatFallSupport(new(15155.449f, y, 102f))).IsFalse();
+        await Assert.That(geometry.HasFlatFallSupport(new(15154.849f, y, top))).IsFalse(); // Dry shore.
+        await Assert.That(geometry.HasFlatFallSupport(new(x, 13602.292f, top))).IsFalse(); // Above water.
+
+        var actor = new FallUnit { Hp = 1000, MaxHp = 1000, ParentWorld = world };
+        void Move(float px, float py, float z, double time, bool landing = false)
+        {
+            actor.Transform.Local.SetPosition(px, py, z);
+            actor.ObserveFallMovement(landing, time);
+        }
+        Move(x, y, top + 20, 0);
+        Move(x, y, top + 10, 0.5);
+        Move(x, y, top, 1);
+        var impact = FallMovement.EncodeImpact(20, 20);
+        await Assert.That(actor.Impacts).IsEquivalentTo(new[] { impact });
+        await Assert.That(actor.Hp).IsEqualTo(1000 - (int)(1000 * ((impact - 8600) / 15000d)));
+        var hp = actor.Hp;
+        Move(x, y, top, 1.1, true);
+        Move(15155.449f, y, top, 3);
+        Move(15154.849f, y, top - 1f, 3.3);
+        await Assert.That(actor.Impacts.Count).IsEqualTo(1);
+        Move(15154.849f, y, 101.26315f, 3.65);
+        await Assert.That(actor.Impacts.Count).IsEqualTo(2);
+        Move(x, 13602.292f, top + 20, 10);
+        Move(x, 13602.292f, top, 11);
+        Move(x, 13602.292f, 99f, 12, true);
+        await Assert.That(actor.Impacts.Count).IsEqualTo(2);
+        await Assert.That(actor.Hp).IsEqualTo(hp);
+    }
+
+    [Test]
+    public async Task StockTerrainHole_PrisonFloorFinishesTheJumpWithoutAReport()
+    {
+        var world = CreateStockWorld();
+        const float x = 17047, y = 9553, foot = 122.93604f;
+        await Assert.That(world.Template.TryGetFallTerrainHeight(x, y, out _)).IsFalse();
+        var actor = new FallUnit { Hp = 4026, MaxHp = 4026, ParentWorld = world };
+        actor.Transform.Local.SetPosition(x, y, foot + 1.3f);
+        actor.ObserveFallMovement(false, 0);
+        actor.Transform.Local.SetPosition(x, y, foot + 0.975f);
+        actor.ObserveFallMovement(false, 0.16);
+        await Assert.That(actor.Impacts).IsEmpty();
+        actor.Transform.Local.SetPosition(x, y, foot);
+        actor.ObserveFallMovement(false, 0.32);
+        await Assert.That(actor.Impacts).IsEquivalentTo(new ushort[] { 3120 });
+        actor.ObserveFallMovement(true, 0.42);
+        await Assert.That(actor.Impacts.Count).IsEqualTo(1);
+        await Assert.That(actor.Hp).IsEqualTo(4026);
+    }
+
     private WorldInstance CreateStockWorld()
     {
         var archive = Environment.GetEnvironmentVariable("AAEMU_HOUSING_GAME_PAK");
@@ -327,6 +416,7 @@ public sealed class FallDamageTests
         _previousConfig = AppConfiguration.Instance.World;
         AppConfiguration.Instance.World = new() { GeoDataMode = false };
         var template = new WorldTemplate { Name = "main_world" };
+        template.GeoData = new AiGeoDataManager(template);
         using var input = _stockSource.GetFileStream("game/worlds/main_world/world.xml");
         var xml = new XmlDocument();
         xml.Load(input);

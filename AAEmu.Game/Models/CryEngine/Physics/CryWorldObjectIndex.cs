@@ -67,6 +67,23 @@ public sealed class CryWorldObjectIndex
         return matches.Select(index => _instances[index]).ToArray();
     }
 
+    // A point lies in exactly one broad-phase bucket. No result list or sort is needed.
+    internal bool AnyAt<T>(Vector3 point, float verticalTolerance, T state, Func<T, CryWorldObjectInstance, Vector3, bool> matches)
+    {
+        if (!_buckets.TryGetValue((Bucket(point.X), Bucket(point.Y)), out var bucket))
+            return false;
+        foreach (var index in bucket)
+        {
+            var instance = _instances[index];
+            if (point.X >= instance.Min.X && point.X <= instance.Max.X &&
+                point.Y >= instance.Min.Y && point.Y <= instance.Max.Y &&
+                point.Z >= instance.Min.Z - verticalTolerance && point.Z <= instance.Max.Z + verticalTolerance &&
+                matches(state, instance, point))
+                return true;
+        }
+        return false;
+    }
+
     public static CryWorldObjectIndex Load(WorldTemplate world) => Load(world, path =>
         ClientFileManager.FileExists(path) ? ClientFileManager.GetFileStream(path) : null);
 
