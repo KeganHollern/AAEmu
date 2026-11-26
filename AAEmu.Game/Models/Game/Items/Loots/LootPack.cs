@@ -312,7 +312,7 @@ public class LootPack
                     // Choose grade
                     var generatedGrade = inheritedGrade ?? loot.GradeId;
                     if (inheritedGrade == null && group?.ItemGradeDistributionId > 0)
-                        generatedGrade = GetGradeFromDistribution(group.ItemGradeDistributionId);
+                        generatedGrade = GetGradeFromDistribution(group.ItemGradeDistributionId, random);
                     // Add selected item to final item
                     items.Add((loot.ItemId, countToAddNow, generatedGrade, loot.Group));
                 }
@@ -586,9 +586,8 @@ public class LootPack
         }
     }
 
-    private static byte GetGradeFromDistribution(uint id)
+    private static byte GetGradeFromDistribution(uint id, Random random = null)
     {
-        byte gradeId = 0;
         var distributions = ItemManager.Instance.GetGradeDistributions((byte)id);
 
         var array = new[]
@@ -598,21 +597,15 @@ public class LootPack
             distributions.Weight8, distributions.Weight9, distributions.Weight10, distributions.Weight11
         };
 
-        var old = 0;
-        var gradeDrop = Random.Shared.Next(0, 100);
-        for (byte i = 0; i <= 11; i++)
+        var roll = (random ?? Random.Shared).Next(0, 100);
+        var upperBound = 0;
+        for (byte grade = 0; grade < array.Length; grade++)
         {
-            if (gradeDrop <= array[i] + old)
-            {
-                gradeId = i;
-                i = 11;
-            }
-            else
-            {
-                old += array[i];
-            }
+            upperBound += array[grade];
+            if (roll < upperBound)
+                return grade;
         }
 
-        return gradeId;
+        return 0;
     }
 }
