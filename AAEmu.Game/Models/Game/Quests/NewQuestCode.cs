@@ -48,6 +48,15 @@ public partial class Quest
             return false;
         }
 
+        // A busy starting guard must refuse the offer before its objectives and timer are installed.
+        foreach (var component in stepStart.Components.Values)
+        {
+            if (UsesEscortPath(component.Template) && !TryClaimNpcControl(component.Template))
+            {
+                Owner.SendPacket(new SCQuestContextFailedPacket(TemplateId, QuestStatusFailed.UnitRequirementCheck));
+                return false;
+            }
+        }
         Step = QuestComponentKind.Start;
         // Send the first components, or the one that's used to start this ?
         ComponentId = stepStart.Components.Values.FirstOrDefault()?.Template.Id ?? 0;

@@ -28,7 +28,7 @@ using AAEmu.UnitTests.Utils.Mocks;
 namespace AAEmu.UnitTests.Game.Models.Game.Quests;
 
 [NotInParallel]
-public sealed class QuestFollowUnitTests
+public sealed partial class QuestFollowUnitTests
 {
     private readonly Dictionary<FieldInfo, object> _previousSingletons = [];
     private readonly List<Quest> _quests = [];
