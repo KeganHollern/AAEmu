@@ -28,7 +28,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace AAEmu.UnitTests.Game.Models.Game.Quests;
 
 [NotInParallel]
-public sealed class QuestRewardDeliveryTests
+public sealed partial class QuestRewardDeliveryTests
 {
     private IServiceProvider _previousProvider;
     private bool _previousDebugInfo;

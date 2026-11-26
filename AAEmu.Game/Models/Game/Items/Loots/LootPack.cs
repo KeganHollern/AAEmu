@@ -141,11 +141,10 @@ public class LootPack
 
             foreach (var selectedPack in selected)
             {
-                // If it's a quest item, check if target player has the quest active, else skip it.
                 if (player != null)
                 {
                     var itemTemplate = ItemManager.Instance.GetTemplate(selectedPack.ItemId);
-                    if (itemTemplate?.LootQuestId > 0 && !player.Quests.HasQuest(itemTemplate.LootQuestId))
+                    if (itemTemplate?.LootQuestId > 0 && !player.Quests.CanLootQuestItem(itemTemplate))
                         continue;
                 }
                 
@@ -195,12 +194,8 @@ public class LootPack
                 {
                     // Check for Quest loot drops
                     var itemTemplate = ItemManager.Instance.GetTemplate(loot.ItemId);
-                    if (itemTemplate?.LootQuestId > 0 && player != null)
-                    {
-                        // Skip item if player does not have quest
-                        if (!player.Quests.HasQuest(itemTemplate.LootQuestId))
-                            continue;
-                    }
+                    if (itemTemplate?.LootQuestId > 0 && player != null && !player.Quests.CanLootQuestItem(itemTemplate))
+                        continue;
 
                     // Roll each item
                     var requiresDice = (long)Math.Floor(loot.DropRate * lootDropRate * AppConfiguration.Instance.World.LootRate);
@@ -230,8 +225,7 @@ public class LootPack
                         // Check for questS itemS in group
                         if (itemTemplate?.LootQuestId > 0 && player != null)
                         {
-                            // Add item if player has quest
-                            if (player.Quests.HasQuest(itemTemplate.LootQuestId))
+                            if (player.Quests.CanLootQuestItem(itemTemplate))
                             {
                                 // TODO Add Loot rate for quest items ???
                                 if (!tmpSelectedQuestItemsByGroup.ContainsKey(groupNo))
@@ -371,11 +365,8 @@ public class LootPack
 
                 // Check for Quest loot drops
                 var itemTemplate = ItemManager.Instance.GetTemplate(loot.ItemId);
-                if (itemTemplate?.LootQuestId > 0 && player != null)
-                {
-                    if (!player.Quests.HasQuest(itemTemplate.LootQuestId))
-                        continue;
-                }
+                if (itemTemplate?.LootQuestId > 0 && player != null && !player.Quests.CanLootQuestItem(itemTemplate))
+                    continue;
 
                 // Group 0 items will always need to be included
                 if (loot.Group <= 0 || loot.AlwaysDrop || loot.DropRate == 10000000)

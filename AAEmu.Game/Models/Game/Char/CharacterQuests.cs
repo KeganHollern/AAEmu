@@ -7,12 +7,14 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.StaticValues;
 
 using MySql.Data.MySqlClient;
 
@@ -152,6 +154,26 @@ public partial class CharacterQuests(Character owner, IGameScheduleManager sched
         var questBlockId = (ushort)(questId / 64);
         var questBlockIndex = (int)(questId % 64);
         return CompletedQuests.TryGetValue(questBlockId, out var questBlock) && questBlock.Body.Get(questBlockIndex);
+    }
+
+    internal bool CanLootQuestItem(ItemTemplate item)
+    {
+        if (HasQuest(item.LootQuestId))
+            return true;
+
+        // Some drops start the very quest named by loot_quest_id.
+        if (item.ImplId != ItemImplEnum.AcceptQuest)
+            return false;
+
+        var quest = QuestManager.Instance.GetTemplate(item.LootQuestId);
+        if (quest == null || (!quest.Repeatable && HasQuestCompleted(quest.Id)))
+            return false;
+
+        var start = quest.GetComponents(QuestComponentKind.Start);
+        return start.Any(component => component.ActTemplates.Any(act =>
+                   act is QuestActConAcceptItem starter && starter.ItemId == item.Id)) &&
+               (schedules ?? GameScheduleManager.Instance).CanAcceptQuest(quest.Id) &&
+               start.All(component => UnitRequirementsGameData.Instance.CanComponentRun(component, Owner));
     }
 
     private bool CanAcceptSupplyItems(QuestTemplate template)

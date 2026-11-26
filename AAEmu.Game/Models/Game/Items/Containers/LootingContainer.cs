@@ -554,7 +554,7 @@ public class LootingContainer
     private static bool HasRequiredQuest(Character player, LootingContainerItemEntry itemEntry)
     {
         return itemEntry.Item.Template.LootQuestId == 0 ||
-               (player.Quests?.HasQuest(itemEntry.Item.Template.LootQuestId) ?? false);
+               (player.Quests?.CanLootQuestItem(itemEntry.Item.Template) ?? false);
     }
 
     private bool CanReceiveQuestItem(Character player, LootingContainerItemEntry itemEntry)
