@@ -56,6 +56,8 @@ The exact client does not contain the original retail trigger radius for these o
 
 The wider review adds a sixth volume for the starter of quest 578, Burnt Castle Jailbreak.
 The [starter findings](starter-findings.md) record its source radius of 5 m and its current NPC anchor.
+The Ambush starter uses the original 10-point farm polygon and the shared area predicate.
+The [starter findings](starter-findings.md#ambush-at-adrians-farm) give the mission GUID and prerequisites.
 The other starter gaps remain in [issue 536](https://github.com/KeganHollern/aaemu-cluster/issues/536).
 
 The [exclusion manifest](exclusions.json) records unavailable content and the conditions that keep each exclusion valid.

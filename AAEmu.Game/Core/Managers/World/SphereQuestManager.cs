@@ -381,6 +381,7 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
                 QuestId = supplement.QuestId,
                 ComponentId = supplement.ComponentId,
                 Xyz = new Vector3(supplement.X, supplement.Y, supplement.Z),
+                Polygon = supplement.Polygon,
                 Radius = supplement.Radius
             };
 

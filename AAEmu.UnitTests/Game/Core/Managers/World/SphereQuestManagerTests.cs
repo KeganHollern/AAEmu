@@ -22,7 +22,7 @@ using AAEmu.UnitTests.Utils.Mocks;
 namespace AAEmu.UnitTests.Game.Core.Managers.World;
 
 [NotInParallel]
-public sealed class SphereQuestManagerTests
+public sealed partial class SphereQuestManagerTests
 {
     private const uint QuestId = 60001;
     private const uint ComponentId = 60002;
@@ -35,7 +35,7 @@ public sealed class SphereQuestManagerTests
     [Before(Test)]
     public void SetUp()
     {
-        SetInstance(new QuestManager(null, null));
+        SetInstance(new QuestManager(Mock.Of<ITaskManager>().Object, Mock.Of<IZoneManager>().Object));
         _sphereData = new SphereGameData();
         SetField(_sphereData, "_spheres", new Dictionary<uint, Spheres>());
         SetField(_sphereData, "_sphereQuests", new Dictionary<uint, SphereQuests>());

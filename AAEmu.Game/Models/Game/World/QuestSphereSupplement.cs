@@ -1,3 +1,5 @@
+using AAEmu.Game.Models.Game.World.Zones;
+
 namespace AAEmu.Game.Models.Game.World;
 
 /// <summary>
@@ -26,11 +28,14 @@ public class QuestSphereSupplement
     /// <summary>Zone key the sphere is located in (informational).</summary>
     public uint ZoneId { get; set; }
 
-    /// <summary>Sphere center, in world coordinates (no zone conversion is applied).</summary>
+    /// <summary>World position for the region lookup. A sphere uses its center. A polygon uses its authored origin.</summary>
     public float X { get; set; }
     public float Y { get; set; }
     public float Z { get; set; }
 
     /// <summary>Trigger radius in meters. Client hint spheres typically use 30.</summary>
     public float Radius { get; set; }
+
+    /// <summary>The authored polygon when the client uses an AreaShape.</summary>
+    public Area Polygon { get; set; }
 }

@@ -49,8 +49,17 @@ public class SphereQuestSupplementTests
             await Assert.That(entry.QuestId).IsGreaterThan(0u);
             await Assert.That(entry.ComponentId).IsGreaterThan(0u);
             await Assert.That(float.IsFinite(entry.X) && float.IsFinite(entry.Y) && float.IsFinite(entry.Z)).IsTrue();
-            await Assert.That(float.IsFinite(entry.Radius)).IsTrue();
-            await Assert.That(entry.Radius).IsGreaterThan(0f);
+            if (entry.Polygon is { } polygon)
+            {
+                await Assert.That(polygon.Points.Count).IsGreaterThanOrEqualTo(3);
+                await Assert.That(float.IsFinite(polygon.Height) && polygon.Height >= 0).IsTrue();
+                await Assert.That(polygon.Points.All(p => float.IsFinite(p.X) && float.IsFinite(p.Y) && float.IsFinite(p.Z))).IsTrue();
+            }
+            else
+            {
+                await Assert.That(float.IsFinite(entry.Radius)).IsTrue();
+                await Assert.That(entry.Radius).IsGreaterThan(0f);
+            }
             // World origin means a forgotten position; no legitimate trigger sits there.
             await Assert.That(entry.X != 0f || entry.Y != 0f).IsTrue();
         }
