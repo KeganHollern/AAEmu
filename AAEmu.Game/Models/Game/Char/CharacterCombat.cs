@@ -319,7 +319,7 @@ public partial class Character
     /// <summary>
     /// Collect assist contributors: recent damage on victim + recent heals on killer + active CC casters on victim.
     /// </summary>
-    public HashSet<uint> CollectAssists(Character killer)
+    public HashSet<uint> CollectAssists(Character killer, bool damageOnly = false)
     {
         var assists = new HashSet<uint>();
         var cutoff = DateTime.UtcNow.AddSeconds(-PvpAssistWindowSeconds);
@@ -330,6 +330,9 @@ public partial class Character
             if (charId != killer.Id && time >= cutoff)
                 assists.Add(charId);
         }
+
+        if (damageOnly)
+            return assists;
 
         // 2) Players who healed the killer recently (excluding the killer themselves)
         foreach (var (charId, time) in killer._pvpHealHistory)
