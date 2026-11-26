@@ -3,6 +3,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.InstantGame;
+using AAEmu.Game.Models.StaticValues;
 
 using Moq;
 using Xunit;
@@ -41,8 +42,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         Assert.Equal(23, blue.HonorPoint);
         Assert.Equal(23, SavedHonor(blue));
         Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM gladiator_rank_results WHERE match_id='{match:D}' AND corps1_rank_points={rank.Corps1RankPoints} AND corps2_rank_points={rank.Corps2RankPoints}"));
-        client.Verify(session => session.SendPacket(It.Is<byte[]>(packet => packet.Length >= 8 &&
-            BitConverter.ToUInt16(packet, 6) == SCOffsets.SCCharacterGamePointsPacket)), Times.Once);
+        client.Verify(session => session.SendPacket(It.Is<byte[]>(packet => IsHonorChange(packet, redHonor))), Times.Once);
 
         graph.Save.ClaimArenaHonorOnEntry(blue);
         graph.Save.ClaimArenaHonorOnEntry(blue);
@@ -59,7 +59,8 @@ public sealed partial class PlayerMailSendPersistenceTests
         using var graph = new SendGraph();
         var red = graph.Receiver;
         var blue = graph.Sender;
-        graph.ConnectReceiver(new Mock<ISession>());
+        var client = new Mock<ISession>();
+        graph.ConnectReceiver(client);
         var match = Guid.NewGuid();
         // These totals include two positive category leads on red, and one tied lead on blue.
         var result = new ArenaMatchResult(match, 7, null, [new(red.Id, 70), new(blue.Id, 20)]);
@@ -72,6 +73,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             Assert.Equal(0, ArenaReceipts(match, claimedOnly: true));
             Assert.Equal(0, red.HonorPoint);
             Assert.Equal(0, SavedHonor(red));
+            client.Verify(session => session.SendPacket(It.Is<byte[]>(packet => IsHonorChange(packet, 70))), Times.Never);
         }
         finally
         {
@@ -84,9 +86,33 @@ public sealed partial class PlayerMailSendPersistenceTests
         Assert.Equal(2, ArenaReceipts(match, claimedOnly: true));
         Assert.Equal(70, red.HonorPoint);
         Assert.Equal(70, SavedHonor(red));
+        client.Verify(session => session.SendPacket(It.Is<byte[]>(packet => IsHonorChange(packet, 70))), Times.Once);
         Assert.Equal(20, blue.HonorPoint);
         Assert.Equal(20, SavedHonor(blue));
         Assert.Equal(0, Scalar($"SELECT COUNT(*) FROM gladiator_rank_results WHERE match_id='{match:D}'"));
+    }
+
+    [Fact]
+    public void ArenaHonor_SendsOneCombinedChangeForTwoUnclaimedMatches()
+    {
+        using var graph = new SendGraph();
+        var player = graph.Receiver;
+        var client = new Mock<ISession>();
+        graph.ConnectReceiver(client);
+        player.HonorPoint = 12;
+        var first = new ArenaMatchResult(Guid.NewGuid(), 11, null, [new(player.Id, 5)]);
+        var second = new ArenaMatchResult(Guid.NewGuid(), 11, null, [new(player.Id, 20)]);
+        Assert.True(graph.Save.TryCommitEconomy([player], first.Write));
+        Assert.True(graph.Save.TryCommitEconomy([player], second.Write));
+
+        graph.Save.DeliverArenaHonor(second.Awards);
+        graph.Save.DeliverArenaHonor(first.Awards);
+        Assert.Equal(37, player.HonorPoint);
+        Assert.Equal(37, SavedHonor(player));
+        Assert.Equal(1, ArenaReceipts(first.MatchId, claimedOnly: true));
+        Assert.Equal(1, ArenaReceipts(second.MatchId, claimedOnly: true));
+        client.Verify(session => session.SendPacket(It.Is<byte[]>(packet => IsHonorChange(packet, 25))), Times.Once);
+        client.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -137,6 +163,10 @@ public sealed partial class PlayerMailSendPersistenceTests
         lock (SaveManager.PersistenceSyncRoot)
             return InstantGameManager.Instance.RecordMatchResult(result).WaitAsync(TimeSpan.FromSeconds(10));
     }
+
+    private static bool IsHonorChange(byte[] packet, int amount) =>
+        packet.Length >= 13 && BitConverter.ToUInt16(packet, 6) == SCOffsets.SCGamePointChangedPacket &&
+        packet[8] == (byte)GamePointKind.Honor && BitConverter.ToInt32(packet, 9) == amount;
 
     private static long SavedHonor(Character character) =>
         Scalar($"SELECT honor_point FROM characters WHERE id={character.Id}");

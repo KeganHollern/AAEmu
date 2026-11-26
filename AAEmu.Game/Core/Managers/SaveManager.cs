@@ -7,6 +7,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.InstantGame;
+using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Models.Tasks;
 using AAEmu.Game.Models.Tasks.SaveTask;
 using AAEmu.Game.Services.Health;
@@ -143,25 +144,28 @@ public class SaveManager(
         var saved = false;
         try
         {
-            var credited = new List<Character>();
-            saved = CommitPersistence([], context =>
+            var credited = new List<(Character Player, int Amount)>();
+            lock (PersistenceSyncRoot)
             {
-                InstantGameManager.Instance.SavePendingMatchResults(context);
-                ArenaHonorAward.ClaimPending(context, worldManager.GetAllCharacters(), credited);
-                housingManager.Save(context);
-                crimeManager.Save(context.Connection, context.Transaction);
-                shipyardManager?.Save(context);
-                zoneManager.Save(context.Connection, context.Transaction);
-                foreach (var world in worldManager.GetWorlds())
+                saved = CommitPersistence([], context =>
                 {
-                    foreach (var slave in world.GetAllSlaves())
+                    InstantGameManager.Instance.SavePendingMatchResults(context);
+                    ArenaHonorAward.ClaimPending(context, worldManager.GetAllCharacters(), credited);
+                    housingManager.Save(context);
+                    crimeManager.Save(context.Connection, context.Transaction);
+                    shipyardManager?.Save(context);
+                    zoneManager.Save(context.Connection, context.Transaction);
+                    foreach (var world in worldManager.GetWorlds())
                     {
-                        slave.Save(context.Connection, context.Transaction);
+                        foreach (var slave in world.GetAllSlaves())
+                        {
+                            slave.Save(context.Connection, context.Transaction);
+                        }
                     }
-                }
-            });
-            if (saved)
-                PublishArenaBalances(credited);
+                });
+                if (saved)
+                    SendArenaHonorChanges(credited);
+            }
             return saved;
         }
         catch (Exception exception)
@@ -310,23 +314,23 @@ public class SaveManager(
     {
         // Character selection can still be loading persisted buffs, cooldowns and HP.
         // Write only this balance and its receipts, under the same gate as normal Honor changes.
-        var credited = new List<Character>();
+        var credited = new List<(Character Player, int Amount)>();
         if (CommitPendingState(context => ArenaHonorAward.ClaimPending(context, players, credited)) && publish)
-            PublishArenaBalances(credited);
+            SendArenaHonorChanges(credited);
     }
 
-    private static void PublishArenaBalances(List<Character> credited)
+    private static void SendArenaHonorChanges(List<(Character Player, int Amount)> credited)
     {
-        foreach (var player in credited)
+        foreach (var (player, amount) in credited)
         {
             try
             {
                 if (player.Connection?.ActiveChar == player)
-                    player.SendPacket(new SCCharacterGamePointsPacket(player));
+                    player.SendPacket(new SCGamePointChangedPacket((byte)GamePointKind.Honor, amount));
             }
             catch (Exception ex)
             {
-                Logger.Warn(ex, "Could not send the committed arena Honor balance to character {0}.", player.Id);
+                Logger.Warn(ex, "Could not send the committed arena Honor change to character {0}.", player.Id);
             }
         }
     }
