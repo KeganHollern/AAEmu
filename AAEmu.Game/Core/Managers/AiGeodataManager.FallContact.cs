@@ -100,7 +100,8 @@ public partial class AiGeoDataManager
     private static float TruncatedSpan(float coordinate)
     {
         const float step = 1f / 512f;
-        if (coordinate < 0 || coordinate * 512f != MathF.Truncate(coordinate * 512f))
+        var cell = coordinate / step;
+        if (coordinate < 0 || cell != MathF.Truncate(cell))
             return 0;
         return MathF.Max(0, MathF.BitDecrement(coordinate + step) - coordinate);
     }
@@ -111,15 +112,45 @@ public partial class AiGeoDataManager
         if (missing <= 0)
             return slope.Face.Covers(local);
 
-        // Project only the possible horizontal error that can account for this signed gap.
-        // Both the reported foot and the inferred contact must lie on the actual triangle.
-        var dx = dz * slope.Gradient.X > 0 ? rounding.X : 0;
-        var dy = dz * slope.Gradient.Y > 0 ? rounding.Y : 0;
-        var available = MathF.Abs(slope.Gradient.X * dx + slope.Gradient.Y * dy);
+        // The possible X/Y values form a rectangle. The required height cuts that rectangle
+        // along a line. Only a point on that line inside this triangle can explain the gap.
+        var gradient = slope.Gradient;
+        var dx = dz * gradient.X > 0 ? rounding.X : 0;
+        var dy = dz * gradient.Y > 0 ? rounding.Y : 0;
+        var available = Math.Abs((double)gradient.X * dx + (double)gradient.Y * dy);
         if (available < missing || !slope.Face.Covers(local))
             return false;
-        var fraction = missing / available;
-        return slope.Face.Covers(local + new Vector3(dx * fraction, dy * fraction, 0));
+        var x = dx * (missing / available);
+        var y = dy * (missing / available);
+        var directionX = -(double)gradient.Y;
+        var directionY = (double)gradient.X;
+        var min = double.NegativeInfinity;
+        var max = double.PositiveInfinity;
+        return Clip(x, directionX) && Clip(rounding.X - x, -directionX) &&
+               Clip(y, directionY) && Clip(rounding.Y - y, -directionY) &&
+               InsideEdge(slope.Face.A, slope.Face.B) && InsideEdge(slope.Face.B, slope.Face.C) &&
+               InsideEdge(slope.Face.C, slope.Face.A);
+
+        bool InsideEdge(Vector3 a, Vector3 b)
+        {
+            var edgeX = (double)b.X - a.X;
+            var edgeY = (double)b.Y - a.Y;
+            return Clip(edgeX * (local.Y - (double)a.Y + y) - edgeY * (local.X - (double)a.X + x),
+                edgeX * directionY - edgeY * directionX);
+        }
+
+        // Keep the interval where value + t * rate >= 0.
+        bool Clip(double value, double rate)
+        {
+            if (rate == 0)
+                return value >= 0;
+            var boundary = -value / rate;
+            if (rate > 0)
+                min = Math.Max(min, boundary);
+            else
+                max = Math.Min(max, boundary);
+            return min <= max;
+        }
     }
 
     // Dense rock meshes can contribute hundreds of faces in a single broad-phase placement.

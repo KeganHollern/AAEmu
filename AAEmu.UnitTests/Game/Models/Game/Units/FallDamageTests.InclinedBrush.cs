@@ -58,12 +58,14 @@ public sealed partial class FallDamageTests
     }
 
     [Test]
-    public async Task StockMirageIncline_UsesOnlyTheHeightChangeWithinTheEncodedHorizontalPosition()
+    [Arguments(3382.5798f, 4080.9233f, 104.6072f)]   // Rock face 30, 3.03 mm above its height at decoded XY.
+    [Arguments(3388.4932f, 4079.1853f, 108.935104f)] // Face 143, close to an edge of the triangle.
+    public async Task StockMirageIncline_UsesOnlyTheHeightChangeWithinTheEncodedHorizontalPosition(float x, float y, float z)
     {
         var world = CreateStockWorld("arche_mall_world");
         world.Template.GetCell(3, 3).VerifyCellLoaded();
-        // Signed rock_mossy_a04.cgf, face 30. Truncating X/Y moves the floor 2.53 mm down.
-        var position = Helpers.ConvertPosition(Helpers.ConvertPosition(3382.5798f, 4080.9233f, 104.6072f));
+        // Use the signed rock_mossy_a04.cgf and the ordinary coordinate conversion.
+        var position = Helpers.ConvertPosition(Helpers.ConvertPosition(x, y, z));
         var foot = new Vector3(position.x, position.y, position.z);
         var ground = world.Template.GeoData;
         await Assert.That(ground.HasBrushFallSupport(foot, true)).IsTrue();
