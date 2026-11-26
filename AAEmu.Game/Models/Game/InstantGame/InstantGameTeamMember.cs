@@ -15,6 +15,7 @@ public class InstantGameTeamMember : PacketMarshaler
     public uint BonusSet { get; set; }
     public ushort Killstreak { get; set; }
     public ushort Kills { get; set; }
+    internal int EnemyNpcKills { get; set; }
     public ushort Assists { get; set; }
     public ushort Deaths { get; set; }
 

@@ -15,6 +15,10 @@ public class GameRuleSet
     public int RankWinPoints { get; set; }
     public int RankLossPoints { get; set; }
     public int RankDrawPoints { get; set; }
+    public int WinnerHonor { get; set; }
+    public int LoserHonor { get; set; }
+    public int TopPlayerKillsHonor { get; set; }
+    public int TopNpcKillsHonor { get; set; }
     public int VictoryScore { get; set; }
     public uint BattlefieldId { get; set; }
     // TODO fill out the rest of the fields

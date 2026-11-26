@@ -73,6 +73,10 @@ public class BattlefieldGameData : Singleton<BattlefieldGameData>, IGameDataLoad
                         RankWinPoints = reader.GetInt32("rank_win_point"),
                         RankLossPoints = reader.GetInt32("rank_lose_point"),
                         RankDrawPoints = reader.GetInt32("rank_draw_point"),
+                        WinnerHonor = reader.GetInt32("bonus_winner"),
+                        LoserHonor = reader.GetInt32("bonus_loser"),
+                        TopPlayerKillsHonor = reader.GetInt32("bonus_top_enemy_pc_kill"),
+                        TopNpcKillsHonor = reader.GetInt32("bonus_top_enemy_non_pc_kill"),
                         VictoryScore = reader.GetInt32("victory_score")
                     };
 

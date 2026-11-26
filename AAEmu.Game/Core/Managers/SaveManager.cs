@@ -3,8 +3,10 @@
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.InstantGame;
 using AAEmu.Game.Models.Tasks;
 using AAEmu.Game.Models.Tasks.SaveTask;
 using AAEmu.Game.Services.Health;
@@ -141,9 +143,11 @@ public class SaveManager(
         var saved = false;
         try
         {
+            var credited = new List<Character>();
             saved = CommitPersistence([], context =>
             {
-                InstantGameManager.Instance.SavePendingRankResults(context);
+                InstantGameManager.Instance.SavePendingMatchResults(context);
+                ArenaHonorAward.ClaimPending(context, worldManager.GetAllCharacters(), credited);
                 housingManager.Save(context);
                 crimeManager.Save(context.Connection, context.Transaction);
                 shipyardManager?.Save(context);
@@ -156,6 +160,8 @@ public class SaveManager(
                     }
                 }
             });
+            if (saved)
+                PublishArenaBalances(credited);
             return saved;
         }
         catch (Exception exception)
@@ -200,6 +206,34 @@ public class SaveManager(
     private bool CommitPersistence(IReadOnlyCollection<Character> participants, Action<PersistenceSaveContext> writeSettlement,
         Action<PersistenceSaveContext> validateSource = null)
     {
+        return CommitPendingState(context =>
+        {
+            // Legacy auction mail needs its persisted source locked before pending saves can replace it.
+            validateSource?.Invoke(context);
+            mailManager.Save(context);
+            itemManager.Save(context);
+            auctionManager.Save(context);
+
+            var characters = worldManager.GetAllCharacters().ToDictionary(character => character.Id);
+            foreach (var character in participants)
+            {
+                ArgumentNullException.ThrowIfNull(character);
+                characters[character.Id] = character;
+            }
+            foreach (var character in characters.Values)
+            {
+                if (character.IsDeleted)
+                    continue;
+                if (!character.Save(context))
+                    throw new InvalidOperationException($"Failed to save character {character.Id} - {character.Name}.");
+            }
+
+            writeSettlement?.Invoke(context);
+        });
+    }
+
+    private bool CommitPendingState(Action<PersistenceSaveContext> write)
+    {
         lock (PersistenceSyncRoot)
         {
             ThrowIfConsistencyFailed();
@@ -216,27 +250,7 @@ public class SaveManager(
                 var context = new PersistenceSaveContext(connection, transaction);
                 try
                 {
-                    // Legacy auction mail needs its persisted source locked before pending saves can replace it.
-                    validateSource?.Invoke(context);
-                    mailManager.Save(context);
-                    itemManager.Save(context);
-                    auctionManager.Save(context);
-
-                    var characters = worldManager.GetAllCharacters().ToDictionary(character => character.Id);
-                    foreach (var character in participants)
-                    {
-                        ArgumentNullException.ThrowIfNull(character);
-                        characters[character.Id] = character;
-                    }
-                    foreach (var character in characters.Values)
-                    {
-                        if (character.IsDeleted)
-                            continue;
-                        if (!character.Save(context))
-                            throw new InvalidOperationException($"Failed to save character {character.Id} - {character.Name}.");
-                    }
-
-                    writeSettlement?.Invoke(context);
+                    write(context);
                     commitAttempted = true;
                     CommitTransaction(transaction);
                     context.AcknowledgeCommit();
@@ -273,6 +287,48 @@ public class SaveManager(
             return;
         }
         DoSave();
+    }
+
+    internal void DeliverArenaHonor(IReadOnlyList<ArenaHonorAward> awards)
+    {
+        lock (PersistenceSyncRoot)
+        {
+            var connected = awards.Select(award => worldManager.GetCharacterById(award.CharacterId))
+                .OfType<Character>().Distinct().ToArray();
+            if (connected.Length != 0)
+                ClaimArenaHonor(connected);
+        }
+    }
+
+    internal void ClaimArenaHonorOnEntry(Character player)
+    {
+        // The normal character selection sends the full balance after this claim.
+        ClaimArenaHonor([player], publish: false);
+    }
+
+    private void ClaimArenaHonor(IReadOnlyCollection<Character> players, bool publish = true)
+    {
+        // Character selection can still be loading persisted buffs, cooldowns and HP.
+        // Write only this balance and its receipts, under the same gate as normal Honor changes.
+        var credited = new List<Character>();
+        if (CommitPendingState(context => ArenaHonorAward.ClaimPending(context, players, credited)) && publish)
+            PublishArenaBalances(credited);
+    }
+
+    private static void PublishArenaBalances(List<Character> credited)
+    {
+        foreach (var player in credited)
+        {
+            try
+            {
+                if (player.Connection?.ActiveChar == player)
+                    player.SendPacket(new SCCharacterGamePointsPacket(player));
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn(ex, "Could not send the committed arena Honor balance to character {0}.", player.Id);
+            }
+        }
     }
 
     public void SetAutoSaveInterval()
