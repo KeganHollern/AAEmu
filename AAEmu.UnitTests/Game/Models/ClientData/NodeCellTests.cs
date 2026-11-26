@@ -81,12 +81,36 @@ public class NodeCellTests
         await Assert.That(solid.TerrainHoles).IsNull();
     }
 
+    [Test]
+    [Arguments(2, 0.037f)]
+    [Arguments(17, 0.0041f)]
+    [Arguments(33, 0.0041f)]
+    [Arguments(33, 0f)]
+    public async Task TerrainSector_PreservesBothHeightsAndAllOriginalSurfaceBits(int size, float range)
+    {
+        const float offset = 100.038f;
+        const double coefficient = 65.535;
+        ushort Packed(int x, int y) => (ushort)(((x + 3 * y) << 5) | ((x + y) % 2 == 0 ? 16 : 0));
+        var original = ReadNode(size, Packed, 5, offset: offset, range: range, readOriginal: true);
+        var legacy = ReadNode(size, Packed, 5, offset: offset, range: range);
+        var sector = new TerrainHeightSector(original, coefficient, 33, 33, true, out _, out _);
+        foreach (var x in new ushort[] { 0, 7, 32 })
+        foreach (var y in new ushort[] { 0, 19, 32 })
+        {
+            var expected = offset + ((x + 3 * y) * (size - 1)) * range;
+            await Assert.That(sector.NativeHeight(x, y)).IsEqualTo(expected).Within(0.0001f);
+            await Assert.That(sector.LegacyHeight(x, y, coefficient))
+                .IsEqualTo((ushort)(legacy.GetHeightAtUnit(x, y) * coefficient));
+        }
+    }
+
     private static ushort EncodeHeight(int height, int flags)
     {
         return (ushort)((height << 4) | (flags & 0xF));
     }
 
-    private static NodeCell ReadNode(int size, Func<int, int, ushort> createRawHeight, byte version = 7, bool hasHoles = false)
+    internal static NodeCell ReadNode(int size, Func<int, int, ushort> createRawHeight, byte version = 7,
+        bool hasHoles = false, float offset = 0f, float range = 0.003125f, bool readOriginal = false)
     {
         using var stream = new MemoryStream();
         using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, true))
@@ -98,8 +122,8 @@ public class NodeCellTests
             for (var i = 0; i < 6; i++)
                 writer.Write(0f); // BoxHeightmap
             writer.Write((byte)(hasHoles ? 1 : 0)); // bHasHoles
-            writer.Write(0f); // fOffset
-            writer.Write(0.003125f); // fRange; produces a five-centimetre integer step
+            writer.Write(offset); // fOffset
+            writer.Write(range); // fRange
             writer.Write(size);
             writer.Write(0); // unknown data length
             for (var x = 0; x < size; x++)
@@ -114,7 +138,7 @@ public class NodeCellTests
         stream.Position = 0;
         using var reader = new BinaryReader(stream);
         var node = new NodeCell();
-        node.Read(reader);
+        node.Read(reader, readOriginal);
         return node;
     }
 }

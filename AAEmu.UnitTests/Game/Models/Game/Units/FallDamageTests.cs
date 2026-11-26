@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System.Numerics;
+using System.Reflection;
 using System.Collections.Concurrent;
 using System.Xml;
 
@@ -8,6 +9,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Templates;
@@ -246,6 +248,51 @@ public sealed class FallDamageTests
     }
 
     [Test]
+    [Arguments(12470f, 16104f, 264.938507f, 264.89465f)]
+    [Arguments(12656.44f, 14530.777f, 170.02567f, 169.9737f)]
+    public async Task StockSolidTerrain_ShortJumpLandsBeforeDelayedReport(float x, float y, float foot, float legacy)
+    {
+        var world = CreateStockWorld();
+        await Assert.That(world.GetHeight(x, y)).IsEqualTo(legacy).Within(0.0001f);
+        await Assert.That(world.Template.TryGetFallTerrainHeight(x, y, out var height)).IsTrue();
+        await Assert.That(height).IsEqualTo(foot).Within(FallMovement.PositionTolerance);
+
+        var actor = new FallUnit { Hp = 4026, MaxHp = 4026, ParentWorld = world };
+        void Move(float offset, double time, bool reported = false)
+        {
+            actor.Transform.Local.SetPosition(x, y, foot + offset);
+            actor.ObserveFallMovement(reported, time);
+        }
+        Move(0, 0);
+        Move(0.975f, 0.16);
+        Move(1.3f, 0.32);
+        Move(0.975f, 0.48);
+        await Assert.That(actor.Impacts).IsEmpty();
+        Move(0, 0.64);
+        await Assert.That(actor.Impacts).IsEquivalentTo(new ushort[] { 3120 });
+        Move(0, 0.74, true);
+        Move(0, 0.75, true);
+        Move(0, 6);
+        await Assert.That(actor.Impacts).IsEquivalentTo(new ushort[] { 3120 });
+        await Assert.That(actor.Hp).IsEqualTo(4026);
+    }
+
+    [Test]
+    public async Task StockSolidTerrain_FallUsesTheTriangleInsideTheCell()
+    {
+        var world = CreateStockWorld();
+        const float x = 12512.375f, y = 16382.625f;
+        await Assert.That(world.Template.TryGetFallTerrainHeight(x, y, out var height)).IsTrue();
+        await Assert.That(height).IsEqualTo(477.85873f).Within(0.0001f);
+        await Assert.That(world.Template.TryGetFallTerrainHeight(12512, 16384, out var shared)).IsTrue();
+        await Assert.That(shared).IsEqualTo(478.6059f).Within(0.0001f);
+        // The north cell edge intersects a sector boundary here. The two signed sectors
+        // contain distinct endpoint heights; the owning triangle uses the first authored vertex.
+        await Assert.That(world.Template.TryGetFallTerrainHeight(12672.375f, 16382.625f, out var junction)).IsTrue();
+        await Assert.That(junction).IsEqualTo(513.61926f).Within(0.0001f);
+    }
+
+    [Test]
     public async Task StockTerrain_FallHeightUsesTheSquareOnEachSideOfABoundary()
     {
         var world = CreateStockWorld();
@@ -257,10 +304,16 @@ public sealed class FallDamageTests
             (6143.875f, 8192.125f, true), (6144.125f, 8191.875f, true), (6144f, 8192f, false)
         })
         {
-            await Assert.That(world.TryGetHeight(x, y, out var elevation)).IsTrue();
+            await Assert.That(world.TryGetHeight(x, y, out _)).IsTrue();
             await Assert.That(world.Template.TryGetFallTerrainHeight(x, y, out var height)).IsEqualTo(solid);
             if (solid)
-                await Assert.That(height).IsEqualTo(elevation);
+            {
+                var cx = (int)x / WorldManager.CELL_SIZE;
+                var cy = (int)y / WorldManager.CELL_SIZE;
+                using var input = _stockSource.GetFileStream($"game/worlds/main_world/cells/{cx:000}_{cy:000}/client/terrain/heightmap.dat");
+                var native = CryTerrainGrid.Read(input, new Vector2(cx, cy) * WorldManager.CELL_SIZE);
+                await Assert.That(height).IsEqualTo(native.SampleHeight(x, y)).Within(0.0001f);
+            }
         }
     }
 

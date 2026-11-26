@@ -3,6 +3,8 @@ using System.Reflection;
 
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Models.ClientData;
+using AAEmu.UnitTests.Game.Models.ClientData;
 using AAEmu.Game.Models.CryEngine.Entities;
 using AAEmu.Game.Models.CryEngine.Loaders;
 using AAEmu.Game.Models.CryEngine.Readers;
@@ -485,6 +487,73 @@ public class WorldTemplateTests
 
         await Assert.That(template.TryGetHeight(1023f, 0f, out var height)).IsTrue();
         await Assert.That(height).IsEqualTo(26f);
+        await Assert.That(template.TryGetFallTerrainHeight(1023f, 0f, out var fallHeight)).IsTrue();
+        await Assert.That(fallHeight).IsEqualTo(26f);
+        await Assert.That(template.TryGetFallTerrainHeight(1024f, 0f, out var shared)).IsTrue();
+        await Assert.That(shared).IsEqualTo(42f);
+    }
+
+    [Test]
+    [Arguments((byte)24, (byte)5, 2, true)]
+    [Arguments((byte)23, (byte)5, 2, false)]
+    [Arguments((byte)24, (byte)7, 2, false)]
+    [Arguments((byte)24, (byte)5, 4, false)]
+    public async Task FallTerrain_OnlyCompleteNativeCellsUseTheirOwnTriangle(byte version, byte lastNodeVersion,
+        int lastNodeSize, bool native)
+    {
+        var template = CreateWorldTemplate(2, 1);
+        SetLoadedCell(template, 0, 0, CreateHeightMap());
+        SetLoadedCell(template, 1, 0, CreateHeightMap(42));
+        var map = CreateSectorGrid(version, lastNodeVersion, lastNodeSize, 10.03125f);
+        await Assert.That(template.Cells[0, 0].TryReadTerrainHeightMap(map)).IsTrue();
+        await Assert.That(template.TryGetHeight(1023, 6, out var legacy)).IsTrue();
+        await Assert.That(legacy).IsEqualTo(26f);
+        await Assert.That(template.TryGetFallTerrainHeight(1023, 6, out var height)).IsTrue();
+        await Assert.That(height).IsEqualTo(native ? 10.03125f : legacy);
+    }
+
+    [Test]
+    [Arguments("short")]
+    [Arguments("duplicate")]
+    [Arguments("bad extent")]
+    public async Task ShortOrMisplacedSectorsCannotPublishAZeroHeightCell(string defect)
+    {
+        var template = CreateWorldTemplate(1, 1);
+        SetLoadedCell(template, 0, 0, null);
+        var cell = template.Cells[0, 0];
+        var map = CreateSectorGrid(24, 5, 2, 0f);
+        if (defect == "short")
+            map.Nodes.RemoveAt(255);
+        else if (defect == "duplicate")
+            map.Nodes[255] = map.Nodes[254];
+        else
+            map.Nodes[255].BoxHeightmap.Max.Y--;
+        await Assert.That(cell.TryReadTerrainHeightMap(map)).IsFalse();
+        await Assert.That(cell.HasHeightMap).IsFalse();
+        await Assert.That(template.TryGetFallTerrainHeight(1, 1, out _)).IsFalse();
+
+        await Assert.That(cell.TryReadTerrainHeightMap(CreateSectorGrid(24, 5, 2, 0f))).IsTrue();
+        await Assert.That(template.TryGetFallTerrainHeight(1, 1, out var seaLevel)).IsTrue();
+        await Assert.That(seaLevel).IsEqualTo(0f);
+    }
+
+    private static Hmap CreateSectorGrid(byte version, byte lastNodeVersion, int lastNodeSize, float offset)
+    {
+        var map = new Hmap { Version = version, UnitSizeInMeters = 2, SectorSizeInMeters = 64, SectorsTableSizeInSectors = 16, HeightMapSizeInUnits = 512 };
+        const int sectors = WorldManager.SECTORS_PER_CELL;
+        for (var x = 0; x < sectors; x++)
+        for (var y = 0; y < sectors; y++)
+        {
+            var last = x == sectors - 1 && y == sectors - 1;
+            var node = NodeCellTests.ReadNode(last ? lastNodeSize : 2, (_, _) => 0,
+                last ? lastNodeVersion : (byte)5, offset: offset, readOriginal: true);
+            node.BoxHeightmap.Min.X = x * WorldManager.REGION_SIZE;
+            node.BoxHeightmap.Min.Y = y * WorldManager.REGION_SIZE;
+            node.BoxHeightmap.Max.X = node.BoxHeightmap.Min.X + WorldManager.REGION_SIZE;
+            node.BoxHeightmap.Max.Y = node.BoxHeightmap.Min.Y + WorldManager.REGION_SIZE;
+            map.Nodes.Add(node);
+        }
+        return map;
     }
 
     [Test]
@@ -495,6 +564,7 @@ public class WorldTemplateTests
         var found = template.TryGetHeight(WorldManager.CELL_SIZE - 1f, 0f, out _);
 
         await Assert.That(found).IsFalse();
+        await Assert.That(template.TryGetFallTerrainHeight(WorldManager.CELL_SIZE - 1f, 0f, out _)).IsFalse();
     }
 
     [Test]

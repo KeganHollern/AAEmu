@@ -141,7 +141,7 @@ public class WorldTemplate
         try
         {
             var cell = GetCell(x / WorldManager.CELL_SIZE, y / WorldManager.CELL_SIZE)?.VerifyCellLoaded();
-            return cell is { Loaded: true, HeightMap: not null } ? cell : null;
+            return cell is { Loaded: true, HasHeightMap: true } ? cell : null;
         }
         catch (Exception ex)
         {
@@ -207,6 +207,9 @@ public class WorldTemplate
         if (requireSolidTerrain && cell.IsTerrainHole(x, y))
             return false;
 
+        // Fall contact uses native triangles only for a complete, supported cell.
+        var native = requireSolidTerrain && cell.HasNativeTerrain;
+
         // Get bordering points
         var border = FindNearestSignificantPoints((int)Math.Floor(x), (int)Math.Floor(y));
 
@@ -217,18 +220,18 @@ public class WorldTemplate
         // Interpolate on that same surface so the server agrees with the terrain visible to clients.
         if (offX + offY < 1f)
         {
-            if (!TryGetWeightedHeight(cell, border.Left, border.Top, 1f - offX - offY, out var heightX0Y0) ||
-                !TryGetWeightedHeight(cell, border.Right, border.Top, offX, out var heightX1Y0) ||
-                !TryGetWeightedHeight(cell, border.Left, border.Bottom, offY, out var heightX0Y1))
+            if (!TryGetWeightedHeight(cell, native, border.Left, border.Top, 1f - offX - offY, out var heightX0Y0) ||
+                !TryGetWeightedHeight(cell, native, border.Right, border.Top, offX, out var heightX1Y0) ||
+                !TryGetWeightedHeight(cell, native, border.Left, border.Bottom, offY, out var heightX0Y1))
                 return false;
 
             height = heightX0Y0 * (1f - offX - offY) + heightX1Y0 * offX + heightX0Y1 * offY;
         }
         else
         {
-            if (!TryGetWeightedHeight(cell, border.Right, border.Bottom, offX + offY - 1f, out var heightX1Y1) ||
-                !TryGetWeightedHeight(cell, border.Left, border.Bottom, 1f - offX, out var heightX0Y1) ||
-                !TryGetWeightedHeight(cell, border.Right, border.Top, 1f - offY, out var heightX1Y0))
+            if (!TryGetWeightedHeight(cell, native, border.Right, border.Bottom, offX + offY - 1f, out var heightX1Y1) ||
+                !TryGetWeightedHeight(cell, native, border.Left, border.Bottom, 1f - offX, out var heightX0Y1) ||
+                !TryGetWeightedHeight(cell, native, border.Right, border.Top, 1f - offY, out var heightX1Y0))
                 return false;
 
             height = heightX1Y1 * (offX + offY - 1f) + heightX0Y1 * (1f - offX) + heightX1Y0 * (1f - offY);
@@ -241,7 +244,7 @@ public class WorldTemplate
         return false;
     }
 
-    private bool TryGetWeightedHeight(WorldCell cell, int x, int y, float weight, out float height)
+    private bool TryGetWeightedHeight(WorldCell cell, bool native, int x, int y, float weight, out float height)
     {
         height = 0f;
         if (weight <= 0f)
@@ -249,13 +252,17 @@ public class WorldTemplate
 
         var sampleX = (x - cell.CellX * WorldManager.CELL_SIZE) / 2;
         var sampleY = (y - cell.CellY * WorldManager.CELL_SIZE) / 2;
+        if (native && cell.TryGetHeightMapSample(sampleX, sampleY, out height, true))
+            return true;
+
         // Keep the shared vertex from the next cell when it exists. At the edge of mapped
         // terrain the current cell still contains the endpoint of its own final triangle.
         if ((sampleX == WorldManager.CELL_HMAP_RESOLUTION || sampleY == WorldManager.CELL_HMAP_RESOLUTION) &&
-            TryGetRawHeightMapHeight(x, y, out height))
+            LoadHeightCell(x, y) is { } neighbor &&
+            neighbor.TryGetHeightMapSample(x % WorldManager.CELL_SIZE / 2, y % WorldManager.CELL_SIZE / 2, out height, native))
             return true;
 
-        return cell.TryGetHeightMapSample(sampleX, sampleY, out height);
+        return cell.TryGetHeightMapSample(sampleX, sampleY, out height, native);
     }
 
     /// <summary>
