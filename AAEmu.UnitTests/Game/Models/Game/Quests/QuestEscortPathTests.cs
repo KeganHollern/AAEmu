@@ -1,4 +1,10 @@
 using System.Numerics;
+using TUnit.Assertions.Enums;
+using AAEmu.Commons.Network;
+using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.AI.Enums;
@@ -34,6 +40,8 @@ public sealed partial class QuestFollowUnitTests
         _world.Template.ZoneKeyByRegions = new uint[_world.Template.CellX * WorldManager.SECTORS_PER_CELL,
             _world.Template.CellY * WorldManager.SECTORS_PER_CELL];
         var guard = CreateNpc(91, actorId);
+        guard.Template.NpcPostureSets.Add(new NpcPosture { AnimActionId = 25 });
+        await AssertInitialPosture(guard, true);
         var duplicate = CreateNpc(92, actorId);
         var reporter = CreateNpc(93, satish ? 2979u : 3137u);
         // Both natural spawns use their measured runtime terrain height.
@@ -71,6 +79,9 @@ public sealed partial class QuestFollowUnitTests
         }
         await Assert.That(guard.Ai.IsQuestFollowOwner(quest)).IsTrue();
         await Assert.That(quest.Step).IsEqualTo(QuestComponentKind.Progress);
+        TickEscort(guard, 20);
+        await AssertInitialPosture(guard, false);
+        await Assert.That(guard.PostureChanges).IsEquivalentTo(new[] { (25u, false) }, CollectionOrdering.Matching);
         _owner.Transform.Local.Position = end;
         trigger.Tick(TimeSpan.Zero);
         await Assert.That(quest.Objectives[objective]).IsEqualTo(0);
@@ -84,6 +95,8 @@ public sealed partial class QuestFollowUnitTests
         await Assert.That(quest.Objectives[objective]).IsEqualTo(0);
         await Assert.That(guard.Movements.Count).IsGreaterThan(10);
         await Assert.That(guard.Movements[^1].Flags.HasFlag(MoveTypeFlags.Stopping)).IsTrue();
+        await AssertInitialPosture(guard, true);
+        await Assert.That(guard.PostureChanges).IsEquivalentTo(new[] { (25u, false), (25u, true) }, CollectionOrdering.Matching);
         _owner.Transform.Local.Position = end;
         trigger.Tick(TimeSpan.Zero);
         _manager.DoQueuedEvaluations();
@@ -93,7 +106,12 @@ public sealed partial class QuestFollowUnitTests
         _manager.DoReportEvents(_owner, id, reporter.ObjId, 0, 0);
         _manager.DoQueuedEvaluations();
         await Assert.That(guard.Ai.IsQuestFollowOwner(quest)).IsFalse();
-        TickEscort(guard, 650);
+        TickEscort(guard, 20);
+        await AssertInitialPosture(guard, false);
+        await Assert.That(guard.PostureChanges).IsEquivalentTo(new[] { (25u, false), (25u, true), (25u, false) }, CollectionOrdering.Matching);
+        TickEscort(guard, 630);
+        await AssertInitialPosture(guard, true);
+        await Assert.That(guard.PostureChanges).IsEquivalentTo(new[] { (25u, false), (25u, true), (25u, false), (25u, true) }, CollectionOrdering.Matching);
         await Assert.That(Vector3.Distance(guard.Transform.World.Position, start)).IsLessThan(1.1f);
         await Assert.That(guard.Despawned).IsFalse();
         var next = CreateOwner(8, 80);
@@ -125,6 +143,7 @@ public sealed partial class QuestFollowUnitTests
         var start = path[0].Position;
         var guard = CreateNpc(91, satish ? 9846u : 3138u);
         guard.Transform.Local.Position = guard.Ai.IdlePosition = guard.Ai.HomePosition = start;
+        guard.Template.NpcPostureSets.Add(new NpcPosture { AnimActionId = 25 });
         var giver = satish ? CreateNpc(92, 2979) : guard;
         giver.Transform.Local.Position = start;
         var next = CreateOwner(8, 80);
@@ -164,7 +183,11 @@ public sealed partial class QuestFollowUnitTests
             _owner.Quests.DropQuest(id, true);
 
         await Assert.That(guard.Ai.IsQuestFollowOwner(first)).IsFalse();
-        TickEscort(guard, 220);
+        TickEscort(guard, 5);
+        await AssertInitialPosture(guard, false);
+        TickEscort(guard, 215);
+        await AssertInitialPosture(guard, true);
+        await Assert.That(guard.PostureChanges).IsEquivalentTo(new[] { (25u, false), (25u, true) }, CollectionOrdering.Matching);
         var returned = guard.Transform.World.Position;
         await Assert.That(Vector3.Distance(returned, start)).IsLessThan(1.1f);
         next.Transform.Local.Position = returned;
@@ -182,6 +205,27 @@ public sealed partial class QuestFollowUnitTests
     }
 
     [Test]
+    public async Task EscortPath_AnotherAiCommandRestoresTheGuardPostureOnce()
+    {
+        _world.Template.Name = "main_world";
+        Register(BuildEscortTemplate(false));
+        var start = AiPathsManager.Instance.LoadAiPathPoints("q1313_anci")[0].Position;
+        var guard = CreateNpc(91, 3138);
+        guard.Template.NpcPostureSets.Add(new NpcPosture { AnimActionId = 25 });
+        guard.Transform.Local.Position = guard.Ai.HomePosition = guard.Ai.IdlePosition = _owner.Transform.Local.Position = start;
+        await Assert.That(_owner.Quests.AddQuestFromNpc(1313, guard.ObjId)).IsTrue();
+        var quest = _owner.Quests.ActiveQuests[1313];
+        _quests.Add(quest);
+        TickEscort(guard, 20);
+        await AssertInitialPosture(guard, false);
+        guard.Ai.GoToDummy();
+        guard.Ai.GoToDummy();
+        await Assert.That(guard.Ai.IsQuestFollowOwner(quest)).IsFalse();
+        await Assert.That(guard.PostureChanges).IsEquivalentTo(new[] { (25u, false), (25u, true) }, CollectionOrdering.Matching);
+        await AssertInitialPosture(guard, true);
+    }
+
+    [Test]
     public async Task EscortPath_ASecondCaliopeOnAnotherFloorCannotStartTheWalk()
     {
         Register(BuildEscortTemplate(false));
@@ -193,6 +237,18 @@ public sealed partial class QuestFollowUnitTests
         await Assert.That(_owner.Quests.AddQuestFromNpc(1313, guard.ObjId)).IsFalse();
         await Assert.That(_owner.Quests.ActiveQuests.ContainsKey(1313)).IsFalse();
         await Assert.That(guard.Ai.AiFollowUnitObj).IsNull();
+    }
+
+    // The snapshot includes the original action and one activation byte. The preceding
+    // attachment type and point uniquely identify this field in the stock NPC state.
+    private static async Task AssertInitialPosture(ProbeNpc guard, bool active)
+    {
+        var data = new SCUnitStatePacket(guard).Write(new PacketStream()).GetBytes();
+        var posture = new PacketStream();
+        Unit.ModelPosture(posture, guard, 25, active);
+        var prefix = new byte[] { (byte)AttachPointKind.System, 255 };
+        var match = prefix.Concat(posture.GetBytes()).ToArray();
+        await Assert.That(data.AsSpan().IndexOf(match)).IsGreaterThanOrEqualTo(0);
     }
 
     private static void TickEscort(ProbeNpc guard, int ticks)

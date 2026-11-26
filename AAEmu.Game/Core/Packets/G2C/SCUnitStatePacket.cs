@@ -210,7 +210,7 @@ public class SCUnitStatePacket : GamePacket
 
         #region UnitModelPosture
 
-        Unit.ModelPosture(stream, _unit, (_unit as Npc)?.AnimActionId ?? 0, true);
+        Unit.ModelPosture(stream, _unit, npc?.AnimActionId ?? 0, npc?.Ai?.IsWalkingQuestEscort != true);
 
         #endregion
 
