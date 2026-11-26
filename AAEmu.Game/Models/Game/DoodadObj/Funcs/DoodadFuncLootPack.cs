@@ -3,7 +3,6 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items.Actions;
-using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
@@ -19,18 +18,7 @@ public class DoodadFuncLootPack : DoodadFuncTemplate
             return;
 
         var actAbility = SkillManager.Instance.GetSkillActAbility(skillId);
-
         var lootPack = LootGameData.Instance.GetPack(LootPackId);
-        var lootPackContents = lootPack.GeneratePack(character, actAbility);
-
-        if (character.Inventory.Bag.FreeSlotCount >= lootPackContents.Count)
-        {
-            owner.ToNextPhase = lootPack.GiveLootPack(character, actAbility, ItemTaskType.DoodadInteraction, lootPackContents);
-
-            return;
-        }
-        owner.ToNextPhase = false;
-        SkillLaborBatch.For(character)?.Fail();
-        character.SendErrorMessage(ErrorMessageType.BagFull);
+        owner.ToNextPhase = lootPack.GiveLootPack(character, actAbility, ItemTaskType.DoodadInteraction);
     }
 }

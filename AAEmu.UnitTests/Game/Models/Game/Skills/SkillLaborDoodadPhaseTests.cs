@@ -6,21 +6,26 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Loots;
+using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Effects.Enums;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.UnitTests.Game.Models.Game.Char;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Skills;
 
@@ -169,6 +174,121 @@ public sealed partial class SkillLaborTests
     }
 
     [Test]
+    [Arguments(996, false, 0, true)]  // The ore fits in the original stack.
+    [Arguments(998, false, 0, false)] // Even the smallest ore roll exceeds the available space.
+    [Arguments(0, false, 0, false)]   // The full Bag contains only an unrelated item.
+    [Arguments(996, true, 1, true)]   // One slot suffices for both rolled items.
+    [Arguments(996, true, 0, false)]  // Stone has no space after the first grant.
+    public async Task IronVein_UsesStackCapacityForTheEntirePaidHarvest(int initialOre, bool rollStone, int freeSlots, bool fits)
+    {
+        const uint oreId = 8022, stoneId = 8008;
+        // Select reproducible stock outcomes: ordinary iron ore, with or without the optional raw stone group.
+        var rewards = new List<Loot> { new() { Group = 1, ItemId = oreId, MinAmount = 3, MaxAmount = 4, DropRate = 10_000_000 } };
+        if (rollStone)
+            rewards.Add(new Loot { Group = 3, ItemId = stoneId, MinAmount = 2, MaxAmount = 4, DropRate = 10_000_000 });
+        var vein = CreateMiningDoodad(rewards.ToArray());
+        var templates = (Dictionary<uint, ItemTemplate>)typeof(ItemManager).GetField("_templates", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(ItemManager.Instance)!;
+        foreach (var reward in rewards)
+            templates[reward.ItemId] = new ItemTemplate { Id = reward.ItemId, MaxCount = 1000 };
+        var bag = _owner.Inventory.Bag;
+        if (initialOre > 0)
+        {
+            _material.TemplateId = oreId;
+            _material.Template = templates[oreId];
+            _material.Count = initialOre;
+        }
+        bag.ContainerSize = bag.Items.Count + freeSlots;
+        await Assert.That(bag.FreeSlotCount).IsEqualTo(freeSlots);
+        using var data = new CharacterAchievementsTests.AchievementDataBuilder();
+        data.AddRecord(1, CharRecordKind.GetLootitem, oreId);
+        data.AddRecord(2, CharRecordKind.GetLootitem, stoneId);
+        data.AddRecord(3, CharRecordKind.GetLootpack, 6359);
+        for (uint id = 1; id <= 3; id++)
+        {
+            data.AddAchievement(id, 1000, false);
+            data.AddObjective(id, id, id);
+        }
+        typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(_owner, new CharacterAchievements(_owner, data.Build()));
+        var skill = new Skill(new SkillTemplate { Id = 13986, ConsumeLaborPower = 10, ActabilityGroupId = 13 })
+            { CommitLaborBatch = (_, _) => true };
+        _owner.Actability = new CharacterActability(_owner);
+        var session = new RankFeedbackSession();
+        _owner.Connection = new GameConnection(session) { ActiveChar = _owner };
+        var priorWorld = AppConfiguration.Instance.World;
+        bool result;
+        try
+        {
+            AppConfiguration.Instance.World = new WorldConfig { LootRate = 1 };
+            result = SkillLaborBatch.Run(_owner, skill, true, () => vein.Use(_owner, skill.Id));
+        }
+        finally
+        {
+            AppConfiguration.Instance.World = priorWorld;
+        }
+
+        await Assert.That(result).IsEqualTo(fits);
+        var bagErrors = session.Packets.Count(packet => BitConverter.ToUInt16(packet, 6) == SCOffsets.SCErrorMsgPacket &&
+            BitConverter.ToInt16(packet, 8) == (short)ErrorMessageType.BagFull);
+        await Assert.That(bagErrors).IsEqualTo(fits ? 0 : 1);
+        await Assert.That(vein.FuncGroupId).IsEqualTo(fits ? 17070u : 3054u);
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)(fits ? 10 : 20));
+        await Assert.That(bag.GetItemBySlot(0)).IsSameReferenceAs(_material);
+        var oreGained = bag.Items.Where(item => item.TemplateId == oreId).Sum(item => item.Count) - initialOre;
+        var stoneGained = bag.Items.Where(item => item.TemplateId == stoneId).Sum(item => item.Count);
+        await Assert.That(oreGained).IsBetween(fits ? 3 : 0, fits ? 4 : 0);
+        await Assert.That(stoneGained).IsBetween(fits && rollStone ? 2 : 0, fits && rollStone ? 4 : 0);
+        await Assert.That(_owner.Achievements.GetAmount(1)).IsEqualTo((uint)oreGained);
+        await Assert.That(_owner.Achievements.GetAmount(2)).IsEqualTo((uint)stoneGained);
+        await Assert.That(_owner.Achievements.GetAmount(3)).IsEqualTo(fits ? 1u : 0u);
+    }
+
+    [Test]
+    public async Task PageLoot_FullBagAndOwnedPageReportsOnlyThePickupLimit()
+    {
+        const uint page = 23216;
+        var manager = new DoodadManager(null, null, null, null, null);
+        SetInstance(manager);
+        SetField(SkillManager.Instance, "_skills", new Dictionary<uint, SkillTemplate>());
+        SetField(manager, "_phaseFuncs", new Dictionary<uint, List<DoodadPhaseFunc>>());
+        var function = new DoodadFunc { FuncId = 217, GroupId = 11107, FuncType = nameof(DoodadFuncLootPack), NextPhase = 11108 };
+        SetField(manager, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>> { [11107] = [function] });
+        SetField(manager, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
+        {
+            [function.FuncType] = new() { [217] = new DoodadFuncLootPack { Id = 217, LootPackId = 6660 } }
+        });
+        // Select one possible reward from this stock page pack.
+        SetHarvestPack(6660, [new Loot { ItemId = page, MinAmount = 1, MaxAmount = 1, AlwaysDrop = true }]);
+        var pages = new Doodad { TemplateId = 4531, Template = new DoodadTemplate { Id = 4531 }, FuncGroupId = 11107 };
+        var item = new ItemTemplate { Id = page, MaxCount = 1, PickupLimit = 1 };
+        SetField(ItemManager.Instance, "_templates", new Dictionary<uint, ItemTemplate> { [page] = item });
+        _material.TemplateId = page;
+        _material.Template = item;
+        _material.Count = 1;
+        _owner.Inventory.Bag.ContainerSize = 1;
+        var session = new RankFeedbackSession();
+        _owner.Connection = new GameConnection(session) { ActiveChar = _owner };
+        var priorWorld = AppConfiguration.Instance.World;
+        try
+        {
+            AppConfiguration.Instance.World = new WorldConfig { LootRate = 1 };
+            pages.Use(_owner);
+        }
+        finally
+        {
+            AppConfiguration.Instance.World = priorWorld;
+        }
+        var errors = session.Packets.Where(packet => BitConverter.ToUInt16(packet, 6) == SCOffsets.SCErrorMsgPacket)
+            .Select(packet => (ErrorMessageType)BitConverter.ToInt16(packet, 8)).ToArray();
+        await Assert.That(errors.SequenceEqual(new[] { ErrorMessageType.ItemPickupLimit })).IsTrue();
+        await Assert.That(pages.FuncGroupId).IsEqualTo(11107u);
+        await Assert.That(_owner.Inventory.Bag.Items.Single()).IsSameReferenceAs(_material);
+        await Assert.That(_material.Count).IsEqualTo(1);
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)20);
+    }
+
+    [Test]
     public async Task CommittedPhase_PrecedesALaterDeletionWithoutReplayingWorldState()
     {
         var doodad = CreateMiningDoodad();
@@ -184,7 +304,7 @@ public sealed partial class SkillLaborTests
         await Assert.That(doodad.Phases.Single().GroupId).IsEqualTo(3150u);
     }
 
-    private PhaseRecordingDoodad CreateMiningDoodad()
+    private PhaseRecordingDoodad CreateMiningDoodad(params Loot[] rewards)
     {
         SetInstance(new TaskManager(null));
         var subZones = Mock.Of<ISubZoneManager>();
@@ -220,13 +340,9 @@ public sealed partial class SkillLaborTests
             [nameof(DoodadFuncRatioChange)] = new() { [1035] = new DoodadFuncRatioChange { Id = 1035, Ratio = 10000, NextPhase = 17070 } },
             [nameof(DoodadFuncFinal)] = new() { [3223] = new DoodadFuncFinal { Id = 3223, After = 3000, Respawn = true, MinTime = 270000, MaxTime = 390000 } }
         });
-        var loot = new Loot { ItemId = 200, MinAmount = 1, MaxAmount = 1, AlwaysDrop = true };
-        var lootData = new LootGameData();
-        SetField(lootData, "_lootPacks", new Dictionary<uint, LootPack>
-        {
-            [6359] = new() { Id = 6359, Loots = [loot], LootsByGroupNo = new() { [0] = [loot] }, Groups = [], ActabilityGroups = [] }
-        });
-        SetInstance(lootData);
+        if (rewards.Length == 0)
+            rewards = [new Loot { ItemId = 200, MinAmount = 1, MaxAmount = 1, AlwaysDrop = true }];
+        SetHarvestPack(6359, rewards);
         var world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, 1);
         var doodad = new PhaseRecordingDoodad
         {
@@ -234,6 +350,20 @@ public sealed partial class SkillLaborTests
         };
         typeof(GameObject).GetField("_parentWorld", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(doodad, world);
         return doodad;
+    }
+
+    private void SetHarvestPack(uint packId, Loot[] rewards)
+    {
+        var lootData = new LootGameData();
+        SetField(lootData, "_lootPacks", new Dictionary<uint, LootPack>
+        {
+            [packId] = new()
+            {
+                Id = packId, Loots = [.. rewards], Groups = [], ActabilityGroups = [],
+                LootsByGroupNo = rewards.GroupBy(row => row.Group).ToDictionary(group => group.Key, group => group.ToList())
+            }
+        });
+        SetInstance(lootData);
     }
 
     private sealed class PhaseRecordingDoodad : Doodad
