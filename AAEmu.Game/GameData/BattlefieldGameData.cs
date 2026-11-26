@@ -44,12 +44,14 @@ public class BattlefieldGameData : Singleton<BattlefieldGameData>, IGameDataLoad
 
         using (var command = connection.CreateCommand())
         {
-            // Event 200 awards the enemy player's final hitter, for either corps.
             command.CommandText = """
-                SELECT rules.*, score.event_score AS enemy_player_kill_score
+                SELECT rules.*, score.event_score AS enemy_player_kill_score,
+                    assist.event_score AS enemy_player_damage_assist_score
                 FROM game_rule_sets rules
                 LEFT JOIN game_score_rules score ON score.rule_set_id = rules.id
                     AND score.rule_set_corps = -1 AND score.event_id = 200 AND score.event_value = 0
+                LEFT JOIN game_score_rules assist ON assist.rule_set_id = rules.id
+                    AND assist.rule_set_corps = -1 AND assist.event_id = 204 AND assist.event_value = 0
                 """;
             command.Prepare();
             using (var sqliteReader = command.ExecuteReader())
@@ -70,6 +72,7 @@ public class BattlefieldGameData : Singleton<BattlefieldGameData>, IGameDataLoad
                         TimePlaying = reader.GetInt32("time_playing"),
                         ResurrectionDelay = TimeSpan.FromSeconds(reader.GetUInt32("time_resurrection_delay")),
                         EnemyPlayerKillScore = reader.GetInt32("enemy_player_kill_score", 0),
+                        EnemyPlayerDamageAssistScore = reader.GetInt32("enemy_player_damage_assist_score", 0),
                         RankWinPoints = reader.GetInt32("rank_win_point"),
                         RankLossPoints = reader.GetInt32("rank_lose_point"),
                         RankDrawPoints = reader.GetInt32("rank_draw_point"),
