@@ -794,6 +794,16 @@ CREATE TABLE IF NOT EXISTS `specialty_demand` (
   PRIMARY KEY (`item_id`, `zone_group_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+CREATE TABLE IF NOT EXISTS `arena_match_honor` (
+  `match_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `character_id` int unsigned NOT NULL,
+  `battlefield_id` int unsigned NOT NULL,
+  `honor` int unsigned NOT NULL,
+  `claimed` tinyint(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`match_id`, `character_id`),
+  KEY `arena_honor_claim` (`character_id`, `claimed`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS `gladiator_rank_results` (
   `match_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `completed_at` datetime(6) NOT NULL,

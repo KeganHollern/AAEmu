@@ -56,7 +56,10 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
             }
             // Add to server pool
             if (WorldManager.Instance.TryAddCharacter(character))
+            {
                 character.ParentWorld.SlaveManager.ResumeSelectedOwnersVehicle(character);
+                SaveManager.Instance.ClaimArenaHonorOnEntry(character);
+            }
 
             Connection.ActiveChar.Simulation = new Simulation(character);
 

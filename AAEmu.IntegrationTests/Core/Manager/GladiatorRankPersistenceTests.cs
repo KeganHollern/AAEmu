@@ -69,7 +69,7 @@ public sealed class GladiatorRankPersistenceTests
         {
             LogManager.Configuration = config;
             lock (SaveManager.PersistenceSyncRoot)
-                saved = manager.RecordRankResult(result);
+                saved = manager.RecordMatchResult(new ArenaMatchResult(result.MatchId, 11, result, []));
             Assert.True(SpinWait.SpinUntil(() => target.Logs.Count > 0, TimeSpan.FromSeconds(10)));
             Assert.False(graph.Save.DoSave());
             Assert.False(saved.IsCompleted);

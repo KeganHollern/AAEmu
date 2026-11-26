@@ -38,7 +38,7 @@ public partial class InstantGame
     private bool _finished;
     private bool _entryStarted;
     private bool _participantLeftDuringCountdown;
-    internal Func<GladiatorRankResult, Task> SaveRankResult { get; init; } = result => InstantGameManager.Instance.RecordRankResult(result);
+    internal Func<ArenaMatchResult, Task> SaveMatchResult { get; init; } = result => InstantGameManager.Instance.RecordMatchResult(result);
 
     public InstantGame(Battlefield battlefield) : this(battlefield,
         WorldManager.Instance.CreateWorldInstance(WorldManager.Instance.GetWorldTemplateByZoneKey(battlefield.ZoneKey), 0),
@@ -361,8 +361,8 @@ public partial class InstantGame
                 _ => (VictoryState.Draw, VictoryState.Draw)
             };
             // Register this outcome before a disconnect or the final Game checkpoint can run.
-            if (GetCompletedGladiatorResult() is { } rank)
-                saved = SaveRankResult(rank);
+            if (GetCompletedResult() is { } result)
+                saved = SaveMatchResult(result);
         }
 
         await saved;
@@ -378,18 +378,41 @@ public partial class InstantGame
             DestroyInstantGame();
     }
 
-    private GladiatorRankResult GetCompletedGladiatorResult()
+    private ArenaMatchResult GetCompletedResult()
     {
-        if (_battlefield.Id != (uint)InstantGameType.Gladiator || _participantLeftDuringCountdown ||
+        if (_participantLeftDuringCountdown ||
             _announcedAt is not { } start ||
             _clock.GetElapsedTime(start) < StartCountdown || _members.Count == 0 ||
-            _corps1Result.Members.Count != 1 || _corps2Result.Members.Count != 1)
+            _corps1Result.Members.Count == 0 || _corps2Result.Members.Count == 0)
             return null;
 
+        var id = Guid.NewGuid();
+        GladiatorRankResult rank = null;
+        if (_battlefield.Id == (uint)InstantGameType.Gladiator)
+        {
+            if (_corps1Result.Members.Count != 1 || _corps2Result.Members.Count != 1 ||
+                _corps1Result.Members[0].Character.Id == _corps2Result.Members[0].Character.Id)
+                return null;
+            rank = GetGladiatorRank(id);
+        }
+        else if (_battlefield.Id != (uint)InstantGameType.DrillCamp)
+            return null;
+
+        var rule = _battlefield.RuleSet;
+        var members = _corps1Result.Members.Concat(_corps2Result.Members).ToArray();
+        var topPlayerKills = members.Max(member => member.Kills);
+        var topNpcKills = members.Max(member => member.EnemyNpcKills);
+        foreach (var member in members)
+            member.SetMatchHonor(rule, topPlayerKills > 0 && member.Kills == topPlayerKills,
+                topNpcKills > 0 && member.EnemyNpcKills == topNpcKills);
+        var awards = members.Select(member => new ArenaHonorAward(member.Character.Id, member.Bonus)).ToArray();
+        return new ArenaMatchResult(id, _battlefield.Id, rank, awards);
+    }
+
+    private GladiatorRankResult GetGladiatorRank(Guid id)
+    {
         var red = _corps1Result.Members[0];
         var blue = _corps2Result.Members[0];
-        if (red.Character.Id == blue.Character.Id)
-            return null;
 
         var rule = _battlefield.RuleSet;
         var (redPoints, bluePoints) = _corps1Result.State switch
@@ -400,7 +423,7 @@ public partial class InstantGame
             _ => throw new InvalidOperationException("Gladiator has no final team result.")
         };
         var now = _clock.GetUtcNow().UtcDateTime;
-        return new GladiatorRankResult(Guid.NewGuid(), now.AddTicks(-(now.Ticks % 10)),
+        return new GladiatorRankResult(id, now.AddTicks(-(now.Ticks % 10)),
             red.Character.Id, red.Score, redPoints, blue.Character.Id, blue.Score, bluePoints);
     }
 
