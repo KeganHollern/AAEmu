@@ -64,7 +64,9 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
             Connection.ActiveChar.Simulation = new Simulation(character);
 
             Connection.SendPacket(new SCCharacterStatePacket(character));
-            Connection.SendPacket(new SCCharacterGamePointsPacket(character));
+            // Queue the initial balance in order with in-world Honor changes.
+            lock (SaveManager.PersistenceSyncRoot)
+                Connection.SendPacket(new SCCharacterGamePointsPacket(character));
             Connection.ActiveChar.Inventory.Send();
             Connection.SendPacket(new SCActionSlotsPacket(Connection.ActiveChar.Slots));
 

@@ -8,7 +8,7 @@ namespace AAEmu.Game.Models.Game.InstantGame;
 internal sealed record ArenaHonorAward(uint CharacterId, int Amount)
 {
     // The persistence gate protects the loaded balance and holds it through commit.
-    internal static void ClaimPending(PersistenceSaveContext context, IReadOnlyCollection<Character> characters, List<Character> credited)
+    internal static void ClaimPending(PersistenceSaveContext context, IReadOnlyCollection<Character> characters, List<(Character Player, int Amount)> credited)
     {
         var players = characters.Where(player => !player.IsDeleted).ToDictionary(player => player.Id);
         if (players.Count == 0)
@@ -52,7 +52,7 @@ internal sealed record ArenaHonorAward(uint CharacterId, int Amount)
             context.AfterCommit(() =>
             {
                 player.HonorPoint = updated;
-                credited.Add(player);
+                credited.Add((player, (int)total));
             });
         }
     }
