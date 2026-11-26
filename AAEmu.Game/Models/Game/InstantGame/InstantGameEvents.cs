@@ -3,6 +3,8 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.InstantGame.Static;
+using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.InstantGame;
@@ -26,7 +28,7 @@ public partial class InstantGame
     {
         lock (SaveManager.PersistenceSyncRoot)
         {
-            if (args.Killer is not Character killer || args.Victim is not Character victim)
+            if (args.Killer is not Character killer)
                 return;
 
             if (_finished || _announcedAt is not { } announcement)
@@ -40,8 +42,17 @@ public partial class InstantGame
                 return;
             }
 
-            if (killer.CurrentInstantGame != this || victim.CurrentInstantGame != this ||
-                !_members.TryGetValue(killer, out var memberKiller) || !_members.TryGetValue(victim, out var memberVictim) ||
+            if (killer.CurrentInstantGame != this || !_members.TryGetValue(killer, out var memberKiller))
+                return;
+            if (args.Victim is Npc npc)
+            {
+                if (_battlefield.RuleSet.TopNpcKillsHonor > 0 && npc.ParentWorld == _world &&
+                    killer.ParentWorld == _world && killer.GetRelationStateTo(npc) == RelationState.Hostile)
+                    memberKiller.EnemyNpcKills++;
+                return;
+            }
+            if (args.Victim is not Character victim || victim.CurrentInstantGame != this ||
+                !_members.TryGetValue(victim, out var memberVictim) ||
                 memberKiller.Corps == memberVictim.Corps)
                 return;
             memberKiller.Kills++;

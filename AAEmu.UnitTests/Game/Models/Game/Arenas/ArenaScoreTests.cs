@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
@@ -11,6 +12,7 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.InstantGame;
 using AAEmu.Game.Models.Game.InstantGame.Static;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Units;
@@ -40,6 +42,7 @@ public sealed class ArenaScoreTests
     private bool _previousDebugInfo;
     private InstantGame _game;
     private readonly List<GladiatorRankResult> _rankResults = [];
+    private readonly List<ArenaMatchResult> _matchResults = [];
     private Task _rankSaved = Task.CompletedTask;
 
     [Before(Test)]
@@ -60,8 +63,10 @@ public sealed class ArenaScoreTests
             INSERT INTO battle_fields VALUES(7,198),(11,302);
             CREATE TABLE game_rule_sets(id INTEGER, battle_field_id INTEGER, corps_size INTEGER, corps1_id INTEGER,
                 corps2_id INTEGER, time_opening INTEGER, time_ending INTEGER, time_playing INTEGER, victory_score INTEGER, level_min INTEGER, time_resurrection_delay INTEGER,
-                rank_win_point INTEGER, rank_lose_point INTEGER, rank_draw_point INTEGER);
-            INSERT INTO game_rule_sets VALUES(22,7,5,159,160,4,1,15,0,40,15,0,0,0),(28,11,1,159,160,2,1,10,60,50,5,4,1,0);
+                rank_win_point INTEGER, rank_lose_point INTEGER, rank_draw_point INTEGER,
+                bonus_winner INTEGER, bonus_loser INTEGER, bonus_top_enemy_pc_kill INTEGER, bonus_top_enemy_non_pc_kill INTEGER);
+            INSERT INTO game_rule_sets VALUES(22,7,5,159,160,4,1,15,0,40,15,0,0,0,50,10,10,10),
+                (28,11,1,159,160,2,1,10,60,50,5,4,1,0,20,5,0,0);
             CREATE TABLE game_score_rules(id INTEGER, rule_set_id INTEGER, rule_set_corps INTEGER,
                 event_id INTEGER, event_value INTEGER, event_score INTEGER);
             INSERT INTO game_score_rules VALUES(68,22,-1,200,0,3),(93,28,-1,200,0,30),
@@ -459,14 +464,116 @@ public sealed class ArenaScoreTests
         await end;
     }
 
+    [Test]
+    [Arguments(7u, false)]
+    [Arguments(7u, true)]
+    [Arguments(11u, false)]
+    [Arguments(11u, true)]
+    public async Task CompletedMatch_ShowsHonorForBothSidesAndAllTiedLeaders(uint field, bool draw)
+    {
+        Start(field);
+        if (!draw)
+        {
+            Kill(_red[0], _blue[0]);
+            if (field == 7)
+            {
+                Kill(_red[1], _blue[1]);
+                Kill(_blue[0], _red[0]);
+            }
+        }
+        var end = _game.EndGame();
+        var receipt = _matchResults.Single().Awards.ToDictionary(award => award.CharacterId, award => award.Amount);
+        var display = ReadFinalAwards();
+        await Assert.That(receipt.Count).IsEqualTo(_red.Count + _blue.Count);
+        await Assert.That(display.Count).IsEqualTo(receipt.Count);
+        foreach (var player in _red.Concat(_blue))
+        {
+            var won = !draw && _red.Contains(player);
+            var honor = field == 11 ? (won ? 20 : 5) : (won ? 50 : 10);
+            var badges = draw ? 0u : won ? 1u : 16u;
+            if (!draw && field == 7 && (player == _red[0] || player == _red[1] || player == _blue[0]))
+            {
+                honor += 10;
+                badges |= 4u;
+            }
+            await Assert.That(receipt[player.Id]).IsEqualTo(honor);
+            await Assert.That(display[player.Id]).IsEqualTo((honor, badges));
+        }
+        await _game.EndGame();
+        await Assert.That(_matchResults.Count).IsEqualTo(1);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await end;
+    }
+
+    [Test]
+    public async Task DrillCampHonor_CombinesTiedEnemyNpcAndPlayerLeadsAcrossBothTeams()
+    {
+        Set(WorldManager.Instance, "_worlds", new ConcurrentDictionary<uint, WorldInstance> { [_world.Id] = _world });
+        Start(7);
+        var friendly = new Npc { ParentWorld = _world, Faction = new() { Id = FactionsEnum.Friendly } };
+        var hostile = new Npc { ParentWorld = _world, Faction = new() { Id = FactionsEnum.Hostile } };
+        var elsewhere = new Npc { Faction = hostile.Faction };
+        void NpcKill(Character killer, Npc target) =>
+            killer.Events.OnKill(target, new OnKillArgs { Killer = killer, Victim = target });
+
+        Kill(_red[0], _blue[2]);
+        Kill(_blue[0], _red[2]);
+        NpcKill(_red[0], hostile);
+        NpcKill(_blue[1], hostile);
+        NpcKill(_blue[0], friendly);
+        NpcKill(_red[1], elsewhere);
+        var end = _game.EndGame();
+        var awards = _matchResults.Single().Awards.ToDictionary(award => award.CharacterId, award => award.Amount);
+        await Assert.That(awards[_red[0].Id]).IsEqualTo(30);
+        await Assert.That(awards[_blue[0].Id]).IsEqualTo(20);
+        await Assert.That(awards[_blue[1].Id]).IsEqualTo(20);
+        await Assert.That(awards[_red[1].Id]).IsEqualTo(10);
+        await Assert.That(awards.Values.Sum()).IsEqualTo(140);
+        var display = ReadFinalAwards();
+        await Assert.That(display[_red[0].Id]).IsEqualTo((30, 12u));
+        await Assert.That(display[_blue[0].Id]).IsEqualTo((20, 4u));
+        await Assert.That(display[_blue[1].Id]).IsEqualTo((20, 8u));
+        await Assert.That(display[_red[1].Id]).IsEqualTo((10, 0u));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await end;
+    }
+
+    private Dictionary<uint, (int Honor, uint Badges)> ReadFinalAwards()
+    {
+        var display = new Dictionary<uint, (int Honor, uint Badges)>();
+        var packet = Packets(SCOffsets.SCInstantGameEndPacket).Single();
+        packet.ReadByte();
+        for (var side = 0; side < 2; side++)
+        {
+            packet.ReadByte();
+            packet.ReadUInt32();
+            packet.ReadInt32();
+            packet.ReadInt16();
+            packet.ReadInt16();
+            var count = packet.ReadByte();
+            for (var i = 0; i < count; i++)
+            {
+                var id = packet.ReadUInt32();
+                packet.ReadString();
+                packet.ReadInt32();
+                display.Add(id, (packet.ReadInt32(), packet.ReadUInt32()));
+                for (var j = 0; j < 4; j++)
+                    packet.ReadUInt16();
+            }
+        }
+        return display;
+    }
+
     private void Start(uint id, bool finishCountdown = true)
     {
         var field = _fields.GetBattlefield(id);
         _game = new InstantGame(field, _world, _clock)
         {
-            SaveRankResult = result =>
+            SaveMatchResult = result =>
             {
-                _rankResults.Add(result);
+                _matchResults.Add(result);
+                if (result.Rank != null)
+                    _rankResults.Add(result.Rank);
                 return _rankSaved;
             }
         };
@@ -536,9 +643,9 @@ public sealed class ArenaScoreTests
             stream.ReadString();
             var memberScore = stream.ReadInt32();
             personalScores += memberScore;
-            await Assert.That(stream.ReadInt32()).IsEqualTo(0);
+            stream.ReadInt32(); // The completed match tests check each recipient's Honor.
             var expectedBadge = state switch { 2 => 1u, 1 => 16u, _ => 0u };
-            await Assert.That(stream.ReadUInt32()).IsEqualTo(expectedBadge);
+            await Assert.That(stream.ReadUInt32() & (1u | 16u)).IsEqualTo(expectedBadge);
             stream.ReadUInt16();
             stream.ReadUInt16();
             var assists = stream.ReadUInt16();

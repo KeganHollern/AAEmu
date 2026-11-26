@@ -25,43 +25,51 @@ public class InstantGameManager : Singleton<InstantGameManager>, IInstantGameMan
     private readonly List<InstantGame> _queueList = [];
 
     private readonly Lock _lock = new();
-    private readonly Dictionary<GladiatorRankResult, TaskCompletionSource> _pendingRankResults = [];
+    private readonly Dictionary<ArenaMatchResult, TaskCompletionSource> _pendingMatchResults = [];
 
     // Called under the Game persistence lock. Every published end has a committed result.
-    internal Task RecordRankResult(GladiatorRankResult result)
+    internal async Task RecordMatchResult(ArenaMatchResult result)
     {
         var saved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingRankResults.Add(result, saved);
+        _pendingMatchResults.Add(result, saved);
         _ = Task.Run(() =>
         {
             try
             {
-                using var connection = MySQL.CreateConnection();
-                result.Write(connection);
                 lock (SaveManager.PersistenceSyncRoot)
-                    MarkRankSaved(result);
+                {
+                    if (!_pendingMatchResults.ContainsKey(result))
+                        return;
+                    using var connection = MySQL.CreateConnection();
+                    using var transaction = connection.BeginTransaction();
+                    result.Write(new PersistenceSaveContext(connection, transaction));
+                    transaction.Commit();
+                    MarkMatchSaved(result);
+                }
             }
             catch (Exception ex)
             {
-                _log.Error(ex, "Could not save Gladiator result {0}. The next Game checkpoint retries it.", result.MatchId);
+                _log.Error(ex, "Could not save arena result {0}. The next Game checkpoint retries it.", result.MatchId);
             }
         });
-        return saved.Task;
+        await saved.Task;
+        if (result.Awards.Count != 0)
+            SaveManager.Instance.DeliverArenaHonor(result.Awards);
     }
 
     // The normal save and the host shutdown checkpoint each try pending outcomes once.
-    internal void SavePendingRankResults(PersistenceSaveContext context)
+    internal void SavePendingMatchResults(PersistenceSaveContext context)
     {
-        foreach (var result in _pendingRankResults.Keys)
+        foreach (var result in _pendingMatchResults.Keys)
         {
-            result.Write(context.Connection, context.Transaction);
-            context.AfterCommit(() => MarkRankSaved(result));
+            result.Write(context);
+            context.AfterCommit(() => MarkMatchSaved(result));
         }
     }
 
-    private void MarkRankSaved(GladiatorRankResult result)
+    private void MarkMatchSaved(ArenaMatchResult result)
     {
-        if (_pendingRankResults.Remove(result, out var saved))
+        if (_pendingMatchResults.Remove(result, out var saved))
             saved.TrySetResult();
     }
 
