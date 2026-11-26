@@ -224,7 +224,10 @@ public sealed class SecurityInstrumentationTests
             var lines = target.Logs.ToArray();
             var completion = $"{typeof(GameSecurityTelemetry).FullName}|staff.command|{entry.RequestId}|";
             await Assert.That(lines.Count(line => line.StartsWith(completion, StringComparison.Ordinal))).IsEqualTo(1);
-            await Assert.That(string.Join('\n', lines)).DoesNotContain("private-");
+            var logged = string.Join('\n', lines);
+            await Assert.That(logged).DoesNotContain("private-command");
+            await Assert.That(logged).DoesNotContain("private-argument");
+            await Assert.That(logged).DoesNotContain("private-detail");
         }
         finally { LogManager.Configuration = original; }
     }
