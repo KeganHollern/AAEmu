@@ -40,7 +40,9 @@ public class DoodadFuncClout : DoodadPhaseFuncTemplate
 
         var areaTrigger = new AreaTrigger { Shape = WorldManager.Instance.GetAreaShapeById(AoeShapeId) };
 
-        if (UseOriginSource)
+        // Gust and Squall each expire their own temporary doodad. The original player remains the caster.
+        var windPhase = (owner.TemplateId, owner.FuncGroupId, Id) is (679, 456, 26) or (1203, 1817, 105);
+        if (UseOriginSource && !windPhase)
         {
             // будем проверять на дистанции 4 м от персонажа
             var doodads = WorldManager.GetAround<Doodad>(caster, 4f);
@@ -62,6 +64,8 @@ public class DoodadFuncClout : DoodadPhaseFuncTemplate
         areaTrigger.TargetRelation = TargetRelation;
         areaTrigger.TickRate = Tick;
         areaTrigger.EffectsPerBuff = new Dictionary<uint, List<EffectTemplate>> { { BuffId, Effects.Select(eid => SkillManager.Instance.GetEffectTemplate(eid)).ToList() } };
+        areaTrigger.IsGroundGust = windPhase && Id == 26 && UseOriginSource && BuffId == 0 &&
+            caster is Character && caster.ObjId == owner.OwnerObjId;
 
         AreaTriggerManager.Instance.AddAreaTrigger(areaTrigger);
 

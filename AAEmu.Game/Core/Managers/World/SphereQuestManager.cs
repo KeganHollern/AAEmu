@@ -22,11 +22,12 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
 
     private readonly List<SphereQuestTrigger> _sphereQuestTriggers = [];
     private readonly List<SphereQuestStarter> _questStartingSpheres = [];
+    private List<WorldSkillSphere> _skillSpheres = [];
     // Keep the session owner so late logout cleanup cannot remove reconnect state.
-    private readonly Dictionary<uint, (Character Character, Vector3 Position)> _questStartingLastPositionChecks = [];
+    private readonly Dictionary<uint, (Character Character, Vector3 Position)> _lastEntryPositions = [];
 
     private readonly object _triggersLock = new();
-    private readonly object _questStartingSpheresLock = new();
+    private readonly object _entrySpheresLock = new();
 
     public void Initialize()
     {
@@ -63,11 +64,13 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
             }
         }
 
+        var skillSpheres = WorldSkillSphere.Load(parent.Template.Name);
         _sphereQuests = sphereQuests;
-        lock (_questStartingSpheresLock)
+        lock (_entrySpheresLock)
         {
             _questStartingSpheres.Clear();
             _questStartingSpheres.AddRange(newStartingSpheres);
+            _skillSpheres = skillSpheres;
         }
     }
 
@@ -126,8 +129,8 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
                 (questId == 0 || trigger.Quest.TemplateId == questId));
         if (questId == 0)
         {
-            lock (_questStartingSpheresLock)
-                _questStartingLastPositionChecks.Remove(ownerId);
+            lock (_entrySpheresLock)
+                _lastEntryPositions.Remove(ownerId);
         }
     }
 
@@ -135,11 +138,11 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
     {
         lock (_triggersLock)
             _sphereQuestTriggers.RemoveAll(trigger => ReferenceEquals(trigger.Owner, owner));
-        lock (_questStartingSpheresLock)
+        lock (_entrySpheresLock)
         {
-            if (_questStartingLastPositionChecks.TryGetValue(owner.Id, out var sample) &&
+            if (_lastEntryPositions.TryGetValue(owner.Id, out var sample) &&
                 ReferenceEquals(sample.Character, owner))
-                _questStartingLastPositionChecks.Remove(owner.Id);
+                _lastEntryPositions.Remove(owner.Id);
         }
     }
 
@@ -164,7 +167,7 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
                     trigger.Tick(delta);
             }
 
-            TickQuestStarters((character, sphere, previousPosition) =>
+            TickEntrySpheres((character, sphere, previousPosition) =>
                 QuestManager.Instance.DoOnEnterQuestStarterSphere(character, sphere, previousPosition));
         }
         catch (Exception e)
@@ -173,27 +176,26 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
         }
     }
 
-    internal void TickQuestStarters(Action<Character, SphereQuestStarter, Vector3> onEnter)
+    internal void TickEntrySpheres(Action<Character, SphereQuestStarter, Vector3> onQuestEnter)
     {
-        // Handle Global triggers for quest starters
-        List<SphereQuestStarter> startingSphereSnapshot;
+        List<IWorldEntrySphere> entrySpheres;
         Dictionary<uint, (Character Character, Vector3 Position)> previousPositions;
-        lock (_questStartingSpheresLock)
+        lock (_entrySpheresLock)
         {
-            startingSphereSnapshot = [.. _questStartingSpheres];
-            previousPositions = new(_questStartingLastPositionChecks);
+            entrySpheres = [.. _questStartingSpheres, .. _skillSpheres];
+            previousPositions = new(_lastEntryPositions);
         }
         var currentPositions = new Dictionary<uint, (Character Character, Vector3 Position)>();
-        foreach (var questStartingSphere in startingSphereSnapshot)
+        foreach (var sphere in entrySpheres)
         {
             // Link the region if it hasn't been done yet
-            questStartingSphere.Region ??= parent.GetRegionByPos(questStartingSphere.Sphere.Xyz);
+            sphere.Region ??= parent.GetRegionByPos(sphere.Center);
 
-            if (!questStartingSphere.Region?.HasPlayerActivity() ?? true)
+            if (sphere.Region?.HasPlayerActivity() != true)
                 continue;
 
             var playersInNearbyRegion = new Dictionary<uint, Character>();
-            foreach (var region in questStartingSphere.Region.GetNeighbors())
+            foreach (var region in sphere.Region.GetNeighbors())
             {
                 var playersInRegion = new List<Character>();
                 region.GetList(playersInRegion, 0);
@@ -209,30 +211,34 @@ public class SphereQuestManager(WorldInstance parent) : ISphereQuestManager
                 var hasLastPosition = previousPositions.TryGetValue(characterId, out var previousSample) &&
                     ReferenceEquals(previousSample.Character, character);
                 var lastCheckLocation = hasLastPosition ? previousSample.Position : Vector3.Zero;
-                var oldInside = hasLastPosition && questStartingSphere.Sphere.Contains(lastCheckLocation);
+                var oldInside = hasLastPosition && sphere.Contains(lastCheckLocation);
                 if (!currentPositions.TryGetValue(characterId, out var currentPosition))
                 {
                     currentPosition = (character, character.Transform.World.Position);
                     currentPositions.Add(characterId, currentPosition);
                 }
-                var newInside = questStartingSphere.Sphere.Contains(currentPosition.Position);
+                var newInside = sphere.Contains(currentPosition.Position);
 
                 if (!oldInside && newInside)
                 {
-                    if (questStartingSphere.Sphere.DbSphere == null ||
-                        UnitRequirementsGameData.Instance.CanTriggerSphere(questStartingSphere.Sphere.DbSphere, character))
-                        onEnter(character, questStartingSphere, lastCheckLocation);
+                    if (sphere.Definition is { } definition && !UnitRequirementsGameData.Instance.CanTriggerSphere(definition, character))
+                        continue;
+
+                    if (sphere is SphereQuestStarter questStarter)
+                        onQuestEnter(character, questStarter, lastCheckLocation);
+                    else if (sphere is WorldSkillSphere skillSphere)
+                        character.UseSkill(skillSphere.SkillId, character);
                 }
             }
         }
 
-        lock (_questStartingSpheresLock)
+        lock (_entrySpheresLock)
         {
-            _questStartingLastPositionChecks.Clear();
+            _lastEntryPositions.Clear();
             foreach (var (characterId, sample) in currentPositions)
             {
                 if (sample.Character.Transform.InstanceId == parent.Id)
-                    _questStartingLastPositionChecks[characterId] = sample;
+                    _lastEntryPositions[characterId] = sample;
             }
         }
     }

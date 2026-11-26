@@ -47,17 +47,19 @@ public sealed partial class SphereQuestManagerTests
         var entered = new List<SphereQuestStarter>();
         var ground = new Vector3(11140.628f, 14855.227f, 185.874f);
         owner.Transform.Local.Position = ground;
-        manager.TickQuestStarters((_, s, _) => entered.Add(s));
+        manager.TickEntrySpheres((_, s, _) => entered.Add(s));
         await Assert.That(entered).IsEmpty();
         owner.Transform.Local.Position = ground + new Vector3(0, 0, 8);
-        manager.TickQuestStarters((_, s, _) => entered.Add(s));
-        manager.TickQuestStarters((_, s, _) => entered.Add(s));
+        manager.TickEntrySpheres((_, s, _) => entered.Add(s));
+        manager.TickEntrySpheres((_, s, _) => entered.Add(s));
         await Assert.That(entered.Count).IsEqualTo(1);
         await Assert.That(entered[0].QuestTemplateId).IsEqualTo(41u);
     }
 
     [Test]
-    public async Task ExactClient_GweonidWind_RegistersEachOriginalQuestVolumeOnce()
+    [Arguments(101)]
+    [Arguments(303)]
+    public async Task ExactClient_GweonidWind_RegistersEachOriginalVolumeOnce(int sphereId)
     {
         var path = Environment.GetEnvironmentVariable("AAEMU_HOUSING_GAME_PAK");
         Skip.Unless(!string.IsNullOrEmpty(path), "Set AAEMU_HOUSING_GAME_PAK for original mission geometry.");
@@ -67,8 +69,11 @@ public sealed partial class SphereQuestManagerTests
         {
             var world = new WorldInstance(new WorldTemplate { Name = "main_world", Id = 1 }, 0, true, 1);
             var manager = new SphereQuestManager(world);
+            SeedGroundWindSphere();
             manager.Load();
-            var actual = manager.GetSpheresForQuest(41);
+            var actual = sphereId == 101
+                ? manager.GetSpheresForQuest(41).Select(s => (Center: s.Xyz, s.Radius)).ToList()
+                : GetField<List<WorldSkillSphere>>(manager, "_skillSpheres").Select(s => (s.Center, s.Radius)).ToList();
             using var worldFile = source.GetFileStream("game/worlds/main_world/world.xml");
             var zone = XDocument.Load(worldFile).Descendants("Zone").Single(z => (int?)z.Attribute("id") == 129);
             var offset = new Vector3((int)zone.Attribute("originX")! * WorldManager.CELL_SIZE,
@@ -79,7 +84,7 @@ public sealed partial class SphereQuestManagerTests
                 (string)e.Attribute("EntityClass") == "AreaSphere" && (int?)e.Element("Area")?.Attribute("Group") == 16);
 
             // ObjectsSyncless repeats the same areas from Objects.
-            var originals = spheres.Where(e => (int)e.Element("Area")!.Attribute("value1")! == 101)
+            var originals = spheres.Where(e => (int)e.Element("Area")!.Attribute("value1")! == sphereId)
                 .GroupBy(e => (string)e.Attribute("EntityGuid")).ToArray();
             await Assert.That(originals.Length).IsEqualTo(14);
             await Assert.That(actual.Count).IsEqualTo(originals.Length);
@@ -91,7 +96,7 @@ public sealed partial class SphereQuestManagerTests
                 var xyz = entity.Attribute("Pos")!.Value.Split(',').Select(n => float.Parse(n, CultureInfo.InvariantCulture)).ToArray();
                 var center = offset + new Vector3(xyz[0], xyz[1], xyz[2]);
                 var radius = (float)area.Attribute("SphereRadius")!;
-                await Assert.That(actual.Count(v => v.Radius == radius && Vector3.Distance(v.Xyz, center) < 0.002f)).IsEqualTo(1);
+                await Assert.That(actual.Count(v => v.Radius == radius && Vector3.Distance(v.Center, center) < 0.002f)).IsEqualTo(1);
             }
         }
         finally

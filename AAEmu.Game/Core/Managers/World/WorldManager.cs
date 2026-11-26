@@ -694,6 +694,8 @@ public class WorldManager(
         return null;
     }
 
+    internal bool IsRegistered(WorldInstance world) => _worlds.TryGetValue(world.Id, out var active) && active == world;
+
     /// <summary>
     /// Get a list of all world instances
     /// </summary>

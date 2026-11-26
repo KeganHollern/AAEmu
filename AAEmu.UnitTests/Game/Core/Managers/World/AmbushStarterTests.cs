@@ -186,7 +186,7 @@ public sealed partial class SphereQuestManagerTests
                 owner.Region = region;
                 region.AddObject(owner);
             }
-            world.SphereQuestManager.TickQuestStarters(QuestManager.Instance.DoOnEnterQuestStarterSphere);
+            world.SphereQuestManager.TickEntrySpheres(QuestManager.Instance.DoOnEnterQuestStarterSphere);
         }
 
         Visit(11519, 129.346f);

@@ -21,7 +21,7 @@ public sealed class QuestSphereLogoutTests
         var volume = new SphereQuest { QuestId = 100, ComponentId = 101, Radius = 10 };
         SetField(manager, "_sphereQuests", new Dictionary<uint, List<SphereQuest>> { [101] = [volume] });
         var positions = GetField<Dictionary<uint, (Character Character, Vector3 Position)>>(
-            manager, "_questStartingLastPositionChecks");
+            manager, "_lastEntryPositions");
         var departing = CreateCharacter(world, 7);
         var savedQuest = CreateQuest(departing);
         savedQuest.Objectives[0] = 1;

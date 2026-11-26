@@ -1,4 +1,7 @@
-﻿using AAEmu.Game.Core.Managers.World;
+﻿using System.Numerics;
+
+using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
@@ -27,6 +30,7 @@ public class AreaTrigger
     public SkillTargetRelation TargetRelation { get; set; }
     public BuffTemplate InsideBuffTemplate { get; set; }
     public Dictionary<uint, List<EffectTemplate>> EffectsPerBuff { get; set; } = new();
+    internal bool IsGroundGust { get; set; }
     public int TickRate { get; set; }
     private DateTime _lastTick = DateTime.MinValue;
 
@@ -56,6 +60,14 @@ public class AreaTrigger
         // units still receive their leave events instead of being stranded with
         // the trigger's inside-buff.
         var currentUnitsInShape = WorldManager.GetAroundByShape<Unit>(Owner, Shape) ?? [];
+
+        if (IsGroundGust)
+        {
+            // The shared region search uses XY distance. The ground gust is a sphere at its cast position.
+            var center = Owner.Transform.World.Position;
+            var radiusSquared = Shape.Value1 * Shape.Value1;
+            currentUnitsInShape.RemoveAll(unit => Vector3.DistanceSquared(center, unit.Transform.World.Position) > radiusSquared);
+        }
 
         List<Unit> unitsSnapshot;
         lock (_unitsLock)
@@ -148,12 +160,13 @@ public class AreaTrigger
 
     private void ApplyEffects()
     {
-        if (InsideBuffTemplate == null || Caster == null)
+        if (Caster == null || (InsideBuffTemplate == null && !IsGroundGust))
         {
             return;
         }
 
-        if (!EffectsPerBuff.ContainsKey(InsideBuffTemplate.BuffId))
+        var insideBuffId = InsideBuffTemplate?.BuffId ?? 0;
+        if (!EffectsPerBuff.TryGetValue(insideBuffId, out var effects))
         {
             return;
         }
@@ -161,14 +174,14 @@ public class AreaTrigger
         var unitsToApply = SkillTargetingUtil.FilterWithRelation(TargetRelation, Caster, Units);
         foreach (var unit in unitsToApply)
         {
-            foreach (var effect in EffectsPerBuff[InsideBuffTemplate.BuffId])
+            foreach (var effect in effects)
             {
                 if (effect is BuffEffect buffEffect && unit.Buffs.CheckBuff(buffEffect.BuffId))
                 {
                     continue;
                 }
 
-                var eff = unit.Buffs.GetEffectFromBuffId(InsideBuffTemplate.BuffId);
+                var eff = insideBuffId == 0 ? null : unit.Buffs.GetEffectFromBuffId(insideBuffId);
                 CastAction castAction = null;
                 if (eff != null)
                 {
@@ -186,6 +199,21 @@ public class AreaTrigger
 
     // Called every 50ms
     public void Tick(TimeSpan delta)
+    {
+        if (IsGroundGust)
+        {
+            // An expired area can remain in the manager's tick snapshot until the cycle ends.
+            lock (SaveManager.PersistenceSyncRoot)
+            {
+                if (Owner.IsVisible && Owner.AttachAreaTriggers.Contains(this))
+                    TickCurrent();
+            }
+            return;
+        }
+        TickCurrent();
+    }
+
+    private void TickCurrent()
     {
         UpdateUnits();
         if (TickRate > 0)
