@@ -108,6 +108,21 @@ public sealed class BoostedLootTests
     }
 
     [Test]
+    public async Task EmptyOrZeroWeightGroupsDoNotGainAnAward()
+    {
+        foreach (var count in new[] { 0, 2 })
+        {
+            var pack = Pack(count);
+            foreach (var row in pack.LootsByGroupNo[1])
+                row.DropRate = 0;
+            var rolls = new Rolls();
+            var rewards = pack.GeneratePackNewV2(1.1f, 1, null, ActabilityType.None, null, rolls);
+            await Assert.That(rewards.Count).IsEqualTo(0);
+            await Assert.That(rolls.Width).IsEqualTo(0);
+        }
+    }
+
+    [Test]
     public async Task GroupZeroStillRollsEachItem()
     {
         var pack = Pack(2);
@@ -140,7 +155,7 @@ public sealed class BoostedLootTests
     }
 
     [Test]
-    public async Task StockSeedAndBarrelPacksKeepAllChoicesAndExcludeExplicitFullWeights()
+    public async Task StockPacksKeepAllChoicesAtEqualLoadedWeights()
     {
         var path = Environment.GetEnvironmentVariable("AAEMU_COMBAT_TEST_COMPACT");
         Skip.Unless(!string.IsNullOrEmpty(path), "Set AAEMU_COMBAT_TEST_COMPACT to the r208022 server compact.");
@@ -159,7 +174,7 @@ public sealed class BoostedLootTests
             var id = (uint)reader.GetInt32(0);
             _items[id] = new ItemTemplate { Id = id, LootQuestId = (uint)reader.GetInt32(1), FixedGrade = reader.GetInt32(2) };
         }
-        foreach (var (packId, group, count) in new[] { (6586u, 1u, 42), (6188u, 2u, 7), (6103u, 2u, 234) })
+        foreach (var (packId, group, count) in new[] { (6586u, 1u, 42), (6188u, 2u, 7), (6103u, 2u, 234), (6158u, 1u, 5), (6234u, 1u, 2) })
         {
             var pack = data.GetPack(packId);
             var authored = pack.LootsByGroupNo[group];
@@ -172,12 +187,15 @@ public sealed class BoostedLootTests
                 await Assert.That(award.itemId).IsEqualTo(authored[index].ItemId);
             }
         }
-        var fullWeights = data.GetPack(6158);
-        await Assert.That(fullWeights.LootsByGroupNo[1].All(x => x.DropRate == 10_000_000 && !x.HasUnitWeight)).IsTrue();
-        var weighted = new Rolls();
-        fullWeights.GeneratePackNewV2(1.1f, 1, null, ActabilityType.None, null, weighted);
-        await Assert.That(weighted.WeightedRolls).IsGreaterThan(0);
-        await Assert.That(weighted.Width).IsEqualTo(0);
+        var logbook = data.GetPack(6234);
+        var chapters = logbook.LootsByGroupNo[1];
+        await Assert.That(chapters.All(row => row.DropRate == 5_000_000)).IsTrue();
+        await Assert.That(logbook.Groups[1].DropRate).IsEqualTo(3_000_000u);
+        var lastPassingRoll = new Rolls { Index = 1, Gate = 3_299_999 };
+        var chapterThree = logbook.GeneratePackNewV2(1.1f, 1, null, ActabilityType.None, null, lastPassingRoll).Single();
+        await Assert.That(chapterThree).IsEqualTo((18741u, 1, (byte)0, 1u));
+        var blocked = logbook.GeneratePackNewV2(1.1f, 1, null, ActabilityType.None, null, new Rolls { Gate = 3_300_000 });
+        await Assert.That(blocked.Count).IsEqualTo(0);
     }
 
     private LootPack Pack(int count)
@@ -185,7 +203,7 @@ public sealed class BoostedLootTests
         var rows = new List<Loot>();
         for (uint id = 10; id < 10 + count; id++)
         {
-            rows.Add(new Loot { Group = 1, ItemId = id, HasUnitWeight = true, DropRate = 10_000_000, MinAmount = 1, MaxAmount = 1 });
+            rows.Add(new Loot { Group = 1, ItemId = id, DropRate = 10_000_000, MinAmount = 1, MaxAmount = 1 });
             _items[id] = new ItemTemplate { Id = id };
         }
         return new LootPack { Groups = [], ActabilityGroups = [], LootsByGroupNo = new() { [1] = rows } };

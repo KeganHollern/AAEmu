@@ -221,7 +221,8 @@ public class LootPack
                     var tmpSelectedItemsByGroup = new Dictionary<uint, List<Loot>>();
                     var tmpSelectedQuestItemsByGroup = new Dictionary<uint, List<Loot>>();
                     var normalizedRate = 0u;
-                    var chooseUniformly = lootDropRate * AppConfiguration.Instance.World.LootRate > 1 && groupLootList.Count > 1;
+                    var chooseUniformly = lootDropRate * AppConfiguration.Instance.World.LootRate > 1 &&
+                        groupLootList.Count > 1 && groupLootList[0].DropRate > 1;
                     // Sort mixed quest / non-quest items
                     foreach (var loot in groupLootList)
                     {
@@ -231,7 +232,7 @@ public class LootPack
                             // The group roll already used the boost. Only equal, optional rewards
                             // with the same quantity and grade can share a uniform item roll.
                             var first = groupLootList[0];
-                            chooseUniformly = loot.HasUnitWeight && !loot.AlwaysDrop && loot.ItemId != Item.Coins &&
+                            chooseUniformly = loot.DropRate == first.DropRate && !loot.AlwaysDrop && loot.ItemId != Item.Coins &&
                                 itemTemplate is { LootQuestId: 0 } &&
                                 loot.MinAmount == first.MinAmount && loot.MaxAmount == first.MaxAmount && loot.GradeId == first.GradeId;
                         }
