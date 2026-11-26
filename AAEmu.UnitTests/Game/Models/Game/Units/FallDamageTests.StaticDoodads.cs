@@ -98,7 +98,7 @@ public sealed partial class FallDamageTests
         typeof(DoodadManager).GetField("_phaseFuncs", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(manager, new Dictionary<uint, List<DoodadPhaseFunc>>
             {
-                [3333] = [new() { FuncType = "DoodadFuncFinal" }],
+                [3333] = [new() { FuncType = "DoodadFuncClout", FuncId = 226 }],
                 [7071] = [new() { FuncType = "DoodadFuncTimer", FuncId = 1855 }],
                 [7078] = [new() { FuncType = "DoodadFuncFinal", FuncId = 1387 }]
             });
@@ -179,7 +179,6 @@ public sealed partial class FallDamageTests
 
             var rollback = furnace.CaptureLaborState();
             furnace.FuncGroupId = 3333;
-            furnace.SetScale(0.5f);
             await Assert.That(Land(15591.911f)).IsEqualTo(0);
             rollback();
             await Assert.That(Land(15591.911f)).IsEqualTo(1);
@@ -213,7 +212,6 @@ public sealed partial class FallDamageTests
             await Assert.That(Jump(world, 20944.758f, 118.99698f, 18836.092f).Impacts.Count).IsEqualTo(0);
 
             // An independent geometry source can replace or omit the named CGF.
-            var property = typeof(HousingManager).GetProperty("GeometryAssets", BindingFlags.Instance | BindingFlags.NonPublic)!;
             foreach (var missing in new[] { false, true })
             {
                 Stream Read(string name)
@@ -230,7 +228,7 @@ public sealed partial class FallDamageTests
                     changed.Position = 0;
                     return changed;
                 }
-                property.SetValue(housing, new HousingGeometryAssets(Read, (_, _) => []));
+                housing.GeometryAssets = new HousingGeometryAssets(Read, (_, _) => []);
                 var copy = Spawn(world, missing ? 73u : 72u, template,
                     new() { X = 13674.676f, Y = 15590.036f, Z = 466, Yaw = 29.8806f * MathF.PI / 180 });
                 await Assert.That(Jump(world, 13673.426f, 466.09233f, 15591.911f).Impacts.Count).IsEqualTo(0);
