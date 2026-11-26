@@ -340,12 +340,17 @@ public partial class Skill
         // if (caster is Character)
         Logger.Debug($"Created SkillTlId {TlId} for Skill {Template.Id}, Caster {caster.Name} ({caster.TemplateId}:{caster.ObjId}) with target {target.Name} ({target.TemplateId}:{target.ObjId})");
 
-        var rangeResult = SkillRange.Check(this, unit, target);
-        if (rangeResult != SkillResult.Success)
+        var targetResult = SkillRange.Check(this, unit, target);
+        if (targetResult == SkillResult.Success && IsOversizeJarUnavailable(caster, target))
+        {
+            Cancelled = true;
+            targetResult = SkillResult.NotNow;
+        }
+        if (targetResult != SkillResult.Success)
         {
             SkillTlIdManager.ReleaseId(TlId);
             TlId = 0;
-            return rangeResult;
+            return targetResult;
         }
 
         if (character != null && !PermissionManager.Instance.CanUse(character, GamePermission.UseRestrictedPortals))
@@ -1292,6 +1297,13 @@ public partial class Skill
             return;
         }
         var player = caster as Character;
+        if (IsOversizeJarUnavailable(caster, targetSelf))
+        {
+            Cancelled = true;
+            player.SendPacket(new SCSkillStartedPacket(Id, 0, casterCaster, targetCaster, this, skillObject)
+                .SetSkillResult(SkillResult.NotNow));
+            return;
+        }
         if (player != null && targetSelf is Doodad seat && seat.GetBondedSeatAction(Id) is { } attachment &&
             RejectFullSeat(player, seat, attachment.Space))
             return;
@@ -1830,6 +1842,19 @@ public partial class Skill
     }
 
     private const uint DancingGoddessHunt = 29301;
+
+    private bool IsOversizeJarUnavailable(BaseUnit caster, BaseUnit target)
+    {
+        if (Id != SkillsEnum.ExamineUselessLargeJar || caster is not Character || target is not Doodad { TemplateId: 4285 } jar)
+            return false;
+
+        // The interaction removes this jar before its paired spawn effect runs.
+        // Check the same instance binding the effect uses, including pinned spawners.
+        var world = caster.ParentWorld;
+        return jar.FuncGroupId != 10535 || world?.GetDoodad(jar.ObjId) != jar || world.SpawnManager == null ||
+            !Template.Effects.Exists(effect => effect.Template is NpcSpawnerSpawnEffect { Id: 298, SpawnerId: 61949 } spawn &&
+                world.SpawnManager.GetNpcSpawnersBySpawnerTemplateId(spawn.SpawnerId).Count > 0);
+    }
 
     private static SkillResult CheckRedDragonEgg(Character player, BaseUnit target, out Item bow)
     {
