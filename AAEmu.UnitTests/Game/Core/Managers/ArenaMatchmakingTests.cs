@@ -177,7 +177,66 @@ public sealed class ArenaMatchmakingTests
         _queue.ApplyToBattlefield(7, InstantCorps.Any, player);
         _queue.BattlefieldTick(tick);
         await Assert.That(Messages(observer, SCOffsets.SCAppliedToInstantGamePacket).Count()).IsEqualTo(3);
-        await Assert.That(player.CurrentInstantGame.BattlefieldId).IsEqualTo(11u);
+        await Assert.That(player.CurrentInstantGame).IsNull();
+        _queue.WithdrawFromBattlefield(player);
+        _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        _queue.BattlefieldTick(tick);
+        await Assert.That(player.CurrentInstantGame).IsSameReferenceAs(duel);
+    }
+
+    [Test]
+    [Arguments(InstantGameType.Gladiator, 2)]
+    [Arguments(InstantGameType.DrillCamp, 10)]
+    public async Task NextRoom_WaitsForAnotherMatchAndOffersTheVacancyToTheNextApplicant(InstantGameType mode, int playersNeeded)
+    {
+        var tick = TimeSpan.FromSeconds(15);
+        var original = Enumerable.Range(1, playersNeeded).Select(AddApplicant).ToArray();
+        var waiting = original[0];
+        var observer = Observe(waiting);
+        foreach (var member in original)
+            _queue.ApplyToBattlefield((uint)mode, InstantCorps.Any, member);
+        _queue.BattlefieldTick(tick);
+        var declined = waiting.CurrentInstantGame;
+        declined.PlayerInviteResponse(waiting, false, 1);
+        _queue.BattlefieldTick(tick);
+        await Assert.That(waiting.CurrentInstantGame).IsNull();
+        await Assert.That(Messages(observer, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(1);
+
+        var replacement = AddApplicant(playersNeeded + 1);
+        _queue.ApplyToBattlefield((uint)mode, InstantCorps.Any, replacement);
+        _queue.BattlefieldTick(tick);
+        await Assert.That(replacement.CurrentInstantGame).IsSameReferenceAs(declined);
+        await Assert.That(waiting.CurrentInstantGame).IsNull();
+
+        var next = Enumerable.Range(playersNeeded + 2, playersNeeded - 1).Select(AddApplicant).ToArray();
+        foreach (var member in next)
+            _queue.ApplyToBattlefield((uint)mode, InstantCorps.Any, member);
+        _queue.BattlefieldTick(tick);
+        await Assert.That(waiting.CurrentInstantGame).IsNotNull();
+        await Assert.That(waiting.CurrentInstantGame == declined).IsFalse();
+        await Assert.That(next.All(member => member.CurrentInstantGame == waiting.CurrentInstantGame)).IsTrue();
+        await Assert.That(Messages(observer, SCOffsets.SCInviteToInstantGamePacket).Count()).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task NextRoom_UsesAnotherOpenRoomWhenTheFirstRoomHasNoEligibleApplicant()
+    {
+        var tick = TimeSpan.FromSeconds(15);
+        var players = Enumerable.Range(1, 4).Select(AddApplicant).ToArray();
+        foreach (var player in players)
+            _queue.ApplyToBattlefield(11, InstantCorps.Any, player);
+        _queue.BattlefieldTick(tick);
+        _queue.BattlefieldTick(tick);
+        var firstRoom = players[0].CurrentInstantGame;
+        var secondRoom = players[2].CurrentInstantGame;
+        await Assert.That(firstRoom == secondRoom).IsFalse();
+
+        firstRoom.PlayerInviteResponse(players[0], false, 1);
+        _queue.WithdrawFromBattlefield(players[2]);
+        _queue.BattlefieldTick(tick);
+        await Assert.That(players[0].CurrentInstantGame).IsSameReferenceAs(secondRoom);
+        await Assert.That(players[1].CurrentInstantGame).IsSameReferenceAs(firstRoom);
+        await Assert.That(players[2].CurrentInstantGame).IsNull();
     }
 
     [Test]
