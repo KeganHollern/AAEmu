@@ -354,12 +354,12 @@ public sealed partial class FallDamageTests
         await Assert.That(world.GetHeight(x, y)).IsEqualTo(98.11868f).Within(0.0001f);
         await Assert.That(world.Template.TryGetFallTerrainHeight(x, y, out var terrain)).IsTrue();
         await Assert.That(terrain).IsEqualTo(98.18010f).Within(0.0001f);
-        await Assert.That(geometry.HasFlatFallSupport(new(x, y, top))).IsTrue();
-        await Assert.That(geometry.HasFlatFallSupport(new(x, y, top + 0.003f))).IsFalse();
-        await Assert.That(geometry.HasFlatFallSupport(new(x, y, 103.2611f))).IsFalse(); // Downward face 377.
-        await Assert.That(geometry.HasFlatFallSupport(new(15155.449f, y, 102f))).IsFalse();
-        await Assert.That(geometry.HasFlatFallSupport(new(15154.849f, y, top))).IsFalse(); // Dry shore.
-        await Assert.That(geometry.HasFlatFallSupport(new(x, 13602.292f, top))).IsFalse(); // Above water.
+        await Assert.That(geometry.HasBrushFallSupport(new(x, y, top))).IsTrue();
+        await Assert.That(geometry.HasBrushFallSupport(new(x, y, top + 0.003f))).IsFalse();
+        await Assert.That(geometry.HasBrushFallSupport(new(x, y, 103.2611f))).IsFalse(); // Downward face 377.
+        await Assert.That(geometry.HasBrushFallSupport(new(15155.449f, y, 102f))).IsFalse();
+        await Assert.That(geometry.HasBrushFallSupport(new(15154.849f, y, top))).IsFalse(); // Dry shore.
+        await Assert.That(geometry.HasBrushFallSupport(new(x, 13602.292f, top))).IsFalse(); // Above water.
 
         var actor = new FallUnit { Hp = 1000, MaxHp = 1000, ParentWorld = world };
         void Move(float px, float py, float z, double time, bool landing = false)
@@ -506,7 +506,7 @@ public sealed partial class FallDamageTests
         }
     }
 
-    private WorldInstance CreateStockWorld()
+    private WorldInstance CreateStockWorld(string worldName = "main_world")
     {
         var archive = Environment.GetEnvironmentVariable("AAEMU_HOUSING_GAME_PAK");
         Skip.Unless(!string.IsNullOrEmpty(archive), "Set AAEMU_HOUSING_GAME_PAK to check the stock terrain.");
@@ -515,9 +515,9 @@ public sealed partial class FallDamageTests
         _stockSource = ClientFileManager.Sources[^1];
         _previousConfig = AppConfiguration.Instance.World;
         AppConfiguration.Instance.World = new() { GeoDataMode = false };
-        var template = new WorldTemplate { Name = "main_world" };
+        var template = new WorldTemplate { Name = worldName };
         template.GeoData = new AiGeoDataManager(template);
-        using var input = _stockSource.GetFileStream("game/worlds/main_world/world.xml");
+        using var input = _stockSource.GetFileStream($"game/worlds/{worldName}/world.xml");
         var xml = new XmlDocument();
         xml.Load(input);
         template.XmlWorld.ReadNode(xml.DocumentElement, template);

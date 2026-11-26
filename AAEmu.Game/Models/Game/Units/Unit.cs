@@ -1099,7 +1099,7 @@ public partial class Unit : BaseUnit, IUnit
         var template = ParentWorld?.Template;
         var grounded = (template?.TryGetFallTerrainHeight(position.X, position.Y, out var height) == true &&
             position.Z <= height + FallMovement.PositionTolerance) ||
-            template?.GeoData?.HasFlatFallSupport(position) == true ||
+            template?.GeoData?.HasBrushFallSupport(position, this is Character) == true ||
             template?.GeoData?.HasFinishedHouseFallSupport(this, position) == true ||
             template?.GeoData?.HasStaticDoodadFallSupport(this, position) == true;
         var impact = FallMovement.Observe(position.Z, time ?? FallMovement.Now, grounded, reportedLanding);
