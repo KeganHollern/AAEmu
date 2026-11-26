@@ -111,6 +111,11 @@ public sealed class CryTerrainGrid
         return grid ?? throw new InvalidDataException("The heightmap has no root node.");
     }
 
+    /// <summary>True only where the authored surface removes both terrain triangles.</summary>
+    public bool IsHole(float x, float y) =>
+        TryLocate(x, y, out var cellX, out var cellY, out _, out _) &&
+        _surfaces[SurfaceIndex(cellX, cellY)] == Hole;
+
     /// <summary>Gets the triangle height at world XY. Holes and unavailable data return NaN.</summary>
     public float SampleHeight(float x, float y)
     {

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Numerics;
 using System.Reflection;
 
@@ -13,8 +14,10 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.CryEngine.Entities;
 using AAEmu.Game.Models.CryEngine.Loaders;
+using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.CryEngine.Readers;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -167,13 +170,19 @@ public sealed partial class PlayerMailSendPersistenceTests
         [InlineData(0, 29, 0, 100)]
         [InlineData(57, 100, 100, 1020)]
         [InlineData(71, 100, 71, 1020)]
-        public void CargoWreck_TransfersTheStoredPackToMeasuredHeightAndReloadsTheSameItem(int floor, int water, int expected, int vehicleX)
+        [InlineData(57, 100, 74, 100, true, false)]
+        [InlineData(57, 100, 74, 100, true, true)]
+        public void CargoWreck_TransfersTheStoredPackToMeasuredHeightAndReloadsTheSameItem(int floor, int water, int expected, int vehicleX, bool hole = false, bool missingRaw = false)
         {
             using var fixture = new ShipyardGraph();
             fixture.EnableSalvage();
             var graph = fixture.Graph;
             var world = fixture.World;
             AddCargoCoast(world, (ushort)floor, water, vehicleX);
+            if (hole)
+                AddWreckHole(world, vehicleX, expected);
+            if (missingRaw)
+                world.Template.Cells[0, 0] = null;
             ConfigureCargoBindings();
             var owner = graph.Sender;
             var vehicle = new Slave { Id = owner.Id + 87, ObjId = owner.Id + 86, ParentWorld = world, TemplateId = 75 };
@@ -202,8 +211,9 @@ public sealed partial class PlayerMailSendPersistenceTests
                 Assert.InRange(point.X, vehicleX + 2f, vehicleX + 4f);
                 Assert.InRange(point.Y, 104f, 106f);
                 Assert.Equal(84f, world.Template.GeoData.GetHeight(point));
-                Assert.True(world.TryGetHeight(point.X, point.Y, out var seabed));
-                Assert.Equal((float)floor, seabed);
+                Assert.Equal(!missingRaw, world.TryGetHeight(point.X, point.Y, out var seabed));
+                if (!missingRaw)
+                    Assert.Equal((float)floor, seabed);
                 Assert.Equal(expected, point.Z);
                 Assert.Same(owner.Inventory.SystemContainer, item._holdingContainer);
                 Assert.Equal(1, item.Count);
@@ -342,6 +352,29 @@ public sealed partial class PlayerMailSendPersistenceTests
                 SwapSingleton(oldItemData);
                 SwapSingleton(oldItems);
             }
+        }
+
+        private static void AddWreckHole(WorldInstance world, int vehicleX, float support)
+        {
+            var assets = new HousingGeometryAssets(path => path.EndsWith("heightmap.dat", StringComparison.Ordinal)
+                ? HousingFlatTerrain(57, hole: true) : null, (_, _) => []);
+            world.SlaveManager = new SlaveManager(world) { PlacementAssets = assets };
+            // Every normal 1 m scatter lands on this solid slab, below a ray-only picking proxy.
+            CryWorldObjectInstance Slab(float top, int physicsType)
+            {
+                var center = new Vector3(vehicleX + 3, 105, top - 1);
+                var half = new Vector3(2, 2, 1);
+                var bounds = new CryBounds(center - half, center + half);
+                return new("", Matrix4x4.Identity, bounds.Min, bounds.Max, "cargo fixture")
+                {
+                    Asset = new(bounds, [HousingBox(center, half) with { PhysicsType = physicsType }])
+                };
+            }
+            var floor = Slab(support, CryGeometryLayerRules.Solid);
+            var lower = Slab(30, CryGeometryLayerRules.Solid) with { ModelUri = "missing.cgf", Asset = null };
+            var rayOnly = Slab(90, CryGeometryLayerRules.Ray);
+            HousingField<ConcurrentDictionary<WorldTemplate, Lazy<CryWorldObjectIndex>>>(assets, "_worlds")[world.Template] =
+                new Lazy<CryWorldObjectIndex>(() => new([lower, rayOnly, floor]));
         }
 
         private static void AddCargoCoast(WorldInstance world, ushort seabed, float water, int vehicleX)

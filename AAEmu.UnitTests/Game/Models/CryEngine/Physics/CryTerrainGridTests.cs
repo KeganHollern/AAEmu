@@ -63,7 +63,11 @@ public sealed class CryTerrainGridTests
         var query = new CryBox(new(2, 2, 12), new(1.9f, 1.9f, 1), Matrix4x4.Identity);
         await Assert.That(grid.IntersectBox(query)).IsEqualTo(CryIntersection.Intersects);
         using var hole = Map(2, Node(2, [Pack(20, 31), Pack(20), Pack(20), Pack(20)]));
-        await Assert.That(CryTerrainGrid.Read(hole, Vector2.Zero).IntersectBox(query with { Center = new(1, 1, 12), HalfSize = new(0.4f) }))
+        var cutout = CryTerrainGrid.Read(hole, Vector2.Zero);
+        await Assert.That(cutout.IsHole(1, 1)).IsTrue();
+        await Assert.That(cutout.IsHole(3, 1)).IsFalse();
+        await Assert.That(grid.IsHole(1, 1)).IsFalse();
+        await Assert.That(cutout.IntersectBox(query with { Center = new(1, 1, 12), HalfSize = new(0.4f) }))
             .IsEqualTo(CryIntersection.Clear);
     }
 

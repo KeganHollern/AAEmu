@@ -33,7 +33,7 @@ public sealed partial class PlayerMailSendPersistenceTests
     private static CryGeometryPart HousingBox(Vector3 center, Vector3 halfSize) =>
         new(new CryBox(center, halfSize, Matrix4x4.Identity), Matrix4x4.Identity, CryGeometryLayerRules.Solid, "", "");
 
-    private static MemoryStream HousingFlatTerrain(float height)
+    private static MemoryStream HousingFlatTerrain(float height, bool hole = false)
     {
         var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, true);
@@ -42,8 +42,9 @@ public sealed partial class PlayerMailSendPersistenceTests
         writer.Write(new byte[128]);
         writer.Write(5);
         foreach (var value in new[] { 0f, 0f, height, 1024f, 1024f, height }) writer.Write(value);
-        writer.Write(false); writer.Write(height); writer.Write(1f / 32); writer.Write(2); writer.Write(0);
-        writer.Write(new byte[8 + 20 + 36]);
+        writer.Write(hole); writer.Write(height); writer.Write(1f / 32); writer.Write(2); writer.Write(0);
+        for (var i = 0; i < 4; i++) writer.Write((ushort)(hole ? 31 : 0));
+        writer.Write(new byte[20 + 36]);
         stream.Position = 4;
         writer.Write((int)stream.Length);
         stream.Position = 0;
