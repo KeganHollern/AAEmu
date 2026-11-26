@@ -25,7 +25,7 @@ using Microsoft.Extensions.Time.Testing;
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
 [NotInParallel]
-public sealed class ArenaMatchmakingTests
+public sealed partial class ArenaMatchmakingTests
 {
     private readonly WorldManager _worlds = new(null, null, null, null, null);
     private readonly InstantGameManager _queue = new();
