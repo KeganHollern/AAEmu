@@ -76,6 +76,7 @@ public class CharacterMails
                 {
                     UnreadMailCount.UpdateReceived(mail.MailType, -1);
                     mail.OpenDate = now;
+                    mail.UpdateEmptyLetterExpiry(now);
                     mail.Header.Status = MailStatus.Read;
                     mail.IsDelivered = true;
                     MailManager.Instance.NotifyMailReceiverOpenedIfSenderOnline(mail);
@@ -275,10 +276,14 @@ public class CharacterMails
                 if (tookAuctionItem)
                     Self.Achievements.Increment(CharRecordKind.AuctionBuy, 0, 0);
 
+                // Only a real claim can start the empty-letter window.
+                var claimed = tookMoney || itemSlotList.Count != 0;
+                if (claimed)
+                    thisMail.UpdateEmptyLetterExpiry(now);
                 // Mark mail as read in case we took at least one item from it
-                if (thisMail.Header.Status == MailStatus.Unread && (tookMoney || itemSlotList.Count > 0))
+                if (thisMail.Header.Status == MailStatus.Unread && claimed)
                 {
-                    thisMail.OpenDate = DateTime.UtcNow;
+                    thisMail.OpenDate = now;
                     thisMail.Header.Status = MailStatus.Read;
                     UnreadMailCount.UpdateReceived(thisMail.MailType, -1);
                     Self.SendPacket(new SCMailStatusUpdatedPacket(false, mailId, MailStatus.Read));

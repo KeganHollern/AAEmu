@@ -1063,13 +1063,13 @@ internal sealed class MySqlAuctionMailClaimStore : IAuctionMailClaimStore
         command.CommandText =
             "REPLACE INTO `mails` (" +
             "`id`,`type`,`status`,`title`,`text`,`sender_id`,`sender_name`,`attachment_count`," +
-            "`receiver_id`,`receiver_name`,`open_date`,`send_date`,`received_date`,`returned`,`extra`," +
+            "`receiver_id`,`receiver_name`,`open_date`,`send_date`,`received_date`,`expires_at`,`returned`,`extra`," +
             "`money_amount_1`,`money_amount_2`,`money_amount_3`," +
             "`attachment0`,`attachment1`,`attachment2`,`attachment3`,`attachment4`," +
             "`attachment5`,`attachment6`,`attachment7`,`attachment8`,`attachment9`) " +
             "VALUES (" +
             "@id,@type,@status,@title,@text,@sender_id,@sender_name,@attachment_count," +
-            "@receiver_id,@receiver_name,@open_date,@send_date,@received_date,@returned,@extra," +
+            "@receiver_id,@receiver_name,@open_date,@send_date,@received_date,@expires_at,@returned,@extra," +
             "@money_amount_1,@money_amount_2,@money_amount_3," +
             "@attachment0,@attachment1,@attachment2,@attachment3,@attachment4," +
             "@attachment5,@attachment6,@attachment7,@attachment8,@attachment9)";
@@ -1086,6 +1086,7 @@ internal sealed class MySqlAuctionMailClaimStore : IAuctionMailClaimStore
         command.Parameters.AddWithValue("@open_date", plan.FinalOpenDate);
         command.Parameters.AddWithValue("@send_date", mail.Body.SendDate);
         command.Parameters.AddWithValue("@received_date", mail.Body.RecvDate);
+        command.Parameters.AddWithValue("@expires_at", (object)mail.ExpiresAt ?? DBNull.Value);
         command.Parameters.AddWithValue("@returned", mail.Header.Returned ? 1 : 0);
         command.Parameters.AddWithValue("@extra", mail.Header.Extra);
         command.Parameters.AddWithValue(

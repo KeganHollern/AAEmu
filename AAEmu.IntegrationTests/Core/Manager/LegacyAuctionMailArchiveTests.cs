@@ -306,7 +306,7 @@ public sealed partial class PlayerMailSendPersistenceTests
         var source = Assert.Single(graph.Mails._allPlayerMails.Values);
         graph.LegacyAuctionMailId = source.Id;
         source.MailType = MailType.AucBidWin;
-        source.Body.RecvDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+        SetLegacyDelivery(source, new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc));
         var auction = graph.Items.GetItemContainerForCharacter(graph.Sender.Id, SlotType.Auction, null, 0);
         lock (SaveManager.PersistenceSyncRoot)
         {

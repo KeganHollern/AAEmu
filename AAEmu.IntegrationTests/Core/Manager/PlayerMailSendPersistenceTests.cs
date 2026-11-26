@@ -302,7 +302,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             Mock.Get(_world).Setup(world => world.GetCharacter(Receiver.Name)).Returns(Receiver);
         }
 
-        public SendGraph(bool useRealMailIds = false)
+        public SendGraph(bool useRealMailIds = false, IItemIdManager itemIds = null)
         {
             var id = (uint)Interlocked.Add(ref _nextId, 100);
             _nextMailId = id + 50;
@@ -310,7 +310,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             // Explicit participants must save the sender even when no online character is enumerated.
             world.Setup(manager => manager.GetAllCharacters()).Returns([]);
             _world = world.Object;
-            Items = NewItemStore();
+            Items = NewItemStore(itemIds);
             _oldItems = SwapSingleton(Items);
             _oldQuests = SwapSingleton(new QuestManager(_tasks, Mock.Of<IZoneManager>()));
             _oldWorld = SwapSingleton(new WorldManager(Mock.Of<ITickManager>(), Mock.Of<IWorldIdManager>(),
@@ -508,7 +508,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             }
         }
 
-        private ItemManager NewItemStore() => new(Mock.Of<ISkillManager>(), Mock.Of<IItemIdManager>(),
+        private ItemManager NewItemStore(IItemIdManager itemIds = null) => new(Mock.Of<ISkillManager>(), itemIds ?? Mock.Of<IItemIdManager>(),
             Mock.Of<IContainerIdManager>(), Mock.Of<ILocalizationManager>(), _tasks, _world);
 
         public (ItemManager Items, MailManager Mails) ReloadLifecycle(bool useReloadedCheckpoint = false)

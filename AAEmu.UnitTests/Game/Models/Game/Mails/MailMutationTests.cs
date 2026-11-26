@@ -58,6 +58,7 @@ public sealed class MailMutationTests
         _deleted.Add(2);
         var next = Mail();
         next.Header.Attachments = 9;
+        next.ExpiresAt = DateTime.UnixEpoch;
         next.IsDirty = false;
         bool staged;
         lock (SaveManager.PersistenceSyncRoot)
@@ -70,6 +71,7 @@ public sealed class MailMutationTests
         await Assert.That(_deleted).IsEquivalentTo([2L]);
         await Assert.That(next.Id).IsEqualTo(0L);
         await Assert.That(next.Header.Attachments).IsEqualTo((byte)9);
+        await Assert.That(next.ExpiresAt).IsEqualTo(DateTime.UnixEpoch);
         await Assert.That(next.IsDirty).IsFalse();
         _ids.ReleaseId(10000U).WasCalled(Times.Once);
         _ids.ReleaseId(1U).WasCalled(Times.Never);

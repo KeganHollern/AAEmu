@@ -306,6 +306,9 @@ public sealed class QuestRewardDeliveryTests
         var beforeReward = DateTime.UtcNow;
         await Assert.That(quest.DistributeRewards(true)).IsTrue();
         var mail = _mail.AllPlayerMails.Values.Single();
+        var deadline = mail.Body.RecvDate.AddDays(90);
+        await Assert.That(MailManager.IsExpired(mail, deadline.AddTicks(-1))).IsFalse();
+        await Assert.That(MailManager.IsExpired(mail, deadline)).IsTrue();
         await Assert.That(mail.Body.SendDate).IsBetween(beforeReward, DateTime.UtcNow);
         await Assert.That(mail.Body.RecvDate).IsEqualTo(mail.Body.SendDate);
 
