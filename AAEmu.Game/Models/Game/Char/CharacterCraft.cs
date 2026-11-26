@@ -222,14 +222,6 @@ public class CharacterCraft(Character owner)
             return;
         }
 
-        if (Owner.Inventory.FreeSlotCount(SlotType.Inventory) < CurrentCraft.CraftProducts.Count)
-        {
-            // TODO not verified
-            Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.NotEnoughSpace, 0, false);
-            CraftOrCancel();
-            return;
-        }
-
         // Materials can change while the cast is running. Recheck immediately before granting products.
         var stillHasMaterials = HasAvailableMaterials(CurrentCraft);
         if (!stillHasMaterials)
@@ -349,6 +341,16 @@ public class CharacterCraft(Character owner)
             CancelCraft(sourceSkill);
         }
 
+        // Stage the inputs first so a product can use a slot vacated by its last material.
+        foreach (var material in CurrentCraft.CraftMaterials)
+        {
+            if (!inventory.TryConsume(Owner.Inventory.Bag, material.ItemId, material.Amount))
+            {
+                RejectCraft();
+                return;
+            }
+        }
+
         foreach (var product in CurrentCraft.CraftProducts)
         {
             // Determine if this product should inherit grade
@@ -394,6 +396,13 @@ public class CharacterCraft(Character owner)
             else if (!inventory.TryGrant(Owner.Inventory.Bag, product.ItemId, product.Amount, out _, gradeToUse, crafterId,
                          stackGradeOverride: stackGradeOverride, crafterWorldId: crafterWorldId))
             {
+                if (inventory.FullContainer == Owner.Inventory.Bag)
+                {
+                    localMutation?.Dispose();
+                    Owner.SendErrorMessage(ErrorMessageType.CraftCantActAnyMore, ErrorMessageType.NotEnoughSpace, 0, false);
+                    CraftOrCancel();
+                    return;
+                }
                 RejectCraft();
                 return;
             }
@@ -423,15 +432,6 @@ Owner.Achievements?.Increment(
                         true)
                 ]);
                 afterCommit.Add(RecordProduct);
-            }
-        }
-
-        foreach (var material in CurrentCraft.CraftMaterials)
-        {
-            if (!inventory.TryConsume(Owner.Inventory.Bag, material.ItemId, material.Amount))
-            {
-                RejectCraft();
-                return;
             }
         }
 
