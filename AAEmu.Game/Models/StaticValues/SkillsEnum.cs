@@ -8,6 +8,7 @@ public static class SkillsEnum
     public const uint UseAuctioneer = 12083;
     public const uint Blessing = 12084; // Priest recover exp
     public const uint Repair = 12086;
+    public const uint ExamineUselessLargeJar = 16855;
     public const uint ThreatenRedDragonEgg = 23150;
     public const uint RepairShip = 14913;
     public const uint UseStore = 12087;
