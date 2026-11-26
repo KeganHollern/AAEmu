@@ -33,6 +33,7 @@ internal sealed class QuestEscortPath(NpcAi ai, IReadOnlyList<AiPathPoint> point
                 _movement.AiPathPointsRemaining.Enqueue(points[i]);
             _returning = true;
             _stopped = false;
+            ai.SetQuestEscortWalking(this, true);
         }
         if (_movement.RunCurrentPath(delta))
             return false;
@@ -40,6 +41,7 @@ internal sealed class QuestEscortPath(NpcAi ai, IReadOnlyList<AiPathPoint> point
         {
             ai.Owner.StopMovement();
             _stopped = true;
+            ai.SetQuestEscortWalking(this, false);
         }
         return _returning;
     }

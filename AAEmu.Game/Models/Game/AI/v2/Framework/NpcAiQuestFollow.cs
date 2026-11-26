@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.AI.Utils;
 using AAEmu.Game.Models.Game.AI.v2.Controls;
 using AAEmu.Game.Models.Game.Char;
@@ -18,6 +19,28 @@ public abstract partial class NpcAi
     private int _questFollowRestorePending;
 
     private volatile QuestEscortPath _questEscortPath;
+    private volatile bool _questEscortWalking;
+    internal bool IsWalkingQuestEscort => _questEscortWalking;
+
+    internal void SetQuestEscortWalking(QuestEscortPath path, bool walking)
+    {
+        lock (_questFollowSyncRoot)
+        {
+            if (!ReferenceEquals(path, _questEscortPath) || _questEscortWalking == walking)
+                return;
+            _questEscortWalking = walking;
+            if (Owner is { IsDead: false, Despawned: false, CombatRetired: false, Hp: > 0 } npc && npc.AnimActionId != 0)
+                npc.BroadcastPacket(new SCUnitModelPostureChangedPacket(npc, npc.AnimActionId, !walking), false);
+        }
+    }
+
+    private void ClearQuestEscortPath()
+    {
+        if (_questEscortPath != null)
+            SetQuestEscortWalking(_questEscortPath, false);
+        _questEscortPath = null;
+    }
+
 
     internal bool TryStartQuestFollow(object owner, Unit target, Action onLost, IReadOnlyList<AiPathPoint> path = null)
     {
@@ -39,6 +62,7 @@ public abstract partial class NpcAi
                         Math.Max(Owner.Template.Scale, AiPathHandler.MinWaypointArrivalRadius)))
                     return false;
                 _questEscortPath = new QuestEscortPath(this, path);
+                SetQuestEscortWalking(_questEscortPath, true);
             }
             _questFollowOwner = owner;
             _questFollowTarget = target;
@@ -141,7 +165,7 @@ public abstract partial class NpcAi
         Action onLost;
         lock (_questFollowSyncRoot)
         {
-            _questEscortPath = null;
+            ClearQuestEscortPath();
             if (_questFollowOwner == null)
                 return;
             onLost = _questFollowLost;
@@ -171,7 +195,7 @@ public abstract partial class NpcAi
                 ReferenceEquals(npc.Ai, this))
                 _questEscortPath.RequestReturn();
             else
-                _questEscortPath = null;
+                ClearQuestEscortPath();
         }
         _questFollowOwner = null;
         _questFollowTarget = null;
@@ -195,7 +219,7 @@ public abstract partial class NpcAi
                 if (!ReferenceEquals(path, _questEscortPath))
                     return true;
                 IdlePosition = _questFollowIdlePosition;
-                _questEscortPath = null;
+                ClearQuestEscortPath();
                 GoToIdle();
             }
         }

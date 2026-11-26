@@ -2,7 +2,10 @@
 using System.Numerics;
 using System.Reflection;
 
+using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
+using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
@@ -196,12 +199,15 @@ public sealed partial class QuestFollowUnitTests
         var first = CreateActiveQuest(reindeer: true);
         var second = CreateActiveQuest(reindeer: true, questId: 1040);
         var follower = CreateNpc(81, 4729);
+        follower.Template.NpcPostureSets.Add(new NpcPosture { AnimActionId = 25 });
         Talk(first, follower);
         Talk(second, follower);
         _manager.DoQueuedEvaluations();
         second.ReleaseNpcControl();
 
         await Assert.That(follower.Ai.AiFollowUnitObj).IsSameReferenceAs(_owner);
+        await AssertInitialPosture(follower, true);
+        await Assert.That(follower.PostureChanges).IsEmpty();
         await Assert.That(follower.Ai.IsQuestFollowOwner(first)).IsTrue();
         await Assert.That(follower.Ai.IsQuestFollowOwner(second)).IsFalse();
     }
@@ -562,6 +568,22 @@ public sealed partial class QuestFollowUnitTests
     private sealed class ProbeNpc : MovementProbeNpc
     {
         public List<uint> Skills { get; } = [];
+        public List<(uint Action, bool Active)> PostureChanges { get; } = [];
+
+        public override void BroadcastPacket(GamePacket packet, bool self)
+        {
+            if (packet is SCUnitModelPostureChangedPacket)
+            {
+                var data = packet.Write(new PacketStream());
+                data.Rollback();
+                data.ReadBc();
+                data.ReadByte();
+                data.ReadBoolean();
+                PostureChanges.Add((data.ReadUInt32(), data.ReadBoolean()));
+            }
+            base.BroadcastPacket(packet, self);
+        }
+
         public override SkillResult UseSkill(uint skillId, IUnit target)
         {
             Skills.Add(skillId);
