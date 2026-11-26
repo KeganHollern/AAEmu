@@ -38,9 +38,14 @@ public partial class Skill
             if (!selectedByUse)
             {
                 var action = DoodadManager.Instance.GetFunc(doodad.FuncGroupId, Id);
-                // GetFunc can return a skill-less fallback. Only the original use chains can reserve through it.
-                if (action?.SkillId != Id && action?.FuncType is not
-                        (nameof(DoodadFuncUse) or nameof(DoodadFuncOpenPaper) or nameof(DoodadFuncRemoveItem)))
+                var reservesCast = action?.FuncType switch
+                {
+                    nameof(DoodadFuncUse) or nameof(DoodadFuncOpenPaper) or nameof(DoodadFuncRemoveItem) => true,
+                    // GetFunc can return a skill-less fallback. These actions must select this skill explicitly.
+                    nameof(DoodadFuncBinding) or nameof(DoodadFuncBuff) or nameof(DoodadFuncRecoverItem) => action.SkillId == Id,
+                    _ => false
+                };
+                if (!reservesCast)
                     return true;
             }
             if (GetCastTime(caster) <= 0)
