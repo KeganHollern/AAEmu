@@ -198,7 +198,8 @@ public sealed class SecurityInstrumentationTests
     {
         var metrics = new GameSecurityMetrics();
         var original = LogManager.Configuration;
-        using var target = CaptureEvents(LogLevel.Info);
+        using var target = CaptureEvents(LogLevel.Info,
+            "${logger}|${event-properties:item=EventName}|${event-properties:item=RequestId}|${message}|${all-event-properties}");
         try
         {
             var store = new AuditStore();
@@ -210,6 +211,9 @@ public sealed class SecurityInstrumentationTests
                 complete("failed", "duplicate");
             }
 
+            // A connection close emits another Info event from the same security logger.
+            await Task.Run(() => new GameConnection(new Session(7), securityMetrics: metrics).MarkClosed());
+
             await Assert.That(Count(metrics, "aaemu_game_gm_commands_total", "source=\"game_chat\",outcome=\"completed\""))
                 .IsEqualTo(1L);
             await Assert.That(Count(metrics, "aaemu_game_gm_commands_total", "source=\"game_chat\",outcome=\"failed\""))
@@ -217,8 +221,13 @@ public sealed class SecurityInstrumentationTests
             await Assert.That(store.Completions).IsEqualTo(1);
             await Assert.That(store.Entry.Arguments.Single()).IsEqualTo("private-argument");
             await Assert.That(store.Entry.Detail).IsEqualTo("private-detail");
-            await Assert.That(target.Logs.Count).IsEqualTo(1);
-            await Assert.That(target.Logs.Single()).DoesNotContain("private-");
+            var lines = target.Logs.ToArray();
+            var completion = $"{typeof(GameSecurityTelemetry).FullName}|staff.command|{entry.RequestId}|";
+            await Assert.That(lines.Count(line => line.StartsWith(completion, StringComparison.Ordinal))).IsEqualTo(1);
+            var logged = string.Join('\n', lines);
+            await Assert.That(logged).DoesNotContain("private-command");
+            await Assert.That(logged).DoesNotContain("private-argument");
+            await Assert.That(logged).DoesNotContain("private-detail");
         }
         finally { LogManager.Configuration = original; }
     }
@@ -243,9 +252,9 @@ public sealed class SecurityInstrumentationTests
         return long.Parse(metrics.Collect().Split('\n').Single(line => line.StartsWith(prefix, StringComparison.Ordinal))[prefix.Length..]);
     }
 
-    private static MemoryTarget CaptureEvents(LogLevel level = null)
+    private static MemoryTarget CaptureEvents(LogLevel level = null, string layout = "${message}")
     {
-        var target = new MemoryTarget { Layout = "${message}" };
+        var target = new MemoryTarget { Layout = layout };
         var config = new LoggingConfiguration();
         config.AddRule(level ?? LogLevel.Warn, LogLevel.Fatal, target);
         LogManager.Configuration = config;
