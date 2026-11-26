@@ -36,7 +36,7 @@ public partial class Skill
         lock (SaveManager.PersistenceSyncRoot)
         {
             if (!selectedByUse && DoodadManager.Instance.GetFunc(doodad.FuncGroupId, Id)?.FuncType is not
-                    (nameof(DoodadFuncUse) or nameof(DoodadFuncOpenPaper) or nameof(DoodadFuncRemoveItem)))
+                    (nameof(DoodadFuncUse) or nameof(DoodadFuncOpenPaper) or nameof(DoodadFuncRemoveItem) or nameof(DoodadFuncBinding)))
                 return true;
             if (GetCastTime(caster) <= 0)
                 return true;
