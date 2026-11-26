@@ -482,41 +482,22 @@ public sealed class ArenaScoreTests
             }
         }
         var end = _game.EndGame();
-        var members = (Dictionary<Character, InstantGameTeamMember>)typeof(InstantGame)
-            .GetField("_members", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_game)!;
-        var expectedAwards = new Dictionary<uint, int>();
-        foreach (var member in members.Values)
+        var receipt = _matchResults.Single().Awards.ToDictionary(award => award.CharacterId, award => award.Amount);
+        var display = ReadFinalAwards();
+        await Assert.That(receipt.Count).IsEqualTo(_red.Count + _blue.Count);
+        await Assert.That(display.Count).IsEqualTo(receipt.Count);
+        foreach (var player in _red.Concat(_blue))
         {
-            var expected = field == 11 ? 5 : 10;
-            if (!draw && _red.Contains(member.Character))
-                expected = field == 11 ? 20 : 50;
-            if (field == 7 && member.Kills > 0)
-                expected += 10;
-            await Assert.That(member.Bonus).IsEqualTo(expected);
-            expectedAwards.Add(member.Character.Id, expected);
-        }
-        var receipt = _matchResults.Single();
-        await Assert.That(receipt.Awards.ToDictionary(award => award.CharacterId, award => award.Amount)).IsEquivalentTo(expectedAwards);
-        var packet = Packets(SCOffsets.SCInstantGameEndPacket).Single();
-        packet.ReadByte();
-        for (var side = 0; side < 2; side++)
-        {
-            packet.ReadByte();
-            packet.ReadUInt32();
-            packet.ReadInt32();
-            packet.ReadInt16();
-            packet.ReadInt16();
-            var count = packet.ReadByte();
-            for (var i = 0; i < count; i++)
+            var won = !draw && _red.Contains(player);
+            var honor = field == 11 ? (won ? 20 : 5) : (won ? 50 : 10);
+            var badges = draw ? 0u : won ? 1u : 16u;
+            if (!draw && field == 7 && (player == _red[0] || player == _red[1] || player == _blue[0]))
             {
-                var id = packet.ReadUInt32();
-                packet.ReadString();
-                packet.ReadInt32();
-                await Assert.That(packet.ReadInt32()).IsEqualTo(expectedAwards[id]);
-                packet.ReadUInt32();
-                for (var j = 0; j < 4; j++)
-                    packet.ReadUInt16();
+                honor += 10;
+                badges |= 4u;
             }
+            await Assert.That(receipt[player.Id]).IsEqualTo(honor);
+            await Assert.That(display[player.Id]).IsEqualTo((honor, badges));
         }
         await _game.EndGame();
         await Assert.That(_matchResults.Count).IsEqualTo(1);
@@ -548,8 +529,39 @@ public sealed class ArenaScoreTests
         await Assert.That(awards[_blue[1].Id]).IsEqualTo(20);
         await Assert.That(awards[_red[1].Id]).IsEqualTo(10);
         await Assert.That(awards.Values.Sum()).IsEqualTo(140);
+        var display = ReadFinalAwards();
+        await Assert.That(display[_red[0].Id]).IsEqualTo((30, 12u));
+        await Assert.That(display[_blue[0].Id]).IsEqualTo((20, 4u));
+        await Assert.That(display[_blue[1].Id]).IsEqualTo((20, 8u));
+        await Assert.That(display[_red[1].Id]).IsEqualTo((10, 0u));
         _clock.Advance(TimeSpan.FromMinutes(1));
         await end;
+    }
+
+    private Dictionary<uint, (int Honor, uint Badges)> ReadFinalAwards()
+    {
+        var display = new Dictionary<uint, (int Honor, uint Badges)>();
+        var packet = Packets(SCOffsets.SCInstantGameEndPacket).Single();
+        packet.ReadByte();
+        for (var side = 0; side < 2; side++)
+        {
+            packet.ReadByte();
+            packet.ReadUInt32();
+            packet.ReadInt32();
+            packet.ReadInt16();
+            packet.ReadInt16();
+            var count = packet.ReadByte();
+            for (var i = 0; i < count; i++)
+            {
+                var id = packet.ReadUInt32();
+                packet.ReadString();
+                packet.ReadInt32();
+                display.Add(id, (packet.ReadInt32(), packet.ReadUInt32()));
+                for (var j = 0; j < 4; j++)
+                    packet.ReadUInt16();
+            }
+        }
+        return display;
     }
 
     private void Start(uint id, bool finishCountdown = true)
@@ -633,7 +645,7 @@ public sealed class ArenaScoreTests
             personalScores += memberScore;
             stream.ReadInt32(); // The completed match tests check each recipient's Honor.
             var expectedBadge = state switch { 2 => 1u, 1 => 16u, _ => 0u };
-            await Assert.That(stream.ReadUInt32()).IsEqualTo(expectedBadge);
+            await Assert.That(stream.ReadUInt32() & (1u | 16u)).IsEqualTo(expectedBadge);
             stream.ReadUInt16();
             stream.ReadUInt16();
             var assists = stream.ReadUInt16();

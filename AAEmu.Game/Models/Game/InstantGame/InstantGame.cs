@@ -400,13 +400,8 @@ public partial class InstantGame
         var topPlayerKills = members.Max(member => member.Kills);
         var topNpcKills = members.Max(member => member.EnemyNpcKills);
         foreach (var member in members)
-        {
-            member.Bonus = member.Corps.State == VictoryState.Win ? rule.WinnerHonor : rule.LoserHonor;
-            if (topPlayerKills > 0 && member.Kills == topPlayerKills)
-                member.Bonus += rule.TopPlayerKillsHonor;
-            if (topNpcKills > 0 && member.EnemyNpcKills == topNpcKills)
-                member.Bonus += rule.TopNpcKillsHonor;
-        }
+            member.SetMatchHonor(rule, topPlayerKills > 0 && member.Kills == topPlayerKills,
+                topNpcKills > 0 && member.EnemyNpcKills == topNpcKills);
         var awards = members.Select(member => new ArenaHonorAward(member.Character.Id, member.Bonus)).ToArray();
         return new ArenaMatchResult(id, _battlefield.Id, rank, awards);
     }

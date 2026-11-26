@@ -7,6 +7,8 @@ namespace AAEmu.Game.Models.Game.InstantGame;
 public class InstantGameTeamMember : PacketMarshaler
 {
     private const uint VictoryBadge = 1u << 0;
+    private const uint TopPlayerKillsBadge = 1u << 2;
+    private const uint TopNpcKillsBadge = 1u << 3;
     private const uint DefeatBadge = 1u << 4;
 
     public Character Character { get; set; }
@@ -20,6 +22,22 @@ public class InstantGameTeamMember : PacketMarshaler
     public ushort Deaths { get; set; }
 
     public InstantGameTeamResult Corps { get; set; }
+
+    internal void SetMatchHonor(GameRuleSet rule, bool leadsPlayerKills, bool leadsNpcKills)
+    {
+        Bonus = Corps.State == VictoryState.Win ? rule.WinnerHonor : rule.LoserHonor;
+        BonusSet &= ~(TopPlayerKillsBadge | TopNpcKillsBadge);
+        if (leadsPlayerKills && rule.TopPlayerKillsHonor > 0)
+        {
+            Bonus += rule.TopPlayerKillsHonor;
+            BonusSet |= TopPlayerKillsBadge;
+        }
+        if (leadsNpcKills && rule.TopNpcKillsHonor > 0)
+        {
+            Bonus += rule.TopNpcKillsHonor;
+            BonusSet |= TopNpcKillsBadge;
+        }
+    }
 
     public override PacketStream Write(PacketStream stream)
     {
