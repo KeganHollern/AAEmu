@@ -21,7 +21,7 @@ using AAEmu.Game.Models.Game.World;
 namespace AAEmu.UnitTests.Game.Models.Game.Units;
 
 [NotInParallel]
-public sealed class FallDamageTests
+public sealed partial class FallDamageTests
 {
     private ClientSource _stockSource;
     private WorldConfig _previousConfig;

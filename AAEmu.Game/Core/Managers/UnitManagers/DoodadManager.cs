@@ -2652,6 +2652,7 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
                         template.FactionId = (FactionsEnum)reader.GetUInt32("faction_id");
                         template.GrowthTime = reader.GetInt32("growth_time", 0);
                         template.DespawnOnCollision = reader.GetBoolean("despawn_on_collision", true);
+                        template.LoadModelFromWorld = reader.GetBoolean("load_model_from_world", false);
                         template.NoCollision = reader.GetBoolean("no_collision", true);
                         template.RestrictZoneId = reader.IsDBNull("restrict_zone_id")
                             ? 0

@@ -559,7 +559,7 @@ public sealed partial class CryGeometryResolver(Func<string, System.IO.Stream> o
             count++;
         return int.TryParse(text[..count], NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) ? index : 0;
     }
-    private static string AssetPath(string path) => Normalize(path).StartsWith("game/", StringComparison.Ordinal)
+    internal static string AssetPath(string path) => Normalize(path).StartsWith("game/", StringComparison.Ordinal)
         ? Normalize(path) : "game/" + Normalize(path);
 
     private sealed record Chunk(uint Kind, int Version, int Body, int Size);
