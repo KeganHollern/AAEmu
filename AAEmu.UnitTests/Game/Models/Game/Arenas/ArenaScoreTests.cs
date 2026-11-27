@@ -258,17 +258,22 @@ public sealed class ArenaScoreTests
         _world.Template.CellY = 1;
         _world.Template.ZoneKeyByRegions = new uint[32, 16];
         _world.Regions = new Region[32, 16];
+        for (var i = 0; i < _world.Regions.GetLength(0); i++)
+            for (var j = 0; j < _world.Regions.GetLength(1); j++)
+                _world.Regions[i, j] = new Region(_world, i, j, field.ZoneKey);
         Install(new SusManager(WorldManager.Instance));
+        var otherView = new TransferVisibilityTests.RecordingSession();
         foreach (var player in new[] { victim, killer })
         {
             player.Transform.InstanceId = _world.Id;
+            player.IsVisible = true;
             player.Mates = new CharacterMates(player);
             player.VisualOptions = new() { Stp = new byte[6] };
             player.Equipment.ContainerSize = 28;
             player.Appellations = new CharacterAppellations(player);
             player.Skills = new CharacterSkills(player);
             player.Abilities = new CharacterAbilities(player);
-            player.Connection = new GameConnection(_observer) { ActiveChar = player };
+            player.Connection = new GameConnection(player == victim ? _observer : otherView) { ActiveChar = player };
             _world.AddObject(player);
             var site = player == victim ? midpoint : attack;
             player.Transform.Local.SetPosition(site);
@@ -284,15 +289,18 @@ public sealed class ArenaScoreTests
 
         await Assert.That(victim.Transform.World.Position).IsEqualTo(arrival);
         await Assert.That(victim.Region).IsSameReferenceAs(_world.GetRegionByPos(arrival));
-        var notice = Packets(SCOffsets.SCCharacterResurrectedPacket, 8).Single();
-        await Assert.That(notice.ReadBc()).IsEqualTo(victim.ObjId);
-        var (x, y, z) = notice.ReadPosition();
-        await Assert.That(Vector3.Distance(new(x, y, z), arrival)).IsLessThan(.001f);
+        foreach (var view in new[] { _observer, otherView })
+        {
+            var notice = Packets(SCOffsets.SCCharacterResurrectedPacket, 8, view).Single();
+            await Assert.That(notice.ReadBc()).IsEqualTo(victim.ObjId);
+            var (x, y, z) = notice.ReadPosition();
+            await Assert.That(Vector3.Distance(new(x, y, z), arrival)).IsLessThan(.001f);
+        }
 
         var killerAt = fieldId == 11 ? killerArrival : attack;
         await Assert.That(killer.Transform.World.Position).IsEqualTo(killerAt);
         await Assert.That(killer.Region).IsSameReferenceAs(_world.GetRegionByPos(killerAt));
-        var teleports = Packets(SCOffsets.SCTeleportUnitPacket, 8);
+        var teleports = Packets(SCOffsets.SCTeleportUnitPacket, 8, otherView);
         await Assert.That(teleports.Length).IsEqualTo(fieldId == 11 ? 1 : 0);
         if (fieldId == 11)
         {
@@ -300,6 +308,15 @@ public sealed class ArenaScoreTests
             teleports[0].ReadInt16();
             var (kx, ky, kz) = teleports[0].ReadPosition();
             await Assert.That(Vector3.Distance(new(kx, ky, kz), killerArrival)).IsLessThan(.001f);
+            // The stock Gladiator spawns are outside each other's visible regions.
+            await Assert.That(RemovedFromView(_observer, killer.ObjId)).IsTrue();
+            await Assert.That(RemovedFromView(otherView, victim.ObjId)).IsTrue();
+        }
+        else
+        {
+            // Both Drill Camp spawns remain visible from the fight at the midpoint.
+            await Assert.That(RemovedFromView(_observer, killer.ObjId)).IsFalse();
+            await Assert.That(RemovedFromView(otherView, victim.ObjId)).IsFalse();
         }
 
         foreach (var player in new[] { victim, killer })
@@ -734,7 +751,19 @@ public sealed class ArenaScoreTests
         victim.ReduceCurrentHp(killer, 1, KillReason.PvpBattleField);
     }
 
-    private PacketStream[] Packets(ushort opcode, int position = 16) => _observer.Packets
+    private bool RemovedFromView(TransferVisibilityTests.RecordingSession view, uint id)
+    {
+        foreach (var removal in Packets(SCOffsets.SCUnitsRemovedPacket, 8, view))
+        {
+            var count = removal.ReadUInt16();
+            for (var i = 0; i < count; i++)
+                if (removal.ReadBc() == id)
+                    return true;
+        }
+        return false;
+    }
+
+    private PacketStream[] Packets(ushort opcode, int position = 16, TransferVisibilityTests.RecordingSession view = null) => (view ?? _observer).Packets
         .Where(bytes => bytes.Length >= 8 && BitConverter.ToUInt16(bytes, 6) == opcode)
         .Select(bytes => new PacketStream(bytes) { Pos = position }).ToArray();
 
@@ -779,15 +808,15 @@ public sealed class ArenaScoreTests
         await Assert.That(personalScores).IsEqualTo(score);
     }
 
-    private sealed class ArenaPlayer : CharacterMock
+    private sealed class ArenaPlayer() : Character(new UnitCustomModelParams())
     {
         public override int MaxHp => 100;
         public override int MaxMp => 100;
 
         public override void BroadcastPacket(GamePacket packet, bool self)
         {
-            if (self && packet is SCCharacterResurrectedPacket)
-                SendPacket(packet);
+            if (Region != null)
+                base.BroadcastPacket(packet, self);
         }
     }
 
