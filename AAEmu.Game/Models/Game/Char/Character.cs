@@ -2567,6 +2567,8 @@ public partial class Character : Unit, ICharacter
             command.CommandText = "SELECT * FROM characters WHERE `id` = @id AND `account_id` = @account_id and `deleted`=0";
             command.Parameters.AddWithValue("@id", characterId);
             command.Parameters.AddWithValue("@account_id", accountId);
+            // The binary result retains the stored FLOAT coordinates.
+            command.Prepare();
             using (var reader = command.ExecuteReader())
             {
                 if (reader.Read())
@@ -2694,6 +2696,8 @@ public partial class Character : Unit, ICharacter
             command.Connection = connection;
             command.CommandText = "SELECT * FROM characters WHERE `id` = @id and `deleted`=0";
             command.Parameters.AddWithValue("@id", characterId);
+            // The binary result retains the stored FLOAT coordinates.
+            command.Prepare();
             using (var reader = command.ExecuteReader())
             {
                 if (reader.Read())

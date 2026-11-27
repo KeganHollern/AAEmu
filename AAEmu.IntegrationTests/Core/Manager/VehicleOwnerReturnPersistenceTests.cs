@@ -1,19 +1,16 @@
 using System.Numerics;
-using System.Reflection;
 using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
-using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
-using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Slaves;
@@ -21,7 +18,6 @@ using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Interactions;
 using AAEmu.Game.Models.StaticValues;
-using Moq;
 using Xunit;
 
 namespace AAEmu.IntegrationTests.Core.Manager;
@@ -143,29 +139,6 @@ public sealed partial class PlayerMailSendPersistenceTests
             Assert.Equal(pack.UccId, restoredPack.UccId);
             Assert.Equal(SlotType.Equipment, restoredPack.SlotType);
             Assert.Equal((int)EquipmentItemSlot.Backpack, restoredPack.Slot);
-        }
-
-        private static void ConfigureCharacterList(ShipyardGraph fixture)
-        {
-            var formulas = new FormulaManager();
-            var constant = new UnitFormula();
-            typeof(Formula).GetProperty("Expression", BindingFlags.NonPublic | BindingFlags.Instance)!
-                .SetValue(constant, (Func<Dictionary<string, double>, double>)(_ => 100));
-            SetField(formulas, "_unitFormulas", new Dictionary<FormulaOwnerType, Dictionary<UnitFormulaKind, UnitFormula>>
-            { [FormulaOwnerType.Character] = Enum.GetValues<UnitFormulaKind>().ToDictionary(kind => kind, _ => constant) });
-            fixture.Replace(formulas);
-            fixture.Replace(new AccountManager(null, null, TimeProvider.System));
-            var experience = new ExperienceManager();
-            var levels = new Mock<IExperienceLevelTemplateLoader>();
-            levels.Setup(loader => loader.Load()).Returns([new ExperienceLevelTemplate { Level = 1 }]);
-            experience.Load(levels.Object, 1, 1);
-            fixture.Replace(experience);
-            fixture.Replace(new ExpeditionManager(null, null, null, null));
-            fixture.Replace(new CharacterManager(WorldManager.Instance, null, null, null, null, null, null, null, null, null, null));
-            fixture.Replace(new HousingManager(null, null, null, null, null, null, null, null, null, null, null, null, null, null));
-            var itemData = new ItemGameData();
-            SetField(itemData, "_itemGradeBuffs", new Dictionary<uint, Dictionary<byte, uint>>());
-            fixture.Replace(itemData);
         }
     }
 }
