@@ -23,6 +23,7 @@ public sealed partial class SkillLaborTests
     [Arguments("no-cart")]
     [Arguments("moved-during-cast")]
     [Arguments("blocked-at-finish")]
+    [Arguments("blocked-at-effect")]
     [Arguments("recalled-during-cast")]
     public async Task RidersEscape_MovesOnlyTheOwnersOriginalCartAtAValidDestination(string action)
     {
@@ -54,7 +55,8 @@ public sealed partial class SkillLaborTests
         world.SlaveManager.PlacementGeometry = (_, _, _) =>
         {
             geometryCalls++;
-            var blocked = action == "blocked" || action == "blocked-at-finish" && geometryCalls == 2;
+            var blocked = action == "blocked" || action == "blocked-at-finish" && geometryCalls == 2 ||
+                action == "blocked-at-effect" && geometryCalls == 3;
             return blocked ? ErrorMessageType.SlaveSpawnErrorInvalidArea : ErrorMessageType.NoErrorMessage;
         };
         var template = new SkillTemplate
