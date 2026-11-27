@@ -17,18 +17,29 @@ public partial class AiGeoDataManager
     }
     private readonly record struct InclinedFace(LevelFace Face, Vector2 Gradient);
     private sealed record InclinedGroup(CryBounds Bounds, InclinedFace[] Faces);
-    private readonly record struct LevelCylinderCap(Vector3 Center, Vector3 LocalX, Vector3 LocalY, float RadiusSquared)
+    private readonly record struct CylinderCap(Vector3 Center, Vector3 LocalX, Vector3 LocalY, float RadiusSquared, Vector2 Gradient)
     {
-        public bool Touches(Vector3 foot)
+        public bool Touches(Vector3 foot, Vector2 rounding)
         {
             var delta = foot - Center;
-            if (MathF.Abs(delta.Z) > FallMovement.PositionTolerance)
+            var radius = delta.X * LocalX + delta.Y * LocalY;
+            if (!(radius.LengthSquared() <= RadiusSquared))
                 return false;
-            // Transform the horizontal displacement into shape coordinates, including nonuniform scale.
-            return (delta.X * LocalX + delta.Y * LocalY).LengthSquared() <= RadiusSquared;
+            var dz = delta.Z - (delta.X * Gradient.X + delta.Y * Gradient.Y);
+            if (MathF.Abs(dz) <= FallMovement.PositionTolerance)
+                return true;
+            if (Gradient == Vector2.Zero || !RoundingLine.TryCreate(Gradient, rounding, dz, out var line))
+                return false;
+
+            // The horizontal footprint of the disk is an ellipse. The closest point on the
+            // allowed height line, in model coordinates, must still lie inside the disk.
+            var origin = radius + (float)line.X * LocalX + (float)line.Y * LocalY;
+            var direction = (float)line.DirectionX * LocalX + (float)line.DirectionY * LocalY;
+            var parameter = Math.Clamp(-(double)Vector3.Dot(origin, direction) / direction.LengthSquared(), line.Min, line.Max);
+            return (origin + (float)parameter * direction).LengthSquared() <= RadiusSquared;
         }
     }
-    private sealed record FallFaces(LevelFace[] Level, InclinedGroup[] Inclined, LevelCylinderCap[] Caps);
+    private sealed record FallFaces(LevelFace[] Level, InclinedGroup[] Inclined, CylinderCap[] Caps);
 
     // All r208022 playable models use a minimum fall angle of 50 degrees.
     private static readonly float PlayerFallNormalZ = MathF.Cos(50f * MathF.PI / 180f);
@@ -88,12 +99,12 @@ public partial class AiGeoDataManager
     {
         if (TouchesLevelFace(faces.Level, local))
             return true;
+        var horizontalRounding = playerInclines ? new Vector2(TruncatedSpan(foot.X), TruncatedSpan(foot.Y)) : Vector2.Zero;
         foreach (ref readonly var cap in faces.Caps.AsSpan())
-            if (cap.Touches(local))
+            if ((playerInclines || cap.Gradient == Vector2.Zero) && cap.Touches(local, horizontalRounding))
                 return true;
         if (!playerInclines)
             return false;
-        var horizontalRounding = new Vector2(TruncatedSpan(foot.X), TruncatedSpan(foot.Y));
         foreach (var group in faces.Inclined)
         {
             if (!group.Bounds.Contains(local))
@@ -122,48 +133,62 @@ public partial class AiGeoDataManager
 
     private static bool TouchesIncline(in InclinedFace slope, Vector3 local, Vector2 rounding, float dz)
     {
-        var missing = MathF.Abs(dz) - FallMovement.PositionTolerance;
-        if (missing <= 0)
+        if (MathF.Abs(dz) <= FallMovement.PositionTolerance)
             return slope.Face.Covers(local);
-
-        // The possible X/Y values form a rectangle. The required height cuts that rectangle
-        // along a line. Only a point on that line inside this triangle can explain the gap.
-        var gradient = slope.Gradient;
-        var dx = dz * gradient.X > 0 ? rounding.X : 0;
-        var dy = dz * gradient.Y > 0 ? rounding.Y : 0;
-        var available = Math.Abs((double)gradient.X * dx + (double)gradient.Y * dy);
-        if (available < missing || !slope.Face.Covers(local))
+        if (!RoundingLine.TryCreate(slope.Gradient, rounding, dz, out var line) || !slope.Face.Covers(local))
             return false;
-        var x = dx * (missing / available);
-        var y = dy * (missing / available);
-        var directionX = -(double)gradient.Y;
-        var directionY = (double)gradient.X;
-        var min = double.NegativeInfinity;
-        var max = double.PositiveInfinity;
-        return Clip(x, directionX) && Clip(rounding.X - x, -directionX) &&
-               Clip(y, directionY) && Clip(rounding.Y - y, -directionY) &&
-               InsideEdge(slope.Face.A, slope.Face.B) && InsideEdge(slope.Face.B, slope.Face.C) &&
+        return InsideEdge(slope.Face.A, slope.Face.B) && InsideEdge(slope.Face.B, slope.Face.C) &&
                InsideEdge(slope.Face.C, slope.Face.A);
 
         bool InsideEdge(Vector3 a, Vector3 b)
         {
             var edgeX = (double)b.X - a.X;
             var edgeY = (double)b.Y - a.Y;
-            return Clip(edgeX * (local.Y - (double)a.Y + y) - edgeY * (local.X - (double)a.X + x),
-                edgeX * directionY - edgeY * directionX);
+            return line.Clip(edgeX * (local.Y - (double)a.Y + line.Y) - edgeY * (local.X - (double)a.X + line.X),
+                edgeX * line.DirectionY - edgeY * line.DirectionX);
+        }
+    }
+
+    // The possible X/Y positions form a rectangle. The missing height cuts that rectangle
+    // along a line. Both triangles and disks must cover some point on the same line.
+    private struct RoundingLine(double x, double y, double directionX, double directionY)
+    {
+        public double X { get; } = x;
+        public double Y { get; } = y;
+        public double DirectionX { get; } = directionX;
+        public double DirectionY { get; } = directionY;
+        public double Min { get; private set; } = double.NegativeInfinity;
+        public double Max { get; private set; } = double.PositiveInfinity;
+
+        public static bool TryCreate(Vector2 gradient, Vector2 rounding, float dz, out RoundingLine line)
+        {
+            var missing = MathF.Abs(dz) - FallMovement.PositionTolerance;
+            var dx = dz * gradient.X > 0 ? rounding.X : 0;
+            var dy = dz * gradient.Y > 0 ? rounding.Y : 0;
+            var available = Math.Abs((double)gradient.X * dx + (double)gradient.Y * dy);
+            if (available < missing)
+            {
+                line = default;
+                return false;
+            }
+            var x = dx * (missing / available);
+            var y = dy * (missing / available);
+            line = new RoundingLine(x, y, -gradient.Y, gradient.X);
+            return line.Clip(x, line.DirectionX) && line.Clip(rounding.X - x, -line.DirectionX) &&
+                   line.Clip(y, line.DirectionY) && line.Clip(rounding.Y - y, -line.DirectionY);
         }
 
         // Keep the interval where value + t * rate >= 0.
-        bool Clip(double value, double rate)
+        public bool Clip(double value, double rate)
         {
             if (rate == 0)
                 return value >= 0;
             var boundary = -value / rate;
             if (rate > 0)
-                min = Math.Max(min, boundary);
+                Min = Math.Max(Min, boundary);
             else
-                max = Math.Min(max, boundary);
-            return min <= max;
+                Max = Math.Min(Max, boundary);
+            return Min <= Max;
         }
     }
 
@@ -201,13 +226,13 @@ public partial class AiGeoDataManager
     private static FallFaces ReadFallFaces(Matrix4x4 placement, CryGeometryAsset asset, bool includeBrushPrimitives)
     {
         var inclined = new List<InclinedFace>();
-        var caps = includeBrushPrimitives ? new List<LevelCylinderCap>() : null;
+        var caps = includeBrushPrimitives ? new List<CylinderCap>() : null;
         var level = ReadLevelFaces(placement, asset, inclined, caps);
         return new FallFaces(level, GroupInclines(inclined), caps?.ToArray() ?? []);
     }
 
     private static LevelFace[] ReadLevelFaces(Matrix4x4 placement, CryGeometryAsset asset,
-        List<InclinedFace> inclined = null, List<LevelCylinderCap> brushCaps = null)
+        List<InclinedFace> inclined = null, List<CylinderCap> brushCaps = null)
     {
         if (asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
             return [];
@@ -221,7 +246,7 @@ public partial class AiGeoDataManager
                 continue;
             var transform = part.Transform * offset;
             if (brushCaps != null && part.Shape is CryCylinder { IsCapsule: false } cylinder)
-                AddLevelCylinderCap(brushCaps, cylinder, transform);
+                AddCylinderCap(brushCaps, cylinder, transform);
             if (brushCaps != null && part.Shape is CryBox box && inclined != null)
             {
                 AddLevelBoxFace(result, box, transform);
@@ -256,17 +281,19 @@ public partial class AiGeoDataManager
         return result.ToArray();
     }
 
-    private static void AddLevelCylinderCap(List<LevelCylinderCap> caps, CryCylinder cylinder, Matrix4x4 transform)
+    private static void AddCylinderCap(List<CylinderCap> caps, CryCylinder cylinder, Matrix4x4 transform)
     {
         if (cylinder.Radius <= 0 || cylinder.HalfHeight <= 0 || !Matrix4x4.Invert(transform, out var inverse))
             return;
-        var normal = Vector3.TransformNormal(cylinder.Axis, Matrix4x4.Transpose(inverse));
-        if (normal.X != 0 || normal.Y != 0 || normal.Z == 0)
+        var normal = Vector3.Normalize(Vector3.TransformNormal(cylinder.Axis, Matrix4x4.Transpose(inverse)));
+        if (!(MathF.Abs(normal.Z) > PlayerFallNormalZ))
             return;
         var top = cylinder.Center + cylinder.Axis * MathF.CopySign(cylinder.HalfHeight, normal.Z);
-        caps.Add(new LevelCylinderCap(Vector3.Transform(top, transform),
-            Vector3.TransformNormal(Vector3.UnitX, inverse), Vector3.TransformNormal(Vector3.UnitY, inverse),
-            cylinder.Radius * cylinder.Radius));
+        var gradient = new Vector2(-normal.X / normal.Z, -normal.Y / normal.Z);
+        // Each horizontal metre also moves along the cap plane before conversion to model coordinates.
+        caps.Add(new CylinderCap(Vector3.Transform(top, transform),
+            Vector3.TransformNormal(new Vector3(1, 0, gradient.X), inverse),
+            Vector3.TransformNormal(new Vector3(0, 1, gradient.Y), inverse), cylinder.Radius * cylinder.Radius, gradient));
     }
 
     // For each pair of opposite box faces, only the upward face can support a player.
