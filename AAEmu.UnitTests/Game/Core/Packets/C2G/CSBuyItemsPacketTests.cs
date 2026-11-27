@@ -68,6 +68,7 @@ public sealed class CSBuyItemsPacketTests
         SetField(items, "_templates", new Dictionary<uint, ItemTemplate>
         {
             [23633] = new() { Id = 23633, MaxCount = 100 },
+            [19604] = new() { Id = 19604, MaxCount = 1, Price = 30000 },
             [21166] = new() { Id = 21166, MaxCount = 1, Price = 100000 },
             [23707] = new() { Id = 23707, MaxCount = 1, Price = 1000 },
             [23708] = new() { Id = 23708, MaxCount = 1, Price = 1000 },
@@ -104,7 +105,8 @@ public sealed class CSBuyItemsPacketTests
                 [383] = new DoodadFuncPurchase { Id = 383, ItemId = 23682, Count = 1 },
                 [388] = new DoodadFuncPurchase { Id = 388, ItemId = 26426, Count = 1 },
                 [25] = new DoodadFuncPurchase { Id = 25, ItemId = 16197, Count = 1 },
-                [134] = new DoodadFuncPurchase { Id = 134, ItemId = 21166, Count = 1, CoinItemId = 23633, CoinCount = 15 }
+                [134] = new DoodadFuncPurchase { Id = 134, ItemId = 21166, Count = 1, CoinItemId = 23633, CoinCount = 15 },
+                [251] = new DoodadFuncPurchase { Id = 251, ItemId = 19604, Count = 1, CoinItemId = 23633, CoinCount = 5 }
             },
             [nameof(DoodadFuncStoreUi)] = new() { [14] = _store }
         });
@@ -464,27 +466,93 @@ public sealed class CSBuyItemsPacketTests
         await AssertSingleError(ErrorMessageType.StoreInvalidItem);
     }
 
-    [Test]
-    public async Task CottageDesignDisplay_TakesFifteenGildaStarsThroughItsTokenConfirmation()
+    private void OpenCottageDesignDisplay()
     {
         _shop.TemplateId = 4729;
         _function.FuncId = 134;
         _function.FuncKey = 10262;
         _function.SkillId = 14569;
         _function.GroupId = 11691;
+        _function.NextPhase = 11692;
         _function.FuncType = nameof(DoodadFuncPurchase);
-        var byId = new Dictionary<uint, DoodadFunc> { [10262] = _function };
+        var byId = new Dictionary<uint, DoodadFunc> { [_function.FuncKey] = _function };
         SetField(DoodadManager.Instance, "_funcsById", byId);
-        var bag = _character.Inventory.Bag;
-        await Assert.That(bag.AcquireDefaultItem(ItemTaskType.DoodadInteraction, 23633, 15)).IsTrue();
+        Install(new TaskManager(null));
+        ConfigureDisplayTimer(4568);
+    }
 
+    private void ConfirmTokenDisplay()
+    {
         var confirmation = new PacketStream().WriteBc(_shop.ObjId).Write(_function.FuncKey);
         new CSBuyCoinItemPacket { Connection = _character.Connection }.Read(new PacketStream(confirmation.GetBytes()));
+    }
 
+    [Test]
+    public async Task CottageDesignDisplay_ChargesFifteenStarsAndReopensAfterThreeSeconds()
+    {
+        OpenCottageDesignDisplay();
+        var bag = _character.Inventory.Bag;
+        await Assert.That(bag.AcquireDefaultItem(ItemTaskType.DoodadInteraction, 23633, 30)).IsTrue();
+        var stars = bag.Items.Single();
+        var start = DateTime.UtcNow;
+        ConfirmTokenDisplay();
+        await Assert.That(_shop.FuncGroupId).IsEqualTo(11692U);
+        var timer = _shop.FuncTask;
+        await Assert.That(timer).IsTypeOf<DoodadFuncTimerTask>();
+        await Assert.That(timer.TriggerTime >= start.AddSeconds(3) && timer.TriggerTime <= DateTime.UtcNow.AddSeconds(3)).IsTrue();
+        await Assert.That(stars.Count).IsEqualTo(15);
+        var design = bag.Items.Single(item => item.TemplateId == 21166);
+        await Assert.That(design.Count).IsEqualTo(1);
+        ConfirmTokenDisplay();
+        await Assert.That(_shop.FuncTask).IsSameReferenceAs(timer);
+        await Assert.That(stars.Count).IsEqualTo(15);
+        await Assert.That(bag.Items.Single(item => item.TemplateId == 21166)).IsSameReferenceAs(design);
+        timer.Execute();
+        await Assert.That(_shop.FuncGroupId).IsEqualTo(11691U);
+        ConfirmTokenDisplay();
+        await Assert.That(bag.Items.All(item => item.TemplateId == 21166)).IsTrue();
+        await Assert.That(bag.Items.Count).IsEqualTo(2);
         await Assert.That(_character.Money).IsEqualTo(1000L);
-        var item = bag.Items.Single();
-        await Assert.That(item.TemplateId).IsEqualTo(21166U);
-        await Assert.That(item.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CottageDesignDisplay_OneMissingStarKeepsTheOriginalOfferAndItems()
+    {
+        OpenCottageDesignDisplay();
+        var bag = _character.Inventory.Bag;
+        await Assert.That(bag.AcquireDefaultItem(ItemTaskType.DoodadInteraction, 23633, 14)).IsTrue();
+        var stars = bag.Items.Single();
+        _session.Packets.Clear();
+        ConfirmTokenDisplay();
+        await Assert.That(bag.Items.Single()).IsSameReferenceAs(stars);
+        await Assert.That(stars.Count).IsEqualTo(14);
+        await Assert.That(_character.Money).IsEqualTo(1000L);
+        await Assert.That(_shop.FuncGroupId).IsEqualTo(11691U);
+        await Assert.That(_shop.FuncTask).IsNull();
+        await AssertSingleError(ErrorMessageType.NotEnoughItem);
+    }
+
+    [Test]
+    public async Task HeiferDisplay_TheFiveStarOfferStaysOpenWithoutAnAuthoredTimer()
+    {
+        _shop.TemplateId = 4904;
+        _function.FuncType = nameof(DoodadFuncPurchase);
+        (_function.GroupId, _function.FuncKey, _function.FuncId, _function.SkillId, _function.NextPhase) =
+            (12219, 10540, 251, 14569, 0);
+        var manager = DoodadManager.Instance;
+        SetField(manager, "_funcsById", new Dictionary<uint, DoodadFunc> { [_function.FuncKey] = _function });
+        SetField(manager, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>> { [_function.GroupId] = [_function] });
+        SetField(manager, "_phaseFuncs", new Dictionary<uint, List<DoodadPhaseFunc>>());
+        _shop.FuncGroupId = _function.GroupId;
+        var bag = _character.Inventory.Bag;
+        await Assert.That(bag.AcquireDefaultItem(ItemTaskType.DoodadInteraction, 23633, 10)).IsTrue();
+        ConfirmTokenDisplay();
+        ConfirmTokenDisplay();
+        await Assert.That(bag.Items.Count).IsEqualTo(2);
+        await Assert.That(bag.Items.All(item => item.TemplateId == 19604)).IsTrue();
+        await Assert.That(_shop.FuncGroupId).IsEqualTo(12219U);
+        await Assert.That(_shop.FuncTask).IsNull();
+        await Assert.That(_character.Money).IsEqualTo(1000L);
     }
 
     [Test]

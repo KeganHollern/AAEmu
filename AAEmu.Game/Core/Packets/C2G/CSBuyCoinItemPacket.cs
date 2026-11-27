@@ -1,6 +1,8 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -30,6 +32,18 @@ public class CSBuyCoinItemPacket() : GamePacket(CSOffsets.CSBuyCoinItemPacket, 1
             Logger.Warn("BuyCoinItem, no funcTemplate found with doodad func for objId: {0}, id: {1} funcId: {2}, funcType: {3}", objId, id, doodadFunc.FuncId, doodadFunc.FuncType);
             return;
         }
-        funcTemplate.Use(Connection.ActiveChar, doodad, 0);
+        var character = Connection.ActiveChar;
+        if (doodadFunc.SkillId == DoodadFuncPurchase.Buy && funcTemplate is DoodadFuncPurchase { UsesItemPayment: true } purchase)
+        {
+            lock (character.StorePurchaseSyncRoot)
+            {
+                if (doodad.Despawn == DateTime.MinValue && doodad.CurrentFuncs.Contains(doodadFunc) &&
+                    ServiceInteraction.CanReach(character, doodad))
+                    purchase.CompleteDisplayPurchase(character, doodad, doodadFunc);
+            }
+            return;
+        }
+
+        funcTemplate.Use(character, doodad, 0);
     }
 }
