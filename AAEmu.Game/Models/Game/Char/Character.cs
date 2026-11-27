@@ -3038,8 +3038,6 @@ public partial class Character : Unit, ICharacter
                 command.Parameters.AddWithValue("@experience", Experience);
                 command.Parameters.AddWithValue("@recoverable_exp", RecoverableExp);
                 command.Parameters.AddWithValue("@last_exp_loss", LastExpLoss);
-                command.Parameters.AddWithValue("@hp", Hp);
-                command.Parameters.AddWithValue("@mp", Mp);
                 command.Parameters.AddWithValue("@consumed_lp", ConsumedLaborPower);
                 command.Parameters.AddWithValue("@ability1", (byte)Ability1);
                 command.Parameters.AddWithValue("@ability2", (byte)Ability2);
@@ -3060,6 +3058,11 @@ public partial class Character : Unit, ICharacter
                 var saveFromInstanceReturn =
                     MainWorldPosition != null &&
                     Transform.InstanceId != WorldManager.DefaultInstanceId;
+                // A reconnect uses the home position. Arena teams and defeats belong to the live match.
+                var arenaReturn = saveFromInstanceReturn && CurrentInstantGame?.ReturnsMemberHome(this) == true;
+                var reviveOnReturn = arenaReturn && IsDead;
+                command.Parameters.AddWithValue("@hp", reviveOnReturn ? MaxHp : Hp);
+                command.Parameters.AddWithValue("@mp", reviveOnReturn ? MaxMp : Mp);
                 command.Parameters.AddWithValue("@zone_id", saveFromInstanceReturn ? MainWorldPosition.ZoneId : Transform.ZoneId);
                 command.Parameters.AddWithValue("@x", saveFromInstanceReturn ? MainWorldPosition.World.Position.X : Transform.World.Position.X);
                 command.Parameters.AddWithValue("@y", saveFromInstanceReturn ? MainWorldPosition.World.Position.Y : Transform.World.Position.Y);
@@ -3067,8 +3070,8 @@ public partial class Character : Unit, ICharacter
                 command.Parameters.AddWithValue("@roll", saveFromInstanceReturn ? MainWorldPosition.World.Rotation.X : Transform.World.Rotation.X);
                 command.Parameters.AddWithValue("@pitch", saveFromInstanceReturn ? MainWorldPosition.World.Rotation.Y : Transform.World.Rotation.Y);
                 command.Parameters.AddWithValue("@yaw", saveFromInstanceReturn ? MainWorldPosition.World.Rotation.Z : Transform.World.Rotation.Z);
-                command.Parameters.AddWithValue("@faction_id", Faction.Id);
-                command.Parameters.AddWithValue("@faction_name", FactionName);
+                command.Parameters.AddWithValue("@faction_id", arenaReturn ? OriginFaction?.Id ?? Faction.Id : Faction.Id);
+                command.Parameters.AddWithValue("@faction_name", arenaReturn ? OriginFactionName ?? FactionName : FactionName);
                 command.Parameters.AddWithValue("@expedition_id", Expedition?.Id ?? 0);
                 command.Parameters.AddWithValue("@family", Family);
                 command.Parameters.AddWithValue("@dead_count", DeadCount);
