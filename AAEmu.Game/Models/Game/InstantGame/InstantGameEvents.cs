@@ -1,4 +1,6 @@
-﻿using AAEmu.Game.Core.Managers;
+﻿using System.Numerics;
+
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Crime;
 using AAEmu.Game.Models.Game.Char;
@@ -121,6 +123,7 @@ public partial class InstantGame
                 victim.Buffs.RemoveAllEffects();
                 victim.Hp = victim.MaxHp;
                 victim.Mp = victim.MaxMp;
+                victim.MoveToRespawn(new Vector3(spawn.X, spawn.Y, spawn.Z));
                 victim.BroadcastPacket(new SCUnitPointsPacket(victim.ObjId, victim.Hp, victim.Mp), true);
             }
 
@@ -136,6 +139,7 @@ public partial class InstantGame
                 }
                 killer.Hp = killer.MaxHp;
                 killer.Mp = killer.MaxMp;
+                killer.MoveToRespawn(new Vector3(spawn.X, spawn.Y, spawn.Z));
                 killer.BroadcastPacket(new SCUnitPointsPacket(killer.ObjId, killer.Hp, killer.Mp), true);
                 killer.Buffs.RemoveAllEffects();
                 killer.ResetAllSkillCooldowns(false);

@@ -1,4 +1,7 @@
-﻿using AAEmu.Game.Core.Managers;
+﻿using System.Numerics;
+
+using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
@@ -9,6 +12,24 @@ public partial class Character
 {
     protected override int GetMinimumHealthAfterDamage(BaseUnit attacker, KillReason killReason) =>
         killReason != KillReason.Gm && DuelManager.Instance.IsNonlethalOpponentDamage(attacker, this) ? 1 : 0;
+
+    internal void MoveToRespawn(Vector3 destination)
+    {
+        if (Transform.World.Position == destination)
+            return;
+
+        if (Transform.Parent != null || Transform.StickyParent != null)
+        {
+            ForceDismount();
+            Transform.StickyParent = null;
+        }
+
+        // A previous portal can still await acknowledgement during a server-selected return.
+        FallMovement.Reset();
+        Transform.Local.SetPosition(destination);
+        MovementValidation.RecordServerRelocation(this);
+        WorldManager.Instance.AddVisibleObject(this);
+    }
 
     internal void ComputeDeathWaitTime(DateTime now, KillReason killReason, ResurrectionGameData data)
     {
