@@ -1,5 +1,6 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Skills.Buffs;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -23,6 +24,7 @@ public class Buff
 
     private readonly object _lock = new();
     private int _count;
+    private bool _closedByGliderLanding;
 
     public uint Index { get; set; }
     public Skill Skill { get; set; }
@@ -44,6 +46,11 @@ public class Buff
             if (_inUse != value && Template is { } template &&
                 (template.FallDamageImmune || template.Gliding) && Owner is Unit unit)
                 unit.FallMovement.Reset();
+            if (value && !_inUse && Template?.Gliding == true && Owner is Character player)
+            {
+                _closedByGliderLanding = false;
+                player.CancelGliderLanding();
+            }
             _inUse = value;
         }
     }
@@ -180,6 +187,9 @@ public class Buff
             StopEffectTask(replace);
         }
     }
+
+    internal bool TryFinishGliderLanding() => StopEffectTask(false, gliderLanding: true);
+
     internal void ApplyRefreshState(Buff newBuff, DateTime now)
     {
         var remaining = GetTimeLeft();
@@ -229,12 +239,24 @@ public class Buff
             State = EffectState.Finishing;
     }
 
-    private void StopEffectTask(bool replace)
+    private bool StopEffectTask(bool replace, bool gliderLanding = false)
     {
         lock (_lock)
         {
-            Events.OnTimeout(this, new OnTimeoutArgs());
-            Triggers.UnsubscribeEvents();
+            // A normal exit can already be waiting on this lock when the landing closes the flight.
+            if (_closedByGliderLanding)
+                return false;
+            if (gliderLanding)
+            {
+                if (!InUse || State != EffectState.Acting)
+                    return false;
+                State = EffectState.Finished;
+                InUse = false;
+                _closedByGliderLanding = true;
+            }
+            else
+                Events.OnTimeout(this, new OnTimeoutArgs());
+            Triggers.UnsubscribeEvents(!gliderLanding);
             Owner.Buffs.RemoveEffect(this);
             Template.Dispel(Caster, Owner, this, replace);
 
@@ -247,6 +269,7 @@ public class Buff
                 owner.SetFaction(saveFactions[owner.Id]);
                 saveFactions.Remove(owner.Id);
             }
+            return true;
         }
     }
 
