@@ -63,6 +63,8 @@ public sealed class CSBuyItemsPacketTests
         {
             [23633] = new() { Id = 23633, MaxCount = 100 },
             [21166] = new() { Id = 21166, MaxCount = 1, Price = 100000 },
+            [23681] = new() { Id = 23681, MaxCount = 1, Price = 1000 },
+            [23682] = new() { Id = 23682, MaxCount = 1, Price = 1000 },
             [16197] = new() { Id = 16197, MaxCount = 1, Price = 5000 },
             [1000] = new() { Id = 1000, MaxCount = 100, FixedGrade = -1, Price = 10, HonorPrice = 20, LivingPointPrice = 30 },
             [1001] = new() { Id = 1001, MaxCount = 100, FixedGrade = -1, Price = 1 }
@@ -85,6 +87,8 @@ public sealed class CSBuyItemsPacketTests
         {
             [nameof(DoodadFuncPurchase)] = new()
             {
+                [382] = new DoodadFuncPurchase { Id = 382, ItemId = 23681, Count = 1 },
+                [383] = new DoodadFuncPurchase { Id = 383, ItemId = 23682, Count = 1 },
                 [25] = new DoodadFuncPurchase { Id = 25, ItemId = 16197, Count = 1 },
                 [134] = new DoodadFuncPurchase { Id = 134, ItemId = 21166, Count = 1, CoinItemId = 23633, CoinCount = 15 }
             },
@@ -162,6 +166,65 @@ public sealed class CSBuyItemsPacketTests
         await Assert.That(item.Count).IsEqualTo(2);
         await Assert.That(item.Grade).IsEqualTo((byte)2);
         await Assert.That(_session.Packets.Any(packet => BitConverter.ToUInt16(packet, 6) == SCOffsets.SCItemTaskSuccessPacket)).IsTrue();
+    }
+
+    private void OpenFoalStall(uint template)
+    {
+        _shop.TemplateId = template;
+        (_function.GroupId, _function.FuncKey, _function.FuncId, _function.SkillId) = template switch
+        {
+            5943 => (15312U, 12667U, 382U, 20218U), // Gray Lilyut Foal.
+            5944 => (15313U, 12668U, 383U, 20219U), // Buckskin Lilyut Foal.
+            _ => throw new ArgumentOutOfRangeException(nameof(template))
+        };
+        _function.FuncType = nameof(DoodadFuncPurchase);
+    }
+
+    private void BuyFoal(uint item) => SendPurchase(clientShopId: _function.FuncKey,
+        requests: [new StorePurchaseRequest(item, 1, ShopCurrencyType.Money)]);
+
+    [Test]
+    [Arguments(2f)]
+    [Arguments(4f)]
+    public async Task FoalStalls_ChargeEachDisplayedPriceAndGrantTheChosenAnimal(float distance)
+    {
+        _character.Money = 2000;
+        _shop.Transform.Local.SetPosition(distance, 0, 0);
+        OpenFoalStall(5943);
+        BuyFoal(23681);
+        await Assert.That(_character.Money).IsEqualTo(1000L);
+        await Assert.That(_character.Inventory.Bag.Items.Single().TemplateId).IsEqualTo(23681U);
+
+        OpenFoalStall(5944);
+        BuyFoal(23682);
+        await Assert.That(_character.Money).IsZero();
+        await Assert.That(_character.Inventory.Bag.Items.Count).IsEqualTo(2);
+        await Assert.That(_character.Inventory.Bag.Items.Count(item => item.TemplateId == 23682 && item.Count == 1)).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(999, 2f, 23682U, ErrorMessageType.NotEnoughMoney)]
+    [Arguments(1000, 4.1f, 23682U, ErrorMessageType.TooFarAway)]
+    [Arguments(1000, 2f, 23681U, ErrorMessageType.StoreInvalidItem)]
+    public async Task FoalStalls_KeepTheWalletAndBagWhenAQuoteCannotSettle(
+        int money, float distance, uint item, ErrorMessageType expected)
+    {
+        OpenFoalStall(5944);
+        _character.Money = money;
+        _shop.Transform.Local.SetPosition(distance, 0, 0);
+        BuyFoal(item);
+        await Assert.That(_character.Money).IsEqualTo((long)money);
+        await Assert.That(_character.Inventory.Bag.Items).IsEmpty();
+        await AssertSingleError(expected);
+    }
+
+    [Test]
+    public async Task FoalStalls_KeepTheSeparateLimitedPurchaseSkillOutsideTheGoldDisplay()
+    {
+        OpenFoalStall(5944);
+        _function.SkillId = 23942; // Limited Purchase per Account has its own contract.
+        BuyFoal(23682);
+        await AssertUnchanged(ErrorMessageType.StoreHaveProblem);
     }
 
     private void OpenBlueStatueDisplay()
