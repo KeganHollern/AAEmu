@@ -5,6 +5,7 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.IO;
 using AAEmu.Game.Models.CryEngine.Physics;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.Housing;
@@ -15,7 +16,7 @@ namespace AAEmu.Game.Core.Managers;
 
 public partial class AiGeoDataManager
 {
-    private sealed record DoodadFloor(uint Phase, Vector3 Rotation, float Scale, LevelFace[] Faces, long RetryAfter, bool StockModel);
+    private sealed record DoodadFloor(uint Phase, Vector3 Rotation, float Scale, FallFaces Faces, long RetryAfter, bool StockModel);
     private readonly ConditionalWeakTable<Doodad, DoodadFloor> _doodadFloors = new();
 
     internal bool HasStaticDoodadFallSupport(Unit actor, Vector3 foot)
@@ -45,7 +46,7 @@ public partial class AiGeoDataManager
                 if (ReferenceEquals(doodad.ParentWorld, world) && doodad.IsVisible &&
                     Region.IsStaticDoodadCandidate(doodad) &&
                     doodad.Transform.World.Position == entry.Position &&
-                    HasDoodadFace(doodad, foot - entry.Position))
+                    HasDoodadFace(doodad, foot, entry.Position, actor is Character))
                     return true;
             }
         }
@@ -55,13 +56,13 @@ public partial class AiGeoDataManager
                 continue;
             var doodad = entry.Doodad;
             if (ReferenceEquals(doodad.ParentWorld, world) && doodad.IsVisible && Region.IsStaticDoodadCandidate(doodad) &&
-                doodad.Transform.World.Position == entry.Origin && HasDoodadFace(doodad, foot - entry.Origin, stockOnly: true))
+                doodad.Transform.World.Position == entry.Origin && HasDoodadFace(doodad, foot, entry.Origin, actor is Character, stockOnly: true))
                 return true;
         }
         return false;
     }
 
-    private bool HasDoodadFace(Doodad doodad, Vector3 relativeFoot, bool stockOnly = false)
+    private bool HasDoodadFace(Doodad doodad, Vector3 foot, Vector3 origin, bool playerInclines, bool stockOnly = false)
     {
         var phase = doodad.FuncGroupId;
         var rotation = doodad.Transform.World.Rotation;
@@ -73,38 +74,39 @@ public partial class AiGeoDataManager
             floor = new DoodadFloor(phase, rotation, doodad.Scale, faces, retry, stockModel);
             _doodadFloors.AddOrUpdate(doodad, floor);
         }
-        return (!stockOnly || floor.StockModel) && TouchesLevelFace(floor.Faces, relativeFoot);
+        return floor.Faces != null && (!stockOnly || floor.StockModel) && TouchesFallFace(floor.Faces, foot, foot - origin, playerInclines);
     }
 
-    private static LevelFace[] ReadDoodadFaces(Doodad doodad, uint phase, out long retry, out bool stockModel)
+    private static FallFaces ReadDoodadFaces(Doodad doodad, uint phase, out long retry, out bool stockModel)
     {
         retry = 0;
         stockModel = false;
         if (phase == 0 || !doodad.Template.FuncGroups.Any(group => group.Id == phase &&
                 group.GroupKindId != DoodadFuncGroups.DoodadFuncGroupKind.End) ||
             DoodadManager.Instance.GetPhaseFunc(phase).Any(func => func.FuncType != nameof(DoodadFuncTimer)))
-            return [];
+            return null;
         var path = HousingGeometryAssets.DoodadModelPath(doodad.Template, phase);
         if (path?.StartsWith("cgf://", StringComparison.OrdinalIgnoreCase) != true ||
             !path.EndsWith(".cgf", StringComparison.OrdinalIgnoreCase))
-            return [];
+            return null;
         try
         {
             if (ClientFileManager.FileExists(CryGeometryResolver.AssetPath(path[6..])))
             {
                 var asset = HousingManager.Instance.GeometryAssets.Load(path);
                 if (asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
-                    return [];
+                    return null;
                 stockModel = asset.SourceSha256 != null && StockDoodadFloorModel.Find(path)?.Sha256 == asset.SourceSha256;
                 var placement = HousingGeometryAssets.Transform(doodad);
-                var faces = new List<LevelFace>(ReadLevelFaces(placement, asset));
+                var inclined = new List<InclinedFace>();
+                var faces = new List<LevelFace>(ReadLevelFaces(placement, asset, inclined));
                 placement.Translation = Vector3.Zero;
                 foreach (var part in asset.Parts)
                 {
                     if (part is { PhysicsType: 0x1000, Shape: CryBox box })
                         AddLevelBoxFace(faces, box, part.Transform * placement);
                 }
-                return faces.ToArray();
+                return new FallFaces(faces.ToArray(), GroupInclines(inclined), []);
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException or ArgumentException or OverflowException)
@@ -112,7 +114,7 @@ public partial class AiGeoDataManager
             Logger.Debug(ex, "Could not read the static doodad model {0}", path);
         }
         retry = Environment.TickCount64 + 30_000;
-        return [];
+        return null;
     }
 
     // These are the extents of the physical box in its own axes, including its authored orientation.
