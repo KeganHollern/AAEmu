@@ -1307,7 +1307,13 @@ public partial class Skill
                     _laborObject = skillObject;
                     _normalLaborEffectsCompleted = true;
                     SkillLaborBatch.Run(laborOwner, this, true,
-                        () => ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject),
+                        () =>
+                        {
+                            ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
+                            if (Template.ConsumeLaborPower > 0 && targetSelf is Doodad && Template.Plot == null && !Template.PlotOnly &&
+                                laborOwner.Achievements?.TracksUse(CharRecordKind.UseSkill, Template.Id) == true)
+                                RecordUseSkillAchievement(laborOwner, SkillLaborBatch.Current);
+                        },
                         ExpiredCostume != null ? ItemTaskType.RechargeBuff :
                         Dyeing.IsDyeingSkill(this) ? ItemTaskType.Dyeing : ItemTaskType.SkillEffectGainItem);
                 }
@@ -2032,7 +2038,7 @@ public partial class Skill
             PermissionManager.Instance.CanUse(character, GamePermission.IgnoreSkillCooldowns);
     }
 
-    internal void RecordUseSkillAchievement(BaseUnit caster)
+    internal void RecordUseSkillAchievement(BaseUnit caster, SkillLaborBatch batch = null)
     {
         if (Cancelled)
             return;
@@ -2041,7 +2047,10 @@ public partial class Skill
         if (owner == null || Interlocked.Exchange(ref _achievementUseRecorded, 1) != 0)
             return;
 
-        owner.Achievements.Increment(CharRecordKind.UseSkill, Template.Id, 0);
+        if (batch != null)
+            batch.StageAchievementProgress([new AchievementProgressEvent(CharRecordKind.UseSkill, Template.Id, 0, 1)]);
+        else
+            owner.Achievements.Increment(CharRecordKind.UseSkill, Template.Id, 0);
     }
 
     public SkillHitType RollCombatDice(BaseUnit attacker, BaseUnit target)
