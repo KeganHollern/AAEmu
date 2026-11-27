@@ -142,8 +142,9 @@ public partial class Unit : BaseUnit, IUnit
     {
         get
         {
-            // Percent movement modifiers apply to the normal-speed baseline too.
-            var value = CalculateBonuses(1000d, UnitAttribute.MoveSpeedMul);
+            var (flat, percent) = GetBonusFactors(1000d, UnitAttribute.MoveSpeedMul);
+            // Once either factor stops movement, another slow cannot start it again.
+            var value = Math.Max(0d, flat) * Math.Max(0d, percent) / 100d;
             var bonus = UnitAttributeLimitsGameData.Instance.Clamp(UnitAttribute.MoveSpeedMul, value - 1000d);
             return (float)(1000d + bonus) / 1000f;
         }
@@ -931,6 +932,12 @@ public partial class Unit : BaseUnit, IUnit
 
     protected double CalculateBonuses(double value, UnitAttribute attr)
     {
+        var (flat, percent) = GetBonusFactors(value, attr);
+        return flat * percent / 100d;
+    }
+
+    private (double Flat, double Percent) GetBonusFactors(double value, UnitAttribute attr)
+    {
         // Apply static and dynamic flat values, then one combined Percent multiplier.
         // Dynamic bonuses are evaluated on the fly from their source buff so that time-varying
         // modifiers (LinearFunc and ManualFunc) reflect the current elapsed time rather
@@ -974,7 +981,7 @@ public partial class Unit : BaseUnit, IUnit
                 percent += dynValue;
         }
 
-        return value * percent / 100d;
+        return (value, percent);
     }
 
     public void SendPacket(GamePacket packet)

@@ -52,12 +52,38 @@ public sealed class UnitAttributeLimitsTests
     [Arguments(3000, 4f)]
     [Arguments(9000, 4f)]
     [Arguments(-1000, 0f)]
-    [Arguments(-20000, -9f)]
-    public async Task Movement_ClampsRawBonusBeforeRestoringTheNormalSpeedBaseline(int bonus, float expected)
+    [Arguments(-20000, 0f)]
+    public async Task Movement_RespectsZeroSpeedAndTheAuthoredSpeedCap(int bonus, float expected)
     {
         var unit = new Unit();
         unit.AddBonus(1, Modifier(UnitAttribute.MoveSpeedMul, bonus));
         await Assert.That(unit.MoveSpeedMul).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task Movement_BubbleTrapStopsTheSlowerRazorbeakUntilTheBuffEnds()
+    {
+        var npc = new Npc();
+        npc.AddBonus(0, Modifier(UnitAttribute.MoveSpeedMul, -50, UnitModifierType.Percent));
+        await Assert.That(npc.MoveSpeedMul).IsEqualTo(0.5f);
+        npc.AddBonus(96, Modifier(UnitAttribute.MoveSpeedMul, -2000));
+        await Assert.That(npc.MoveSpeedMul).IsEqualTo(0f);
+        npc.RemoveBonus(96, UnitAttribute.MoveSpeedMul);
+        await Assert.That(npc.MoveSpeedMul).IsEqualTo(0.5f);
+    }
+
+    [Test]
+    public async Task Movement_OverlappingNegativeFactorsKeepTheUnitStopped()
+    {
+        var unit = new Unit();
+        unit.AddBonus(1, Modifier(UnitAttribute.MoveSpeedMul, -130, UnitModifierType.Percent));
+        await Assert.That(unit.MoveSpeedMul).IsEqualTo(0f);
+        unit.AddDynamicBonus(2, DynamicModifier(unit, -1300, UnitModifierType.Value));
+        await Assert.That(unit.MoveSpeedMul).IsEqualTo(0f);
+        unit.RemoveBonus(1, UnitAttribute.MoveSpeedMul);
+        await Assert.That(unit.MoveSpeedMul).IsEqualTo(0f);
+        unit.RemoveDynamicBonus(2, UnitAttribute.MoveSpeedMul);
+        await Assert.That(unit.MoveSpeedMul).IsEqualTo(1f);
     }
 
     [Test]
