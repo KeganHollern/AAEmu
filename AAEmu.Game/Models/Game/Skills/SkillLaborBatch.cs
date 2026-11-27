@@ -1,4 +1,5 @@
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Items;
@@ -17,7 +18,7 @@ internal sealed class SkillLaborBatch
     public Skill Skill { get; }
     public InventoryMutation Inventory { get; }
     private readonly CharacterLaborMutation _labor;
-    private CharacterAchievements.DeferredPersistenceScope _craftAchievements;
+    private CharacterAchievements.DeferredPersistenceScope _achievementUpdate;
     public bool IsCommitting { get; private set; }
     private readonly List<Action> _afterCommit = [];
     private readonly HashSet<object> _deferred = [];
@@ -98,12 +99,26 @@ internal sealed class SkillLaborBatch
         }
     }
 
-    public void StageCraftProgress(IReadOnlyList<AchievementProgressEvent> progress)
+    public void StageAchievementProgress(IReadOnlyList<AchievementProgressEvent> progress)
     {
         if (progress.Count == 0 || Owner.Achievements == null)
             return;
-        _craftAchievements ??= Owner.Achievements.BeginDeferredPersistence();
+        _achievementUpdate ??= Owner.Achievements.BeginDeferredPersistence();
         Owner.Achievements.Increment(progress);
+    }
+
+    public void StageItemUse(uint itemTemplateId)
+    {
+        if (itemTemplateId == 0)
+            return;
+        if (Owner.Achievements?.TracksItemUse(itemTemplateId) != true)
+        {
+            AfterCommit(() => Owner.ItemUseByTemplate(itemTemplateId));
+            return;
+        }
+
+        StageAchievementProgress([new AchievementProgressEvent(CharRecordKind.UseItem, itemTemplateId, 0, 1)]);
+        AfterCommit(() => QuestManager.Instance.DoItemUseEvents(Owner, itemTemplateId));
     }
 
     public void AfterCommit(Action action) => _afterCommit.Add(action);
@@ -203,7 +218,8 @@ internal sealed class SkillLaborBatch
                         (int)Math.Ceiling(AppConfiguration.Instance.World.VocationRate * skill.Template.GainLifePoint));
                 if (skill.Cancelled || owner.SkillCancelled || inventory.HasFailed)
                     return batch.Fail();
-                if (labor.HasChanges || inventory.HasChanges || batch._doodads.Count > 0 || batch._writes.Count > 0 || batch._restore.Count > 0)
+                if (labor.HasChanges || inventory.HasChanges || batch._achievementUpdate != null ||
+                    batch._doodads.Count > 0 || batch._writes.Count > 0 || batch._restore.Count > 0)
                 {
                     batch.IsCommitting = true;
                     committed = skill.CommitLaborBatch(owner, context =>
@@ -228,13 +244,13 @@ internal sealed class SkillLaborBatch
                     skill.LaborVocationSettled = !skill.Template.PlotOnly;
                 }
                 s_current = null;
-                var craftNotifications = batch._craftAchievements?.CreateCommittedNotifications();
-                batch._craftAchievements?.Commit();
+                var achievementNotifications = batch._achievementUpdate?.CreateCommittedNotifications();
+                batch._achievementUpdate?.Commit();
                 inventory.Complete();
                 if (labor.HasChanges)
                     labor.Complete();
-                if (craftNotifications != null)
-                    owner.Achievements.SendCommittedState(craftNotifications);
+                if (achievementNotifications != null)
+                    owner.Achievements.SendCommittedState(achievementNotifications);
                 foreach (var action in batch._afterCommit)
                     action();
                 return true;
@@ -246,7 +262,7 @@ internal sealed class SkillLaborBatch
                 {
                     inventory.PreservePreparedState();
                     labor.PreservePreparedState();
-                    batch._craftAchievements?.PreservePreparedState();
+                    batch._achievementUpdate?.PreservePreparedState();
                 }
                 skill.Cancelled = true;
                 if (committed)
@@ -255,7 +271,7 @@ internal sealed class SkillLaborBatch
             }
             finally
             {
-                batch._craftAchievements?.Dispose();
+                batch._achievementUpdate?.Dispose();
                 s_current = null;
                 if (!committed && !batch.IsCommitting)
                 {

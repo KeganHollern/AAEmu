@@ -8,6 +8,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Crafts;
 using AAEmu.Game.Models.Game.Housing;
@@ -29,6 +30,7 @@ using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
+using AAEmu.UnitTests.Game.Models.Game.Char;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Skills;
@@ -408,18 +410,42 @@ public sealed partial class SkillLaborTests
     }
 
     [Test]
-    public async Task Completion_ConsumedSourceStillPublishesItemUse()
+    [Arguments(true, true)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task Completion_SavesTrackedItemUseWithSourceAndPublishesQuestAfterCommit(bool tracked, bool commit)
     {
         _material.Count = 1;
         _reagents.Add(1, new SkillReagent { Id = 1, SkillId = 50, ItemId = 100, Amount = 1 });
+        using var data = new CharacterAchievementsTests.AchievementDataBuilder();
+        data.AddAchievement(312, 100, false);
+        data.AddRecord(510, CharRecordKind.UseItem, tracked ? _material.TemplateId : 19812u);
+        data.AddObjective(1, 312, 510);
+        var achievements = new CharacterAchievements(_owner, data.Build());
+        typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(_owner, achievements);
+
         var skill = NewSkill();
         var uses = 0;
+        var usesAtCommit = -1;
+        var amountAtCommit = 0u;
         _owner.ConditionChance = true;
         _owner.Events.OnItemUse += (_, _) => uses++;
+        skill.CommitLaborBatch = (_, _) =>
+        {
+            amountAtCommit = achievements.GetAmount(312);
+            usesAtCommit = uses;
+            return commit;
+        };
+
         skill.ApplyEffects(_owner, new SkillItem(70, _material.Id, _material.TemplateId),
             _owner, new SkillCastUnitTarget(70), null);
-        await Assert.That(_material.Count).IsEqualTo(0);
-        await Assert.That(uses).IsEqualTo(1);
+
+        await Assert.That(amountAtCommit).IsEqualTo(tracked ? 1u : 0u);
+        await Assert.That(usesAtCommit).IsEqualTo(0);
+        await Assert.That(achievements.GetAmount(312)).IsEqualTo(tracked && commit ? 1u : 0u);
+        await Assert.That(_material.Count).IsEqualTo(commit ? 0 : 1);
+        await Assert.That(uses).IsEqualTo(commit ? 1 : 0);
     }
 
     [Test]
