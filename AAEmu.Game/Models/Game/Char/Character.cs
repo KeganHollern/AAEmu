@@ -1810,7 +1810,7 @@ public partial class Character : Unit, ICharacter
                     {
                         var gained = (uint)change;
                         if (batch != null)
-                            batch.AfterCommit(() => Achievements?.Increment(CharRecordKind.GetLifePoint, 0, 0, gained));
+                            batch.StageAchievementProgress([new(CharRecordKind.GetLifePoint, 0, 0, gained)]);
                         else
                             Achievements?.Increment(CharRecordKind.GetLifePoint, 0, 0, gained);
                     }
