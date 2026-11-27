@@ -573,6 +573,8 @@ public partial class HousingManager(
                 if (!house.Save(context))
                     throw new InvalidOperationException("The new house could not be saved.");
             }, null);
+            if (house.CurrentStep == -1)
+                batch.StageAchievementProgress(CharRecordKind.MakeHousing, house.TemplateId);
             RemoveCropsForNewHouse(house);
             batch.AfterCommit(() =>
             {
@@ -580,8 +582,6 @@ public partial class HousingManager(
                 player.SendPacket(new SCMyHousePacket(house));
                 house.Spawn();
                 UpdateTaxInfo(house);
-                if (house.CurrentStep == -1)
-                    player.Achievements?.Increment(CharRecordKind.MakeHousing, house.TemplateId, 0);
             });
         }, ItemTaskType.HouseCreation);
     }
