@@ -71,7 +71,33 @@ def audit(database, source):
         checked_plots.add(plot_id)
         return summons
 
-    def npc_outputs(npc_id, site, ancestors=()):
+    def placement_outputs(placement, expanded_groups, ancestors=()):
+        pins = placement["NpcSpawnerIds"]
+        # AddNpcSpawner keeps the last explicit template on the indexed placement.
+        definitions = rows("SELECT member_id, member_type FROM npc_spawner_npcs WHERE npc_spawner_id=?",
+                           pins[-1]) if pins else []
+        site = placement["EventSiteKey"]
+        if not any(member["member_type"] == "NpcGroup" for member in definitions):
+            return npc_outputs(placement["UnitId"], site, expanded_groups, ancestors)
+        if len(definitions) != 1:
+            raise ValueError(f"Group spawner {pins[-1]} has multiple definitions; population order needs review")
+        placement_id = placement["EventPlacementId"]
+        if placement_id in expanded_groups:
+            raise ValueError(f"Group placement {placement_id} is reused by a summon; available population needs review")
+        expanded_groups.add(placement_id)
+        if one("SELECT maxPopulation FROM npc_spawners WHERE id=?", pins[-1])["maxPopulation"] == 0:
+            raise ValueError(f"Group spawner {pins[-1]} has zero capacity")
+        group = definitions[0]["member_id"]
+        one("SELECT id FROM npc_groups WHERE id=?", group)
+        members = rows("SELECT npc_id FROM npc_group_members WHERE npc_group_id=?", group)
+        if not members:
+            raise ValueError(f"NPC group {group} has no members")
+        output = Counter()
+        for member in members:
+            output.update(npc_outputs(member["npc_id"], site, expanded_groups, ancestors))
+        return output
+
+    def npc_outputs(npc_id, site, expanded_groups, ancestors):
         if npc_id in ancestors:
             raise ValueError(f"Recursive NPC summon cycle: {ancestors} -> {npc_id}")
         one("SELECT id FROM npcs WHERE id=?", npc_id)
@@ -96,11 +122,12 @@ def audit(database, source):
                 if effect["actual_type"] != "NpcSpawnerSpawnEffect":
                     continue
                 spawn = one("SELECT * FROM npc_spawner_spawn_effects WHERE id=?", effect["actual_id"])
-                children = [p for p in placements if p["EventSiteKey"] == site and spawn["spawner_id"] in p["NpcSpawnerIds"]]
+                children = [p for p in placements if p["EventSiteKey"] == site and p["NpcSpawnerIds"]
+                            and p["NpcSpawnerIds"][-1] == spawn["spawner_id"]]
                 if not children:
                     raise ValueError(f"Missing effect placements: site={site} spawner={spawn['spawner_id']}")
                 for child in children:
-                    output.update(npc_outputs(child["UnitId"], site, ancestors + (npc_id,)))
+                    output.update(placement_outputs(child, expanded_groups, ancestors + (npc_id,)))
         return output
 
     report = []
@@ -118,9 +145,14 @@ def audit(database, source):
                             raise ValueError(f"Crimson controller is not airborne: {placement_id}")
             for step in rows("SELECT * FROM tower_def_progs WHERE tower_def_id=? ORDER BY id", definition["id"]):
                 available = Counter()
+                used_placements = set()
+                expanded_groups = set()
                 for target in rows("SELECT * FROM tower_def_prog_spawn_targets WHERE tower_def_prog_id=?", step["id"]):
                     for placement_id in site["bindings"][str(target["spawn_target_id"])]:
-                        available.update(npc_outputs(by_id[placement_id]["UnitId"], site["key"]))
+                        # SpawnBinding clears the previous actors before reusing a placement.
+                        if placement_id not in used_placements:
+                            available.update(placement_outputs(by_id[placement_id], expanded_groups))
+                            used_placements.add(placement_id)
                 objectives = rows("SELECT * FROM tower_def_prog_kill_targets WHERE tower_def_prog_id=?", step["id"])
                 total_available.update(available)
                 for objective in objectives:
