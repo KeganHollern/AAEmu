@@ -6,6 +6,9 @@ namespace AAEmu.Game.Core.Managers;
 public interface IAccountManager : IInitializable
 {
     void Add(GameConnection connection);
+    bool TryRegister(GameConnection connection);
+    void ApplyLoginRewards(GameConnection connection);
+    ICollection<uint> GetConnectedAccountIds();
     void Remove(uint id);
     void Remove(GameConnection connection);
     GameConnection GetConnection(uint accountId);

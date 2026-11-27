@@ -49,6 +49,38 @@ public sealed class WorldAdmissionOrderingTests
         }
     }
 
+    [Test]
+    public async Task Admission_ProbeCannotSupersedeAnEarlierReservation()
+    {
+        var previousLogin = LoginNetwork.Instance.GetConnection();
+        var session = new ReplySession();
+        var moderation = new OrderedModeration();
+        var accounts = Mock.Of<IAccountManager>();
+        accounts.GetConnectedAccountIds().Returns(Array.Empty<uint>());
+        var manager = new EnterWorldManager(accounts.Object, Mock.Of<IStreamManager>().Object,
+            Mock.Of<IQuestManager>().Object, Mock.Of<IChatManager>().Object, Mock.Of<IFamilyManager>().Object,
+            Mock.Of<IWorldManager>().Object, moderation);
+        LoginNetwork.Instance.SetConnection(new LoginConnection(session));
+        try
+        {
+            manager.AddAccount(42, 100, 1, 0, 0, IPAddress.Loopback, 1, true);
+            manager.AddAccount(42, 200, 2, 0, 0, IPAddress.Loopback, 1, false);
+            moderation.Second.SetResult(true);
+            await AssertReply(session, 200, 2);
+            moderation.First.SetResult(true);
+            await AssertReply(session, 100, 0);
+
+            await Assert.That(manager.ConsumePendingAccount(1, 42)).IsEqualTo(PendingWorldAccountResult.Consumed);
+            await Assert.That(manager.ConsumePendingAccount(2, 42)).IsEqualTo(PendingWorldAccountResult.NotFound);
+        }
+        finally
+        {
+            moderation.First.TrySetResult(false);
+            moderation.Second.TrySetResult(false);
+            LoginNetwork.Instance.SetConnection(previousLogin);
+        }
+    }
+
     private static async Task AssertReply(ReplySession session, uint correlation, byte result)
     {
         var bytes = await session.Replies.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));

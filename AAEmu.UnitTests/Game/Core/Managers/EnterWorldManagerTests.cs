@@ -76,6 +76,26 @@ public class EnterWorldManagerTests
             .IsEqualTo(expected ? PendingWorldAccountResult.Consumed : PendingWorldAccountResult.NotFound);
     }
 
+    [Test]
+    [Arguments(AccountRole.NormalPlayer, false, 1)]
+    [Arguments(AccountRole.Admin, true, 1)]
+    [Arguments(AccountRole.Admin, false, 2)]
+    public async Task PrepareAdmission_ProbeChecksRoleAndModerationWithoutIssuingACookie(
+        AccountRole role, bool banned, int expected)
+    {
+        const uint id = 42;
+        var accounts = Mock.Of<IAccountManager>();
+        accounts.TryGetAccountRole(id).SetsOutRole(role).Returns(true);
+        var moderation = new ModerationManager(new PermissionManager(accounts.Object));
+        moderation.ApplyState(new ModerationState(id, 1, banned, 0, false, 0));
+        var manager = CreateManager(accounts.Object, moderation: moderation,
+            startupWorld: new WorldConfig { AccessMode = WorldAccessMode.AdminsOnly });
+
+        var status = manager.PrepareAdmission(id, 123, null, IPAddress.Loopback, moderation, 1, false);
+        await Assert.That((int)status).IsEqualTo(expected);
+        await Assert.That(manager.ConsumePendingAccount(123, id)).IsEqualTo(PendingWorldAccountResult.NotFound);
+    }
+
     [Test, NotInParallel]
     [Arguments(AccountRole.Admin, true, true)]
     [Arguments(AccountRole.Moderator, true, false)]
@@ -92,6 +112,7 @@ public class EnterWorldManagerTests
         var session = Mock.Of<ISession>();
         session.Ip.Returns(IPAddress.Loopback);
         var connection = new GameConnection(session.Object);
+        accounts.TryRegister(connection).Returns(true);
         accounts.IsCurrent(connection).Returns(true);
         streams.AddToken(connection).Returns(1u);
         var manager = CreateManager(accounts.Object, streams.Object, moderation,

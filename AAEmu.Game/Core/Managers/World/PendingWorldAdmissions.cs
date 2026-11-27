@@ -4,6 +4,13 @@ using AAEmu.Game.Models;
 
 namespace AAEmu.Game.Core.Managers.World;
 
+internal enum WorldAdmissionStatus : byte
+{
+    Reserved = 0,
+    Denied = 1,
+    Waiting = 2
+}
+
 internal enum PendingWorldAccountResult
 {
     NotFound,
@@ -28,29 +35,49 @@ internal sealed class PendingWorldAdmissions(TimeProvider clock = null)
     private readonly Lock _lock = new();
     private readonly Dictionary<uint, Admission> _tokens = [];
     private readonly Dictionary<uint, uint> _accounts = [];
+    private readonly HashSet<uint> _joining = [];
     private readonly Dictionary<IPAddress, Failure> _failures = [];
 
     private sealed record Admission(uint AccountId, AccountPayment Payment, IPAddress Address, DateTimeOffset Expires);
     private sealed record Failure(int Count, DateTimeOffset Expires);
 
     internal bool TryAdd(uint token, uint accountId, AccountPayment payment, IPAddress address)
+        => Reserve(token, accountId, payment, address, 0, null) == WorldAdmissionStatus.Reserved;
+
+    internal WorldAdmissionStatus Reserve(uint token, uint accountId, AccountPayment payment, IPAddress address,
+        ushort populationCap, IAccountManager accountManager)
     {
         address = Normalize(address);
         if (token == 0 || accountId == 0 || address == null)
-            return false;
+            return WorldAdmissionStatus.Denied;
         lock (_lock)
         {
             var now = _clock.GetUtcNow();
             Prune(now);
             // A random collision must not overwrite another account's secret.
             if (_tokens.ContainsKey(token))
-                return false;
+                return WorldAdmissionStatus.Denied;
+            if (populationCap > 0)
+            {
+                // One account can own a live session and its replacement cookie at the same time.
+                var occupied = accountManager.GetConnectedAccountIds().ToHashSet();
+                occupied.UnionWith(_joining);
+                occupied.UnionWith(_accounts.Keys);
+                if (!occupied.Contains(accountId) && occupied.Count >= populationCap)
+                    return WorldAdmissionStatus.Waiting;
+            }
             if (_accounts.TryGetValue(accountId, out var previous))
                 RemoveLocked(previous);
             _tokens.Add(token, new Admission(accountId, payment ?? new AccountPayment(), address, now + Lifetime));
             _accounts[accountId] = token;
-            return true;
+            return WorldAdmissionStatus.Reserved;
         }
+    }
+
+    internal void FinishLogin(uint accountId)
+    {
+        lock (_lock)
+            _joining.Remove(accountId);
     }
 
     internal void Remove(uint token)
@@ -60,7 +87,7 @@ internal sealed class PendingWorldAdmissions(TimeProvider clock = null)
     }
 
     internal PendingWorldAccountResult Consume(uint token, uint accountId, IPAddress address,
-        bool checkAddress, out AccountPayment payment)
+        bool checkAddress, out AccountPayment payment, bool beginLogin = false)
     {
         payment = null;
         address = Normalize(address);
@@ -90,6 +117,8 @@ internal sealed class PendingWorldAdmissions(TimeProvider clock = null)
             else
             {
                 RemoveLocked(token);
+                if (beginLogin)
+                    _joining.Add(accountId);
                 payment = admission.Payment;
                 return PendingWorldAccountResult.Consumed;
             }

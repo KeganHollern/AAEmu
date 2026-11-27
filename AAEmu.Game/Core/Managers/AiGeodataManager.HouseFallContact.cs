@@ -61,7 +61,7 @@ public partial class AiGeoDataManager
         var margin = Vector3.UnitZ * FallMovement.PositionTolerance;
         return new HouseFloor(house.Template, placement.Translation, house.Transform.World.Rotation, house.Scale,
             new CryBounds(bounds.Min - margin, bounds.Max + margin),
-            new Lazy<FallFaces>(() => ReadFallFaces(placement, model.Asset, includeBoxes: false)));
+            new Lazy<FallFaces>(() => ReadFallFaces(placement, model.Asset, includeBrushPrimitives: false)));
     }
 
     private HouseModel GetHouseModel(HousingTemplate template)
