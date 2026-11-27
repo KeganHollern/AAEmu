@@ -10,14 +10,14 @@ namespace AAEmu.Game.Core.Managers;
 
 public partial class AiGeoDataManager
 {
-    private readonly ConditionalWeakTable<CryWorldObjectInstance, BrushFaces> _fallFaces = new();
+    private readonly ConditionalWeakTable<CryWorldObjectInstance, FallFaces> _fallFaces = new();
     private readonly record struct LevelFace(Vector3 A, Vector3 B, Vector3 C)
     {
         public bool Covers(Vector3 foot) => SideOfEdge(A, B, foot) >= 0 && SideOfEdge(B, C, foot) >= 0 && SideOfEdge(C, A, foot) >= 0;
     }
     private readonly record struct InclinedFace(LevelFace Face, Vector2 Gradient);
     private sealed record InclinedGroup(CryBounds Bounds, InclinedFace[] Faces);
-    private sealed record BrushFaces(LevelFace[] Level, InclinedGroup[] Inclined);
+    private sealed record FallFaces(LevelFace[] Level, InclinedGroup[] Inclined);
 
     // All r208022 playable models use a minimum fall angle of 50 degrees.
     private static readonly float PlayerFallNormalZ = MathF.Cos(50f * MathF.PI / 180f);
@@ -68,13 +68,13 @@ public partial class AiGeoDataManager
             if (asset == null || asset.Parts.Count == 0)
                 return false;
             faces = _fallFaces.GetOrAdd(brush, static (placement, model) =>
-            {
-                var inclined = new List<InclinedFace>();
-                var level = ReadLevelFaces(placement.Transform, model, inclined);
-                return new BrushFaces(level, GroupInclines(inclined));
-            }, asset);
+                ReadFallFaces(placement.Transform, model, includeBoxes: true), asset);
         }
-        var local = foot - brush.Transform.Translation;
+        return TouchesFallFace(faces, foot, foot - brush.Transform.Translation, playerInclines);
+    }
+
+    private static bool TouchesFallFace(FallFaces faces, Vector3 foot, Vector3 local, bool playerInclines)
+    {
         if (TouchesLevelFace(faces.Level, local))
             return true;
         if (!playerInclines)
@@ -184,7 +184,15 @@ public partial class AiGeoDataManager
         return false;
     }
 
-    private static LevelFace[] ReadLevelFaces(Matrix4x4 placement, CryGeometryAsset asset, List<InclinedFace> inclined = null)
+    private static FallFaces ReadFallFaces(Matrix4x4 placement, CryGeometryAsset asset, bool includeBoxes)
+    {
+        var inclined = new List<InclinedFace>();
+        var level = ReadLevelFaces(placement, asset, inclined, includeBoxes);
+        return new FallFaces(level, GroupInclines(inclined));
+    }
+
+    private static LevelFace[] ReadLevelFaces(Matrix4x4 placement, CryGeometryAsset asset,
+        List<InclinedFace> inclined = null, bool includeBoxes = false)
     {
         if (asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
             return [];
@@ -197,7 +205,7 @@ public partial class AiGeoDataManager
             if (part.PhysicsType != 0x1000)
                 continue;
             var transform = part.Transform * offset;
-            if (part.Shape is CryBox box && inclined != null)
+            if (includeBoxes && part.Shape is CryBox box && inclined != null)
             {
                 AddLevelBoxFace(result, box, transform);
                 AddInclinedBoxFaces(inclined, box, transform);

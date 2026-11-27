@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 
 using AAEmu.Game.Models.CryEngine.Physics;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Units;
 
@@ -11,7 +12,7 @@ public partial class AiGeoDataManager
 {
     private sealed record HouseModel(CryGeometryAsset Asset, CryBounds Bounds, long RetryAfter = 0);
     private sealed record HouseFloor(HousingTemplate Template, Vector3 Origin, Vector3 Rotation, float Scale,
-        CryBounds Bounds, Lazy<LevelFace[]> Faces);
+        CryBounds Bounds, Lazy<FallFaces> Faces);
     private readonly ConditionalWeakTable<HousingTemplate, HouseModel> _houseModels = new();
     private readonly ConditionalWeakTable<House, HouseFloor> _houseFloors = new();
 
@@ -30,14 +31,14 @@ public partial class AiGeoDataManager
                 if (!ReferenceEquals(house.ParentWorld, actor.ParentWorld) || house.CurrentStep != -1 ||
                     house.OwnerId == 0 || house.Template == null || house.ModelId != house.Template.MainModelId)
                     continue;
-                if (HasContactOnHouse(house, foot))
+                if (HasContactOnHouse(house, foot, actor is Character))
                     return true;
             }
         }
         return false;
     }
 
-    private bool HasContactOnHouse(House house, Vector3 foot)
+    private bool HasContactOnHouse(House house, Vector3 foot, bool playerInclines)
     {
         var pose = house.Transform.World;
         var template = house.Template;
@@ -50,7 +51,7 @@ public partial class AiGeoDataManager
             floor = PlaceHouseFloor(house, model);
             _houseFloors.AddOrUpdate(house, floor);
         }
-        return floor.Bounds.Contains(foot) && TouchesLevelFace(floor.Faces.Value, foot - floor.Origin);
+        return floor.Bounds.Contains(foot) && TouchesFallFace(floor.Faces.Value, foot, foot - floor.Origin, playerInclines);
     }
 
     private static HouseFloor PlaceHouseFloor(House house, HouseModel model)
@@ -60,7 +61,7 @@ public partial class AiGeoDataManager
         var margin = Vector3.UnitZ * FallMovement.PositionTolerance;
         return new HouseFloor(house.Template, placement.Translation, house.Transform.World.Rotation, house.Scale,
             new CryBounds(bounds.Min - margin, bounds.Max + margin),
-            new Lazy<LevelFace[]>(() => ReadLevelFaces(placement, model.Asset)));
+            new Lazy<FallFaces>(() => ReadFallFaces(placement, model.Asset, includeBoxes: false)));
     }
 
     private HouseModel GetHouseModel(HousingTemplate template)
