@@ -11,6 +11,7 @@ using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 
@@ -20,20 +21,22 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 
 public sealed partial class PlayerMailSendPersistenceTests
 {
-    [Fact]
-    public void RidersEscape_NormalRecallSavesTheSelectedCartPositionAndOriginalScroll()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RidersEscape_NormalRecallSavesTheSelectedVehiclePositionAndOriginalScroll(bool ship)
     {
         using var fixture = new VehicleRepairGraph(4, 1000, 5);
         using var scene = new VehiclePlacementScene(fixture);
         var owner = fixture.Graph.Sender;
-        var cart = scene.Active;
+        var vehicle = scene.Active;
         var scroll = fixture.Vehicle;
         scroll.IsDestroyed = 0;
-        scroll.SummonLocation = cart.Transform.World.Position;
+        scroll.SummonLocation = vehicle.Transform.World.Position;
         scroll.IsDirty = true;
         Assert.True(fixture.Graph.Save.TryCommitEconomy([owner]));
-        Assert.True(cart.Save());
-        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM slaves WHERE id={cart.Id} AND x=110 AND y=100 AND z=10"));
+        Assert.True(vehicle.Save());
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM slaves WHERE id={vehicle.Id} AND x=110 AND y=100 AND z=10"));
 
         var models = new ModelManager();
         SetField(models, "_modelTypes", new Dictionary<uint, ModelType>());
@@ -41,24 +44,36 @@ public sealed partial class PlayerMailSendPersistenceTests
         try
         {
             var manager = scene.World.SlaveManager;
+            if (ship)
+            {
+                vehicle.Template.SlaveKind = SlaveKind.SmallSailingShip;
+                vehicle.ModelId = 128;
+                SetField(models, "_modelTypes", new Dictionary<uint, ModelType> { [128] = new() { SubType = "ShipModel", SubId = 1 } });
+                SetField(models, "_models", new Dictionary<string, Dictionary<uint, Model>> {
+                    ["ShipModel"] = new() { [1] = new ShipModelV1 { Mass = 100, MassBoxSizeX = 2, MassBoxSizeY = 6, MassBoxSizeZ = 2 } } });
+                scene.World.Water = new WaterBodies { OceanLevel = 10 };
+                scene.World.Physics.Initialize();
+                scene.World.Physics.AddShip(vehicle);
+            }
             manager.PlacementGeometry = (_, _, _) => ErrorMessageType.NoErrorMessage;
             var target = new SkillCastPositionTarget { PosX = 100, PosY = 107, PosZ = 10, PosRot = MathF.PI / 2 };
-            Assert.True(manager.MoveLandVehicle(owner, cart, target));
-            Assert.Same(cart, manager.GetActiveSlaveByOwnerObjId(owner.ObjId));
-            Assert.True(manager.Delete(owner, cart.ObjId));
+            Assert.True(manager.MoveEscapingVehicle(owner, vehicle, target));
+            Assert.Same(vehicle, manager.GetActiveSlaveByOwnerObjId(owner.ObjId));
+            Assert.True(manager.Delete(owner, vehicle.ObjId));
             Assert.True(fixture.Graph.Save.DoSave());
         }
         finally
         {
+            scene.World.Physics.Dispose();
             SwapSingleton(previousModels);
         }
 
         var saved = Assert.IsType<SummonSlave>(fixture.Graph.ReloadLifecycle().Items.GetItemByItemId(scroll.Id));
-        Assert.Equal(cart.Id, saved.SlaveDbId);
+        Assert.Equal(vehicle.Id, saved.SlaveDbId);
         Assert.Equal(owner.Id, saved.OwnerId);
         Assert.Equal(scroll.Slot, saved.Slot);
         Assert.False(saved.HasSummonLocation);
-        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM slaves WHERE id={cart.Id} AND item_id={saved.Id} " +
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM slaves WHERE id={vehicle.Id} AND item_id={saved.Id} " +
             $"AND owner_id={owner.Id} AND x=100 AND y=107 AND z=10 AND hp=100 AND mp=7"));
     }
 

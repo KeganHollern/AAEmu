@@ -234,15 +234,12 @@ public partial class Skill
                 Cancelled = true;
                 return SkillResult.InvalidTarget;
             }
-            if (!vehicle.Template.IsABoat())
+            if (!vehicles.TryEscapePlacement(vehicleOwner, vehicle, targetCaster, out _))
             {
-                if (!vehicles.TryLandEscapePlacement(vehicleOwner, vehicle, targetCaster, out _))
-                {
-                    Cancelled = true;
-                    return SkillResult.Failure;
-                }
-                EscapeVehicle = vehicle;
+                Cancelled = true;
+                return SkillResult.Failure;
             }
+            EscapeVehicle = vehicle;
         }
         ExpiredCostume = null;
         if (Id == RechargeItemBuff.WashSkill && sourceItem?.TemplateId == RechargeItemBuff.Cleaner &&
@@ -943,10 +940,10 @@ public partial class Skill
     {
         if (caster is not Unit unit) { return; }
 
-        // The cart can leave or the landing spot can become occupied during the 10-second cast.
+        // The vehicle can leave or the landing spot can become occupied during the 10-second cast.
         // Stop before the fired notification and the 30-minute cooldown.
         if (EscapeVehicle != null && caster is Character owner &&
-            owner.ParentWorld?.SlaveManager.TryLandEscapePlacement(owner, EscapeVehicle, targetCaster, out _) != true)
+            owner.ParentWorld?.SlaveManager.TryEscapePlacement(owner, EscapeVehicle, targetCaster, out _) != true)
         {
             Stop(caster);
             return;
