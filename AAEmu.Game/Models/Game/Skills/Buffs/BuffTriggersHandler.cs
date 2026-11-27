@@ -110,12 +110,13 @@ public class BuffTriggersHandler(Buff buff)
             }
         }
     }
-    public void UnsubscribeEvents()
+    public void UnsubscribeEvents(bool dispelled = true)
     {
         //TODO These invokes need to be moved to better locations
         //TODO: Make sure this is when buff time runs out?
         //Not sure if this is for expiration or for being dispelled aka Purged
-        buff.Events.OnDispelled(buff, new OnDispelledArgs());
+        if (dispelled)
+            buff.Events.OnDispelled(buff, new OnDispelledArgs());
         foreach (var trigger in _triggers)
         {
             switch (trigger.Template.Kind)
