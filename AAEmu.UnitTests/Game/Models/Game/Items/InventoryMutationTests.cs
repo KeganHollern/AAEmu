@@ -11,6 +11,7 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.Formulas;
@@ -28,6 +29,7 @@ using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Loots;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.UnitTests.Game.Models.Game.Char;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Items;
@@ -1153,7 +1155,7 @@ public sealed class InventoryMutationTests
             skillsField.SetValue(null, skills);
             var itemData = new ItemGameData();
             SetField(itemData, "_itemGradeBuffs", new Dictionary<uint, Dictionary<byte, uint>>
-                { [200] = new() { [3] = 701, [4] = 702 } });
+                { [200] = new() { [4] = 701, [5] = 702 } });
             itemDataField.SetValue(null, itemData);
             SetField(ItemManager.Instance, "_itemUnitModifiers", new Dictionary<uint, List<BonusTemplate>>());
             SetField(ItemManager.Instance, "_itemProcBindings", new Dictionary<uint, List<uint>>());
@@ -1172,7 +1174,7 @@ public sealed class InventoryMutationTests
                 HoldableTemplate = new Holdable { SlotTypeId = 1 }
             };
             var equipment = AddItem(2, 200, 1);
-            equipment.Grade = 3;
+            equipment.Grade = 4;
             equipment.IsDirty = false;
             if (worn)
             {
@@ -1184,23 +1186,37 @@ public sealed class InventoryMutationTests
             }
             equipment.IsDirty = false;
             var charm = AddItem(3, 300, 1);
-            var grade3 = new GradeTemplate
+            var initialGrade = new GradeTemplate
             {
-                Grade = 3, GradeOrder = 3, EnchantSuccessRatio = broken ? 0 : 10000,
+                Grade = 4, GradeOrder = 4, EnchantSuccessRatio = broken ? 0 : 10000,
                 EnchantBreakRatio = broken ? 10000 : 0
             };
-            var grade4 = new GradeTemplate { Grade = 4, GradeOrder = 4 };
-            SetField(ItemManager.Instance, "_grades", new Dictionary<int, GradeTemplate> { [3] = grade3, [4] = grade4 });
-            SetField(ItemManager.Instance, "_gradesOrdered", new Dictionary<int, GradeTemplate> { [3] = grade3, [4] = grade4 });
+            var upgradedGrade = new GradeTemplate { Grade = 5, GradeOrder = 5 };
+            SetField(ItemManager.Instance, "_grades", new Dictionary<int, GradeTemplate> { [4] = initialGrade, [5] = upgradedGrade });
+            SetField(ItemManager.Instance, "_gradesOrdered", new Dictionary<int, GradeTemplate> { [4] = initialGrade, [5] = upgradedGrade });
             SetField(ItemManager.Instance, "_enchantingCosts", new Dictionary<uint, EquipSlotEnchantingCost> { [1] = new() });
             SetField(ItemManager.Instance, "_enchantingSupports", new Dictionary<uint, ItemGradeEnchantingSupport>
                 { [300] = new() { RequireGradeMin = -1, RequireGradeMax = -1 } });
+            using var data = new CharacterAchievementsTests.AchievementDataBuilder();
+            data.AddAchievement(289, 100, false);
+            data.AddRecord(484, CharRecordKind.EnchantItem, 5);
+            data.AddObjective(1, 289, 484);
+            data.AddAchievement(297, 50, false);
+            data.AddRecord(495, CharRecordKind.EnchantFailure);
+            data.AddObjective(2, 297, 495);
+            var achievements = new CharacterAchievements(_owner, data.Build());
+            typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(_owner, achievements);
+
             var skill = new Skill(new SkillTemplate { Id = 22520, ConsumeLaborPower = 10 });
             var checkpointSawPreparedState = false;
+            uint successAtCommit = 0, failureAtCommit = 0;
             skill.CommitLaborBatch = (_, _) =>
             {
                 checkpointSawPreparedState = refreshes == 0 && _owner.Money == 75 && _owner.LaborPower == 10 &&
-                    scroll.Count == 1 && charm.Count == 0 && (broken ? equipment.Count == 0 : equipment.Grade == 4);
+                    scroll.Count == 1 && charm.Count == 0 && (broken ? equipment.Count == 0 : equipment.Grade == 5);
+                successAtCommit = achievements.GetAmount(289);
+                failureAtCommit = achievements.GetAmount(297);
                 return commit;
             };
             var result = SkillLaborBatch.Run(_owner, skill, true, () =>
@@ -1211,6 +1227,10 @@ public sealed class InventoryMutationTests
                 if (!skill.Cancelled)
                     SkillLaborBatch.Current.Inventory.TryConsume(_bag, scroll, 1);
             });
+            await Assert.That(successAtCommit).IsEqualTo(broken ? 0u : 1u);
+            await Assert.That(failureAtCommit).IsEqualTo(broken ? 1u : 0u);
+            await Assert.That(achievements.GetAmount(289)).IsEqualTo(commit && !broken ? 1u : 0u);
+            await Assert.That(achievements.GetAmount(297)).IsEqualTo(commit && broken ? 1u : 0u);
             await Assert.That(checkpointSawPreparedState).IsTrue();
             await Assert.That(result).IsEqualTo(commit);
             await Assert.That(_owner.LaborPower).IsEqualTo((short)(commit ? 10 : 20));
@@ -1218,7 +1238,7 @@ public sealed class InventoryMutationTests
             await Assert.That(scroll.Count).IsEqualTo(commit ? 1 : 2);
             await Assert.That(charm.Count).IsEqualTo(commit ? 0 : 1);
             await Assert.That(equipment.Count).IsEqualTo(commit && broken ? 0 : 1);
-            await Assert.That(equipment.Grade).IsEqualTo((byte)(commit && !broken ? 4 : 3));
+            await Assert.That(equipment.Grade).IsEqualTo((byte)(commit && !broken ? 5 : 4));
             await Assert.That(refreshes).IsEqualTo(commit && !broken && worn ? 1 : 0);
             buffs.AddBuff(Is<Buff>(buff => buff.Template.Id == 702), 0, 0)
                 .WasCalled(commit && !broken && worn ? Times.Once : Times.Never);
