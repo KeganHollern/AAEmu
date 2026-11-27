@@ -15,7 +15,7 @@ public partial class Character
     // movement intervals and a scheduling margin. A later packet must not root a new jump.
     private const double GliderMovementWindow = 0.25;
     private sealed record GliderLanding(Buff Flight, BuffTriggerTemplate Contact, WorldInstance World,
-        Vector3 Position, double Time);
+        Vector3 Position, double Time, float LastZ, float LastGap);
     private GliderLanding _gliderLanding;
 
     internal void CancelGliderLanding() => Interlocked.Exchange(ref _gliderLanding, null);
@@ -45,9 +45,10 @@ public partial class Character
         if (contact == null || landing.Any(trigger => trigger != contact && trigger.Effect is not BuffEffect { Buff.Id: (uint)BuffConstants.PreparingGlider }))
             return false;
 
-        var touchdown = gap <= flight.Template.GlidingLandHeight + FallMovement.PositionTolerance;
-        var pending = touchdown ? null : new GliderLanding(flight, contact, ParentWorld, position, time ?? FallMovement.Now);
-        Interlocked.Exchange(ref _gliderLanding, pending);
+        var pending = new GliderLanding(flight, contact, ParentWorld, position, time ?? FallMovement.Now, position.Z, gap);
+        var previous = Interlocked.CompareExchange(ref _gliderLanding, pending, null);
+        if (previous != null)
+            return previous.Flight == flight;
         if (!flight.TryFinishGliderLanding())
         {
             Interlocked.CompareExchange(ref _gliderLanding, null, pending);
@@ -59,17 +60,15 @@ public partial class Character
                 new BuffTrigger(flight, trigger).Execute(flight, EventArgs.Empty);
         }
 
-        if (touchdown)
-            new BuffTrigger(flight, contact).Execute(flight, EventArgs.Empty);
+        if (gap <= flight.Template.GlidingLandHeight + FallMovement.PositionTolerance)
+            CompleteGliderLanding(pending);
         return true;
     }
 
     internal void ObserveGliderLanding(double time)
     {
-        if (Volatile.Read(ref _gliderLanding) == null)
-            return;
-        var landing = Interlocked.Exchange(ref _gliderLanding, null);
-        if (landing == null || landing.World != ParentWorld || time < landing.Time || time - landing.Time > GliderMovementWindow)
+        var landing = Volatile.Read(ref _gliderLanding);
+        if (landing == null || landing.Flight.InUse)
             return;
 
         var position = Transform.World.Position;
@@ -77,12 +76,26 @@ public partial class Character
         var template = landing.Flight.Template;
         var maxTravel = template.GlidingMoveSpeedFast * GliderMovementWindow + FallMovement.PositionTolerance;
         var maxDescent = template.GlidingFallSpeedFast * GliderMovementWindow + FallMovement.PositionTolerance;
-        if (step.Z > FallMovement.PositionTolerance || -step.Z > maxDescent ||
+        if (landing.World != ParentWorld || time < landing.Time || time - landing.Time > GliderMovementWindow ||
+            position.Z > landing.LastZ + FallMovement.PositionTolerance || -step.Z > maxDescent ||
             step.X * step.X + step.Y * step.Y > maxTravel * maxTravel ||
-            !TryGetDryGliderGap(position, out var gap) || gap > template.GlidingLandHeight + FallMovement.PositionTolerance)
+            !TryGetDryGliderGap(position, out var gap) || gap > landing.LastGap + FallMovement.PositionTolerance)
+        {
+            Interlocked.CompareExchange(ref _gliderLanding, null, landing);
             return;
+        }
 
-        new BuffTrigger(landing.Flight, landing.Contact).Execute(landing.Flight, EventArgs.Empty);
+        if (gap <= template.GlidingLandHeight + FallMovement.PositionTolerance)
+            CompleteGliderLanding(landing);
+        else if (position.Z < landing.LastZ || gap < landing.LastGap)
+            Interlocked.CompareExchange(ref _gliderLanding,
+                landing with { LastZ = Math.Min(landing.LastZ, position.Z), LastGap = Math.Min(landing.LastGap, gap) }, landing);
+    }
+
+    private void CompleteGliderLanding(GliderLanding landing)
+    {
+        if (ReferenceEquals(Interlocked.CompareExchange(ref _gliderLanding, null, landing), landing))
+            new BuffTrigger(landing.Flight, landing.Contact).Execute(landing.Flight, EventArgs.Empty);
     }
 
     private bool TryGetDryGliderGap(Vector3 position, out float gap)

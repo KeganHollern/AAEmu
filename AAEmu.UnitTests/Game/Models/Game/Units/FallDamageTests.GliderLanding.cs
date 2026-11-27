@@ -44,11 +44,64 @@ public sealed partial class FallDamageTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task GliderLanding_AWaitOrTurnBeforeTheThresholdKeepsOnlyTheOriginalDescent(bool rise)
+    {
+        var (player, flight, results) = CreateLandingFlight(1029, true);
+        player.Transform.Local.SetPosition(10, 10, 1.20f);
+        await Assert.That(player.TryCloseGliderForLanding(flight, 10)).IsTrue();
+        await Assert.That(player.TryCloseGliderForLanding(flight, 10.001)).IsFalse();
+        player.ObserveFallMovement(false, 10.02);
+        player.Transform.Local.SetPosition(10.2f, 10, 1.10f);
+        player.ObserveFallMovement(false, 10.06);
+        if (rise)
+        {
+            player.Transform.Local.SetPosition(10.25f, 10, 1.15f);
+            player.ObserveFallMovement(false, 10.10);
+        }
+        player.Transform.Local.SetPosition(10.6f, 10, 0.90f);
+        player.ObserveFallMovement(false, 10.16);
+        player.ObserveFallMovement(false, 10.19);
+        await Assert.That(results.Count(id => id == 1238)).IsEqualTo(rise ? 0 : 1);
+        await Assert.That(results.Count(id => id == 4622)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task GliderLanding_MorePositionsDoNotExtendTheOriginalDeadline()
+    {
+        var (player, flight, results) = CreateLandingFlight(1029, true);
+        player.Transform.Local.SetPosition(10, 10, 1.20f);
+        await Assert.That(player.TryCloseGliderForLanding(flight, 10)).IsTrue();
+        player.Transform.Local.SetPosition(10.2f, 10, 1.10f);
+        player.ObserveFallMovement(false, 10.16);
+        player.Transform.Local.SetPosition(10.6f, 10, 0.90f);
+        player.ObserveFallMovement(false, 10.26);
+        await Assert.That(results).IsEquivalentTo(new uint[] { 4622 });
+    }
+
+    [Test]
+    public async Task GliderLanding_MeasuresTravelFromTheOriginalClosure()
+    {
+        var (player, flight, results) = CreateLandingFlight(1029, true);
+        player.Transform.Local.SetPosition(10, 10, 1.20f);
+        await Assert.That(player.TryCloseGliderForLanding(flight, 10)).IsTrue();
+        player.Transform.Local.SetPosition(10.6f, 10, 1.15f);
+        player.ObserveFallMovement(false, 10.07);
+        player.Transform.Local.SetPosition(11.2f, 10, 1.10f);
+        player.ObserveFallMovement(false, 10.14);
+        player.Transform.Local.SetPosition(11.8f, 10, 0.90f);
+        player.ObserveFallMovement(false, 10.21);
+        await Assert.That(results).IsEquivalentTo(new uint[] { 4622 });
+    }
+
+    [Test]
     [Arguments("late")]
     [Arguments("new flight")]
     [Arguments("rising")]
     [Arguments("relocated")]
     [Arguments("mounted")]
+    [Arguments("position lock")]
     [Arguments("missing terrain")]
     [Arguments("water")]
     public async Task GliderLanding_DiscardsTheUnconfirmedGroundEffect(string change)
@@ -57,6 +110,11 @@ public sealed partial class FallDamageTests
         player.Transform.Local.SetPosition(10, 10, 1.106f);
         await Assert.That(player.TryCloseGliderForLanding(flight, 10)).IsTrue();
         player.Transform.Local.SetPosition(change == "relocated" ? 210 : 10, 10, change == "rising" ? 1.2f : 0.852f);
+        if (change == "position lock")
+        {
+            player.DisabledSetPosition = true;
+            player.DisabledSetPosition = false;
+        }
         if (change == "mounted")
             player.IsRiding = true;
         if (change == "missing terrain")

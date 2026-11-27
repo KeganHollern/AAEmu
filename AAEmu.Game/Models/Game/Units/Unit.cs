@@ -606,13 +606,14 @@ public partial class Unit : BaseUnit, IUnit
 
     protected void CompleteDeath(BaseUnit killer, KillReason killReason, Character lootPlayer = null)
     {
+        var thisCharacter = this as Character;
         FallMovement.Reset();
+        thisCharacter?.CancelGliderLanding();
         InterruptSkills();
 
         IsInBattle = false;
         var killerUnit = killer as Unit;
         var killerCharacter = killer as Character;
-        var thisCharacter = this as Character;
 
         Events.OnDeath(this, new OnDeathArgs { Killer = killerUnit, Victim = this });
         var world = ParentWorld;
