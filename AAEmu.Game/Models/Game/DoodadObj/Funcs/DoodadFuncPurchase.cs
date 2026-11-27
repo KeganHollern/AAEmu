@@ -9,8 +9,16 @@ namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
 
 public class DoodadFuncPurchase : DoodadFuncTemplate
 {
-    // Buy, Buy Gray Lilyut Foal and Buy Buckskin Lilyut Foal open the same gold dialog.
-    internal static bool OpensGoldDisplay(uint skillId) => skillId is 14569 or 20218 or 20219;
+    // Each of these stock actions opens the gold purchase dialog for its active display.
+    internal static bool OpensGoldDisplay(uint skillId) => skillId is
+        14569 or // Buy
+        17709 or 20218 or 20219 or // Lilyut foals
+        17711 or 20215 or // Elk calves (Violet and White share the same skill)
+        17537 or 20206 or 20207 or // Snowlion cubs
+        17710 or 20208 or 20209 or // Leomorph cubs
+        17929 or 20216 or 20217 or // Wolfhound pups
+        19362 or 20220 or 20221; // Sabrefang cubs
+
     internal const float DisplayReach = 4f;
     internal bool UsesItemPayment => CoinItemId != 0 && CoinCount > 0;
 
