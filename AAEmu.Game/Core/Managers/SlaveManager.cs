@@ -217,6 +217,8 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
                 return;
 
             slave.AttachedCharacters.Remove(attachPoint);
+            if (attachPoint == AttachPointKind.Driver)
+                slave.DriverEscapeDeparture = null;
             ClearSlaveAttachmentState(character);
         }
         ShipHarpoonRopeController.OnOperatorLeftSlave(slave, character);

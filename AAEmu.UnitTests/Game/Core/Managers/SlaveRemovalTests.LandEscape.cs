@@ -4,6 +4,7 @@ using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
@@ -21,9 +22,10 @@ namespace AAEmu.UnitTests.Game.Core.Managers;
 public sealed partial class SlaveRemovalTests
 {
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task LandEscape_PublishesTheSameCartAtTheNewPose(bool driverSeated)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task LandEscape_PublishesTheSameCartAtTheNewPose(bool driverSeated, bool driverMoving)
     {
         var models = new ModelManager();
         SetField(models, "_modelTypes", new Dictionary<uint, ModelType>());
@@ -58,6 +60,11 @@ public sealed partial class SlaveRemovalTests
         WorldManager.Instance.AddVisibleObject(rack);
         if (driverSeated)
             _world.SlaveManager.BindSlave(nearby.Player, _slave.ObjId, AttachPointKind.Driver, AttachUnitReason.NewMaster);
+        if (driverMoving)
+        {
+            Drive(before - Vector3.UnitX * .1f, velocity: -2500);
+            await Assert.That(_slave.VehicleVelocity.X).IsLessThan(0);
+        }
         foreach (var session in new[] { _session, nearby.Session, departure.Session, arrival.Session })
             session.Packets.Clear();
         _owner.CurrentTarget = _slave;
@@ -69,8 +76,9 @@ public sealed partial class SlaveRemovalTests
 
         foreach (var session in new[] { _session, nearby.Session })
         {
-            var packet = session.Packets.Single();
-            await Assert.That(BitConverter.ToUInt16(packet, 6)).IsEqualTo(SCOffsets.SCOneUnitMovementPacket);
+            if (!driverSeated || !ReferenceEquals(session, nearby.Session))
+                await Assert.That(session.Packets.Count).IsEqualTo(1);
+            var packet = session.Packets.Single(p => BitConverter.ToUInt16(p, 6) == SCOffsets.SCOneUnitMovementPacket);
             var body = new PacketStream(packet[8..]);
             await Assert.That(body.ReadBc()).IsEqualTo(_slave.ObjId);
             await Assert.That(body.ReadByte()).IsEqualTo((byte)MoveTypeEnum.Vehicle);
@@ -92,6 +100,43 @@ public sealed partial class SlaveRemovalTests
         {
             await Assert.That(nearby.Player.Transform.Parent).IsSameReferenceAs(_slave.Transform);
             await Assert.That(_slave.AttachedCharacters[AttachPointKind.Driver]).IsSameReferenceAs(nearby.Player);
+            var types = nearby.Session.Packets.Select(p => BitConverter.ToUInt16(p, 6)).ToList();
+
+            // The ordinary idle report arrived 130 ms after the field relocation. Another
+            // report can still be in transit if the cart was already moving at departure.
+            Drive(before);
+            Drive(before - Vector3.UnitX * .2f, velocity: -2500);
+            await Assert.That(_slave.VehicleVelocity).IsEqualTo(Vector3.Zero);
+            await Assert.That(_slave.Transform.World.Position).IsEqualTo(after);
+            await Assert.That(nearby.Player.Transform.Parent).IsSameReferenceAs(_slave.Transform);
+            var remove = types.IndexOf(SCOffsets.SCUnitsRemovedPacket);
+            var state = types.IndexOf(SCOffsets.SCUnitStatePacket);
+            var attach = types.IndexOf(SCOffsets.SCUnitAttachedPacket);
+            var bound = types.IndexOf(SCOffsets.SCSlaveBoundPacket);
+            await Assert.That(remove).IsGreaterThanOrEqualTo(0);
+            await Assert.That(state).IsGreaterThan(remove);
+            await Assert.That(attach).IsGreaterThan(state);
+            await Assert.That(bound).IsGreaterThan(attach);
+            Drive(after + Vector3.UnitY * .25f);
+            await Assert.That(Vector3.Distance(_slave.Transform.World.Position, after + Vector3.UnitY * .25f)).IsLessThan(.001f);
+            // After the first accepted arrival, the driver can go back towards the original site.
+            Drive(before);
+            await Assert.That(Vector3.Distance(_slave.Transform.World.Position, before)).IsLessThan(.001f);
+
+            await Assert.That(_world.SlaveManager.MoveEscapingVehicle(_owner, _slave, target)).IsTrue();
+            Drive(before);
+            await Assert.That(_slave.Transform.World.Position).IsEqualTo(after);
+            _world.SlaveManager.UnbindSlave(nearby.Player, _slave.TlId, AttachUnitReason.None);
+            await Assert.That(nearby.Player.Transform.Parent).IsNull();
+            Drive(before);
+            await Assert.That(_slave.Transform.World.Position).IsEqualTo(after);
+            var displaced = after + Vector3.UnitX * .1f;
+            var replacement = Watch(34, after);
+            _world.SlaveManager.BindSlave(replacement.Player, _slave.ObjId, AttachPointKind.Driver, AttachUnitReason.NewMaster);
+            Drive(displaced); // A late move from the original driver has no effect.
+            await Assert.That(_slave.Transform.World.Position).IsEqualTo(after);
+            Drive(displaced, replacement.Player);
+            await Assert.That(Vector3.Distance(_slave.Transform.World.Position, displaced)).IsLessThan(.001f);
         }
         else
         {
@@ -102,6 +147,16 @@ public sealed partial class SlaveRemovalTests
             var entry = Array.IndexOf(newTypes, SCOffsets.SCSlaveStatePacket);
             await Assert.That(entry).IsGreaterThanOrEqualTo(0);
             await Assert.That(Array.IndexOf(newTypes, SCOffsets.SCOneUnitMovementPacket)).IsGreaterThan(entry);
+        }
+
+        void Drive(Vector3 position, Character driver = null, short velocity = 0)
+        {
+            var body = new PacketStream().WriteBc(_slave.ObjId).Write((byte)MoveTypeEnum.Vehicle);
+            new VehicleMoveType { X = position.X, Y = position.Y, Z = position.Z, VelX = velocity }.Write(body);
+            body.Rollback();
+            var movementPacket = new CSMoveUnitPacket { Connection = (driver ?? nearby.Player).Connection };
+            movementPacket.Read(body);
+            movementPacket.Execute();
         }
 
         void Place(GameObject obj, Vector3 position)
