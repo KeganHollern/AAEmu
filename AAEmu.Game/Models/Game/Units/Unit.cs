@@ -606,13 +606,14 @@ public partial class Unit : BaseUnit, IUnit
 
     protected void CompleteDeath(BaseUnit killer, KillReason killReason, Character lootPlayer = null)
     {
+        var thisCharacter = this as Character;
         FallMovement.Reset();
+        thisCharacter?.CancelGliderLanding();
         InterruptSkills();
 
         IsInBattle = false;
         var killerUnit = killer as Unit;
         var killerCharacter = killer as Character;
-        var thisCharacter = this as Character;
 
         Events.OnDeath(this, new OnDeathArgs { Killer = killerUnit, Victim = this });
         var world = ParentWorld;
@@ -1085,6 +1086,8 @@ public partial class Unit : BaseUnit, IUnit
 
     internal void ObserveFallMovement(bool reportedLanding, double? time = null)
     {
+        if (this is Character player)
+            player.ObserveGliderLanding(time ?? FallMovement.Now);
         var controlledFall = Buffs.HasEffectsMatchingCondition(buff => buff.InUse && !buff.IsEnded() &&
             (buff.Template.FallDamageImmune || buff.Template.Gliding));
         if (DisabledSetPosition || IsDead || controlledFall || ActiveSkillController != null ||

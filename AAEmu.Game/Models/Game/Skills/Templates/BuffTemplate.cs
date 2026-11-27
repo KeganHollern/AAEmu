@@ -95,6 +95,9 @@ public class BuffTemplate
     public bool RemoveOnExempt { get; init; }
     public bool RemoveOnLand { get; init; }
     public bool Gliding { get; init; }
+    public float GlidingLandHeight { get; init; }
+    public float GlidingMoveSpeedFast { get; init; }
+    public float GlidingFallSpeedFast { get; init; }
     public int GlidingRotateSpeed { get; init; }
     public float GlidingLiftHeight { get; init; }
     public float GlidingLiftSpeed { get; init; }

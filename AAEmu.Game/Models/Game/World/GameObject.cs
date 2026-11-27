@@ -33,7 +33,10 @@ public class GameObject : IGameObject
                 if (this is Unit unit)
                     unit.FallMovement.Reset();
                 if (this is Character character)
+                {
+                    character.CancelGliderLanding();
                     MovementValidation.Reset(character.ObjId);
+                }
 
                 if (this is Units.Mate pet)
                     MovementValidation.Reset(pet.ObjId);
@@ -71,6 +74,8 @@ public class GameObject : IGameObject
             if (_parentWorld != value)
             {
                 var previousWorld = _parentWorld;
+                var character = this as Character;
+                character?.CancelGliderLanding();
                 if (this is Npc npc)
                     npc.AcceptedFloor = null;
                 if (this is Unit unit)
@@ -78,8 +83,7 @@ public class GameObject : IGameObject
                 _parentWorld = value;
                 if (value != null)
                     Transform.InstanceId = value.Id; // should not loop on itself
-                if (this is Character character)
-                    character.Quests?.RefreshSphereTriggers(previousWorld, value);
+                character?.Quests?.RefreshSphereTriggers(previousWorld, value);
             }
         }
     }
