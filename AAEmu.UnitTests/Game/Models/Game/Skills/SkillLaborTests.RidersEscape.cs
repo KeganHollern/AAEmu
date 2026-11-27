@@ -62,16 +62,7 @@ public sealed partial class SkillLaborTests
                 action == "blocked-at-effect" && geometryCalls == 3;
             return blocked ? ErrorMessageType.SlaveSpawnErrorInvalidArea : ErrorMessageType.NoErrorMessage;
         };
-        var template = new SkillTemplate
-        {
-            Id = 22143, TargetType = SkillTargetType.SummonPos, MaxRange = 4,
-            CastingTime = 10000, CooldownTime = 1800000
-        };
-        template.Effects.Add(new SkillEffect
-        {
-            ApplicationMethod = SkillEffectApplicationMethod.SourceOnce, Chance = 100, EndLevel = byte.MaxValue,
-            Template = new SpecialEffect { SpecialEffectTypeId = SpecialType.EscapeMySlave }
-        });
+        var template = CreateOwnerEscapeTemplate();
         var skill = new Skill(template);
         var session = new RankFeedbackSession();
         _owner.Connection = new GameConnection(session) { ActiveChar = _owner };
@@ -119,5 +110,20 @@ public sealed partial class SkillLaborTests
             await Assert.That(cart.Id).IsEqualTo(77u);
             await Assert.That(scroll.SlaveDbId).IsEqualTo(cart.Id);
         }
+    }
+
+    private static SkillTemplate CreateOwnerEscapeTemplate()
+    {
+        var template = new SkillTemplate
+        {
+            Id = 22143, TargetType = SkillTargetType.SummonPos, MaxRange = 4,
+            CastingTime = 10000, CooldownTime = 1800000
+        };
+        template.Effects.Add(new SkillEffect
+        {
+            ApplicationMethod = SkillEffectApplicationMethod.SourceOnce, Chance = 100, EndLevel = byte.MaxValue,
+            Template = new SpecialEffect { SpecialEffectTypeId = SpecialType.EscapeMySlave }
+        });
+        return template;
     }
 }

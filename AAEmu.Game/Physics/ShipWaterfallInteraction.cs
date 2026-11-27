@@ -562,7 +562,7 @@ public sealed class ShipWaterfallInteraction
         return MathF.Max(8f, hullHeight * 2f);
     }
 
-    private static void ClearGroundState(Slave ship)
+    internal static void ClearGroundState(Slave ship)
     {
         ship.GroundContactLatched = false;
         ship.GroundedByStern = false;

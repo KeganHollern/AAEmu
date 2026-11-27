@@ -65,7 +65,7 @@ public sealed partial class SlaveRemovalTests
 
         _world.SlaveManager.PlacementGeometry = (_, _, _) => ErrorMessageType.NoErrorMessage;
         var target = new SkillCastPositionTarget { PosX = after.X, PosY = after.Y, PosZ = after.Z, PosRot = 1.5f * MathF.PI };
-        await Assert.That(_world.SlaveManager.MoveLandVehicle(_owner, _slave, target)).IsTrue();
+        await Assert.That(_world.SlaveManager.MoveEscapingVehicle(_owner, _slave, target)).IsTrue();
 
         foreach (var session in new[] { _session, nearby.Session })
         {
