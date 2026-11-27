@@ -72,7 +72,7 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
             {
                 // StoreUi opens locally in r208022. No server interaction session precedes this request.
                 var display = doodad?.CurrentFuncs.FirstOrDefault(func => func.FuncKey == storeType &&
-                    func.SkillId == DoodadFuncPurchase.DisplaySkillId && func.FuncType == nameof(DoodadFuncPurchase));
+                    DoodadFuncPurchase.OpensGoldDisplay(func.SkillId) && func.FuncType == nameof(DoodadFuncPurchase));
                 if (doodad == null || doodad.Despawn > DateTime.MinValue ||
                     !ServiceInteraction.CanReach(character, doodad, display == null ? 3f : DoodadFuncPurchase.DisplayReach))
                 {
