@@ -279,6 +279,51 @@ public sealed partial class SkillLaborTests
     }
 
     [Test]
+    [Arguments(1, true)]
+    [Arguments(1, false)]
+    [Arguments(0, true)]
+    public async Task GardenConstruction_UsesLooseLumberFromTheBag(int count, bool saveSucceeds)
+    {
+        const uint gardenSkill = 18553;
+        const uint lumberId = 8337;
+        var world = new WorldManager(null, null, null, null, null);
+        SetField(world, "_worldInteractionGroups", new Dictionary<uint, WorldInteractionGroup>
+        {
+            [(uint)WorldInteractionType.GroundBuild] = WorldInteractionGroup.Building
+        });
+        SetInstance(world);
+        var garden = new HousingTemplate { HousingBindingDoodad = [] };
+        garden.BuildSteps.Add(0, new HousingBuildStep { ModelId = 989, NumActions = 1, SkillId = gardenSkill });
+        var house = new House { ObjId = 80, TemplateId = 267, Template = garden, CurrentStep = 0 };
+        _material.TemplateId = lumberId;
+        _material.Template = new ItemTemplate { Id = lumberId, MaxCount = 100 };
+        _material.Count = count;
+        var worn = AddConstructionPack(2, 17683, _owner.Inventory.Equipment, (int)EquipmentItemSlot.Backpack);
+        var skill = new Skill(new SkillTemplate
+        {
+            Id = gardenSkill, TargetType = SkillTargetType.Building, ConsumeLaborPower = 10,
+            Effects =
+            [
+                new SkillEffect
+                {
+                    ApplicationMethod = SkillEffectApplicationMethod.Target, Chance = 100, EndLevel = 99,
+                    ConsumeItemId = lumberId, ConsumeItemCount = 1,
+                    Template = new CraftEffect { WorldInteraction = WorldInteractionType.GroundBuild }
+                }
+            ]
+        }) { CommitLaborBatch = (_, _) => saveSucceeds };
+
+        skill.ApplyEffects(_owner, new SkillCasterUnit(_owner.ObjId), house, new SkillCastUnitTarget(house.ObjId), null);
+
+        var paid = count > 0 && saveSucceeds;
+        await Assert.That(skill.Cancelled).IsEqualTo(!paid);
+        await Assert.That(house.CurrentStep).IsEqualTo(paid ? -1 : 0);
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)(paid ? 10 : 20));
+        await Assert.That(_material.Count).IsEqualTo(paid ? 0 : count);
+        await Assert.That(_owner.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack)).IsSameReferenceAs(worn);
+    }
+
+    [Test]
     [Arguments(0, 17683u, true)]
     [Arguments(1, 17685u, true)]
     [Arguments(2, 17686u, true)]
