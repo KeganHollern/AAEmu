@@ -1144,17 +1144,17 @@ public class WorldManager(
                 foreach (var diff in diffs)
                     diff?.RemoveFromCharacters(obj);
 
+            // Entry callbacks can send nearby updates, so publish the new membership first.
+            region.AddObject(obj);
+            obj.Region = region;
+            currentRegion.RemoveObject(obj);
+
             // Add to characters in newly visible regions
             diffs = region.FindDifferenceBetweenRegions(currentRegion);
             if (diffs != null)
                 foreach (var diff in diffs)
                     if (obj.IsVisible)
                         diff?.AddToCharacters(obj);
-
-            // Move the object to the new region
-            region.AddObject(obj);
-            obj.Region = region;
-            currentRegion.RemoveObject(obj);
 
             // --- IMPORTANT ---
             // Recursively update regions of all children,
