@@ -13,7 +13,7 @@ dotnet run --project Docs/customized/issue-579/DoodadFloorBounds.csproj -c Relea
 cmp "$output_dir/bounds.json" AAEmu.Game/Models/Game/World/Data/r208022-doodad-floor-bounds.json
 ```
 
-The expected output has 141 rows and 22,175 bytes. Its SHA-256 is `e1af11f02bcd762a412a1278fcadb4fb8d207402bdaf972fea0ba2eb06719a62`.
+The expected output has 145 rows and 22,788 bytes. Its SHA-256 is `c82cb7261df2ab473818295ab3a23c4e230d3649f1aa057872c24ab840b56802`.
 
 | Input | Identity |
 | --- | --- |
@@ -28,8 +28,8 @@ The placement manifest contains the SHA-256 of each file, 2 spaces, its relative
 
 The 18 worlds contain 46,202 placement rows. The generator applies the Game's same-template position check within each world. It skips followers, growth templates, non-default model kinds, world-supplied models, and models without collision. It uses each start or normal phase with no phase functions or only timer functions. A phase model takes priority over the template model.
 
-This gives 492 distinct CGF paths across 16,500 eligible placements. The archive contains 349 static models with default physical boxes or triangle meshes. Another 93 models have animated collision or need a pose. Another 48 models have no default physical box or mesh. The archive lacks 2 paths.
+This gives 492 distinct CGF paths across 16,500 eligible placements. The generator uses solid boxes, triangle meshes and cylinders with flat ends. It skips animated models, models that need a collision pose, and paths missing from the archive.
 
-The generator uses `HousingGeometryAssets` and `CryGeometryQueries.GetBounds` to combine the transformed physical parts of each model. It then finds the corner farthest from the model origin. A model qualifies if that corner exceeds 2 m at any eligible placement's uniform scale. Rotation preserves that distance. The independent survey also checked all 8 corners at each authored rotation. Both methods selected the same 141 paths.
+The generator uses `HousingGeometryAssets` and `CryGeometryQueries.GetBounds` to combine the transformed physical parts of each model. It then finds the corner farthest from the model origin. A model qualifies if that corner exceeds 2 m at any eligible placement's uniform scale. Rotation preserves that distance. Including cylinders adds 4 models and extends the bounds of 2 models from the original box and mesh survey.
 
 The table stores the local bounds at unit scale. A query must use the current model, scale, and transform before it tests the actual floor. In the original survey, 141 paths crossed the corner threshold across 3,040 placements. Only 75 paths had a level face that extended more than 2 m from the origin.

@@ -100,13 +100,18 @@ public partial class AiGeoDataManager
                 var placement = HousingGeometryAssets.Transform(doodad);
                 var inclined = new List<InclinedFace>();
                 var faces = new List<LevelFace>(ReadLevelFaces(placement, asset, inclined));
+                var caps = new List<CylinderCap>();
                 placement.Translation = Vector3.Zero;
                 foreach (var part in asset.Parts)
                 {
-                    if (part is { PhysicsType: 0x1000, Shape: CryBox box })
+                    if (part.PhysicsType != 0x1000)
+                        continue;
+                    if (part.Shape is CryBox box)
                         AddLevelBoxFace(faces, box, part.Transform * placement);
+                    else if (part.Shape is CryCylinder { IsCapsule: false } cylinder)
+                        AddCylinderCap(caps, cylinder, part.Transform * placement, levelOnly: true);
                 }
-                return new FallFaces(faces.ToArray(), GroupInclines(inclined), []);
+                return new FallFaces(faces.ToArray(), GroupInclines(inclined), caps.ToArray());
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException or ArgumentException or OverflowException)

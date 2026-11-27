@@ -5,9 +5,9 @@ using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
-using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
 
@@ -151,6 +151,89 @@ public sealed partial class FallDamageTests
         actor.Transform.Local.SetPosition(x, y, z);
         actor.ObserveFallMovement(false, 0.32);
         return actor;
+    }
+
+    [Test]
+    [Arguments(2870u, 6422u, "ndeco_butcher_cuttingboard01", 23217.521f, 9100.18f, 650.78f, 159.7164f,
+        23217.502f, 9100.166f, 651.2126f, 23218.096f, 23218.127f)]
+    [Arguments(2308u, 4587u, "old/axe_a_ready", 9662.09f, 13104.004f, 182.3748f, 0f,
+        9662.08f, 13103.966f, 182.73994f, 9662.58f, 9662.611f)]
+    [Arguments(3044u, 6959u, "ndeco_art_pottery06", 9683.178f, 13155.688f, 186.2993f, 77.0923f,
+        9683.178f, 13155.688f, 187.45721f, 9683.615f, 9683.646f)]
+    public async Task OutdoorDoodad_LandsOnTheSolidCylinderAndLeavesItsRoundEdge(uint templateId, uint phaseId,
+        string model, float x, float y, float z, float yaw, float centerX, float centerY, float capZ,
+        float insideX, float outsideX)
+    {
+        await WithStaticDoodadWorld(async (world, _) =>
+        {
+            world.Template.GetCell((int)x / 1024, (int)y / 1024).VerifyCellLoaded();
+            var template = new DoodadTemplate
+            {
+                Id = templateId, ModelKindId = 1, Model = $"cgf://objects/env/01_nuia/001_ndeco/{model}.cgf",
+                FuncGroups = [new() { Id = phaseId, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Start }]
+            };
+            var block = Spawn(world, 81, template, new() { X = x, Y = y, Z = z, Yaw = yaw * MathF.PI / 180 });
+            var foot = new Vector3(centerX, centerY, capZ);
+            var player = await CheckPlayerLanding(world, block, foot);
+            var ground = world.Template.GeoData;
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, new(insideX, centerY, capZ))).IsTrue();
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, new(outsideX, centerY, capZ))).IsFalse();
+            // The square enclosing the cylinder contains this point, but the disk does not.
+            await Assert.That(ground.HasStaticDoodadFallSupport(player,
+                new(insideX, centerY + (insideX - centerX), capZ))).IsFalse();
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, foot - Vector3.UnitZ * 0.04f)).IsFalse();
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, foot + Vector3.UnitZ * 0.04f)).IsFalse();
+            Matrix4x4.Invert(HousingGeometryAssets.Transform(block), out var inverse);
+            var localCenter = Vector3.Transform(foot, inverse);
+            block.Transform.Local.SetRotation(0, 0.15f, yaw * MathF.PI / 180);
+            var tiltedCenter = Vector3.Transform(localCenter, HousingGeometryAssets.Transform(block));
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, tiltedCenter)).IsFalse();
+            block.Transform.Local.SetRotation(0, 0, yaw * MathF.PI / 180);
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, foot)).IsTrue();
+            block.ParentObjId = 15;
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, foot)).IsFalse();
+        });
+    }
+
+    [Test]
+    public async Task OutdoorBarrel_UsesItsStockSizeAndModelForALandingBeyondTheNearSearch()
+    {
+        await WithStaticDoodadWorld(async (world, _) =>
+        {
+            world.Template.GetCell(19, 11).VerifyCellLoaded();
+            var template = new DoodadTemplate
+            {
+                Id = 2536, ModelKindId = 1, Model = "cgf://objects/env/01_nuia/001_ndeco/old/barrel_grape_a02.cgf",
+                FuncGroups = [new() { Id = 5399, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Start }]
+            };
+            var barrel = Spawn(world, 82, template, new()
+            {
+                X = 19976.248f, Y = 12279.296f, Z = 101.0982f, Yaw = 31.7378f * MathF.PI / 180
+            });
+            barrel.SetScale(1.03f);
+            var foot = new Vector3(19976.791f, 12279.632f, 103.00845f);
+            await Assert.That(Vector3.Distance(foot, barrel.Transform.World.Position)).IsGreaterThan(2f);
+            var player = await CheckPlayerLanding(world, barrel, foot);
+            await Assert.That(world.Template.GeoData.HasStaticDoodadFallSupport(player, foot + Vector3.UnitX * 0.15f)).IsFalse();
+            barrel.SetScale(1);
+            await Assert.That(world.Template.GeoData.HasStaticDoodadFallSupport(player, foot)).IsFalse();
+        });
+    }
+
+    private static async Task<InclinePlayer> CheckPlayerLanding(WorldInstance world, Doodad doodad, Vector3 foot)
+    {
+        var player = new InclinePlayer { ParentWorld = world, Region = doodad.Region, Hp = 9516 };
+        player.Transform.Local.SetPosition(foot + Vector3.UnitZ * 1.3f);
+        player.ObserveFallMovement(false, 0);
+        player.Transform.Local.SetPosition(foot + Vector3.UnitZ * 0.975f);
+        player.ObserveFallMovement(false, 0.16);
+        await Assert.That(player.Impacts).IsEmpty();
+        player.Transform.Local.SetPosition(foot);
+        player.ObserveFallMovement(false, 0.32);
+        await Assert.That(player.Impacts).IsEquivalentTo(new ushort[] { 3120 });
+        player.ObserveFallMovement(true, 0.42);
+        await Assert.That(player.Impacts.Count).IsEqualTo(1);
+        return player;
     }
 
     [Test]

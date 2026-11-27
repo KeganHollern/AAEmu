@@ -44,7 +44,8 @@ try
         var model = assets.Load("cgf://" + path);
         if (model.HasAnimatedCollision || model.PoseRequirements.Any(pose => pose.AffectsCollision))
             continue;
-        var solids = model.Parts.Where(part => part.PhysicsType == 0x1000 && part.Shape is CryBox or CryTriangleMesh);
+        var solids = model.Parts.Where(part => part.PhysicsType == 0x1000 &&
+            part.Shape is CryBox or CryTriangleMesh or CryCylinder { IsCapsule: false });
         var boxes = solids.Select(part => CryGeometryQueries.GetBounds(part, Matrix4x4.Identity)).ToArray();
         if (boxes.Length == 0)
             continue;
