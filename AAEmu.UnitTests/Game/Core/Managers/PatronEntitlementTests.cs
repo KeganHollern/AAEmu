@@ -37,7 +37,7 @@ public class PatronEntitlementTests
     public async Task Admission_ParsesLoginGoldenBytes()
     {
         var bytes = Convert.FromHexString("2A00000078563412D4C3B2A100F153650000000000D2496B0000000000000000000000000000FFFFC0000201");
-        await Assert.That(LGPlayerEnterPacket.TryReadAdmission(new PacketStream(bytes), out var account, out var connection, out var token, out var start, out var end, out var address)).IsTrue();
+        await Assert.That(LGPlayerEnterPacket.TryReadAdmission(new PacketStream(bytes), out var account, out var connection, out var token, out var start, out var end, out var address, out _, out _)).IsTrue();
         await Assert.That(account).IsEqualTo(42u);
         await Assert.That(connection).IsEqualTo(0x12345678u);
         await Assert.That(token).IsEqualTo(0xa1b2c3d4u);
@@ -110,7 +110,7 @@ public class PatronEntitlementTests
     [Arguments(8)] [Arguments(24)] [Arguments(43)] [Arguments(45)]
     public async Task Admission_RejectsOldTruncatedAndTrailingBodies(int length)
     {
-        await Assert.That(LGPlayerEnterPacket.TryReadAdmission(new PacketStream(new byte[length]), out _, out _, out _, out _, out _, out _)).IsFalse();
+        await Assert.That(LGPlayerEnterPacket.TryReadAdmission(new PacketStream(new byte[length]), out _, out _, out _, out _, out _, out _, out _, out _)).IsFalse();
     }
 
     [Test]
@@ -126,7 +126,7 @@ public class PatronEntitlementTests
         var stream = new PacketStream();
         stream.Write(42u); stream.Write(0x12345678u); stream.Write(0xa1b2c3d4u); stream.Write(start); stream.Write(end);
         stream.Write(System.Net.IPAddress.Parse("192.0.2.1").MapToIPv6().GetAddressBytes());
-        await Assert.That(LGPlayerEnterPacket.TryReadAdmission(stream, out var account, out var connection, out _, out var parsedStart, out var parsedEnd, out _)).IsEqualTo(expected);
+        await Assert.That(LGPlayerEnterPacket.TryReadAdmission(stream, out var account, out var connection, out _, out var parsedStart, out var parsedEnd, out _, out _, out _)).IsEqualTo(expected);
         await Assert.That(account).IsEqualTo(42u);
         await Assert.That(connection).IsEqualTo(0x12345678u);
         await Assert.That(parsedStart).IsEqualTo(start);
