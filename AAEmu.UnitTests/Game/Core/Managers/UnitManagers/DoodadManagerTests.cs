@@ -6,11 +6,40 @@ using AAEmu.Game.Models.Game.DoodadObj.Details;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.World;
+using Microsoft.Data.Sqlite;
 
 namespace AAEmu.UnitTests.Game.Core.Managers.UnitManagers;
 
 public class DoodadManagerTests
 {
+    [Test]
+    public async Task LoadBankFunctions_LoadsTheTwoStockWarehouseDefinitions()
+    {
+        var manager = new DoodadManager(null, null, null, null, null);
+        SetPrivateField(manager, "_funcTemplates", new Dictionary<string, Dictionary<uint, DoodadFuncTemplate>>
+        {
+            [nameof(DoodadFuncBankUi)] = []
+        });
+        using var compact = new SqliteConnection("Data Source=:memory:");
+        compact.Open();
+        using var command = compact.CreateCommand();
+        command.CommandText = """
+            CREATE TABLE doodad_func_bank_uis (id INTEGER PRIMARY KEY);
+            INSERT INTO doodad_func_bank_uis VALUES (1), (2);
+            """;
+        command.ExecuteNonQuery();
+        manager.LoadBankFunctions(compact);
+
+        foreach (var id in new uint[] { 1, 2 })
+        {
+            var bank = manager.GetFuncTemplate(id, nameof(DoodadFuncBankUi));
+            await Assert.That(bank).IsTypeOf<DoodadFuncBankUi>();
+            await Assert.That(bank.Id).IsEqualTo(id);
+        }
+        await Assert.That(manager.GetFuncTemplate(3, nameof(DoodadFuncBankUi))).IsNull();
+        await Assert.That(manager.GetFuncTemplate(2, nameof(DoodadFuncAuctionUi))).IsNull();
+    }
+
     #region Constructor Tests
 
     [Test]

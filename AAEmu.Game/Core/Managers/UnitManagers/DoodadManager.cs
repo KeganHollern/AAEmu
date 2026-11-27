@@ -172,6 +172,7 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
             }
 
             LoadPhaseFunctions(connection);
+            LoadBankFunctions(connection);
 
             // doodad_func_animates
             using (var command = connection.CreateCommand())
@@ -2881,6 +2882,19 @@ public partial class DoodadManager(IObjectIdManager objectIdManager, IDoodadIdMa
     public List<DoodadFunc> GetFuncsForGroup(uint funcGroupId)
     {
         return _funcsByGroups.TryGetValue(funcGroupId, out var group) ? group : [];
+    }
+
+    internal void LoadBankFunctions(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id FROM doodad_func_bank_uis";
+        using var reader = new SQLiteWrapperReader(command.ExecuteReader());
+        var functions = _funcTemplates[nameof(DoodadFuncBankUi)];
+        while (reader.Read())
+        {
+            var function = new DoodadFuncBankUi { Id = reader.GetUInt32("id") };
+            functions.Add(function.Id, function);
+        }
     }
 
     internal void LoadPhaseFunctions(SqliteConnection connection)
