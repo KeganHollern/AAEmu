@@ -120,18 +120,20 @@ public class GradeEnchant : SpecialEffectAction
             return;
         }
 
+        var upgraded = result is GradeEnchantResult.Success or GradeEnchantResult.GreatSuccess;
+        var progress = upgraded
+            ? new AchievementProgressEvent(CharRecordKind.EnchantItem, grade, 0, 1)
+            : new AchievementProgressEvent(CharRecordKind.EnchantFailure, 0, 0, 1);
+        batch.StageAchievementProgress([progress]);
+
         // Skill.Apply consumes the authored scroll in the same batch. Publish
         // the roll only after labor, gold, charm, scroll and item state commit.
         batch.AfterCommit(() =>
         {
             RefreshWornPiece(character, item, initialGrade);
-            if (result is GradeEnchantResult.Success or GradeEnchantResult.GreatSuccess)
-                character.Achievements?.Increment(CharRecordKind.EnchantItem, grade, 0);
-            else
-                character.Achievements?.Increment(CharRecordKind.EnchantFailure, 0, 0);
             character.SendPacket(new SCGradeEnchantResultPacket((byte)result, item, initialGrade, grade));
             character.BroadcastPacket(new SCSkillEndedPacket(skill.TlId), true);
-            if (grade >= 8 && result is GradeEnchantResult.Success or GradeEnchantResult.GreatSuccess)
+            if (grade >= 8 && upgraded)
                 WorldManager.Instance.BroadcastPacketToServer(
                     new SCGradeEnchantBroadcastPacket(character.Name, (byte)result, item, initialGrade, grade));
         });
