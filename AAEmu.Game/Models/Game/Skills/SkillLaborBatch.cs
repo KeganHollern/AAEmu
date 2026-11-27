@@ -17,6 +17,7 @@ internal sealed class SkillLaborBatch
     public Skill Skill { get; }
     public InventoryMutation Inventory { get; }
     private readonly CharacterLaborMutation _labor;
+    private CharacterAchievements.DeferredPersistenceScope _craftAchievements;
     public bool IsCommitting { get; private set; }
     private readonly List<Action> _afterCommit = [];
     private readonly HashSet<object> _deferred = [];
@@ -95,6 +96,14 @@ internal sealed class SkillLaborBatch
             doodad.MarkLaborDeletion(true);
             AfterCommit(() => doodad.PublishCommittedDeletion(delete));
         }
+    }
+
+    public void StageCraftProgress(IReadOnlyList<AchievementProgressEvent> progress)
+    {
+        if (progress.Count == 0 || Owner.Achievements == null)
+            return;
+        _craftAchievements ??= Owner.Achievements.BeginDeferredPersistence();
+        Owner.Achievements.Increment(progress);
     }
 
     public void AfterCommit(Action action) => _afterCommit.Add(action);
@@ -219,9 +228,13 @@ internal sealed class SkillLaborBatch
                     skill.LaborVocationSettled = !skill.Template.PlotOnly;
                 }
                 s_current = null;
+                var craftNotifications = batch._craftAchievements?.CreateCommittedNotifications();
+                batch._craftAchievements?.Commit();
                 inventory.Complete();
                 if (labor.HasChanges)
                     labor.Complete();
+                if (craftNotifications != null)
+                    owner.Achievements.SendCommittedState(craftNotifications);
                 foreach (var action in batch._afterCommit)
                     action();
                 return true;
@@ -233,6 +246,7 @@ internal sealed class SkillLaborBatch
                 {
                     inventory.PreservePreparedState();
                     labor.PreservePreparedState();
+                    batch._craftAchievements?.PreservePreparedState();
                 }
                 skill.Cancelled = true;
                 if (committed)
@@ -241,6 +255,7 @@ internal sealed class SkillLaborBatch
             }
             finally
             {
+                batch._craftAchievements?.Dispose();
                 s_current = null;
                 if (!committed && !batch.IsCommitting)
                 {

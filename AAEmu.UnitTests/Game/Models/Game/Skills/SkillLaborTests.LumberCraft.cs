@@ -8,6 +8,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Char.Templates;
 using AAEmu.Game.Models.Game.Crafts;
@@ -22,6 +23,8 @@ using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Skills.Effects.Enums;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.World;
+
+using AAEmu.UnitTests.Game.Models.Game.Char;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Skills;
 
@@ -70,7 +73,19 @@ public sealed partial class SkillLaborTests
         typeof(CharacterCraft).GetProperty("CurrentCraft", flags)!.SetValue(_owner.Craft, recipe);
         typeof(CharacterCraft).GetProperty("Count", flags)!.SetValue(_owner.Craft, 1);
         _owner.Craft.IsCrafting = true;
+        using var data = new CharacterAchievementsTests.AchievementDataBuilder();
+        data.AddAchievement(1, 100, false);
+        data.AddRecord(1, CharRecordKind.MakeItemType, lumberId, uint.MaxValue);
+        data.AddObjective(1, 1, 1);
+        data.AddAchievement(2, 100, false);
+        data.AddRecord(2, CharRecordKind.MakeItemImpl, (uint)templates[lumberId].ImplId, 0);
+        data.AddObjective(2, 2, 2);
+        var achievements = new CharacterAchievements(_owner, data.Build());
+        typeof(Character).GetField("<Achievements>k__BackingField", flags)!.SetValue(_owner, achievements);
+
         var commitCount = 0;
+        var productProgressAtCommit = 0u;
+        var classProgressAtCommit = 0u;
         var skill = new Skill(new SkillTemplate
         {
             Id = recipe.SkillId, TargetType = SkillTargetType.Doodad, ConsumeLaborPower = 5, ActabilityGroupId = 18,
@@ -83,6 +98,8 @@ public sealed partial class SkillLaborTests
         skill.CommitLaborBatch = (_, _) =>
         {
             commitCount++;
+            productProgressAtCommit = achievements.GetAmount(1);
+            classProgressAtCommit = achievements.GetAmount(2);
             return commitSucceeds;
         };
         var sawmill = PlaceSawmill(recipe.ReqDoodadId);
@@ -108,6 +125,11 @@ public sealed partial class SkillLaborTests
             .Where(packet => BitConverter.ToUInt16(packet, 6) == SCOffsets.SCErrorMsgPacket)
             .Select(packet => (ErrorMessageType)BitConverter.ToUInt16(packet, 10)).ToArray();
         var expectedSuccess = expectedError == ErrorMessageType.NoErrorMessage;
+        var stagedCount = expectedSuccess || expectedError == ErrorMessageType.InternalError ? 1u : 0u;
+        await Assert.That(productProgressAtCommit).IsEqualTo(stagedCount);
+        await Assert.That(classProgressAtCommit).IsEqualTo(stagedCount);
+        await Assert.That(achievements.GetAmount(1)).IsEqualTo(expectedSuccess ? 1u : 0u);
+        await Assert.That(achievements.GetAmount(2)).IsEqualTo(expectedSuccess ? 1u : 0u);
         await Assert.That(errors).IsEquivalentTo(expectedSuccess ? Array.Empty<ErrorMessageType>() : [expectedError]);
         await Assert.That(commitCount).IsEqualTo(expectedSuccess || !commitSucceeds ? 1 : 0);
         await Assert.That(skill.Cancelled).IsEqualTo(!expectedSuccess);
