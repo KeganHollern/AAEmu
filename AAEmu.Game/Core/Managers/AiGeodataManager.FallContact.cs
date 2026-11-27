@@ -281,22 +281,13 @@ public partial class AiGeoDataManager
         return result.ToArray();
     }
 
-    private static void AddCylinderCap(List<CylinderCap> caps, CryCylinder cylinder, Matrix4x4 transform, bool levelOnly = false)
+    private static void AddCylinderCap(List<CylinderCap> caps, CryCylinder cylinder, Matrix4x4 transform)
     {
         if (cylinder.Radius <= 0 || cylinder.HalfHeight <= 0 || !Matrix4x4.Invert(transform, out var inverse))
             return;
         var normal = Vector3.Normalize(Vector3.TransformNormal(cylinder.Axis, Matrix4x4.Transpose(inverse)));
         if (!(MathF.Abs(normal.Z) > PlayerFallNormalZ))
             return;
-        if (levelOnly)
-        {
-            // A stock pottery rotation leaves a tiny tilt. Compare the full diameter's
-            // height difference with the same two-endpoint precision used for foot Z.
-            var worldZ = new Vector3(transform.M13, transform.M23, transform.M33);
-            var heightRange = 2 * cylinder.Radius * Vector3.Cross(Vector3.Normalize(cylinder.Axis), worldZ).Length();
-            if (!(heightRange <= FallMovement.PositionTolerance))
-                return;
-        }
         var top = cylinder.Center + cylinder.Axis * MathF.CopySign(cylinder.HalfHeight, normal.Z);
         var gradient = new Vector2(-normal.X / normal.Z, -normal.Y / normal.Z);
         // Each horizontal metre also moves along the cap plane before conversion to model coordinates.

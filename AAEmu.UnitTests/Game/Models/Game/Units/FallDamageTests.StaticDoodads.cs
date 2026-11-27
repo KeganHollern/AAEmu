@@ -158,6 +158,7 @@ public sealed partial class FallDamageTests
         23217.502f, 9100.166f, 651.2126f, 23218.096f, 23218.127f)]
     [Arguments(2308u, 4587u, "old/axe_a_ready", 9662.09f, 13104.004f, 182.3748f, 0f,
         9662.08f, 13103.966f, 182.73994f, 9662.58f, 9662.611f)]
+    // This level placement is the control for the sloped Vase below.
     [Arguments(3044u, 6959u, "ndeco_art_pottery06", 9683.178f, 13155.688f, 186.2993f, 77.0923f,
         9683.178f, 13155.688f, 187.45721f, 9683.615f, 9683.646f)]
     public async Task OutdoorDoodad_LandsOnTheSolidCylinderAndLeavesItsRoundEdge(uint templateId, uint phaseId,
@@ -185,7 +186,7 @@ public sealed partial class FallDamageTests
             await Assert.That(ground.HasStaticDoodadFallSupport(player, foot + Vector3.UnitZ * 0.04f)).IsFalse();
             Matrix4x4.Invert(HousingGeometryAssets.Transform(block), out var inverse);
             var localCenter = Vector3.Transform(foot, inverse);
-            block.Transform.Local.SetRotation(0, 0.15f, yaw * MathF.PI / 180);
+            block.Transform.Local.SetRotation(0, 65f * MathF.PI / 180, yaw * MathF.PI / 180);
             var tiltedCenter = Vector3.Transform(localCenter, HousingGeometryAssets.Transform(block));
             await Assert.That(ground.HasStaticDoodadFallSupport(player, tiltedCenter)).IsFalse();
             block.Transform.Local.SetRotation(0, 0, yaw * MathF.PI / 180);
@@ -234,6 +235,36 @@ public sealed partial class FallDamageTests
         player.ObserveFallMovement(true, 0.42);
         await Assert.That(player.Impacts.Count).IsEqualTo(1);
         return player;
+    }
+
+    [Test]
+    public async Task AncientWhiteVase_PlayerLandsOnTheInclinedCapAtTheOutdoorPlacement()
+    {
+        await WithStaticDoodadWorld(async (world, _) =>
+        {
+            world.Template.GetCell(9, 12).VerifyCellLoaded();
+            var template = new DoodadTemplate
+            {
+                Id = 3044, ModelKindId = 1, Model = "cgf://objects/env/01_nuia/001_ndeco/ndeco_art_pottery06.cgf",
+                FuncGroups = [new() { Id = 6959, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Start }]
+            };
+            const float radians = MathF.PI / 180;
+            var vase = Spawn(world, 83, template, new()
+            {
+                X = 9683.177734f, Y = 13155.688477f, Z = 186.29930f,
+                Roll = -23.815f * radians, Pitch = -5.3367f * radians, Yaw = 77.0923f * radians
+            });
+            var ground = world.Template.GeoData;
+            var center = Encoded(new(9682.700f, 13155.697f, 187.35413f));
+            var player = await CheckPlayerLanding(world, vase, center);
+            // Stock collision puts the western lip lower than the center. Beyond it the player falls to terrain.
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, Encoded(new(9682.294f, 13155.697f, 187.17012f)))).IsTrue();
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, Encoded(new(9682.263f, 13155.697f, 187.1561f)))).IsFalse();
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, center + Vector3.UnitZ * 0.04f)).IsFalse();
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, center - Vector3.UnitZ * 0.04f)).IsFalse();
+            var npc = new FallUnit { ParentWorld = world, Region = vase.Region };
+            await Assert.That(ground.HasStaticDoodadFallSupport(npc, center)).IsFalse();
+        });
     }
 
     [Test]
@@ -287,12 +318,12 @@ public sealed partial class FallDamageTests
             furnace.ParentObjId = 15;
             await Assert.That(ground.HasStaticDoodadFallSupport(player, foot)).IsFalse();
         });
+    }
 
-        static Vector3 Encoded(Vector3 point)
-        {
-            var position = Helpers.ConvertPosition(Helpers.ConvertPosition(point.X, point.Y, point.Z));
-            return new Vector3(position.x, position.y, position.z);
-        }
+    private static Vector3 Encoded(Vector3 point)
+    {
+        var position = Helpers.ConvertPosition(Helpers.ConvertPosition(point.X, point.Y, point.Z));
+        return new Vector3(position.x, position.y, position.z);
     }
 
     [Test]

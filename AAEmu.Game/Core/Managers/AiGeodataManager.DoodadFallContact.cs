@@ -109,7 +109,7 @@ public partial class AiGeoDataManager
                     if (part.Shape is CryBox box)
                         AddLevelBoxFace(faces, box, part.Transform * placement);
                     else if (part.Shape is CryCylinder { IsCapsule: false } cylinder)
-                        AddCylinderCap(caps, cylinder, part.Transform * placement, levelOnly: true);
+                        AddCylinderCap(caps, cylinder, part.Transform * placement);
                 }
                 return new FallFaces(faces.ToArray(), GroupInclines(inclined), caps.ToArray());
             }
