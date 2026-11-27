@@ -23,14 +23,10 @@ public class BigFish : Item
     {
         if (stream.LeftBytes < DetailBytesLength)
             return;
-        /*
-         Length = 4
-         Weight = 4
-         Capture Date = 8
-         */
-        stream.ReadSingle();    // Weight
-        stream.ReadSingle();    // Length
-        stream.ReadDateTime(); // Capture Date
+        Weight = stream.ReadSingle();
+        Length = stream.ReadSingle();
+        // The item record supplies CreateTime separately.
+        stream.ReadDateTime();
     }
 
     public override void WriteDetails(PacketStream stream)
