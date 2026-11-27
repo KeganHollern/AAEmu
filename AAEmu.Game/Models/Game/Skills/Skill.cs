@@ -104,6 +104,7 @@ public partial class Skill
     internal Character VehicleOperator { get; set; }
     internal AAEmu.Game.Models.Game.Duels.Duel DuelContext { get; set; }
     internal uint SourceItemTemplateId { get; private set; }
+    internal EquipItem ExpiredCostume { get; private set; }
     private bool _bypassGcd;
     private int _achievementUseRecorded;
     private int _stopRequested;
@@ -221,6 +222,18 @@ public partial class Skill
         {
             Cancelled = true;
             return SkillResult.InvalidSource;
+        }
+        ExpiredCostume = null;
+        if (Id == RechargeItemBuff.WashSkill && sourceItem?.TemplateId == RechargeItemBuff.Cleaner &&
+            caster is Character owner && targetCaster is SkillCastItemTarget itemTarget &&
+            owner.Inventory.GetItemById(itemTarget.Id) is EquipItem { TemplateId: 31888 or 31889 } costume)
+        {
+            if (!RechargeItemBuff.CanWash(owner, costume, DateTime.UtcNow))
+            {
+                Cancelled = true;
+                return SkillResult.InvalidTarget;
+            }
+            ExpiredCostume = costume;
         }
         // Origins includes all six character slots. Refuse before the item skill spends its scroll.
         if (sourceItem?.TemplateId == CharacterSlotScroll && caster is Character slotOwner)
@@ -1256,7 +1269,7 @@ public partial class Skill
                 ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
             else if (caster is Character laborOwner && (Template.ConsumeLaborPower > 0 ||
                      Template.Effects.Any(effect => effect.Template is RecoverExpEffect or RepairSlaveEffect) ||
-                     Dyeing.IsDyeingSkill(this) || MateRecovery.IsRecoverySkill(Template)))
+                     ExpiredCostume != null || Dyeing.IsDyeingSkill(this) || MateRecovery.IsRecoverySkill(Template)))
             {
                 lock (SaveManager.PersistenceSyncRoot)
                 {
@@ -1268,6 +1281,7 @@ public partial class Skill
                     _normalLaborEffectsCompleted = true;
                     SkillLaborBatch.Run(laborOwner, this, true,
                         () => ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject),
+                        ExpiredCostume != null ? ItemTaskType.RechargeBuff :
                         Dyeing.IsDyeingSkill(this) ? ItemTaskType.Dyeing : ItemTaskType.SkillEffectGainItem);
                 }
             }
@@ -1712,7 +1726,7 @@ public partial class Skill
                 // original type-1 position target produced by the r208022 skill client.
                 var preserveSlavePosition = Template.TargetType == SkillTargetType.SummonPos &&
                     effect.Template is SpecialEffect { SpecialEffectTypeId: SpecialType.SpawnSlave };
-                var thisTargetCaster = preserveSlavePosition || target.ObjId == targetCaster.ObjId
+                var thisTargetCaster = preserveSlavePosition || ExpiredCostume != null || target.ObjId == targetCaster.ObjId
                     ? targetCaster
                     : new SkillCastUnitTarget(target.ObjId);
 
