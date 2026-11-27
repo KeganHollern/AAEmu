@@ -332,7 +332,7 @@ public class CharacterCraft(Character owner)
         var batch = SkillLaborBatch.For(Owner);
         using var localMutation = batch == null ? new InventoryMutation(ItemTaskType.CraftActSaved) : null;
         var inventory = batch?.Inventory ?? localMutation;
-        var afterCommit = new List<Action>();
+        var productProgress = new List<AchievementProgressEvent>();
         var previousBackpackId = 0UL;
 
         void RejectCraft()
@@ -415,23 +415,10 @@ public class CharacterCraft(Character owner)
                 if (actualGrade < 0)
                     actualGrade = 0;
 
-                void RecordProduct() =>
-Owner.Achievements?.Increment(
-                [
-                    new AchievementProgressEvent(
-                        CharRecordKind.MakeItemType,
-                        product.ItemId,
-                        (uint)actualGrade,
-                        (uint)product.Amount,
-                        true),
-                    new AchievementProgressEvent(
-                        CharRecordKind.MakeItemImpl,
-                        (uint)productTemplate.ImplId,
-                        (uint)actualGrade,
-                        (uint)product.Amount,
-                        true)
-                ]);
-                afterCommit.Add(RecordProduct);
+                productProgress.Add(new AchievementProgressEvent(
+                    CharRecordKind.MakeItemType, product.ItemId, (uint)actualGrade, (uint)product.Amount, true));
+                productProgress.Add(new AchievementProgressEvent(
+                    CharRecordKind.MakeItemImpl, (uint)productTemplate.ImplId, (uint)actualGrade, (uint)product.Amount, true));
             }
         }
 
@@ -447,8 +434,6 @@ Owner.Achievements?.Increment(
         var completedCraftId = CurrentCraft.Id;
         void CompleteCraft()
         {
-            foreach (var callback in afterCommit)
-                callback();
             Count--;
             QuestManager.Instance.DoOnCraftEvents(Owner, completedCraftId);
 
@@ -463,12 +448,17 @@ Owner.Achievements?.Increment(
             }
         }
         if (batch != null)
+        {
+            batch.StageCraftProgress(productProgress);
             batch.AfterCommit(CompleteCraft);
+        }
         else
         {
             if (previousBackpackId != 0)
                 Owner.Inventory.PreviousBackPackItemId = previousBackpackId;
             localMutation.Complete();
+            if (productProgress.Count > 0)
+                Owner.Achievements?.Increment(productProgress);
             CompleteCraft();
         }
     }
