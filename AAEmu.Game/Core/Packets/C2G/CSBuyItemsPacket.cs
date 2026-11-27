@@ -159,6 +159,13 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
             return;
         }
 
+        if (display.SkillId == DoodadFuncPurchase.BuyDragoraTicket)
+        {
+            // The booth checks the quest and enters its timed phase only after payment.
+            doodad.Use(character, display.SkillId);
+            return;
+        }
+
         var result = purchase.TryPurchase(character);
         if (result != ErrorMessageType.NoErrorMessage)
             character.SendErrorMessage(result);

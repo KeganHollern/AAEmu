@@ -25,7 +25,13 @@ using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Merchant;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Quests;
+using AAEmu.Game.Models.Game.Quests.Static;
+using AAEmu.Game.Models.Game.Skills.Templates;
+using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Tasks.Doodads;
 using AAEmu.UnitTests.Utils.Mocks;
 using Microsoft.Data.Sqlite;
 
@@ -68,6 +74,7 @@ public sealed class CSBuyItemsPacketTests
             [23709] = new() { Id = 23709, MaxCount = 1, Price = 1000 },
             [23681] = new() { Id = 23681, MaxCount = 1, Price = 1000 },
             [23682] = new() { Id = 23682, MaxCount = 1, Price = 1000 },
+            [26426] = new() { Id = 26426, MaxCount = 1, Price = 10000 },
             [16197] = new() { Id = 16197, MaxCount = 1, Price = 5000 },
             [1000] = new() { Id = 1000, MaxCount = 100, FixedGrade = -1, Price = 10, HonorPrice = 20, LivingPointPrice = 30 },
             [1001] = new() { Id = 1001, MaxCount = 100, FixedGrade = -1, Price = 1 }
@@ -95,6 +102,7 @@ public sealed class CSBuyItemsPacketTests
                 [379] = new DoodadFuncPurchase { Id = 379, ItemId = 23709, Count = 1 },
                 [382] = new DoodadFuncPurchase { Id = 382, ItemId = 23681, Count = 1 },
                 [383] = new DoodadFuncPurchase { Id = 383, ItemId = 23682, Count = 1 },
+                [388] = new DoodadFuncPurchase { Id = 388, ItemId = 26426, Count = 1 },
                 [25] = new DoodadFuncPurchase { Id = 25, ItemId = 16197, Count = 1 },
                 [134] = new DoodadFuncPurchase { Id = 134, ItemId = 21166, Count = 1, CoinItemId = 23633, CoinCount = 15 }
             },
@@ -189,8 +197,80 @@ public sealed class CSBuyItemsPacketTests
         _function.FuncType = nameof(DoodadFuncPurchase);
     }
 
-    private void BuyAnimal(uint item) => SendPurchase(clientShopId: _function.FuncKey,
+    private void BuyFromDisplay(uint item) => SendPurchase(clientShopId: _function.FuncKey,
         requests: [new StorePurchaseRequest(item, 1, ShopCurrencyType.Money)]);
+
+    private void OpenDragoraBooth(bool questInProgress, long copper)
+    {
+        var skills = new SkillManager(null, null);
+        SetField(skills, "_skills", new Dictionary<uint, SkillTemplate> { [20365] = new() { Id = 20365 } });
+        Install(skills);
+        var requirements = new UnitRequirementsGameData();
+        SetField(requirements, "<_unitReqsByOwnerType>k__BackingField", new Dictionary<string, List<UnitReqs>>
+        {
+            ["Skill"] = [new() { OwnerId = 20365, KindType = UnitReqsKindType.ProgressQuestContext, Value1 = 5062 }]
+        });
+        Install(requirements);
+        Install(new TaskManager(null));
+        _character.Money = copper;
+        _character.Quests = new CharacterQuests(_character);
+        if (questInProgress)
+        {
+            var quest = new Quest(null, _character, null, null, null, null, null, false);
+            SetField(quest, "_step", QuestComponentKind.Progress);
+            _character.Quests.ActiveQuests[5062] = quest;
+        }
+        _function.FuncType = nameof(DoodadFuncPurchase);
+        (_function.GroupId, _function.FuncKey, _function.FuncId, _function.SkillId, _function.NextPhase) =
+            (15504, 12823, 388, 20365, 15505);
+        var manager = DoodadManager.Instance;
+        SetField(manager, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>> { [15504] = [_function] });
+        SetField(manager, "_phaseFuncs", new Dictionary<uint, List<DoodadPhaseFunc>>
+        {
+            [15505] = [new() { FuncId = 6645, FuncType = nameof(DoodadFuncTimer) }]
+        });
+        SetField(manager, "_phaseFuncTemplates", new Dictionary<string, Dictionary<uint, DoodadPhaseFuncTemplate>>
+        {
+            [nameof(DoodadFuncTimer)] = new() { [6645] = new DoodadFuncTimer { Id = 6645, Delay = 3000, NextPhase = 15504 } }
+        });
+        _shop.TemplateId = 6008;
+        _shop.Template = new DoodadTemplate { Id = 6008, FuncGroups = [new() { Id = 15504 }, new() { Id = 15505 }] };
+        _shop.FuncGroupId = 15504;
+        _shop.Transform.Local.SetPosition(3.7f, 0, 0);
+    }
+
+    [Test]
+    public async Task DragoraBooth_OnePurchaseStartsTheAuthoredTimerAndReopensTheSameTable()
+    {
+        OpenDragoraBooth(true, 20000);
+        var start = DateTime.UtcNow;
+        BuyFromDisplay(26426);
+        await Assert.That(_shop.FuncGroupId).IsEqualTo(15505U);
+        var timer = _shop.FuncTask;
+        await Assert.That(timer).IsTypeOf<DoodadFuncTimerTask>();
+        await Assert.That(timer.TriggerTime >= start.AddSeconds(3) && timer.TriggerTime <= DateTime.UtcNow.AddSeconds(3)).IsTrue();
+        BuyFromDisplay(26426);
+        await Assert.That(_character.Money).IsEqualTo(10000L);
+        await Assert.That(_character.Inventory.Bag.Items.Single().TemplateId).IsEqualTo(26426U);
+        timer.Execute();
+        await Assert.That(_shop.FuncGroupId).IsEqualTo(15504U);
+        BuyFromDisplay(26426);
+        await Assert.That(_character.Money).IsZero();
+        await Assert.That(_character.Inventory.Bag.Items.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false, 10000)]
+    [Arguments(true, 9999)]
+    public async Task DragoraBooth_RefusalLeavesTheOfferAndPaymentIntact(bool questInProgress, int copper)
+    {
+        OpenDragoraBooth(questInProgress, copper);
+        BuyFromDisplay(26426);
+        await Assert.That(_shop.FuncGroupId).IsEqualTo(15504U);
+        await Assert.That(_shop.FuncTask).IsNull();
+        await Assert.That(_character.Money).IsEqualTo((long)copper);
+        await Assert.That(_character.Inventory.Bag.Items).IsEmpty();
+    }
 
     [Test]
     [Arguments(4606U, 23707U)]
@@ -199,7 +279,7 @@ public sealed class CSBuyItemsPacketTests
     public async Task ElkStall_SellsItsOwnCalfForTenSilver(uint stall, uint calf)
     {
         OpenAnimalStall(stall);
-        BuyAnimal(calf);
+        BuyFromDisplay(calf);
         await Assert.That(_character.Money).IsZero();
         var item = _character.Inventory.Bag.Items.Single();
         await Assert.That(item.TemplateId).IsEqualTo(calf);
@@ -214,12 +294,12 @@ public sealed class CSBuyItemsPacketTests
         _character.Money = 2000;
         _shop.Transform.Local.SetPosition(distance, 0, 0);
         OpenAnimalStall(5943);
-        BuyAnimal(23681);
+        BuyFromDisplay(23681);
         await Assert.That(_character.Money).IsEqualTo(1000L);
         await Assert.That(_character.Inventory.Bag.Items.Single().TemplateId).IsEqualTo(23681U);
 
         OpenAnimalStall(5944);
-        BuyAnimal(23682);
+        BuyFromDisplay(23682);
         await Assert.That(_character.Money).IsZero();
         await Assert.That(_character.Inventory.Bag.Items.Count).IsEqualTo(2);
         await Assert.That(_character.Inventory.Bag.Items.Count(item => item.TemplateId == 23682 && item.Count == 1)).IsEqualTo(1);
@@ -235,7 +315,7 @@ public sealed class CSBuyItemsPacketTests
         OpenAnimalStall(5944);
         _character.Money = money;
         _shop.Transform.Local.SetPosition(distance, 0, 0);
-        BuyAnimal(item);
+        BuyFromDisplay(item);
         await Assert.That(_character.Money).IsEqualTo((long)money);
         await Assert.That(_character.Inventory.Bag.Items).IsEmpty();
         await AssertSingleError(expected);
@@ -246,7 +326,7 @@ public sealed class CSBuyItemsPacketTests
     {
         OpenAnimalStall(5944);
         _function.SkillId = 23942; // Limited Purchase per Account has its own contract.
-        BuyAnimal(23682);
+        BuyFromDisplay(23682);
         await AssertUnchanged(ErrorMessageType.StoreHaveProblem);
     }
 
