@@ -7,6 +7,7 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Char.Templates;
 using AAEmu.Game.Models.Game.Features;
@@ -21,6 +22,7 @@ using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Trading;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
+using AAEmu.UnitTests.Game.Models.Game.Char;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Core.Managers.World;
@@ -200,6 +202,38 @@ public sealed class WorldEconomySettlementTests
             await Assert.That(_mail._allPlayerMails).IsEmpty();
             await Assert.That(Demand).IsEmpty();
         }
+    }
+
+    [Test]
+    [Arguments(0u, true)]
+    [Arguments(99u, true)]
+    [Arguments(99u, false)]
+    public async Task Sale_AchievementProgressSharesThePackAndPaymentCommit(uint priorSales, bool commit)
+    {
+        using var data = new CharacterAchievementsTests.AchievementDataBuilder();
+        data.AddAchievement(679, 100, false);
+        data.AddRecord(1161, CharRecordKind.SellItem, _pack.TemplateId, _trader.TemplateId);
+        data.AddObjective(1, 679, 1161);
+        var achievements = new CharacterAchievements(_seller, data.Build());
+        typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(_seller, achievements);
+        achievements.Increment(CharRecordKind.SellItem, _pack.TemplateId, _trader.TemplateId, priorSales);
+        var amountAtCommit = 0u;
+        _save.TryCommitEconomy(Any<IReadOnlyCollection<Character>>(), Any<Action<PersistenceSaveContext>>())
+            .Returns(() =>
+            {
+                amountAtCommit = achievements.GetAmount(679);
+                return commit;
+            });
+
+        var price = _specialty.SellSpecialty(_seller, _trader.ObjId);
+
+        await Assert.That(amountAtCommit).IsEqualTo(priorSales + 1);
+        await Assert.That(price > 0).IsEqualTo(commit);
+        await Assert.That(achievements.GetAmount(679)).IsEqualTo(commit ? priorSales + 1 : priorSales);
+        await Assert.That(achievements.IsCompleted(679)).IsEqualTo(commit && priorSales == 99);
+        await Assert.That(_pack.Count).IsEqualTo(commit ? 0 : 1);
+        await Assert.That(_mail._allPlayerMails.Count).IsEqualTo(commit ? 1 : 0);
     }
 
     [Test]

@@ -61,6 +61,8 @@ public partial class SpecialtyManager
                 return 0;
             }
 
+            using var achievementUpdate = player.Achievements?.BeginDeferredPersistence();
+            player.Achievements?.Increment(CharRecordKind.SellItem, backpack.TemplateId, npc.TemplateId);
             var nextDemand = demand.RecordSale(utcNow, AppConfiguration.Instance.Specialty);
             bool committed;
             try
@@ -76,6 +78,7 @@ public partial class SpecialtyManager
                 inventory.PreservePreparedState();
                 mails.PreservePreparedState();
                 labor.PreservePreparedState();
+                achievementUpdate?.PreservePreparedState();
                 _demand[(backpack.TemplateId, destination)] = nextDemand;
                 throw;
             }
@@ -87,18 +90,21 @@ public partial class SpecialtyManager
             _demand[(backpack.TemplateId, destination)] = nextDemand;
             try
             {
+                var notifications = achievementUpdate?.CreateCommittedNotifications();
+                achievementUpdate?.Commit();
                 inventory.Complete();
                 mails.Complete();
                 labor.Complete();
+                player.Achievements?.SendCommittedState(notifications);
             }
             catch
             {
                 inventory.PreservePreparedState();
                 mails.PreservePreparedState();
                 labor.PreservePreparedState();
+                achievementUpdate?.PreservePreparedState();
                 throw;
             }
-            player.Achievements?.Increment(CharRecordKind.SellItem, backpack.TemplateId, npc.TemplateId);
             return basePrice;
         }
     }
