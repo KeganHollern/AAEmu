@@ -130,16 +130,27 @@ public partial class InstantGame
         RefillOrReleaseBeforeStart();
     }
 
-    private void RemoveDepartedMember(Character character)
+    internal bool ReturnsMemberHome(Character character) =>
+        character.ParentWorld == _world && character.MainWorldPosition != null && _members.ContainsKey(character);
+
+    private bool RemoveDepartedMember(Character character)
     {
         character.Events.OnKill -= OnKill;
+        var revive = character.IsDead && ReturnsMemberHome(character);
         if (_members.Remove(character, out var member))
         {
             character.SetFaction(character.OriginFaction.Id);
             // A player earns a place in the results only after the match starts.
             if (!_announcedAt.HasValue && !_finished)
                 member.Corps.Members.Remove(member);
+            if (revive)
+            {
+                character.ClearResurrectionOffer();
+                character.Hp = character.MaxHp;
+                character.Mp = character.MaxMp;
+            }
         }
+        return revive;
     }
 
     private void RefillOrReleaseBeforeStart()
@@ -462,13 +473,20 @@ public partial class InstantGame
             }
 
             RemovePlayer(character);
-            RemoveDepartedMember(character);
+            var revived = RemoveDepartedMember(character);
             if (character.MainWorldPosition == null)
             {
                 _log.Warn($"Character {character.Name} ({character.Id}) does not have MainWorldPosition when leaving instant game!");
                 return;
             }
 
+            if (revived)
+            {
+                // Close the death panel in the current world before the ordinary instance transfer.
+                var pose = character.Transform.World;
+                character.SendPacket(new SCCharacterResurrectedPacket(character.ObjId, pose.Position.X, pose.Position.Y, pose.Position.Z, pose.Rotation.Z));
+                character.SendPacket(new SCUnitPointsPacket(character.ObjId, character.Hp, character.Mp));
+            }
             LeaveWorldForTransfer(character);
             character.Transform = character.MainWorldPosition.Clone();
             character.Transform.InstanceId = WorldManager.DefaultInstanceId;
