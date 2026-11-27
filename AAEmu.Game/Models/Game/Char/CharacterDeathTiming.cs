@@ -25,6 +25,7 @@ public partial class Character
         }
 
         // A previous portal can still await acknowledgement during a server-selected return.
+        FallMovement.Reset();
         Transform.Local.SetPosition(destination);
         MovementValidation.RecordServerRelocation(this);
         WorldManager.Instance.AddVisibleObject(this);

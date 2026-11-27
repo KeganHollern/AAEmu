@@ -335,6 +335,37 @@ public sealed class ArenaScoreTests
     }
 
     [Test]
+    [Arguments(7u)]
+    [Arguments(11u)]
+    public async Task Resurrection_OnlyAMovedWinnerStartsANewFall(uint fieldId)
+    {
+        Start(fieldId);
+        Install(new PermissionManager(null));
+        var field = _fields.GetBattlefield(fieldId);
+        var winner = _blue[0];
+        var victim = _red[0];
+        var spawn = field.Spawns.Corps2Spawn;
+        var landing = new Vector3(spawn.X + 10, spawn.Y, spawn.Z);
+        winner.Hp = winner.MaxHp;
+        Kill(winner, victim);
+
+        // The winner is already falling when the other player revives.
+        winner.Transform.Local.SetPosition(landing + Vector3.UnitZ * 24);
+        winner.ObserveFallMovement(false, 0);
+        winner.Transform.Local.SetPosition(landing + Vector3.UnitZ * 12);
+        winner.ObserveFallMovement(false, .4);
+        _clock.Advance(field.RuleSet.ResurrectionDelay);
+
+        if (fieldId == 7)
+            winner.Transform.Local.SetPosition(landing);
+        winner.ObserveFallMovement(true, .8);
+        if (fieldId == 11)
+            await Assert.That(winner.Hp).IsEqualTo(winner.MaxHp);
+        else
+            await Assert.That(winner.Hp).IsLessThan(winner.MaxHp);
+    }
+
+    [Test]
     public async Task Resurrection_FinishedMatchKeepsBothPositions()
     {
         Start(11);
