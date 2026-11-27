@@ -1311,7 +1311,7 @@ public partial class Skill
                         {
                             ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
                             if (Template.ConsumeLaborPower > 0 && targetSelf is Doodad && Template.Plot == null && !Template.PlotOnly &&
-                                laborOwner.Achievements?.TracksUse(CharRecordKind.UseSkill, Template.Id) == true)
+                                laborOwner.Achievements?.TracksRecord(CharRecordKind.UseSkill, Template.Id) == true)
                                 RecordUseSkillAchievement(laborOwner, SkillLaborBatch.Current);
                         },
                         ExpiredCostume != null ? ItemTaskType.RechargeBuff :

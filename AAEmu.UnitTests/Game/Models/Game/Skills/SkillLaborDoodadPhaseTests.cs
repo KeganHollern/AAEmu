@@ -174,6 +174,47 @@ public sealed partial class SkillLaborTests
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task PaidShearing_SavesCreditForTheGrantedWool(bool commit)
+    {
+        const uint woolId = 8053, recordId = 1227, sheepFollower = 717;
+        var templates = (Dictionary<uint, ItemTemplate>)typeof(ItemManager)
+            .GetField("_templates", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(ItemManager.Instance)!;
+        templates[woolId] = new ItemTemplate { Id = woolId, MaxCount = 1000 };
+        using var data = new CharacterAchievementsTests.AchievementDataBuilder();
+        data.AddRecord(recordId, CharRecordKind.GetLootitem, woolId);
+        data.AddAchievement(sheepFollower, 100, false);
+        data.AddObjective(1, sheepFollower, recordId);
+        var achievements = new CharacterAchievements(_owner, data.Build());
+        typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(_owner, achievements);
+        var harvest = new DoodadFuncLootItem { Id = 298, ItemId = woolId, CountMin = 1, CountMax = 3, Percent = 10000 };
+        var sheep = new Doodad { TemplateId = 518 };
+        uint creditAtSave = 0;
+        int woolAtSave = 0;
+        int WoolInBag() => _owner.Inventory.Bag.Items.Where(i => i.TemplateId == woolId).Sum(i => i.Count);
+        var skill = new Skill(new SkillTemplate { Id = 13802, ConsumeLaborPower = 5 })
+        {
+            CommitLaborBatch = (_, _) =>
+            {
+                creditAtSave = achievements.GetAmount(sheepFollower);
+                woolAtSave = WoolInBag();
+                return commit;
+            }
+        };
+
+        var result = SkillLaborBatch.Run(_owner, skill, true, () => harvest.Use(_owner, sheep, skill.Id));
+
+        await Assert.That(woolAtSave).IsBetween(1, 3);
+        await Assert.That(creditAtSave).IsEqualTo((uint)woolAtSave);
+        await Assert.That(result).IsEqualTo(commit);
+        await Assert.That(WoolInBag()).IsEqualTo(commit ? woolAtSave : 0);
+        await Assert.That(achievements.GetAmount(sheepFollower)).IsEqualTo(commit ? creditAtSave : 0u);
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)(commit ? 15 : 20));
+    }
+
+    [Test]
     [Arguments(996, false, 0, true)]  // The ore fits in the original stack.
     [Arguments(998, false, 0, false)] // Even the smallest ore roll exceeds the available space.
     [Arguments(0, false, 0, false)]   // The full Bag contains only an unrelated item.
