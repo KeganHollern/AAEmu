@@ -9,7 +9,9 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.Achievement.Enums;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.UnitTests.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
@@ -92,6 +94,45 @@ public sealed partial class SkillLaborTests
 
     private static SkillResult StartReading(Skill skill, Character who, Doodad sign, bool bypassGcd = true) =>
         skill.Use(who, new SkillCasterUnit(who.ObjId), new SkillCastDoodadTarget { ObjId = sign.ObjId }, null, bypassGcd, out _);
+
+    [Test]
+    [Arguments(true, true, false)]
+    [Arguments(true, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, true, true)]
+    public async Task PaidDoodadSkill_SavesOnlyCompletedTrackedUses(bool tracked, bool commit, bool interrupt)
+    {
+        var (sign, _, _) = SetUpSign(true);
+        var skill = ReadSign();
+        skill.Template.ConsumeLaborPower = 5;
+        using var data = new CharacterAchievementsTests.AchievementDataBuilder();
+        data.AddAchievement(790, 100, false);
+        data.AddRecord(1341, CharRecordKind.UseSkill, tracked ? skill.Id : 15874u);
+        data.AddObjective(1, 790, 1341);
+        var achievements = new CharacterAchievements(_owner, data.Build());
+        typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(_owner, achievements);
+        int? atCommit = null;
+        skill.CommitLaborBatch = (_, _) =>
+        {
+            atCommit = (int)achievements.GetAmount(790);
+            return commit;
+        };
+
+        await Assert.That(StartReading(skill, _owner, sign)).IsEqualTo(SkillResult.Success);
+        if (interrupt)
+            _owner.InterruptSkills();
+        else
+        {
+            var cast = (CastTask)_owner.SkillTask;
+            cast.CastWindow = new CastWindow(DateTime.UtcNow.AddSeconds(-1), true, false, false);
+            cast.Execute();
+            skill.RecordUseSkillAchievement(_owner);
+        }
+        await Assert.That(atCommit).IsEqualTo(interrupt ? (int?)null : tracked ? 1 : 0);
+        await Assert.That(achievements.GetAmount(790)).IsEqualTo(tracked && commit && !interrupt ? 1u : 0u);
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)(commit && !interrupt ? 15 : 20));
+    }
 
     private (Doodad tome, ExecutionCharacter other, RankFeedbackSession session, SkillTemplate binding)
         SetUpMemoryTome(bool singleUser)
