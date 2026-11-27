@@ -55,17 +55,19 @@ public sealed partial class PlayerMailSendPersistenceTests
             var neighborUpdates = ListenForNames(graph.Receiver);
             Submit(graph.Receiver, first.TlId, "stranger");
             Submit(owner, first.TlId, "a");
+            Submit(owner, first.TlId, "cartWitness");
             Assert.Equal(cart.Name, first.Name);
             Assert.Empty(ownerUpdates);
             Assert.Empty(neighborUpdates);
 
-            Submit(owner, first.TlId, "aster");
-            Assert.Equal("Aster", first.Name);
-            var expected = (first.ObjId, "Aster");
+            // The English editor corrects later letters, then sends the first letter in lowercase.
+            Submit(owner, first.TlId, "cartwitness");
+            Assert.Equal("Cartwitness", first.Name);
+            var expected = (first.ObjId, "Cartwitness");
             Assert.Equal(expected, Assert.Single(ownerUpdates));
             Assert.Equal(expected, Assert.Single(neighborUpdates));
             Assert.True(world.SlaveManager.Delete(owner, first.ObjId));
-            Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM slaves WHERE id={first.Id} AND name='Aster' " +
+            Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM slaves WHERE id={first.Id} AND BINARY name='Cartwitness' " +
                 $"AND owner_id={owner.Id} AND summoner={owner.Id} AND item_id={firstScroll.Id}"));
 
             var other = world.SlaveManager.Create(owner, null, cart.Id, otherScroll, positionOverride: pose);
@@ -83,7 +85,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             var restored = world.SlaveManager.Create(owner, null, cart.Id, savedScroll, positionOverride: pose);
             Assert.NotEqual(first.ObjId, restored.ObjId);
             Assert.Equal(first.Id, restored.Id);
-            Assert.Equal("Aster", restored.Name);
+            Assert.Equal("Cartwitness", restored.Name);
 
             List<(uint ObjectId, string Name)> ListenForNames(Character player)
             {
