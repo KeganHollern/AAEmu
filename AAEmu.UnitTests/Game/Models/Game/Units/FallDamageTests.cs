@@ -410,33 +410,17 @@ public sealed partial class FallDamageTests
     [Test]
     public async Task FinishedCottage_ObservesOneLandingOnItsPlacedFloorUntilRemoval()
     {
-        var world = CreateStockWorld();
-        world.Regions = new Region[world.Template.Cells.GetLength(0) * WorldManager.SECTORS_PER_CELL,
-            world.Template.Cells.GetLength(1) * WorldManager.SECTORS_PER_CELL];
         const string prefab = "prefab://prefabs/housing_big.xml/nuia_housing_small.nuia_small_";
         var missingModelReads = 0;
-        var manager = new HousingManager(null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+        IReadOnlyList<string> ModelPaths(uint id, uint state)
         {
-            GeometryAssets = new HousingGeometryAssets(
-                path => _stockSource.FileExists(path) ? _stockSource.GetFileStream(path) : null,
-                (id, _) =>
-                {
-                    if (id == 1116)
-                        return [prefab + "floor01", prefab + "wall01", prefab + "roof01"];
-                    missingModelReads++;
-                    throw new InvalidDataException("Test model cannot be read.");
-                })
-        };
-        var singleton = typeof(Singleton<HousingManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
-        var previous = singleton.GetValue(null);
-        var zoneSingleton = typeof(Singleton<ZoneManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
-        var previousZones = zoneSingleton.GetValue(null);
-        var zones = new ZoneManager(null, null);
-        typeof(ZoneManager).GetField("_zones", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .SetValue(zones, new Dictionary<uint, AAEmu.Game.Models.Game.World.Zones.Zone>());
-        zoneSingleton.SetValue(null, zones);
-        singleton.SetValue(null, manager);
-        try
+            if (id == 1116)
+                return [prefab + "floor01", prefab + "wall01", prefab + "roof01"];
+            missingModelReads++;
+            throw new InvalidDataException("Test model cannot be read.");
+        }
+
+        await WithFinishedHouseWorld(ModelPaths, async world =>
         {
             var house = new House
             {
@@ -498,6 +482,31 @@ public sealed partial class FallDamageTests
             Observe(0, 1.6, true);
             await Assert.That(actor.Impacts.Count).IsEqualTo(2);
             await Assert.That(missingModelReads).IsEqualTo(1);
+        });
+    }
+
+    private async Task WithFinishedHouseWorld(Func<uint, uint, IReadOnlyList<string>> paths, Func<WorldInstance, Task> check)
+    {
+        var world = CreateStockWorld();
+        world.Regions = new Region[world.Template.Cells.GetLength(0) * WorldManager.SECTORS_PER_CELL,
+            world.Template.Cells.GetLength(1) * WorldManager.SECTORS_PER_CELL];
+        var manager = new HousingManager(null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+        {
+            GeometryAssets = new HousingGeometryAssets(
+                path => _stockSource.FileExists(path) ? _stockSource.GetFileStream(path) : null, paths)
+        };
+        var singleton = typeof(Singleton<HousingManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previous = singleton.GetValue(null);
+        var zoneSingleton = typeof(Singleton<ZoneManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previousZones = zoneSingleton.GetValue(null);
+        var zones = new ZoneManager(null, null);
+        typeof(ZoneManager).GetField("_zones", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(zones, new Dictionary<uint, AAEmu.Game.Models.Game.World.Zones.Zone>());
+        zoneSingleton.SetValue(null, zones);
+        singleton.SetValue(null, manager);
+        try
+        {
+            await check(world);
         }
         finally
         {
