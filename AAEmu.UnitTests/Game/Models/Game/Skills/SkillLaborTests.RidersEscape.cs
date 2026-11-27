@@ -1,4 +1,7 @@
 using System.Numerics;
+using AAEmu.Commons.Network;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game;
@@ -70,6 +73,8 @@ public sealed partial class SkillLaborTests
             Template = new SpecialEffect { SpecialEffectTypeId = SpecialType.EscapeMySlave }
         });
         var skill = new Skill(template);
+        var session = new RankFeedbackSession();
+        _owner.Connection = new GameConnection(session) { ActiveChar = _owner };
         var result = skill.Use(_owner, new SkillCasterUnit(_owner.ObjId), selected, new SkillObject(), true, out _);
         if (action is "blocked" or "too-far" or "other-owner" or "no-cart")
         {
@@ -92,6 +97,16 @@ public sealed partial class SkillLaborTests
         cast.Execute();
         await Assert.That(skill.Cancelled).IsEqualTo(action != "complete");
         await Assert.That(_owner.Cooldowns.CheckCooldown(template)).IsEqualTo(action == "complete");
+        var resets = session.Packets.Where(packet => BitConverter.ToUInt16(packet, 6) == SCOffsets.SCSkillCooldownResetPacket).ToArray();
+        await Assert.That(resets.Length).IsEqualTo(action == "blocked-at-effect" ? 1 : 0);
+        if (action == "blocked-at-effect")
+        {
+            var reset = new PacketStream(resets.Single()[8..]);
+            await Assert.That(reset.ReadBc()).IsEqualTo(_owner.ObjId);
+            await Assert.That(reset.ReadUInt32()).IsEqualTo(template.Id);
+            await Assert.That(reset.ReadUInt32()).IsEqualTo(0u);
+            await Assert.That(reset.ReadBoolean()).IsFalse();
+        }
         var expected = action == "complete" ? new Vector3(100, 107, 10) : before;
         await Assert.That(cart.Transform.World.Position).IsEqualTo(expected);
         await Assert.That(cart.SummoningItem).IsSameReferenceAs(scroll);
