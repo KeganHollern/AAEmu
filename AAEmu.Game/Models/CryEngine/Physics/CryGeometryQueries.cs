@@ -10,7 +10,8 @@ public static class CryGeometryQueries
         Raycast(part, objectTransform, origin, direction, maximumDistance, ignoreBackFaces, out hit, null);
 
     internal static bool Raycast(CryGeometryPart part, Matrix4x4 objectTransform, Vector3 origin,
-        Vector3 direction, float maximumDistance, bool ignoreBackFaces, out CryRayHit hit, Func<int, Vector3, bool> acceptSurface, int onlyTriangle = -1)
+        Vector3 direction, float maximumDistance, bool ignoreBackFaces, out CryRayHit hit, Func<int, Vector3, bool> acceptSurface,
+        int onlyTriangle = -1, bool includeCylinderEnds = true)
     {
         hit = default;
         if (!float.IsFinite(maximumDistance) || maximumDistance < 0 ||
@@ -63,7 +64,7 @@ public static class CryGeometryQueries
                 RaySphere(localOrigin, localDirection, sphere.Center, sphere.Radius, (candidate, candidateNormal) => Accept(candidate, candidateNormal));
                 break;
             case CryCylinder cylinder:
-                RayCylinder(localOrigin, localDirection, cylinder, (candidate, candidateNormal) => Accept(candidate, candidateNormal));
+                RayCylinder(localOrigin, localDirection, cylinder, includeCylinderEnds, (candidate, candidateNormal) => Accept(candidate, candidateNormal));
                 break;
             case CryTriangleMesh mesh:
                 var start = onlyTriangle >= 0 ? onlyTriangle * 3 : 0;
@@ -199,7 +200,7 @@ public static class CryGeometryQueries
         accept(second, origin + direction * second - center);
     }
 
-    private static void RayCylinder(Vector3 origin, Vector3 direction, CryCylinder cylinder,
+    private static void RayCylinder(Vector3 origin, Vector3 direction, CryCylinder cylinder, bool includeEnds,
         Action<float, Vector3> accept)
     {
         var offset = origin - cylinder.Center;
@@ -217,6 +218,8 @@ public static class CryGeometryQueries
                     accept(candidate, radialOrigin + radialDirection * candidate);
             }
         }
+        if (!includeEnds)
+            return;
         foreach (var sign in new[] { -1f, 1f })
         {
             if (cylinder.IsCapsule)
