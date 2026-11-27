@@ -312,7 +312,7 @@ public class CharacterAchievements
             TryDeliverPendingRewards();
     }
 
-    internal bool TracksUse(CharRecordKind kind, uint templateId) =>
+    internal bool TracksRecord(CharRecordKind kind, uint templateId) =>
         _gameData.TryGetCharRecord(kind, templateId, 0, out _);
 
     internal DeferredPersistenceScope BeginDeferredPersistence()
