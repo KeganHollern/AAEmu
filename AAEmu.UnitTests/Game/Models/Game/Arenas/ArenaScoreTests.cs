@@ -391,10 +391,95 @@ public sealed class ArenaScoreTests
         Start(11);
         var victim = _red[0];
         Kill(_blue[0], victim);
+        victim.Transform.InstanceId = _world.Id;
         _game.LeaveInstantGame(victim);
+        await Assert.That(victim.Hp).IsEqualTo(victim.MaxHp);
+        victim.Hp = 42;
         _clock.Advance(TimeSpan.FromSeconds(5));
-        await Assert.That(victim.Hp).IsEqualTo(0);
+        await Assert.That(victim.Hp).IsEqualTo(42);
         await Assert.That(victim.CurrentInstantGame).IsNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DefeatedMemberLeavesAtHomeAlive_ManualOrTimedExit(bool automatic)
+    {
+        Start(11);
+        var winner = _blue[0];
+        var victim = _red[0];
+        var home = new Vector3(81, 120, 37);
+        victim.MainWorldPosition.Local.SetPosition(home);
+        victim.Transform.InstanceId = _world.Id;
+        victim.Transform.Local.SetPosition(600, 500, 266);
+        Kill(winner, victim);
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await Assert.That(victim.Hp).IsEqualTo(victim.MaxHp);
+        _observer.Packets.Clear();
+        winner.Hp = 57;
+        winner.Mp = 24;
+        Kill(winner, victim);
+        await Assert.That(victim.Hp).IsZero();
+        await Assert.That(_game.IsFinished).IsTrue();
+        if (automatic)
+        {
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            await Assert.That(SpinWait.SpinUntil(() =>
+            {
+                lock (SaveManager.PersistenceSyncRoot)
+                    return victim.CurrentInstantGame == null;
+            }, TimeSpan.FromSeconds(3))).IsTrue();
+        }
+        else
+        {
+            victim.Connection.ActiveChar = victim;
+            new CSLeaveInstantGamePacket { Connection = victim.Connection }.Read(new PacketStream());
+        }
+        await Assert.That(victim.Hp).IsEqualTo(victim.MaxHp);
+        await Assert.That(victim.Mp).IsEqualTo(victim.MaxMp);
+        await Assert.That(victim.Transform.World.Position).IsEqualTo(home);
+        await Assert.That(victim.CurrentInstantGame).IsNull();
+        var events = _observer.Packets.Select(bytes => BitConverter.ToUInt16(bytes, 6)).ToArray();
+        await Assert.That(events.Count(op => op == SCOffsets.SCCharacterResurrectedPacket)).IsEqualTo(1);
+        await Assert.That(Array.IndexOf(events, SCOffsets.SCCharacterResurrectedPacket)).IsLessThan(Array.IndexOf(events, SCOffsets.SCLoadInstancePacket));
+        await Assert.That((winner.Hp, winner.Mp)).IsEqualTo((57, 24));
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await Assert.That(victim.Transform.World.Position).IsEqualTo(home);
+    }
+
+    [Test]
+    public async Task DisconnectBeforeRoundTimer_RestoresDefeatedMemberWithoutAnArenaRespawn()
+    {
+        Start(11);
+        var victim = _red[0];
+        victim.Transform.InstanceId = _world.Id;
+        var worlds = WorldManager.Instance;
+        worlds.TryAddCharacter(victim);
+        Kill(_blue[0], victim);
+        _observer.Packets.Clear();
+        await Assert.That(worlds.TryRemoveCharacter(victim.ObjId)).IsTrue();
+        await Assert.That(victim.Hp).IsEqualTo(victim.MaxHp);
+        await Assert.That(victim.CurrentInstantGame).IsNull();
+        victim.Hp = 29;
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await Assert.That(victim.Hp).IsEqualTo(29);
+        await Assert.That(Packets(SCOffsets.SCCharacterResurrectedPacket)).IsEmpty();
+    }
+
+    [Test]
+    public async Task InvitationOrFieldDeath_DoesNotReviveOutsideTheArena()
+    {
+        Start(11);
+        var victim = _red[0];
+        var field = new WorldInstance(new WorldTemplate(), 0, true, 99);
+        GC.SuppressFinalize(field);
+        victim.ParentWorld = field;
+        victim.Hp = 0;
+        _game.DisconnectPlayer(victim);
+        await Assert.That(victim.Hp).IsZero();
+        _game.AddPlayer(victim, InstantCorps.Corps1);
+        _game.DisconnectPlayer(victim);
+        await Assert.That(victim.Hp).IsZero();
     }
 
     [Test]

@@ -1,3 +1,8 @@
+using System.Numerics;
+using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.InstantGame.Static;
+using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Commons.Network.Core;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
@@ -12,6 +17,63 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 
 public sealed partial class PlayerMailSendPersistenceTests
 {
+    [Fact]
+    public void ArenaCheckpoint_SavesDefeatedMemberAliveAtHomeWithoutChangingCombat()
+    {
+        using var graph = new SendGraph();
+        var player = new ArenaCheckpointPlayer
+        {
+            Id = graph.Sender.Id, AccountId = graph.Sender.AccountId, Name = graph.Sender.Name,
+            Faction = new SystemFaction { Id = FactionsEnum.Nuian }, FactionName = "Home", Buffs = Mock.Of<IBuffs>(),
+            Slots = [], Created = DateTime.UtcNow, Level = 50
+        };
+        var world = new WorldInstance(new WorldTemplate(), 0, true, 42);
+        GC.SuppressFinalize(world);
+        var battlefield = new Battlefield { Id = 11, ZoneKey = 302,
+            RuleSet = new GameRuleSet { CorpsSize = 1, Corps1FactionId = 159, Corps2FactionId = 160 } };
+        var game = new InstantGame(battlefield, world, TimeProvider.System);
+        var home = new Vector3(80, 100, 120);
+        player.MainWorldPosition = player.Transform.CloneDetached(player);
+        player.MainWorldPosition.Local.SetPosition(home);
+        player.Transform.InstanceId = world.Id;
+        player.ParentWorld = world;
+        player.Transform.Local.SetPosition(575, 406, 266);
+        player.Hp = 0;
+        player.Mp = 17;
+
+        Assert.True(graph.Save.TryCommitEconomy([player]));
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM characters WHERE id={player.Id} AND hp=0 AND faction_id=101 AND faction_name='Home'"));
+        game.AddPlayer(player, InstantCorps.Corps1);
+        Assert.True(graph.Save.TryCommitEconomy([player]));
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM characters WHERE id={player.Id} AND hp=0 AND faction_id=101 AND faction_name='Home'"));
+        game.OnEnterWorld(player, 0);
+        Assert.Equal(FactionsEnum.RedTeam, player.Faction.Id);
+        Assert.Equal("RedTeam", player.FactionName);
+        Assert.True(graph.Save.TryCommitEconomy([player]));
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM characters WHERE id={player.Id} AND hp=425 AND mp=300 AND faction_id=101 AND faction_name='Home' AND x=80 AND y=100 AND z=120"));
+        Assert.Equal(0, player.Hp);
+        Assert.Equal(17, player.Mp);
+        Assert.Equal(new Vector3(575, 406, 266), player.Transform.World.Position);
+
+        player.Hp = 91;
+        Assert.True(graph.Save.TryCommitEconomy([player]));
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM characters WHERE id={player.Id} AND hp=91 AND mp=17 AND faction_id=101 AND faction_name='Home' AND x=80 AND y=100 AND z=120"));
+    }
+
+    private sealed class ArenaCheckpointPlayer() : Character(new UnitCustomModelParams())
+    {
+        public override int MaxHp => 425;
+        public override int MaxMp => 300;
+
+        public override void SetFaction(FactionsEnum factionId)
+        {
+            OriginFaction = Faction;
+            OriginFactionName = FactionName;
+            Faction = new SystemFaction { Id = factionId };
+            FactionName = factionId.ToString();
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
