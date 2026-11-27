@@ -568,20 +568,20 @@ public class LootPack
                 if (!mutation.TryGrant(destination, itemId, count, actualGrade))
                     return FailPlacement();
             }
-            void Notify()
-            {
-                foreach (var (itemId, count, _, _) in generatedList)
-                    if (itemId != Item.Coins && count > 0)
-                        character.Achievements?.Increment(CharRecordKind.GetLootitem, itemId, 0, (uint)count);
-                character.Achievements?.Increment(CharRecordKind.GetLootpack, Id, 0);
-            }
             if (batch == null)
-            {
                 mutation.Complete();
-                Notify();
+
+            void RecordProgress(CharRecordKind kind, uint value, uint amount)
+            {
+                if (batch != null)
+                    batch.StageAchievementProgress(kind, value, amount);
+                else
+                    character.Achievements?.Increment(kind, value, 0, amount);
             }
-            else
-                batch.AfterCommit(Notify);
+            foreach (var (itemId, count, _, _) in generatedList)
+                if (itemId != Item.Coins && count > 0)
+                    RecordProgress(CharRecordKind.GetLootitem, itemId, (uint)count);
+            RecordProgress(CharRecordKind.GetLootpack, Id, 1);
             return true;
         }
     }

@@ -215,12 +215,13 @@ public sealed partial class SkillLaborTests
     }
 
     [Test]
-    [Arguments(996, false, 0, true)]  // The ore fits in the original stack.
-    [Arguments(998, false, 0, false)] // Even the smallest ore roll exceeds the available space.
-    [Arguments(0, false, 0, false)]   // The full Bag contains only an unrelated item.
-    [Arguments(996, true, 1, true)]   // One slot suffices for both rolled items.
-    [Arguments(996, true, 0, false)]  // Stone has no space after the first grant.
-    public async Task IronVein_UsesStackCapacityForTheEntirePaidHarvest(int initialOre, bool rollStone, int freeSlots, bool fits)
+    [Arguments(996, false, 0, true, true)]  // The ore fits in the original stack.
+    [Arguments(998, false, 0, false, true)] // Even the smallest ore roll exceeds the available space.
+    [Arguments(0, false, 0, false, true)]   // The full Bag contains only an unrelated item.
+    [Arguments(996, true, 1, true, true)]   // One slot suffices for both rolled items.
+    [Arguments(996, true, 0, false, true)]  // Stone has no space after the first grant.
+    [Arguments(996, true, 1, true, false)] // Both items fit, but the save fails.
+    public async Task IronVein_UsesStackCapacityForTheEntirePaidHarvest(int initialOre, bool rollStone, int freeSlots, bool fits, bool commit)
     {
         const uint oreId = 8022, stoneId = 8008;
         // Select reproducible stock outcomes: ordinary iron ore, with or without the optional raw stone group.
@@ -252,8 +253,17 @@ public sealed partial class SkillLaborTests
         }
         typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(_owner, new CharacterAchievements(_owner, data.Build()));
+        (int ore, int stone, uint oreCredit, uint stoneCredit, uint packCredit)? atSave = null;
+        int Count(uint item) => bag.Items.Where(row => row.TemplateId == item).Sum(row => row.Count);
         var skill = new Skill(new SkillTemplate { Id = 13986, ConsumeLaborPower = 10, ActabilityGroupId = 13 })
-            { CommitLaborBatch = (_, _) => true };
+        {
+            CommitLaborBatch = (_, _) =>
+            {
+                atSave = (Count(oreId) - initialOre, Count(stoneId), _owner.Achievements.GetAmount(1),
+                    _owner.Achievements.GetAmount(2), _owner.Achievements.GetAmount(3));
+                return commit;
+            }
+        };
         _owner.Actability = new CharacterActability(_owner);
         var session = new RankFeedbackSession();
         _owner.Connection = new GameConnection(session) { ActiveChar = _owner };
@@ -269,20 +279,28 @@ public sealed partial class SkillLaborTests
             AppConfiguration.Instance.World = priorWorld;
         }
 
-        await Assert.That(result).IsEqualTo(fits);
+        var saved = fits && commit;
+        await Assert.That(atSave.HasValue).IsEqualTo(fits);
+        if (atSave is { } staged)
+        {
+            await Assert.That(staged.oreCredit).IsEqualTo((uint)staged.ore);
+            await Assert.That(staged.stoneCredit).IsEqualTo((uint)staged.stone);
+            await Assert.That(staged.packCredit).IsEqualTo(1u);
+        }
+        await Assert.That(result).IsEqualTo(saved);
         var bagErrors = session.Packets.Count(packet => BitConverter.ToUInt16(packet, 6) == SCOffsets.SCErrorMsgPacket &&
             BitConverter.ToInt16(packet, 8) == (short)ErrorMessageType.BagFull);
         await Assert.That(bagErrors).IsEqualTo(fits ? 0 : 1);
-        await Assert.That(vein.FuncGroupId).IsEqualTo(fits ? 17070u : 3054u);
-        await Assert.That(_owner.LaborPower).IsEqualTo((short)(fits ? 10 : 20));
+        await Assert.That(vein.FuncGroupId).IsEqualTo(saved ? 17070u : 3054u);
+        await Assert.That(_owner.LaborPower).IsEqualTo((short)(saved ? 10 : 20));
         await Assert.That(bag.GetItemBySlot(0)).IsSameReferenceAs(_material);
-        var oreGained = bag.Items.Where(item => item.TemplateId == oreId).Sum(item => item.Count) - initialOre;
-        var stoneGained = bag.Items.Where(item => item.TemplateId == stoneId).Sum(item => item.Count);
-        await Assert.That(oreGained).IsBetween(fits ? 3 : 0, fits ? 4 : 0);
-        await Assert.That(stoneGained).IsBetween(fits && rollStone ? 2 : 0, fits && rollStone ? 4 : 0);
+        var oreGained = Count(oreId) - initialOre;
+        var stoneGained = Count(stoneId);
+        await Assert.That(oreGained).IsBetween(saved ? 3 : 0, saved ? 4 : 0);
+        await Assert.That(stoneGained).IsBetween(saved && rollStone ? 2 : 0, saved && rollStone ? 4 : 0);
         await Assert.That(_owner.Achievements.GetAmount(1)).IsEqualTo((uint)oreGained);
         await Assert.That(_owner.Achievements.GetAmount(2)).IsEqualTo((uint)stoneGained);
-        await Assert.That(_owner.Achievements.GetAmount(3)).IsEqualTo(fits ? 1u : 0u);
+        await Assert.That(_owner.Achievements.GetAmount(3)).IsEqualTo(saved ? 1u : 0u);
     }
 
     [Test]
