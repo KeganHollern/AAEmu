@@ -12,6 +12,7 @@ namespace AAEmu.Game.Models.Game.Char;
 internal static class ServiceInteraction
 {
     private const float MerchantRange = 3f;
+    private const uint OpenWarehouseSkill = 13238;
 
     internal static bool CanReach(Character character, BaseUnit target, float range = 5f) =>
         IsLiveServiceTarget(character, target) && CenterDistance(character, target) <= range;
@@ -57,9 +58,23 @@ internal static class ServiceInteraction
         character?.CurrentInteractionObject is Doodad doodad && (objectId == 0 || doodad.ObjId == objectId) &&
         doodad.CurrentFuncs?.Any(func => func.FuncType == function) == true && CanReach(character, doodad);
 
-    internal static bool CanUseBank(Character character) =>
-        CanUseNpc(character, character?.CurrentInteractionObject as Npc, npc => npc.Banker) ||
-        CanUseDoodad(character, nameof(DoodadObj.Funcs.DoodadFuncBankUi));
+    internal static bool CanUseBank(Character character)
+    {
+        if (CanUseNpc(character, character?.CurrentInteractionObject as Npc, npc => npc.Banker) ||
+            CanUseDoodad(character, nameof(DoodadFuncBankUi)))
+            return true;
+
+        // The stock client opens a fixed Warehouse locally, without binding the Game interaction target.
+        return WorldManager.GetAround<Doodad>(character).Any(warehouse =>
+            warehouse.OwnerType == DoodadOwnerType.System &&
+            warehouse.Despawn == DateTime.MinValue &&
+            warehouse.ParentWorld?.SpawnManager?.IsAuthoredDoodadSpawner(warehouse.Spawner) == true &&
+            warehouse.CurrentFuncs?.Any(action => action.SkillId == OpenWarehouseSkill &&
+                action.FuncType == nameof(DoodadFuncBankUi) &&
+                DoodadPermissionRules.Allows(character, warehouse, action.PermId)) == true &&
+            SkillManager.Instance.GetSkillTemplate(OpenWarehouseSkill) is { MaxRange: > 0 } skill &&
+            CanReach(character, warehouse, skill.MaxRange));
+    }
 
     internal static bool CanUseAuction(Character character) =>
         CanUseNpc(character, character?.CurrentInteractionObject as Npc, npc => npc.Auctioneer) ||
