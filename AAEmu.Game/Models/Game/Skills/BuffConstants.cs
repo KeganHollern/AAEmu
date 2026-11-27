@@ -20,6 +20,8 @@ public enum BuffConstants : uint
     Plate4P = 717,
     Plate7P = 740,
     DualwieldProficiency = 831,
+    GliderLanding = 1238,
+    PreparingGlider = 4622,
     FallStun = 1391, // From fall damage
     Bloodlust = 1482, // Ctrl+F
     Prisoner_Haranyan = 2028,

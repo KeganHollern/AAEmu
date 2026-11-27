@@ -1,5 +1,6 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Skills.Buffs;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
@@ -44,6 +45,8 @@ public class Buff
             if (_inUse != value && Template is { } template &&
                 (template.FallDamageImmune || template.Gliding) && Owner is Unit unit)
                 unit.FallMovement.Reset();
+            if (value && !_inUse && Template?.Gliding == true && Owner is Character player)
+                player.CancelGliderLanding();
             _inUse = value;
         }
     }
@@ -174,11 +177,22 @@ public class Buff
         }
 
         if (State == EffectState.Finishing)
+            FinishEffect(replace);
+    }
+
+    internal bool TryFinishGliderLanding() => FinishEffect(false, true);
+
+    private bool FinishEffect(bool replace, bool gliderLanding = false)
+    {
+        lock (_lock)
         {
+            if (State == EffectState.Finished || (gliderLanding && (!InUse || State != EffectState.Acting)))
+                return false;
             State = EffectState.Finished;
             InUse = false;
-            StopEffectTask(replace);
         }
+        StopEffectTask(replace, gliderLanding);
+        return true;
     }
     internal void ApplyRefreshState(Buff newBuff, DateTime now)
     {
@@ -229,12 +243,13 @@ public class Buff
             State = EffectState.Finishing;
     }
 
-    private void StopEffectTask(bool replace)
+    private void StopEffectTask(bool replace, bool gliderLanding = false)
     {
         lock (_lock)
         {
-            Events.OnTimeout(this, new OnTimeoutArgs());
-            Triggers.UnsubscribeEvents();
+            if (!gliderLanding)
+                Events.OnTimeout(this, new OnTimeoutArgs());
+            Triggers.UnsubscribeEvents(!gliderLanding);
             Owner.Buffs.RemoveEffect(this);
             Template.Dispel(Caster, Owner, this, replace);
 

@@ -24,7 +24,12 @@ public class CSRemoveBuffPacket() : GamePacket(CSOffsets.CSRemoveBuffPacket, 1)
         // Check if it's actually the player
         if (Connection.ActiveChar.ObjId == objId)
         {
-            if (RemoveEffect(Connection.ActiveChar.Buffs.GetEffectByIndex(buffId)))
+            var character = Connection.ActiveChar;
+            var effect = character.Buffs.GetEffectByIndex(buffId);
+            // The r208022 client ends an automatic dry landing with reason 9. Manual Fold uses its skill.
+            if (reason == 9 && character.TryCloseGliderForLanding(effect))
+                return;
+            if (RemoveEffect(effect))
             {
                 // Removed buff from player
                 return;
