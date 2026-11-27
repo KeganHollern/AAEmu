@@ -105,6 +105,8 @@ public class CraftEffect : EffectTemplate
             }, house.CaptureConstructionState());
         var previousStep = house.CurrentStep;
         house.AddBuildAction(batch == null);
+        if (house.CurrentStep == -1)
+            batch?.StageAchievementProgress(CharRecordKind.MakeHousing, house.TemplateId);
         void PublishProgress()
         {
             if (batch != null && previousStep != house.CurrentStep)
@@ -115,7 +117,8 @@ public class CraftEffect : EffectTemplate
             {
                 foreach (var doodad in house.AttachedDoodads.ToArray())
                     doodad.Spawn();
-                character.Achievements?.Increment(CharRecordKind.MakeHousing, house.TemplateId, 0);
+                if (batch == null)
+                    character.Achievements?.Increment(CharRecordKind.MakeHousing, house.TemplateId, 0);
             }
         }
         if (batch != null)

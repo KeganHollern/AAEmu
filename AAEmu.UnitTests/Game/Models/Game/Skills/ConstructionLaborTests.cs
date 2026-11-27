@@ -6,6 +6,8 @@ using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Achievement.Enums;
+using AAEmu.UnitTests.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Housing;
@@ -81,11 +83,18 @@ public sealed class ConstructionLaborTests
     [Arguments(true, "failed_commit")]
     public async Task House_ProgressAndCompletionShareTheLaborOutcome(bool final, string outcome)
     {
-        var template = new HousingTemplate { MainModelId = 90, HousingBindingDoodad = [] };
+        using var data = new CharacterAchievementsTests.AchievementDataBuilder();
+        data.AddRecord(255, CharRecordKind.MakeHousing, 89);
+        data.AddAchievement(1, 10, false);
+        data.AddObjective(1, 1, 255);
+        var achievements = new CharacterAchievements(_owner, data.Build());
+        typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(_owner, achievements);
+        var template = new HousingTemplate { Id = 89, MainModelId = 90, HousingBindingDoodad = [] };
         template.BuildSteps.Add(0, new HousingBuildStep { NumActions = 2, SkillId = 50, ModelId = 10 });
         if (!final)
             template.BuildSteps.Add(1, new HousingBuildStep { NumActions = 3, SkillId = 51, ModelId = 20 });
-        var house = new House { Template = template, CurrentStep = 0, NumAction = 1, IsDirty = false };
+        var house = new House { Template = template, TemplateId = template.Id, CurrentStep = 0, NumAction = 1, IsDirty = false };
         var door = new SpawnProbe();
         house.AttachedDoodads.Add(door);
         var skill = NewSkill(outcome);
@@ -93,7 +102,8 @@ public sealed class ConstructionLaborTests
         skill.CommitLaborBatch = (_, _) =>
         {
             observedBeforeCommit = house.CurrentStep == (final ? -1 : 1) &&
-                house.ModelId == (final ? 90U : 20U) && door.Spawns == 0 && _owner.Packets.Count == 0;
+                house.ModelId == (final ? 90U : 20U) && door.Spawns == 0 && _owner.Packets.Count == 0 &&
+                achievements.GetAmount(1) == (final ? 1u : 0u);
             return outcome != "failed_commit";
         };
 
@@ -108,6 +118,7 @@ public sealed class ConstructionLaborTests
         await Assert.That(house.CurrentAction).IsEqualTo(success ? (final ? 0 : 2) : 1);
         await Assert.That(house.ModelId).IsEqualTo(success ? (final ? 90U : 20U) : 10U);
         await Assert.That(house.IsDirty).IsEqualTo(success);
+        await Assert.That(achievements.GetAmount(1)).IsEqualTo(success && final ? 1u : 0u);
         await Assert.That(door.Spawns).IsEqualTo(success && final ? 1 : 0);
         await Assert.That(_owner.Packets.Count).IsEqualTo(success ? 1 : 0);
         await Assert.That(_owner.LaborPower).IsEqualTo(outcome == "no_labor" ? (short)0 : success ? (short)10 : (short)20);
