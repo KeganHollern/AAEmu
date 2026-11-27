@@ -19,22 +19,13 @@ public sealed partial class PlayerMailSendPersistenceTests
 {
     [Theory]
     [InlineData(13215.904296875f, 14444.943359375f, 153.639495849609375f)]
+    [InlineData(19976.763671875f, 12279.666015625f, 103.00810241699219f)]
     [InlineData(-1.2345678f, 0.12345678f, -25.765432f)]
     public void CharacterLoadAndSave_PreserveStoredPosition(float x, float y, float z)
     {
         using var fixture = new ShipyardGraph();
-        ConfigureCharacterList(fixture);
-        var original = fixture.Graph.Sender;
-        original.Slots = Enumerable.Range(0, Character.MaxActionSlots).Select(_ => new ActionSlot()).ToArray();
-        original.Level = 1;
-        original.Hp = 90;
-        original.Money = 10001;
-        original.Created = new DateTime(2026, 11, 26, 8, 39, 42, DateTimeKind.Utc);
-        var position = new Vector3(x, y, z);
-        original.Transform.Local.SetPosition(position);
-        Execute($"INSERT INTO accounts(account_id,labor) VALUES({original.AccountId},100)");
-        Assert.True(fixture.Graph.Save.TryCommitEconomy([original]));
-
+        var original = SaveCharacterPose(fixture, new Vector3(x, y, z), Vector3.Zero);
+        var position = original.Transform.World.Position;
         using var db = MySQL.CreateConnection();
         var session = new GameConnection(null);
         Assert.True(session.TryAuthenticate(original.AccountId));
@@ -58,6 +49,38 @@ public sealed partial class PlayerMailSendPersistenceTests
         Assert.Equal((double)x, reader.GetDouble(0));
         Assert.Equal((double)y, reader.GetDouble(1));
         Assert.Equal((double)z, reader.GetDouble(2));
+    }
+
+    [Fact]
+    public void CharacterLoadAndSave_PreserveRollPitchAndYaw()
+    {
+        using var fixture = new ShipyardGraph();
+        var rotation = new Vector3(-0.375f, 0.25f, MathF.PI / 2);
+        var original = SaveCharacterPose(fixture, new Vector3(100, 120, 40), rotation);
+        using var db = MySQL.CreateConnection();
+        for (var i = 0; i < 2; i++)
+        {
+            var selected = Character.Load(db, original.Id, original.AccountId);
+            Assert.Equal(rotation, selected.Transform.World.Rotation);
+            Assert.Equal(rotation, Character.Load(db, original.Id).Transform.World.Rotation);
+            Assert.True(fixture.Graph.Save.TryCommitEconomy([selected]));
+        }
+        Assert.Equal(rotation, Character.Load(db, original.Id, original.AccountId).Transform.World.Rotation);
+    }
+
+    private static Character SaveCharacterPose(ShipyardGraph fixture, Vector3 position, Vector3 rotation)
+    {
+        ConfigureCharacterList(fixture);
+        var original = fixture.Graph.Sender;
+        original.Slots = Enumerable.Range(0, Character.MaxActionSlots).Select(_ => new ActionSlot()).ToArray();
+        original.Level = 1;
+        original.Hp = 90;
+        original.Money = 10001;
+        original.Created = new DateTime(2026, 11, 26, 8, 39, 42, DateTimeKind.Utc);
+        original.Transform.Local.SetPosition(position, rotation);
+        Execute($"INSERT INTO accounts(account_id,labor) VALUES({original.AccountId},100)");
+        Assert.True(fixture.Graph.Save.TryCommitEconomy([original]));
+        return original;
     }
 
     private static void ConfigureCharacterList(ShipyardGraph fixture)
