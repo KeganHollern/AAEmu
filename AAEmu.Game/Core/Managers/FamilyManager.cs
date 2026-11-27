@@ -229,6 +229,7 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
 
             AddFamilyMember(family, invitedChar, invitation.Title);
             family.SendPacket(new SCFamilyMemberAddedPacket(family, family.Members.Count - 1));
+            BroadcastWorldTitle(family, family.GetMember(invitedChar));
             invitedChar.Achievements.Increment(CharRecordKind.EnrollFamily, 0, 0);
         }
     }
@@ -252,6 +253,8 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
             chatManager.GetFamilyChat(family.Id)?.JoinChannel(member.Character);
         }
         family.SendPacket(new SCFamilyCreatedPacket(family));
+        foreach (var member in family.Members)
+            BroadcastWorldTitle(family, member);
         invitor.Achievements.Increment(CharRecordKind.EnrollFamily, 0, 0);
         invitedChar.Achievements.Increment(CharRecordKind.EnrollFamily, 0, 0);
     }
@@ -326,6 +329,7 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
             chatManager.GetFamilyChat(family.Id)?.JoinChannel(character);
             character.SendPacket(new SCFamilyDescPacket(family));
             family.SendPacket(new SCFamilyMemberOnlinePacket(family.Id, member.Id, true));
+            BroadcastWorldTitle(family, member);
             character.Achievements.UpdateMaximum(CharRecordKind.EnrollFamily, 0, 0, 1);
         }
     }
@@ -397,6 +401,7 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
                 target.Character.Family = 0;
                 chatManager.GetFamilyChat(family.Id)?.LeaveChannel(target.Character);
                 target.Character.SendPacket(new SCFamilyRemovedPacket(family.Id));
+                target.Character.BroadcastPacket(new SCFamilyTitlePacket(target.Character.ObjId, 0, "", ""), true);
             }
         }
         family.AcceptSave();
@@ -455,6 +460,7 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
                 return;
             member.Title = newTitle ?? "";
             family.SendPacket(new SCFamilyTitleChangedPacket(family.Id, memberId, member.Title));
+            BroadcastWorldTitle(family, member);
         }
     }
 
@@ -479,6 +485,29 @@ public class FamilyManager(IWorldManager worldManager, IChatManager chatManager,
             family.GetMember(previousOwner).Role = 0;
             family.SendPacket(new SCFamilyOwnerChangedPacket(family.Id, memberId));
             family.SendPacket(new SCFamilyDescPacket(family));
+            foreach (var changed in family.Members)
+                BroadcastWorldTitle(family, changed);
+        }
+    }
+
+    private static SCFamilyTitlePacket WorldTitle(Family family, FamilyMember member, Character subject)
+    {
+        var steward = family.Members.Find(entry => entry.Role == 1);
+        return new SCFamilyTitlePacket(subject.ObjId, member.Role, steward?.Name ?? "", member.Title ?? "");
+    }
+
+    private static void BroadcastWorldTitle(Family family, FamilyMember member)
+    {
+        if (member.Character is { } subject)
+            subject.BroadcastPacket(WorldTitle(family, member, subject), true);
+    }
+
+    internal void SendVisibleTitle(Character subject, Character observer)
+    {
+        lock (_syncRoot)
+        {
+            if (_families.TryGetValue(subject.Family, out var family) && family.GetMember(subject) is { } member)
+                observer.SendPacket(WorldTitle(family, member, subject));
         }
     }
 

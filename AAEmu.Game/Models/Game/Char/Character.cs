@@ -3168,6 +3168,8 @@ public partial class Character : Unit, ICharacter
         if (this != character) // Never send to self, or the client crashes
             character.SendPacket(new SCUnitStatePacket(this));
         character.SendPacket(new SCUnitPointsPacket(ObjId, Hp, Mp));
+        if (Family != 0)
+            FamilyManager.Instance.SendVisibleTitle(this, character);
         /*
         // If player is hanging on something, also send a hung packet, this should work in theory, but doesn't
         if (this.Transform.StickyParent != null)

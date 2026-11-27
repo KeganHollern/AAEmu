@@ -8,13 +8,12 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
-using AAEmu.UnitTests.Utils.Mocks;
 
 using AchievementDataBuilder = AAEmu.UnitTests.Game.Models.Game.Char.CharacterAchievementsTests.AchievementDataBuilder;
 
 namespace AAEmu.UnitTests.Game.Core.Managers;
 
-public sealed class FamilyAuthorizationTests
+public sealed partial class FamilyAuthorizationTests
 {
     [Test]
     [Arguments(false)]
@@ -468,11 +467,12 @@ public sealed class FamilyAuthorizationTests
             typeof(FamilyManager).GetField("_familyMembers", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(Manager, _members);
         }
 
-        public CharacterMock Character(uint id)
+        public FamilyTestCharacter Character(uint id)
         {
-            var character = new CharacterMock
+            var character = new FamilyTestCharacter
             {
                 Id = id,
+                ObjId = id + 1000,
                 Name = $"Member{id}",
                 Connection = new GameConnection(Mock.Of<ISession>().Object)
             };

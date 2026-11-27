@@ -1,7 +1,11 @@
-﻿using AAEmu.Commons.Utils.DB;
+﻿using AAEmu.Commons.Network;
+using AAEmu.Commons.Network.Core;
+using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 
@@ -72,6 +76,31 @@ public sealed class FamilyPersistenceTests : IAsyncLifetime
         Assert.Equal(FamilyId, restarted.GetFamilyOfCharacter(MemberId));
         Assert.Equal(1234, Scalar($"SELECT money FROM characters WHERE id={MemberId}"));
         Assert.Equal(1, Scalar($"SELECT role FROM family_members WHERE character_id={OtherOwnerId} AND family_id={OtherFamilyId}"));
+    }
+
+    [Fact]
+    public void VisibleTitle_AfterRestartUsesTheSavedTitleAndOfflineStewardName()
+    {
+        var manager = LoadManager();
+        var subject = new Character(null) { Id = MemberId, ObjId = 91, Family = FamilyId };
+        manager.ChangeTitle(new Character(null) { Id = OwnerId, Family = FamilyId }, MemberId, "Cousin");
+        var restarted = LoadManager();
+        var session = new Mock<ISession>();
+        var packets = new List<byte[]>();
+        session.Setup(value => value.SendPacket(It.IsAny<byte[]>())).Callback<byte[]>(packets.Add);
+        var observer = new Character(null) { Connection = new GameConnection(session.Object) };
+
+        restarted.SendVisibleTitle(subject, observer);
+        restarted.SendVisibleTitle(new Character(null) { Id = OtherMemberId, Family = FamilyId }, observer);
+
+        var packet = Assert.Single(packets);
+        Assert.Equal(SCOffsets.SCFamilyTitlePacket, BitConverter.ToUInt16(packet, 6));
+        var body = new PacketStream(packet[8..]);
+        Assert.Equal(subject.ObjId, body.ReadBc());
+        Assert.Equal((byte)0, body.ReadByte());
+        Assert.Equal($"Family{OwnerId}", body.ReadString());
+        Assert.Equal("Cousin", body.ReadString());
+        Assert.Equal(body.Count, body.Pos);
     }
 
     [Theory]
