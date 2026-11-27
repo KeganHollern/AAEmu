@@ -3,14 +3,17 @@ using System.Reflection;
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Network.Core;
 using AAEmu.Commons.Utils;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Funcs;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.World;
+using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.UnitTests.Utils.Mocks;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
@@ -31,7 +34,10 @@ public sealed class ServiceInteractionTests
         _previous = s_worldInstance.GetValue(null);
         var manager = new WorldManager(null, null, null, null, null);
         s_worldInstance.SetValue(null, manager);
-        _world = new WorldInstance(new WorldTemplate { Id = 1 }, 0, true, 1);
+        _world = new WorldInstance(new WorldTemplate
+        {
+            Id = 1, CellX = 1, CellY = 1, ZoneKeyByRegions = new uint[16, 16]
+        }, 0, true, 1) { Regions = new Region[16, 16] };
         ((ConcurrentDictionary<uint, WorldInstance>)typeof(WorldManager)
             .GetField("_worlds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!)[1] = _world;
         var connection = new GameConnection(Mock.Of<ISession>().Object);
@@ -133,6 +139,65 @@ public sealed class ServiceInteractionTests
         new CSTakeAllAttachmentItemPacket { Connection = _character.Connection }.Read(new PacketStream().Write(1L));
         new CSTakeAttachmentSequentially { Connection = _character.Connection }.Read(new PacketStream().Write(1L));
         await Assert.That(_character.Money).IsEqualTo(100L);
+    }
+
+    [Test]
+    [Arguments("near", true)]
+    [Arguments("outside", false)]
+    [Arguments("inactive", false)]
+    [Arguments("denied", false)]
+    [Arguments("temporary", false)]
+    [Arguments("player-owned", false)]
+    [Arguments("departed", false)]
+    public async Task FixedWarehouse_LocalOpenChecksTheCurrentServiceBeforeAWithdrawal(string state, bool available)
+    {
+        var region = _world.GetRegion(0, 0);
+        _character.CurrentInteractionObject = null;
+        _character.Transform.Local.SetPosition(20, 20, 10);
+        _character.Region = region;
+        var warehouse = new Doodad
+        {
+            ObjId = 99, TemplateId = 7983, ParentWorld = _world, Region = region, OwnerType = DoodadOwnerType.System
+        };
+        warehouse.Transform.Local.SetPosition(20, 20, state == "outside" ? 14.01f : 14f);
+        _world.AddObject(warehouse);
+        region.AddObject(warehouse);
+        _world.SpawnManager = new SpawnManager(_world);
+        var spawner = new DoodadSpawner { Id = 14, UnitId = warehouse.TemplateId, ParentWorld = _world, Last = warehouse };
+        warehouse.Spawner = spawner;
+        var registry = (Dictionary<uint, DoodadSpawner>)typeof(SpawnManager)
+            .GetProperty("DoodadSpawners", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_world.SpawnManager)!;
+        if (state != "temporary")
+            registry.Add(spawner.Id, spawner);
+        if (state != "inactive")
+            warehouse.CurrentFuncs.Add(new DoodadFunc
+            {
+                SkillId = 13238, FuncType = nameof(DoodadFuncBankUi),
+                PermId = state == "denied" ? (uint)DoodadFuncPermission.OwnerOnly : 0
+            });
+        if (state == "player-owned")
+            warehouse.OwnerType = DoodadOwnerType.Character;
+        if (state == "departed")
+            _world.RemoveObject(warehouse);
+
+        var skillInstance = typeof(Singleton<SkillManager>).GetField("s_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var original = skillInstance.GetValue(null);
+        var skills = new SkillManager(null, null);
+        var templates = (Dictionary<uint, SkillTemplate>)typeof(SkillManager)
+            .GetField("_skills", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(skills)!;
+        templates.Add(13238, new SkillTemplate { Id = 13238, MaxRange = 4 });
+        skillInstance.SetValue(null, skills);
+        try
+        {
+            new CSWithdrawMoneyPacket { Connection = _character.Connection }.Read(new PacketStream().Write(10).Write(0));
+            await Assert.That(_character.Money).IsEqualTo(available ? 110L : 100L);
+            await Assert.That(_character.Money2).IsEqualTo(available ? 90L : 100L);
+            await Assert.That(_character.CurrentInteractionObject).IsNull();
+        }
+        finally
+        {
+            skillInstance.SetValue(null, original);
+        }
     }
 
     [Test]
