@@ -11,11 +11,12 @@ namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
 
 public class DoodadFuncPurchase : DoodadFuncTemplate
 {
+    internal const uint Buy = 14569;
     internal const uint BuyDragoraTicket = 20365;
 
     // Each of these stock actions opens the gold purchase dialog for its active display.
     internal static bool OpensGoldDisplay(uint skillId) => skillId is
-        14569 or // Buy
+        Buy or
         17709 or 20218 or 20219 or // Lilyut foals
         17711 or 20215 or // Elk calves (Violet and White share the same skill)
         17537 or 20206 or 20207 or // Snowlion cubs
@@ -60,6 +61,15 @@ public class DoodadFuncPurchase : DoodadFuncTemplate
             else if (ticketBooth && nextPhase > 0)
                 owner.ToNextPhase = true;
         }
+    }
+
+    internal void CompleteDisplayPurchase(Character character, Doodad doodad, DoodadFunc offer)
+    {
+        var result = TryPurchase(character);
+        if (result != ErrorMessageType.NoErrorMessage)
+            character.SendErrorMessage(result);
+        else if (offer.NextPhase > 0 && offer.NextPhase != offer.GroupId)
+            doodad.DoChangePhase(character, offer.NextPhase);
     }
 
     internal ErrorMessageType TryPurchase(Character character)
