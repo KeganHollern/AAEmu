@@ -237,6 +237,58 @@ public sealed class WorldEconomySettlementTests
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Sale_CollectionRewardWaitsForAConfirmedPayment(bool confirmCommit)
+    {
+        using var data = new CharacterAchievementsTests.AchievementDataBuilder();
+        data.AddAchievement(686, 0, true, itemId: 32672);
+        data.AddAchievement(687, 100, false);
+        data.AddAchievement(688, 100, false);
+        data.AddRecord(1169, CharRecordKind.CompleteAchievement, 687);
+        data.AddRecord(1170, CharRecordKind.CompleteAchievement, 688);
+        data.AddRecord(1171, CharRecordKind.SellItem, _pack.TemplateId, _trader.TemplateId);
+        data.AddRecord(1172, CharRecordKind.SellItem, 31875, _trader.TemplateId);
+        data.AddObjective(1, 686, 1169);
+        data.AddObjective(2, 686, 1170);
+        data.AddObjective(3, 687, 1171);
+        data.AddObjective(4, 688, 1172);
+        var commitConfirmed = false;
+        var deliveries = new List<(uint Achievement, uint Item, bool AfterCommit)>();
+        var achievements = new CharacterAchievements(_seller, data.Build(), null, () => true, (achievement, item) =>
+        {
+            deliveries.Add((achievement, item, commitConfirmed));
+            return AchievementRewardStatus.Inventory;
+        });
+        typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(_seller, achievements);
+        achievements.Increment(CharRecordKind.SellItem, 31875, _trader.TemplateId, 100);
+        achievements.Increment(CharRecordKind.SellItem, _pack.TemplateId, _trader.TemplateId, 99);
+        _save.TryCommitEconomy(Any<IReadOnlyCollection<Character>>(), Any<Action<PersistenceSaveContext>>())
+            .Returns(() =>
+            {
+                if (!confirmCommit)
+                    throw new IOException("Unknown commit outcome");
+                commitConfirmed = true;
+                return true;
+            });
+
+        if (confirmCommit)
+            await Assert.That(_specialty.SellSpecialty(_seller, _trader.ObjId)).IsGreaterThan(0);
+        else
+            await Assert.That(() => _specialty.SellSpecialty(_seller, _trader.ObjId)).Throws<IOException>();
+
+        await Assert.That(achievements.IsCompleted(686)).IsTrue();
+        await Assert.That(achievements.GetAmount(687)).IsEqualTo(100u);
+        await Assert.That(_pack.Count).IsEqualTo(0);
+        await Assert.That(_mail._allPlayerMails.Count).IsEqualTo(1);
+        if (confirmCommit)
+            await Assert.That(deliveries.Single()).IsEqualTo((686u, 32672u, true));
+        else
+            await Assert.That(deliveries).IsEmpty();
+    }
+
+    [Test]
     public async Task Sale_CommitException_KeepsPackAndOutputsPrepared()
     {
         _save.TryCommitEconomy(Any<IReadOnlyCollection<Character>>(), Any<Action<PersistenceSaveContext>>()).Throws(new IOException("Unknown commit outcome"));
