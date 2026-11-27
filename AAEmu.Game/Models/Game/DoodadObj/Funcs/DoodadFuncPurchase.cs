@@ -9,8 +9,8 @@ namespace AAEmu.Game.Models.Game.DoodadObj.Funcs;
 
 public class DoodadFuncPurchase : DoodadFuncTemplate
 {
-    // Skill 14569 opens the stock display dialog. Its authored reach is four metres.
-    internal const uint DisplaySkillId = 14569;
+    // Buy, Buy Gray Lilyut Foal and Buy Buckskin Lilyut Foal open the same gold dialog.
+    internal static bool OpensGoldDisplay(uint skillId) => skillId is 14569 or 20218 or 20219;
     internal const float DisplayReach = 4f;
     internal bool UsesItemPayment => CoinItemId != 0 && CoinCount > 0;
 
