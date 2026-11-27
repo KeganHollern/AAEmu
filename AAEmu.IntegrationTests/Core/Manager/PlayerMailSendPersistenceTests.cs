@@ -386,7 +386,7 @@ public sealed partial class PlayerMailSendPersistenceTests
             return Register(new Backpack(Sender.Id + 40UL, template, 1), (byte)EquipmentItemSlot.Backpack, Sender.Inventory.Equipment);
         }
 
-        private Item Register(Item item, byte slot, ItemContainer container = null)
+        public Item Register(Item item, byte slot, ItemContainer container = null)
         {
             container ??= Sender.Inventory.Bag;
             item.OwnerId = Sender.Id;

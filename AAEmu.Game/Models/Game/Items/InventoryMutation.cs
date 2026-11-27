@@ -111,6 +111,20 @@ public sealed class InventoryMutation : IDisposable
         return true;
     }
 
+    public bool TryRestartCharge(ItemContainer source, EquipItem item, DateTime time)
+    {
+        RequireActive();
+        if (_failed || !IsHeldBy(item, source) || TradeReservation.GetReservedCount(item) != 0)
+            return Fail();
+        Capture(source);
+        Capture(item);
+        // The item details and the saved charge_time both have whole-second precision.
+        item.ChargeStartTime = time.AddTicks(-(time.Ticks % TimeSpan.TicksPerSecond));
+        item.IsDirty = true;
+        AddTask(source.Owner, new ItemUpdate(item));
+        return true;
+    }
+
     public bool TryConsume(ItemContainer source, Item item, int count)
     {
         RequireActive();
@@ -556,6 +570,7 @@ public sealed class InventoryMutation : IDisposable
         private readonly byte _grade = item.Grade;
         private readonly uint _imageTemplateId = item.ImageItemTemplateId;
         private readonly uint _dyeTemplateId = (item as EquipItem)?.DyeItemId ?? 0;
+        private readonly DateTime _chargeStartTime = item.ChargeStartTime;
         private readonly bool _dirty = item.IsDirty;
 
         public void Restore()
@@ -570,6 +585,7 @@ public sealed class InventoryMutation : IDisposable
             item.ImageItemTemplateId = _imageTemplateId;
             if (item is EquipItem equipment)
                 equipment.DyeItemId = _dyeTemplateId;
+            item.ChargeStartTime = _chargeStartTime;
             item.IsDirty = _dirty;
         }
     }
