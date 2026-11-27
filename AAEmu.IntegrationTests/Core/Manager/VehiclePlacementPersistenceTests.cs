@@ -6,6 +6,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Skills;
@@ -15,6 +16,7 @@ using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 
+using Moq;
 using Xunit;
 
 namespace AAEmu.IntegrationTests.Core.Manager;
@@ -22,9 +24,10 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 public sealed partial class PlayerMailSendPersistenceTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void RidersEscape_NormalRecallSavesTheSelectedVehiclePositionAndOriginalScroll(bool ship)
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void RidersEscape_NormalRecallSavesTheSelectedVehiclePositionAndOriginalScroll(bool ship, bool occupied)
     {
         using var fixture = new VehicleRepairGraph(4, 1000, 5);
         using var scene = new VehiclePlacementScene(fixture);
@@ -41,6 +44,9 @@ public sealed partial class PlayerMailSendPersistenceTests
         var models = new ModelManager();
         SetField(models, "_modelTypes", new Dictionary<uint, ModelType>());
         var previousModels = SwapSingleton(models);
+        var previousPermissions = SwapSingleton(new PermissionManager(Mock.Of<IAccountManager>()));
+        using var movement = new SusManager(WorldManager.Instance) { WriteBatch = _ => { } };
+        var previousMovement = SwapSingleton(movement);
         try
         {
             var manager = scene.World.SlaveManager;
@@ -55,10 +61,31 @@ public sealed partial class PlayerMailSendPersistenceTests
                 scene.World.Physics.Initialize();
                 scene.World.Physics.AddShip(vehicle);
             }
+            var driver = fixture.Graph.Receiver;
+            if (occupied)
+            {
+                vehicle.Template.Mountable = true;
+                driver.Hp = 100;
+                driver.ObjId = owner.ObjId + 2;
+                SetParentWorld(driver, scene.World);
+                driver.Region = vehicle.Region;
+                driver.Transform.Local.SetPosition(vehicle.Transform.World.Position);
+                driver.Region.AddObject(driver);
+                scene.World.AddObject(driver);
+                WorldManager.Instance.TryAddCharacter(driver);
+                manager.BindSlave(driver, vehicle.ObjId, AttachPointKind.Driver, AttachUnitReason.NewMaster);
+                Assert.Same(vehicle.Transform, driver.Transform.Parent);
+            }
             manager.PlacementGeometry = (_, _, _) => ErrorMessageType.NoErrorMessage;
             var target = new SkillCastPositionTarget { PosX = 100, PosY = 107, PosZ = 10, PosRot = MathF.PI / 2 };
             Assert.True(manager.MoveEscapingVehicle(owner, vehicle, target));
             Assert.Same(vehicle, manager.GetActiveSlaveByOwnerObjId(owner.ObjId));
+            if (occupied)
+            {
+                Assert.Equal(vehicle.Transform.World.Position, driver.Transform.World.Position);
+                manager.UnbindSlave(driver, vehicle.TlId, AttachUnitReason.None);
+                Assert.Null(driver.Transform.Parent);
+            }
             Assert.True(manager.Delete(owner, vehicle.ObjId));
             Assert.True(fixture.Graph.Save.DoSave());
         }
@@ -66,6 +93,8 @@ public sealed partial class PlayerMailSendPersistenceTests
         {
             scene.World.Physics.Dispose();
             SwapSingleton(previousModels);
+            SwapSingleton(previousPermissions);
+            SwapSingleton(previousMovement);
         }
 
         var saved = Assert.IsType<SummonSlave>(fixture.Graph.ReloadLifecycle().Items.GetItemByItemId(scroll.Id));
@@ -262,20 +291,19 @@ public sealed partial class PlayerMailSendPersistenceTests
             World = HousingPlacementWorld(0);
             Array.Clear(World.Template.ZoneKeyByRegions);
             World.Regions = new Region[16, 16];
-            World.Regions[0, 0] = new Region(World, 0, 0, 0);
             World.SlaveManager = new SlaveManager(World);
             World.SpawnManager = new SpawnManager(World);
             typeof(WorldInstance).GetProperty(nameof(WorldInstance.Physics))!
                 .SetValue(World, new PhysicsManager { SimulationWorld = World });
             SetParentWorld(player, World);
-            player.Region = World.Regions[0, 0];
             player.Transform.Local.SetPosition(100, 100, 10);
+            player.Region = World.GetRegionByPos(player.Transform.World.Position);
             Active = new Slave
             {
                 Id = fixture.Vehicle.SlaveDbId, ObjId = player.ObjId + 1, TlId = 30,
                 Summoner = player, SummoningItem = fixture.Vehicle, OwnerId = player.Id,
                 Hp = 100, Mp = 7, ParentWorld = World, TemplateId = fixture.VehicleTemplate.Id,
-                Template = fixture.VehicleTemplate, IsVisible = true, Region = World.Regions[0, 0]
+                Template = fixture.VehicleTemplate, IsVisible = true, Region = player.Region
             };
             Active.Transform.Local.SetPosition(110, 100, 10);
             World.AddObject(Active);

@@ -7,6 +7,7 @@ using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
+using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Templates;
@@ -246,6 +247,9 @@ public partial class SlaveManager
             if (!TryEscapePlacement(owner, vehicle, target, out var request))
                 return false;
 
+            var driver = vehicle.AttachedCharacters.GetValueOrDefault(AttachPointKind.Driver);
+            if (driver != null)
+                vehicle.DriverEscapeDeparture = vehicle.Transform.World.Position;
             vehicle.Transform.Local.SetPosition(request.Position, new Vector3(0, 0, request.Yaw));
             vehicle.VehicleVelocity = Vector3.Zero;
             vehicle.Transform.FinalizeTransform();
@@ -263,6 +267,16 @@ public partial class SlaveManager
                 RotationX = roll, RotationY = pitch, RotationZ = yaw
             };
             vehicle.BroadcastPacket(new SCOneUnitMovementPacket(vehicle.ObjId, movement), false);
+            if (driver != null)
+            {
+                // The seated client simulates its own cart. Reload that actor using the normal
+                // visibility and seat state so its next drive starts at the new position.
+                driver.SendPacket(new SCUnitsRemovedPacket([vehicle.ObjId]));
+                vehicle.AddVisibleObject(driver);
+                driver.SendPacket(new SCSlaveBoundPacket(driver.Id, vehicle.ObjId));
+                if (ReferenceEquals(driver.CurrentTarget, vehicle))
+                    driver.SendPacket(new SCTargetChangedPacket(driver.ObjId, vehicle.ObjId));
+            }
             return true;
         }
     }

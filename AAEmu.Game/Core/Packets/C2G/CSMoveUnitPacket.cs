@@ -117,28 +117,31 @@ public class CSMoveUnitPacket() : GamePacket(CSOffsets.CSMoveUnitPacket, 1)
                     if (targetUnit is not Slave car)
                         return;
 
-                    // Only the character attached to the driver seat may drive.
-                    if (!IsSlaveDriver(car, character))
-                        return;
-
-                    // Vehicles are root objects, so their local position is their world position.
-                    var claimedCarPosition = new Vector3(vmt.X, vmt.Y, vmt.Z);
-                    if (!MovementValidation.TryAccept(car, character, claimedCarPosition, "vehicle"))
-                        return;
-
-                    var (rotDegX, rotDegY, rotDegZ) = MathUtil.GetSlaveRotationInDegrees(vmt.RotationX, vmt.RotationY, vmt.RotationZ);
-
-                    // Make sure driver is attached to car
-                    character.Transform.Parent = car.Transform;
-                    car.Transform.Local.SetPosition(vmt.X, vmt.Y, vmt.Z, rotDegX, rotDegY, rotDegZ);
                     lock (car.AttachmentSyncRoot)
                     {
+                        // Use the same lock as Rider's Escape and ordinary dismount.
                         if (!IsSlaveDriver(car, character))
                             return;
+                        var claimedCarPosition = new Vector3(vmt.X, vmt.Y, vmt.Z);
+                        // A seated client may have already sent movement at the old position.
+                        // Its first movement from the arrival side hands control back to the driver.
+                        if (car.DriverEscapeDeparture is { } departure &&
+                            Vector3.DistanceSquared(claimedCarPosition, departure) <
+                            Vector3.DistanceSquared(claimedCarPosition, car.Transform.World.Position))
+                            return;
+                        if (!MovementValidation.TryAccept(car, character, claimedCarPosition, "vehicle"))
+                            return;
+
+                        car.DriverEscapeDeparture = null;
+                        var (rotDegX, rotDegY, rotDegZ) = MathUtil.GetSlaveRotationInDegrees(vmt.RotationX, vmt.RotationY, vmt.RotationZ);
+                        character.Transform.Parent = car.Transform;
+                        car.Transform.Local.SetPosition(vmt.X, vmt.Y, vmt.Z, rotDegX, rotDegY, rotDegZ);
                         car.VehicleVelocity = vmt.LinearVelocity;
+                        car.BroadcastPacket(new SCOneUnitMovementPacket(_objId, vmt), true);
                     }
-                    car.BroadcastPacket(new SCOneUnitMovementPacket(_objId, vmt), true);
-                    car.Transform.FinalizeTransform(); // Propagate position updates to all children
+                    // Child visibility can visit other vehicles. Propagate the current pose
+                    // after releasing this vehicle's seat lock.
+                    car.Transform.FinalizeTransform();
                     break;
                 }
             case UnitMoveType dmt:
