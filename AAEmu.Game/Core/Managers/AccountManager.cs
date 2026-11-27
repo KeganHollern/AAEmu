@@ -31,22 +31,30 @@ public class AccountManager(
 
     public void Add(GameConnection connection)
     {
+        if (TryRegister(connection))
+            ApplyLoginRewards(connection);
+    }
+
+    public bool TryRegister(GameConnection connection)
+    {
         if (connection.AccountId == 0)
         {
             Logger.Warn("Rejected unauthenticated account registration");
             connection.Shutdown();
-            return;
+            return false;
         }
 
+        if (_accounts.TryAdd(connection.AccountId, connection))
+            return true;
+        if (!IsCurrent(connection))
+            connection.Shutdown();
+        return false;
+    }
+
+    public void ApplyLoginRewards(GameConnection connection)
+    {
         var loginTime = timeProvider.GetUtcNow().UtcDateTime;
         var rewardDate = DateOnly.FromDateTime(loginTime);
-        if (!_accounts.TryAdd(connection.AccountId, connection))
-        {
-            if (!IsCurrent(connection))
-                connection.Shutdown();
-            return;
-        }
-
         UpdateLoginTime(connection.AccountId, loginTime);
         var accountDetails = GetAccountDetails(connection.AccountId);
         timedRewardsManager.DoDailyAccountLogin(connection.AccountId, rewardDate);
@@ -86,6 +94,8 @@ public class AccountManager(
     }
 
     public int Count() => _accounts.Count;
+
+    public ICollection<uint> GetConnectedAccountIds() => _accounts.Keys;
 
     internal object GetAccountSyncRoot(uint accountId)
     {

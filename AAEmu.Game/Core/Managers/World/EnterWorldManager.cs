@@ -39,20 +39,26 @@ public class EnterWorldManager(
     private long _nextAdmission;
     private readonly object[] _admissionLocks = Enumerable.Range(0, 256).Select(_ => new object()).ToArray();
 
-    public void AddAccount(uint accountId, uint connectionId, uint token, ulong patronStart, ulong patronEnd, IPAddress address)
+    public void AddAccount(uint accountId, uint connectionId, uint token, ulong patronStart, ulong patronEnd, IPAddress address,
+        ushort populationCap = 0, bool permitReservation = true)
     {
         if (!AccountPayment.ValidPeriod(patronStart, patronEnd))
             return;
-        long request;
-        lock (_admissionLocks[accountId % (uint)_admissionLocks.Length])
+        long request = 0;
+        if (permitReservation)
         {
-            request = Interlocked.Increment(ref _nextAdmission);
-            _admissionRequests[accountId] = request;
+            lock (_admissionLocks[accountId % (uint)_admissionLocks.Length])
+            {
+                request = Interlocked.Increment(ref _nextAdmission);
+                _admissionRequests[accountId] = request;
+            }
         }
-        _ = AddAccountAsync(accountId, connectionId, token, new AccountPayment(patronStart, patronEnd), address, request);
+        _ = AddAccountAsync(accountId, connectionId, token, new AccountPayment(patronStart, patronEnd),
+            address, request, populationCap, permitReservation);
     }
 
-    private async Task AddAccountAsync(uint accountId, uint connectionId, uint token, AccountPayment payment, IPAddress address, long request)
+    private async Task AddAccountAsync(uint accountId, uint connectionId, uint token, AccountPayment payment, IPAddress address,
+        long request, ushort populationCap, bool permitReservation)
     {
         var loginConnection = LoginNetwork.Instance.GetConnection();
         var gsId = AppConfiguration.Instance.Id;
@@ -69,9 +75,10 @@ public class EnterWorldManager(
 
             lock (_admissionLocks[accountId % (uint)_admissionLocks.Length])
             {
-                var admitted = _admissionRequests.GetValueOrDefault(accountId) == request &&
-                    PreparePendingAccount(accountId, token, payment, address, moderation);
-                loginConnection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, admitted ? (byte)0 : (byte)1));
+                var status = WorldAdmissionStatus.Denied;
+                if (!permitReservation || _admissionRequests.GetValueOrDefault(accountId) == request)
+                    status = PrepareAdmission(accountId, token, payment, address, moderation, populationCap, permitReservation);
+                loginConnection.SendPacket(new GLPlayerEnterPacket(connectionId, gsId, (byte)status));
             }
         }
         catch (Exception exception)
@@ -81,29 +88,41 @@ public class EnterWorldManager(
         }
         finally
         {
-            ((ICollection<KeyValuePair<uint, long>>)_admissionRequests).Remove(new(accountId, request));
+            if (permitReservation)
+                ((ICollection<KeyValuePair<uint, long>>)_admissionRequests).Remove(new(accountId, request));
         }
     }
 
     internal bool PreparePendingAccount(uint accountId, uint token, AccountPayment payment, IPAddress address,
-        IModerationManager moderation)
+        IModerationManager moderation) =>
+        PrepareAdmission(accountId, token, payment, address, moderation, 0, true) == WorldAdmissionStatus.Reserved;
+
+    internal WorldAdmissionStatus PrepareAdmission(uint accountId, uint token, AccountPayment payment, IPAddress address,
+        IModerationManager moderation, ushort populationCap, bool permitReservation)
     {
         lock (_admissionLocks[accountId % (uint)_admissionLocks.Length])
         {
             if (!CanEnterWorld(accountId))
-                return false;
+                return WorldAdmissionStatus.Denied;
 
-            var stored = false;
-            if (!moderation.TryAdmit(accountId, () => stored = _pending.TryAdd(token, accountId, payment, address)) || !stored)
-                return false;
+            var status = WorldAdmissionStatus.Waiting;
+            if (!moderation.TryAdmit(accountId, () =>
+                {
+                    if (permitReservation)
+                        status = _pending.Reserve(token, accountId, payment, address, populationCap, accountManager);
+                }))
+                return WorldAdmissionStatus.Denied;
+            if (status != WorldAdmissionStatus.Reserved)
+                return status;
+
             // The admission lock prevents cookie consumption until the old save completes.
             try
             {
                 var previous = accountManager.GetConnection(accountId);
                 if (previous == null || previous.KickDuplicate())
-                    return true;
+                    return WorldAdmissionStatus.Reserved;
                 _pending.Remove(token);
-                return false;
+                return WorldAdmissionStatus.Denied;
             }
             catch
             {
@@ -143,7 +162,7 @@ public class EnterWorldManager(
         lock (_admissionLocks[accountId % (uint)_admissionLocks.Length])
         {
             var result = _pending.Consume(token, accountId, connection.Ip,
-                AppConfiguration.Instance.Network.ValidateWorldCookieAddress, out var payment);
+                AppConfiguration.Instance.Network.ValidateWorldCookieAddress, out var payment, beginLogin: true);
             if (result != PendingWorldAccountResult.Consumed)
             {
                 var reason = result switch
@@ -161,17 +180,32 @@ public class EnterWorldManager(
             }
 
             var streamToken = 0u;
-            var moderation = moderationManager ?? ModerationManager.Instance;
-            var admitted = CanEnterWorld(accountId) && moderation.TryAdmit(accountId, () =>
+            try
             {
-                if (accountManager.Contains(accountId) || !connection.TryAuthenticate(accountId))
-                    return;
-                connection.Payment = payment;
-                accountManager.Add(connection);
-                if (accountManager.IsCurrent(connection) && !connection.IsClosed)
-                    streamToken = streamManager.AddToken(connection);
-            });
-            if (!admitted || !connection.IsAuthenticated || connection.IsClosed || streamToken == 0)
+                var registered = false;
+                var moderation = moderationManager ?? ModerationManager.Instance;
+                if (CanEnterWorld(accountId))
+                    moderation.TryAdmit(accountId, () =>
+                    {
+                        if (accountManager.Contains(accountId) || !connection.TryAuthenticate(accountId))
+                            return;
+                        connection.Payment = payment;
+                        registered = accountManager.TryRegister(connection);
+                    });
+
+                if (registered)
+                {
+                    // Account registration is visible before database work starts.
+                    accountManager.ApplyLoginRewards(connection);
+                    if (accountManager.IsCurrent(connection) && !connection.IsClosed)
+                        streamToken = streamManager.AddToken(connection);
+                }
+            }
+            finally
+            {
+                _pending.FinishLogin(accountId);
+            }
+            if (connection.IsClosed || streamToken == 0)
             {
                 GameSecurityTelemetry.TokenFailure(SecurityTokenKind.WorldCookie, SecurityTokenFailure.AdmissionDenied,
                     connection.TokenFailureEvents.TryConsume(), connection.Id, connection.Ip, connection.SecurityMetrics);
