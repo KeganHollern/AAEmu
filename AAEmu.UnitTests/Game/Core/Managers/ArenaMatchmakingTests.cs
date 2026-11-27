@@ -908,7 +908,7 @@ public sealed partial class ArenaMatchmakingTests
 
     private CharacterMock NewSession(int id, uint objectId)
     {
-        var player = new CharacterMock { Id = (uint)id, ObjId = objectId, Level = 50, Name = $"Player{id}", Buffs = Mock.Of<IBuffs>().Object };
+        var player = new CharacterMock { Id = (uint)id, ObjId = objectId, Level = 50, Hp = 100, Name = $"Player{id}", Buffs = Mock.Of<IBuffs>().Object };
         _worlds.TryAddCharacter(player);
         return player;
     }

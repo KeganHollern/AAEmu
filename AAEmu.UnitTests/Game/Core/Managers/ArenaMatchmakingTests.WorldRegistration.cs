@@ -160,6 +160,7 @@ public sealed partial class ArenaMatchmakingTests
         {
             Id = id,
             AccountId = id,
+            Hp = 100,
             ObjId = objId,
             Name = $"Player{id}",
             Level = 50,
