@@ -8,6 +8,8 @@ public class BigFish : Item
     public override ItemDetailType DetailType => ItemDetailType.BigFish;
     public override uint DetailBytesLength => 16;
 
+    private DateTime? _captureDate;
+
     public float Weight { get; set; }
     public float Length { get; set; }
 
@@ -25,14 +27,15 @@ public class BigFish : Item
             return;
         Weight = stream.ReadSingle();
         Length = stream.ReadSingle();
-        // The item record supplies CreateTime separately.
-        stream.ReadDateTime();
+        // The separate item creation column can round up to the next second.
+        var captureDate = stream.ReadDateTime();
+        _captureDate = captureDate > DateTime.UnixEpoch && captureDate < DateTime.MaxValue ? captureDate : null;
     }
 
     public override void WriteDetails(PacketStream stream)
     {
         stream.Write(Weight);     // Weight
         stream.Write(Length);     // Length
-        stream.Write(CreateTime); // Capture Date
+        stream.Write(_captureDate ?? CreateTime);
     }
 }

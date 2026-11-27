@@ -8,13 +8,16 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 
 public sealed partial class PlayerMailSendPersistenceTests
 {
-    [Fact]
-    public void FishTrophy_ReloadKeepsTheSizeShownOnTheOriginalItem()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(875)]
+    public void FishTrophy_ReloadKeepsTheSizeShownOnTheOriginalItem(int milliseconds)
     {
         using var graph = new SendGraph();
         var template = new ItemTemplate { Id = 28041, MaxCount = 1, FixedGrade = -1 };
         var trophy = new BigFish(graph.Sender.Id + 27UL, template, 1) { Weight = 138.5f, Length = 171f };
         graph.Register(trophy, 3);
+        trophy.CreateTime = new DateTime(2026, 9, 7, 23, 59, 59, DateTimeKind.Utc).AddMilliseconds(milliseconds);
         Assert.True(graph.Save.TryCommitEconomy([graph.Sender]));
         var originalDetails = new PacketStream();
         trophy.WriteDetails(originalDetails);
@@ -23,7 +26,9 @@ public sealed partial class PlayerMailSendPersistenceTests
         var restored = Assert.IsType<BigFish>(items.GetItemByItemId(trophy.Id));
         Assert.Equal(trophy.Weight, restored.Weight);
         Assert.Equal(trophy.Length, restored.Length);
-        Assert.Equal(trophy.CreateTime, restored.CreateTime);
+        var loadedDetails = new PacketStream();
+        restored.WriteDetails(loadedDetails);
+        Assert.Equal(originalDetails.GetBytes(), loadedDetails.GetBytes());
         Assert.Equal(trophy.TemplateId, restored.TemplateId);
         Assert.Equal(trophy.Count, restored.Count);
         Assert.Equal(trophy.Slot, restored.Slot);
