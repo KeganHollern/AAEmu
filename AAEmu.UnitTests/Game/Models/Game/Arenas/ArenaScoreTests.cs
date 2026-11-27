@@ -1,10 +1,13 @@
 using System.Collections.Concurrent;
 using System.Reflection;
+using System.Numerics;
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
+using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Core.Packets.C2G;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
@@ -17,6 +20,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
+using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Zones;
 using AAEmu.Game.Models.StaticValues;
@@ -82,7 +86,9 @@ public sealed class ArenaScoreTests
         Install(new DuelManager());
         Install(new PriestBuffGameData());
         Install(new ExperienceManager());
-        Install(new WorldManager(null, null, null, null, null));
+        var worlds = new WorldManager(null, null, null, null, null);
+        Set(worlds, "_worlds", new ConcurrentDictionary<uint, WorldInstance> { [_world.Id] = _world });
+        Install(worlds);
         var zones = new ZoneManager(null, null);
         Set(zones, "_zones", new Dictionary<uint, Zone>());
         Install(zones);
@@ -98,6 +104,8 @@ public sealed class ArenaScoreTests
     [After(Test)]
     public void TearDown()
     {
+        foreach (var player in _red.Concat(_blue))
+            MovementValidation.Reset(player.ObjId);
         AppConfiguration.Instance.World = _previousWorld;
         AppConfiguration.Instance.DebugInfo = _previousDebugInfo;
         foreach (var (field, original) in _originals)
@@ -226,6 +234,155 @@ public sealed class ArenaScoreTests
         _clock.Advance(TimeSpan.FromTicks(1));
         await Assert.That(victim.Hp).IsEqualTo(victim.MaxHp);
         await Assert.That(killer.Hp).IsEqualTo(id == 11 ? killer.MaxHp : 17);
+    }
+
+    [Test]
+    [Arguments(7u, false)]
+    [Arguments(7u, true)]
+    [Arguments(11u, false)]
+    [Arguments(11u, true)]
+    public async Task Resurrection_PublishesTheTeamSpawnAndAcceptsTheNextStep(uint fieldId, bool blueVictim)
+    {
+        Start(fieldId);
+        var field = _fields.GetBattlefield(fieldId);
+        var victim = blueVictim ? _blue[0] : _red[0];
+        var killer = blueVictim ? _red[0] : _blue[0];
+        var spawn = blueVictim ? field.Spawns.Corps2Spawn : field.Spawns.Corps1Spawn;
+        var opposite = blueVictim ? field.Spawns.Corps1Spawn : field.Spawns.Corps2Spawn;
+        var arrival = new Vector3(spawn.X, spawn.Y, spawn.Z);
+        var killerArrival = new Vector3(opposite.X, opposite.Y, opposite.Z);
+        var midpoint = (arrival + killerArrival) / 2;
+        var attack = midpoint + Vector3.UnitY * 2;
+
+        _world.Template.CellX = 2;
+        _world.Template.CellY = 1;
+        _world.Template.ZoneKeyByRegions = new uint[32, 16];
+        _world.Regions = new Region[32, 16];
+        for (var i = 0; i < _world.Regions.GetLength(0); i++)
+            for (var j = 0; j < _world.Regions.GetLength(1); j++)
+                _world.Regions[i, j] = new Region(_world, i, j, field.ZoneKey);
+        Install(new SusManager(WorldManager.Instance));
+        var otherView = new TransferVisibilityTests.RecordingSession();
+        foreach (var player in new[] { victim, killer })
+        {
+            player.Transform.InstanceId = _world.Id;
+            player.IsVisible = true;
+            player.Mates = new CharacterMates(player);
+            player.VisualOptions = new() { Stp = new byte[6] };
+            player.Equipment.ContainerSize = 28;
+            player.Appellations = new CharacterAppellations(player);
+            player.Skills = new CharacterSkills(player);
+            player.Abilities = new CharacterAbilities(player);
+            player.Connection = new GameConnection(player == victim ? _observer : otherView) { ActiveChar = player };
+            _world.AddObject(player);
+            var site = player == victim ? midpoint : attack;
+            player.Transform.Local.SetPosition(site);
+            WorldManager.Instance.AddVisibleObject(player);
+            MovementValidation.RecordServerRelocation(player);
+        }
+
+        Kill(killer, victim);
+        _clock.Advance(field.RuleSet.ResurrectionDelay - TimeSpan.FromTicks(1));
+        await Assert.That(victim.Hp).IsZero();
+        await Assert.That(victim.Transform.World.Position).IsEqualTo(midpoint);
+        _clock.Advance(TimeSpan.FromTicks(1));
+
+        await Assert.That(victim.Transform.World.Position).IsEqualTo(arrival);
+        await Assert.That(victim.Region).IsSameReferenceAs(_world.GetRegionByPos(arrival));
+        foreach (var view in new[] { _observer, otherView })
+        {
+            var notice = Packets(SCOffsets.SCCharacterResurrectedPacket, 8, view).Single();
+            await Assert.That(notice.ReadBc()).IsEqualTo(victim.ObjId);
+            var (x, y, z) = notice.ReadPosition();
+            await Assert.That(Vector3.Distance(new(x, y, z), arrival)).IsLessThan(.001f);
+        }
+
+        var killerAt = fieldId == 11 ? killerArrival : attack;
+        await Assert.That(killer.Transform.World.Position).IsEqualTo(killerAt);
+        await Assert.That(killer.Region).IsSameReferenceAs(_world.GetRegionByPos(killerAt));
+        var teleports = Packets(SCOffsets.SCTeleportUnitPacket, 8, otherView);
+        await Assert.That(teleports.Length).IsEqualTo(fieldId == 11 ? 1 : 0);
+        if (fieldId == 11)
+        {
+            teleports[0].ReadByte();
+            teleports[0].ReadInt16();
+            var (kx, ky, kz) = teleports[0].ReadPosition();
+            await Assert.That(Vector3.Distance(new(kx, ky, kz), killerArrival)).IsLessThan(.001f);
+            // The stock Gladiator spawns are outside each other's visible regions.
+            await Assert.That(RemovedFromView(_observer, killer.ObjId)).IsTrue();
+            await Assert.That(RemovedFromView(otherView, victim.ObjId)).IsTrue();
+        }
+        else
+        {
+            // Both Drill Camp spawns remain visible from the fight at the midpoint.
+            await Assert.That(RemovedFromView(_observer, killer.ObjId)).IsFalse();
+            await Assert.That(RemovedFromView(otherView, victim.ObjId)).IsFalse();
+        }
+
+        foreach (var player in new[] { victim, killer })
+        {
+            var step = player.Transform.World.Position + Vector3.UnitX;
+            var stream = new PacketStream().WriteBc(player.ObjId).Write((byte)MoveTypeEnum.Unit);
+            new UnitMoveType { X = step.X, Y = step.Y, Z = step.Z, DeltaMovement = new sbyte[3] }.Write(stream);
+            stream.Rollback();
+            var move = new CSMoveUnitPacket { Connection = player.Connection };
+            move.Read(stream);
+            move.Execute();
+            var (xStep, yStep, zStep) = Helpers.ConvertPosition(Helpers.ConvertPosition(step.X, step.Y, step.Z));
+            await Assert.That(player.Transform.World.Position).IsEqualTo(new Vector3(xStep, yStep, zStep));
+            await Assert.That(player.DisabledSetPosition).IsFalse();
+        }
+    }
+
+    [Test]
+    [Arguments(7u)]
+    [Arguments(11u)]
+    public async Task Resurrection_OnlyAMovedWinnerStartsANewFall(uint fieldId)
+    {
+        Start(fieldId);
+        Install(new PermissionManager(null));
+        var field = _fields.GetBattlefield(fieldId);
+        var winner = _blue[0];
+        var victim = _red[0];
+        var spawn = field.Spawns.Corps2Spawn;
+        var landing = new Vector3(spawn.X + 10, spawn.Y, spawn.Z);
+        winner.Hp = winner.MaxHp;
+        Kill(winner, victim);
+
+        // The winner is already falling when the other player revives.
+        winner.Transform.Local.SetPosition(landing + Vector3.UnitZ * 24);
+        winner.ObserveFallMovement(false, 0);
+        winner.Transform.Local.SetPosition(landing + Vector3.UnitZ * 12);
+        winner.ObserveFallMovement(false, .4);
+        _clock.Advance(field.RuleSet.ResurrectionDelay);
+
+        if (fieldId == 7)
+            winner.Transform.Local.SetPosition(landing);
+        winner.ObserveFallMovement(true, .8);
+        if (fieldId == 11)
+            await Assert.That(winner.Hp).IsEqualTo(winner.MaxHp);
+        else
+            await Assert.That(winner.Hp).IsLessThan(winner.MaxHp);
+    }
+
+    [Test]
+    public async Task Resurrection_FinishedMatchKeepsBothPositions()
+    {
+        Start(11);
+        var victim = _red[0];
+        var killer = _blue[0];
+        var deathSite = new Vector3(575, 506, 266);
+        var attackSite = deathSite + Vector3.UnitY;
+        victim.Transform.Local.SetPosition(deathSite);
+        killer.Transform.Local.SetPosition(attackSite);
+        Kill(killer, victim);
+        var finish = _game.EndGame();
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await Assert.That(victim.Hp).IsZero();
+        await Assert.That(victim.Transform.World.Position).IsEqualTo(deathSite);
+        await Assert.That(killer.Transform.World.Position).IsEqualTo(attackSite);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await finish;
     }
 
     [Test]
@@ -523,7 +680,6 @@ public sealed class ArenaScoreTests
     [Test]
     public async Task DrillCampHonor_CombinesTiedEnemyNpcAndPlayerLeadsAcrossBothTeams()
     {
-        Set(WorldManager.Instance, "_worlds", new ConcurrentDictionary<uint, WorldInstance> { [_world.Id] = _world });
         Start(7);
         var friendly = new Npc { ParentWorld = _world, Faction = new() { Id = FactionsEnum.Friendly } };
         var hostile = new Npc { ParentWorld = _world, Faction = new() { Id = FactionsEnum.Hostile } };
@@ -626,9 +782,21 @@ public sealed class ArenaScoreTests
         victim.ReduceCurrentHp(killer, 1, KillReason.PvpBattleField);
     }
 
-    private PacketStream[] Packets(ushort opcode) => _observer.Packets
+    private bool RemovedFromView(TransferVisibilityTests.RecordingSession view, uint id)
+    {
+        foreach (var removal in Packets(SCOffsets.SCUnitsRemovedPacket, 8, view))
+        {
+            var count = removal.ReadUInt16();
+            for (var i = 0; i < count; i++)
+                if (removal.ReadBc() == id)
+                    return true;
+        }
+        return false;
+    }
+
+    private PacketStream[] Packets(ushort opcode, int position = 16, TransferVisibilityTests.RecordingSession view = null) => (view ?? _observer).Packets
         .Where(bytes => bytes.Length >= 8 && BitConverter.ToUInt16(bytes, 6) == opcode)
-        .Select(bytes => new PacketStream(bytes) { Pos = 16 }).ToArray();
+        .Select(bytes => new PacketStream(bytes) { Pos = position }).ToArray();
 
     private static (byte Corps, int Award, int Red, int Blue, string Scorer) ReadPoints(PacketStream stream) =>
         (stream.ReadByte(), stream.ReadInt32(), stream.ReadInt32(), stream.ReadInt32(), stream.ReadString());
@@ -671,10 +839,16 @@ public sealed class ArenaScoreTests
         await Assert.That(personalScores).IsEqualTo(score);
     }
 
-    private sealed class ArenaPlayer : CharacterMock
+    private sealed class ArenaPlayer() : Character(new UnitCustomModelParams())
     {
         public override int MaxHp => 100;
         public override int MaxMp => 100;
+
+        public override void BroadcastPacket(GamePacket packet, bool self)
+        {
+            if (Region != null)
+                base.BroadcastPacket(packet, self);
+        }
     }
 
     private static void Set<T>(T target, string name, object value) =>
