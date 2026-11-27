@@ -111,7 +111,7 @@ internal sealed class SkillLaborBatch
     {
         if (itemTemplateId == 0)
             return;
-        if (Owner.Achievements?.TracksItemUse(itemTemplateId) != true)
+        if (Owner.Achievements?.TracksUse(CharRecordKind.UseItem, itemTemplateId) != true)
         {
             AfterCommit(() => Owner.ItemUseByTemplate(itemTemplateId));
             return;
