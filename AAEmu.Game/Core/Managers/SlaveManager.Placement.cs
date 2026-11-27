@@ -1,6 +1,7 @@
 using System.Numerics;
 
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.CryEngine.Physics;
 using AAEmu.Game.Models.Game;
@@ -13,6 +14,7 @@ using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
 
@@ -27,7 +29,7 @@ public partial class SlaveManager
     {
         var error = CheckPlacement(owner, skillData, request, out var template);
         if (error == ErrorMessageType.NoErrorMessage)
-            error = (PlacementGeometry ?? CheckPlacementGeometry)(owner, template, request);
+            error = CheckPlacementGeometry(owner, template, request);
         if (error != ErrorMessageType.NoErrorMessage)
         {
             owner?.SendErrorMessage(error);
@@ -103,11 +105,7 @@ public partial class SlaveManager
         out SlaveTemplate template)
     {
         template = null;
-        if (owner?.ParentWorld?.Template == null || !ReferenceEquals(owner.ParentWorld, World) ||
-            !SlavePlacementRules.IsWithinRange(owner.Transform.World.Position, request.Position) ||
-            !float.IsFinite(request.Yaw) || request.Position.X < 0 || request.Position.Y < 0 ||
-            request.Position.X >= World.Template.CellX * WorldManager.CELL_SIZE ||
-            request.Position.Y >= World.Template.CellY * WorldManager.CELL_SIZE)
+        if (!IsValidPlacementRequest(owner, request))
             return ErrorMessageType.SlaveSpawnErrorInvalidArea;
         var item = ZoneSkillRestrictions.GetSourceItem(owner, skillData);
         if (item is not SummonSlave scroll || item.Template is not SummonSlaveTemplate itemTemplate ||
@@ -126,8 +124,18 @@ public partial class SlaveManager
         return ErrorMessageType.NoErrorMessage;
     }
 
-    private ErrorMessageType CheckPlacementGeometry(Character owner, SlaveTemplate template, SlavePlacementRequest request)
+    private bool IsValidPlacementRequest(Character owner, SlavePlacementRequest request) =>
+        owner?.ParentWorld?.Template != null && ReferenceEquals(owner.ParentWorld, World) &&
+        SlavePlacementRules.IsWithinRange(owner.Transform.World.Position, request.Position) &&
+        float.IsFinite(request.Yaw) && request.Position.X >= 0 && request.Position.Y >= 0 &&
+        request.Position.X < World.Template.CellX * WorldManager.CELL_SIZE &&
+        request.Position.Y < World.Template.CellY * WorldManager.CELL_SIZE;
+
+    private ErrorMessageType CheckPlacementGeometry(Character owner, SlaveTemplate template, SlavePlacementRequest request,
+        Slave movingVehicle = null)
     {
+        if (PlacementGeometry != null)
+            return PlacementGeometry(owner, template, request);
         try
         {
             var modelType = ModelManager.Instance.GetModelType(template.ModelId)?.SubType;
@@ -140,6 +148,8 @@ public partial class SlaveManager
             // Dynamic client physics contains the objects published from this neighborhood.
             // Resolve assets only inside that scope; a remote unsupported model is unrelated.
             var objects = GetPlacementObjects(World, owner.Transform.World.Position);
+            if (movingVehicle != null)
+                objects = objects.Where(obj => !MovesWith(obj, movingVehicle)).ToArray();
             var houses = objects.OfType<House>().ToArray();
             var visibleDoodads = objects.OfType<Doodad>().ToArray();
             var doodads = visibleDoodads.Select(doodad => doodad.ObjId).ToHashSet();
@@ -188,6 +198,68 @@ public partial class SlaveManager
         foreach (var neighbor in region.GetNeighbors())
             neighbor?.GetList(objects, 0);
         return objects.Distinct().ToArray();
+    }
+
+    private static bool MovesWith(GameObject obj, Slave vehicle)
+    {
+        for (var transform = obj.Transform; transform != null; transform = transform.Parent ?? transform.StickyParent)
+            if (ReferenceEquals(transform.GameObject, vehicle))
+                return true;
+        return false;
+    }
+
+    internal bool TryLandEscapePlacement(Character owner, Slave vehicle, SkillCastTarget target,
+        out SlavePlacementRequest request)
+    {
+        var error = CheckLandEscape(owner, vehicle, target, out request);
+        if (error == ErrorMessageType.NoErrorMessage)
+            return true;
+        owner.SendErrorMessage(error);
+        return false;
+    }
+
+    private ErrorMessageType CheckLandEscape(Character owner, Slave vehicle, SkillCastTarget target,
+        out SlavePlacementRequest request)
+    {
+        request = default;
+        if (vehicle.AttachmentsRetired || !vehicle.IsVisible || !ReferenceEquals(vehicle.ParentWorld, World) ||
+            !ReferenceEquals(vehicle.Summoner, owner) || !ReferenceEquals(owner.ParentWorld, World) ||
+            !ReferenceEquals(GetActiveSlaveByOwnerObjId(owner.ObjId), vehicle))
+            return ErrorMessageType.InvalidTarget;
+        var distance = SkillRange.GetDistance(owner, vehicle);
+        if (!float.IsFinite(distance) || distance > 20)
+            return ErrorMessageType.SlaveEscapeTooFarFromSlave;
+        if (!SlavePlacementRequest.TryReadTarget(target, out request) || !IsValidPlacementRequest(owner, request))
+            return ErrorMessageType.SlaveSpawnErrorInvalidArea;
+        return CheckPlacementGeometry(owner, vehicle.Template, request, vehicle);
+    }
+
+    internal bool MoveLandVehicle(Character owner, Slave vehicle, SkillCastTarget target)
+    {
+        lock (vehicle.AttachmentSyncRoot)
+        {
+            if (!TryLandEscapePlacement(owner, vehicle, target, out var request))
+                return false;
+
+            vehicle.Transform.Local.SetPosition(request.Position, new Vector3(0, 0, request.Yaw));
+            vehicle.VehicleVelocity = Vector3.Zero;
+            vehicle.Transform.FinalizeTransform();
+            MovementValidation.RecordServerRelocation(vehicle);
+
+            // Land drivers use this movement type for the cart and its attached seats.
+            // Crossing a visibility boundary publishes the normal entry or departure first.
+            var rotation = vehicle.Transform.World.ToQuaternion();
+            var (roll, pitch, yaw) = PositionAndRotation.ToRollPitchYawShorts(rotation.W < 0 ? -rotation : rotation);
+            var movement = new VehicleMoveType
+            {
+                Type = MoveTypeEnum.Vehicle,
+                Time = (uint)(DateTime.UtcNow - vehicle.SpawnTime).TotalMilliseconds,
+                X = request.Position.X, Y = request.Position.Y, Z = request.Position.Z,
+                RotationX = roll, RotationY = pitch, RotationZ = yaw
+            };
+            vehicle.BroadcastPacket(new SCOneUnitMovementPacket(vehicle.ObjId, movement), false);
+            return true;
+        }
     }
 
     internal static IEnumerable<CryGeometryInstance> QueryPlacementUnits(IEnumerable<CryGeometryInstance> units,
