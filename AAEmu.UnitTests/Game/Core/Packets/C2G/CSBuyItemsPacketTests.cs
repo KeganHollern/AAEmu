@@ -223,20 +223,27 @@ public sealed class CSBuyItemsPacketTests
         _function.FuncType = nameof(DoodadFuncPurchase);
         (_function.GroupId, _function.FuncKey, _function.FuncId, _function.SkillId, _function.NextPhase) =
             (15504, 12823, 388, 20365, 15505);
+        _shop.TemplateId = 6008;
+        ConfigureDisplayTimer(6645);
+        _shop.Transform.Local.SetPosition(3.7f, 0, 0);
+    }
+
+    private void ConfigureDisplayTimer(uint timerId)
+    {
+        var openPhase = _function.GroupId;
+        var busyPhase = (uint)_function.NextPhase;
         var manager = DoodadManager.Instance;
-        SetField(manager, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>> { [15504] = [_function] });
+        SetField(manager, "_funcsByGroups", new Dictionary<uint, List<DoodadFunc>> { [openPhase] = [_function] });
         SetField(manager, "_phaseFuncs", new Dictionary<uint, List<DoodadPhaseFunc>>
         {
-            [15505] = [new() { FuncId = 6645, FuncType = nameof(DoodadFuncTimer) }]
+            [busyPhase] = [new() { FuncId = timerId, FuncType = nameof(DoodadFuncTimer) }]
         });
         SetField(manager, "_phaseFuncTemplates", new Dictionary<string, Dictionary<uint, DoodadPhaseFuncTemplate>>
         {
-            [nameof(DoodadFuncTimer)] = new() { [6645] = new DoodadFuncTimer { Id = 6645, Delay = 3000, NextPhase = 15504 } }
+            [nameof(DoodadFuncTimer)] = new() { [timerId] = new DoodadFuncTimer { Id = timerId, Delay = 3000, NextPhase = (int)openPhase } }
         });
-        _shop.TemplateId = 6008;
-        _shop.Template = new DoodadTemplate { Id = 6008, FuncGroups = [new() { Id = 15504 }, new() { Id = 15505 }] };
-        _shop.FuncGroupId = 15504;
-        _shop.Transform.Local.SetPosition(3.7f, 0, 0);
+        _shop.Template = new DoodadTemplate { Id = _shop.TemplateId, FuncGroups = [new() { Id = openPhase }, new() { Id = busyPhase }] };
+        _shop.FuncGroupId = openPhase;
     }
 
     [Test]
@@ -336,8 +343,11 @@ public sealed class CSBuyItemsPacketTests
         _function.FuncKey = 6542;
         _function.FuncId = 25;
         _function.GroupId = 7312;
+        _function.NextPhase = 7313;
         _function.SkillId = 14569;
         _function.FuncType = nameof(DoodadFuncPurchase);
+        Install(new TaskManager(null));
+        ConfigureDisplayTimer(4460);
         _character.Money = 40000;
     }
 
@@ -357,6 +367,26 @@ public sealed class CSBuyItemsPacketTests
         var item = _character.Inventory.Bag.Items.Single();
         await Assert.That(item.TemplateId).IsEqualTo(16197U);
         await Assert.That(item.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task BlueStatueConfirmation_ClosesTheDisplayForThreeSecondsAfterPayment()
+    {
+        OpenBlueStatueDisplay();
+        var start = DateTime.UtcNow;
+        BuyBlueStatue();
+        await Assert.That(_shop.FuncGroupId).IsEqualTo(7313U);
+        var timer = _shop.FuncTask;
+        await Assert.That(timer).IsTypeOf<DoodadFuncTimerTask>();
+        await Assert.That(timer.TriggerTime >= start.AddSeconds(3) && timer.TriggerTime <= DateTime.UtcNow.AddSeconds(3)).IsTrue();
+        BuyBlueStatue();
+        await Assert.That(_character.Money).IsEqualTo(35000L);
+        await Assert.That(_character.Inventory.Bag.Items.Count).IsEqualTo(1);
+        timer.Execute();
+        await Assert.That(_shop.FuncGroupId).IsEqualTo(7312U);
+        BuyBlueStatue();
+        await Assert.That(_character.Money).IsEqualTo(30000L);
+        await Assert.That(_character.Inventory.Bag.Items.Count).IsEqualTo(2);
     }
 
     [Test]
@@ -400,6 +430,8 @@ public sealed class CSBuyItemsPacketTests
 
         await Assert.That(_character.Money).IsEqualTo((long)money);
         await Assert.That(_character.Inventory.Bag.Items).IsEmpty();
+        await Assert.That(_shop.FuncGroupId).IsEqualTo(7312U);
+        await Assert.That(_shop.FuncTask).IsNull();
         await AssertSingleError(expected);
     }
 
