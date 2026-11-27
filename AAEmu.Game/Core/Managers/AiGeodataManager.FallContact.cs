@@ -17,7 +17,18 @@ public partial class AiGeoDataManager
     }
     private readonly record struct InclinedFace(LevelFace Face, Vector2 Gradient);
     private sealed record InclinedGroup(CryBounds Bounds, InclinedFace[] Faces);
-    private sealed record FallFaces(LevelFace[] Level, InclinedGroup[] Inclined);
+    private readonly record struct LevelCylinderCap(Vector3 Center, Vector3 LocalX, Vector3 LocalY, float RadiusSquared)
+    {
+        public bool Touches(Vector3 foot)
+        {
+            var delta = foot - Center;
+            if (MathF.Abs(delta.Z) > FallMovement.PositionTolerance)
+                return false;
+            // Transform the horizontal displacement into shape coordinates, including nonuniform scale.
+            return (delta.X * LocalX + delta.Y * LocalY).LengthSquared() <= RadiusSquared;
+        }
+    }
+    private sealed record FallFaces(LevelFace[] Level, InclinedGroup[] Inclined, LevelCylinderCap[] Caps);
 
     // All r208022 playable models use a minimum fall angle of 50 degrees.
     private static readonly float PlayerFallNormalZ = MathF.Cos(50f * MathF.PI / 180f);
@@ -68,7 +79,7 @@ public partial class AiGeoDataManager
             if (asset == null || asset.Parts.Count == 0)
                 return false;
             faces = _fallFaces.GetOrAdd(brush, static (placement, model) =>
-                ReadFallFaces(placement.Transform, model, includeBoxes: true), asset);
+                ReadFallFaces(placement.Transform, model, includeBrushPrimitives: true), asset);
         }
         return TouchesFallFace(faces, foot, foot - brush.Transform.Translation, playerInclines);
     }
@@ -77,6 +88,9 @@ public partial class AiGeoDataManager
     {
         if (TouchesLevelFace(faces.Level, local))
             return true;
+        foreach (ref readonly var cap in faces.Caps.AsSpan())
+            if (cap.Touches(local))
+                return true;
         if (!playerInclines)
             return false;
         var horizontalRounding = new Vector2(TruncatedSpan(foot.X), TruncatedSpan(foot.Y));
@@ -184,15 +198,16 @@ public partial class AiGeoDataManager
         return false;
     }
 
-    private static FallFaces ReadFallFaces(Matrix4x4 placement, CryGeometryAsset asset, bool includeBoxes)
+    private static FallFaces ReadFallFaces(Matrix4x4 placement, CryGeometryAsset asset, bool includeBrushPrimitives)
     {
         var inclined = new List<InclinedFace>();
-        var level = ReadLevelFaces(placement, asset, inclined, includeBoxes);
-        return new FallFaces(level, GroupInclines(inclined));
+        var caps = includeBrushPrimitives ? new List<LevelCylinderCap>() : null;
+        var level = ReadLevelFaces(placement, asset, inclined, caps);
+        return new FallFaces(level, GroupInclines(inclined), caps?.ToArray() ?? []);
     }
 
     private static LevelFace[] ReadLevelFaces(Matrix4x4 placement, CryGeometryAsset asset,
-        List<InclinedFace> inclined = null, bool includeBoxes = false)
+        List<InclinedFace> inclined = null, List<LevelCylinderCap> brushCaps = null)
     {
         if (asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
             return [];
@@ -205,7 +220,9 @@ public partial class AiGeoDataManager
             if (part.PhysicsType != 0x1000)
                 continue;
             var transform = part.Transform * offset;
-            if (includeBoxes && part.Shape is CryBox box && inclined != null)
+            if (brushCaps != null && part.Shape is CryCylinder { IsCapsule: false } cylinder)
+                AddLevelCylinderCap(brushCaps, cylinder, transform);
+            if (brushCaps != null && part.Shape is CryBox box && inclined != null)
             {
                 AddLevelBoxFace(result, box, transform);
                 AddInclinedBoxFaces(inclined, box, transform);
@@ -237,6 +254,19 @@ public partial class AiGeoDataManager
             }
         }
         return result.ToArray();
+    }
+
+    private static void AddLevelCylinderCap(List<LevelCylinderCap> caps, CryCylinder cylinder, Matrix4x4 transform)
+    {
+        if (cylinder.Radius <= 0 || cylinder.HalfHeight <= 0 || !Matrix4x4.Invert(transform, out var inverse))
+            return;
+        var normal = Vector3.TransformNormal(cylinder.Axis, Matrix4x4.Transpose(inverse));
+        if (normal.X != 0 || normal.Y != 0 || normal.Z == 0)
+            return;
+        var top = cylinder.Center + cylinder.Axis * MathF.CopySign(cylinder.HalfHeight, normal.Z);
+        caps.Add(new LevelCylinderCap(Vector3.Transform(top, transform),
+            Vector3.TransformNormal(Vector3.UnitX, inverse), Vector3.TransformNormal(Vector3.UnitY, inverse),
+            cylinder.Radius * cylinder.Radius));
     }
 
     // For each pair of opposite box faces, only the upward face can support a player.
