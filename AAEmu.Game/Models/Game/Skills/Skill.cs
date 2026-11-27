@@ -104,6 +104,7 @@ public partial class Skill
     internal Character VehicleOperator { get; set; }
     internal AAEmu.Game.Models.Game.Duels.Duel DuelContext { get; set; }
     internal uint SourceItemTemplateId { get; private set; }
+    internal Slave EscapeVehicle { get; private set; }
     internal EquipItem ExpiredCostume { get; private set; }
     private bool _bypassGcd;
     private int _achievementUseRecorded;
@@ -222,6 +223,26 @@ public partial class Skill
         {
             Cancelled = true;
             return SkillResult.InvalidSource;
+        }
+        EscapeVehicle = null;
+        if (Id == EscapeMySlave.OwnerSkill && caster is Character vehicleOwner)
+        {
+            var vehicles = vehicleOwner.ParentWorld?.SlaveManager;
+            var vehicle = vehicles?.GetActiveSlaveByOwnerObjId(vehicleOwner.ObjId);
+            if (vehicle == null)
+            {
+                Cancelled = true;
+                return SkillResult.InvalidTarget;
+            }
+            if (!vehicle.Template.IsABoat())
+            {
+                if (!vehicles.TryLandEscapePlacement(vehicleOwner, vehicle, targetCaster, out _))
+                {
+                    Cancelled = true;
+                    return SkillResult.Failure;
+                }
+                EscapeVehicle = vehicle;
+            }
         }
         ExpiredCostume = null;
         if (Id == RechargeItemBuff.WashSkill && sourceItem?.TemplateId == RechargeItemBuff.Cleaner &&
@@ -921,6 +942,15 @@ public partial class Skill
     private void CastCore(BaseUnit caster, SkillCaster casterCaster, BaseUnit target, SkillCastTarget targetCaster, SkillObject skillObject)
     {
         if (caster is not Unit unit) { return; }
+
+        // The cart can leave or the landing spot can become occupied during the 10-second cast.
+        // Stop before the fired notification and the 30-minute cooldown.
+        if (EscapeVehicle != null && caster is Character owner &&
+            owner.ParentWorld?.SlaveManager.TryLandEscapePlacement(owner, EscapeVehicle, targetCaster, out _) != true)
+        {
+            Stop(caster);
+            return;
+        }
 
         if (!MateRecovery.Validate(caster, casterCaster, targetCaster, this))
         {
@@ -1722,10 +1752,10 @@ public partial class Skill
             // Template can be null for some reason.
             if (effect.Template != null)
             {
-                // SummonPos effects execute on the caster, but SpawnSlave consumes the
-                // original type-1 position target produced by the r208022 skill client.
+                // Summon and escape both use the position selected by the normal client action.
                 var preserveSlavePosition = Template.TargetType == SkillTargetType.SummonPos &&
-                    effect.Template is SpecialEffect { SpecialEffectTypeId: SpecialType.SpawnSlave };
+                    (effect.Template is SpecialEffect { SpecialEffectTypeId: SpecialType.SpawnSlave } ||
+                     EscapeVehicle != null && effect.Template is SpecialEffect { SpecialEffectTypeId: SpecialType.EscapeMySlave });
                 var thisTargetCaster = preserveSlavePosition || ExpiredCostume != null || target.ObjId == targetCaster.ObjId
                     ? targetCaster
                     : new SkillCastUnitTarget(target.ObjId);

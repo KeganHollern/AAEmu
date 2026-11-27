@@ -7,6 +7,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Models;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 using AAEmu.Game.Models.Game.Skills.Templates;
@@ -19,6 +20,48 @@ namespace AAEmu.IntegrationTests.Core.Manager;
 
 public sealed partial class PlayerMailSendPersistenceTests
 {
+    [Fact]
+    public void RidersEscape_NormalRecallSavesTheSelectedCartPositionAndOriginalScroll()
+    {
+        using var fixture = new VehicleRepairGraph(4, 1000, 5);
+        using var scene = new VehiclePlacementScene(fixture);
+        var owner = fixture.Graph.Sender;
+        var cart = scene.Active;
+        var scroll = fixture.Vehicle;
+        scroll.IsDestroyed = 0;
+        scroll.SummonLocation = cart.Transform.World.Position;
+        scroll.IsDirty = true;
+        Assert.True(fixture.Graph.Save.TryCommitEconomy([owner]));
+        Assert.True(cart.Save());
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM slaves WHERE id={cart.Id} AND x=110 AND y=100 AND z=10"));
+
+        var models = new ModelManager();
+        SetField(models, "_modelTypes", new Dictionary<uint, ModelType>());
+        var previousModels = SwapSingleton(models);
+        try
+        {
+            var manager = scene.World.SlaveManager;
+            manager.PlacementGeometry = (_, _, _) => ErrorMessageType.NoErrorMessage;
+            var target = new SkillCastPositionTarget { PosX = 100, PosY = 107, PosZ = 10, PosRot = MathF.PI / 2 };
+            Assert.True(manager.MoveLandVehicle(owner, cart, target));
+            Assert.Same(cart, manager.GetActiveSlaveByOwnerObjId(owner.ObjId));
+            Assert.True(manager.Delete(owner, cart.ObjId));
+            Assert.True(fixture.Graph.Save.DoSave());
+        }
+        finally
+        {
+            SwapSingleton(previousModels);
+        }
+
+        var saved = Assert.IsType<SummonSlave>(fixture.Graph.ReloadLifecycle().Items.GetItemByItemId(scroll.Id));
+        Assert.Equal(cart.Id, saved.SlaveDbId);
+        Assert.Equal(owner.Id, saved.OwnerId);
+        Assert.Equal(scroll.Slot, saved.Slot);
+        Assert.False(saved.HasSummonLocation);
+        Assert.Equal(1, Scalar($"SELECT COUNT(*) FROM slaves WHERE id={cart.Id} AND item_id={saved.Id} " +
+            $"AND owner_id={owner.Id} AND x=100 AND y=107 AND z=10 AND hp=100 AND mp=7"));
+    }
+
     [Theory]
     [InlineData(123.25f, 456.75f)]
     [InlineData(0f, 456.75f)]

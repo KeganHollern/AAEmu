@@ -152,12 +152,13 @@ public static class MovementValidation
         return false;
     }
 
-    internal static void RecordServerRelocation(Character character)
+    internal static void RecordServerRelocation(Unit unit)
     {
-        var arrival = new AcceptedMove(character.Transform.World.Position, DateTime.UtcNow);
-        Movers.AddOrUpdate(character.ObjId, InitialState with { Last = arrival },
+        var arrival = new AcceptedMove(unit.Transform.World.Position, DateTime.UtcNow);
+        Movers.AddOrUpdate(unit.ObjId, InitialState with { Last = arrival },
             (_, previous) => previous with { Last = arrival });
-        SusManager.ResetMovementAnalysis(character);
+        if (unit is Character character)
+            SusManager.ResetMovementAnalysis(character);
     }
 
     /// <summary>
