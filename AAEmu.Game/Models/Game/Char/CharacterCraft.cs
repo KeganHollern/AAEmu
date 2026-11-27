@@ -449,7 +449,7 @@ public class CharacterCraft(Character owner)
         }
         if (batch != null)
         {
-            batch.StageCraftProgress(productProgress);
+            batch.StageAchievementProgress(productProgress);
             batch.AfterCommit(CompleteCraft);
         }
         else

@@ -1826,7 +1826,7 @@ public partial class Skill
             if (player == null)
                 return;
             if (SkillLaborBatch.For(player) is { } batch)
-                batch.AfterCommit(() => player.ItemUseByTemplate(usedItemTemplateId));
+                batch.StageItemUse(usedItemTemplateId);
             else
                 player.ItemUse(skillItem.ItemId);
 
