@@ -309,8 +309,8 @@ public partial class Skill
 
         if (character != null && target is House or Shipyard.Shipyard && Template.TargetType == SkillTargetType.Building &&
             Template.Effects.Find(effect => effect.Template is CraftEffect &&
-                effect.ConsumeItemId != 0 && effect.ConsumeItemCount > 0) is { } packEffect &&
-            GetEquippedConstructionPack(character, packEffect) == null)
+                effect.ConsumeItemId != 0 && effect.ConsumeItemCount > 0) is { } materialEffect &&
+            GetConstructionMaterial(character, materialEffect) == null)
         {
             Cancelled = true;
             return SkillResult.NeedReagent;
@@ -1311,7 +1311,7 @@ public partial class Skill
                         {
                             ApplyEffectsCore(caster, casterCaster, targetSelf, targetCaster, skillObject);
                             if (Template.ConsumeLaborPower > 0 && targetSelf is Doodad && Template.Plot == null && !Template.PlotOnly &&
-                                laborOwner.Achievements?.TracksUse(CharRecordKind.UseSkill, Template.Id) == true)
+                                laborOwner.Achievements?.TracksRecord(CharRecordKind.UseSkill, Template.Id) == true)
                                 RecordUseSkillAchievement(laborOwner, SkillLaborBatch.Current);
                         },
                         ExpiredCostume != null ? ItemTaskType.RechargeBuff :
@@ -1651,14 +1651,14 @@ public partial class Skill
                 if (targetSelf is House or Shipyard.Shipyard && Template.TargetType == SkillTargetType.Building &&
                     lastAppliedEffect.Template is CraftEffect)
                 {
-                    var pack = GetEquippedConstructionPack(player, lastAppliedEffect);
-                    if (pack == null)
+                    var material = GetConstructionMaterial(player, lastAppliedEffect);
+                    if (material == null)
                     {
                         Cancelled = true;
                         return;
                     }
 
-                    consumedItems.Add((pack, lastAppliedEffect.ConsumeItemCount));
+                    consumedItems.Add((material, lastAppliedEffect.ConsumeItemCount));
                 }
                 else if (lastAppliedEffect.ConsumeSourceItem)
                 {
@@ -1922,10 +1922,17 @@ public partial class Skill
         return bows.Count == 0 ? SkillResult.NeedReagent : SkillResult.ItemLocked;
     }
 
-    private static Item GetEquippedConstructionPack(Character character, SkillEffect effect)
+    private static Item GetConstructionMaterial(Character character, SkillEffect effect)
     {
+        bool Available(Item item) => item?.TemplateId == effect.ConsumeItemId &&
+            item.Count - TradeReservation.GetReservedCount(item) >= effect.ConsumeItemCount;
+
         var pack = character.Inventory?.GetEquippedBySlot(EquipmentItemSlot.Backpack);
-        return pack?.TemplateId == effect.ConsumeItemId && pack.Count >= effect.ConsumeItemCount ? pack : null;
+        if (Available(pack))
+            return pack;
+
+        // The Scarecrow Garden uses loose Lumber. Construction packs must be worn.
+        return character.Inventory?.Bag.Items.FirstOrDefault(item => item.Template is not BackpackTemplate && Available(item));
     }
 
     /// <summary>

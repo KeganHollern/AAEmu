@@ -99,6 +99,12 @@ internal sealed class SkillLaborBatch
         }
     }
 
+    public void StageAchievementProgress(CharRecordKind kind, uint value, uint amount = 1)
+    {
+        if (Owner.Achievements?.TracksRecord(kind, value) == true)
+            StageAchievementProgress([new AchievementProgressEvent(kind, value, 0, amount)]);
+    }
+
     public void StageAchievementProgress(IReadOnlyList<AchievementProgressEvent> progress)
     {
         if (progress.Count == 0 || Owner.Achievements == null)
@@ -111,7 +117,7 @@ internal sealed class SkillLaborBatch
     {
         if (itemTemplateId == 0)
             return;
-        if (Owner.Achievements?.TracksUse(CharRecordKind.UseItem, itemTemplateId) != true)
+        if (Owner.Achievements?.TracksRecord(CharRecordKind.UseItem, itemTemplateId) != true)
         {
             AfterCommit(() => Owner.ItemUseByTemplate(itemTemplateId));
             return;
