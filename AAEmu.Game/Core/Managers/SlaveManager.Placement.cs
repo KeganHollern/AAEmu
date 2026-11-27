@@ -208,23 +208,25 @@ public partial class SlaveManager
         return false;
     }
 
-    internal bool TryLandEscapePlacement(Character owner, Slave vehicle, SkillCastTarget target,
+    internal bool TryEscapePlacement(Character owner, Slave vehicle, SkillCastTarget target,
         out SlavePlacementRequest request)
     {
-        var error = CheckLandEscape(owner, vehicle, target, out request);
+        var error = CheckEscape(owner, vehicle, target, out request);
         if (error == ErrorMessageType.NoErrorMessage)
             return true;
         owner.SendErrorMessage(error);
         return false;
     }
 
-    private ErrorMessageType CheckLandEscape(Character owner, Slave vehicle, SkillCastTarget target,
+    private ErrorMessageType CheckEscape(Character owner, Slave vehicle, SkillCastTarget target,
         out SlavePlacementRequest request)
     {
         request = default;
         if (vehicle.AttachmentsRetired || !vehicle.IsVisible || !ReferenceEquals(vehicle.ParentWorld, World) ||
             !ReferenceEquals(vehicle.Summoner, owner) || !ReferenceEquals(owner.ParentWorld, World) ||
             !ReferenceEquals(GetActiveSlaveByOwnerObjId(owner.ObjId), vehicle))
+            return ErrorMessageType.InvalidTarget;
+        if (vehicle.Template.IsABoat() && (World.Physics == null || vehicle.RigidBody == null || vehicle.ShipController == null))
             return ErrorMessageType.InvalidTarget;
         var distance = SkillRange.GetDistance(owner, vehicle);
         if (!float.IsFinite(distance) || distance > 20)
@@ -234,11 +236,14 @@ public partial class SlaveManager
         return CheckPlacementGeometry(owner, vehicle.Template, request, vehicle);
     }
 
-    internal bool MoveLandVehicle(Character owner, Slave vehicle, SkillCastTarget target)
+    internal bool MoveEscapingVehicle(Character owner, Slave vehicle, SkillCastTarget target)
     {
+        if (vehicle.Template.IsABoat())
+            return World.Physics?.MoveEscapingShip(owner, vehicle, target) == true;
+
         lock (vehicle.AttachmentSyncRoot)
         {
-            if (!TryLandEscapePlacement(owner, vehicle, target, out var request))
+            if (!TryEscapePlacement(owner, vehicle, target, out var request))
                 return false;
 
             vehicle.Transform.Local.SetPosition(request.Position, new Vector3(0, 0, request.Yaw));

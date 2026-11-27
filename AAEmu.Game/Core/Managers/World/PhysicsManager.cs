@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
@@ -155,13 +156,12 @@ public class PhysicsManager
                 lastTick = currentTick;
                 _physicsLoopIndex++;
 
-                // 1. Process pending add/remove actions
-                while (_pendingActions.TryDequeue(out var action)) { action(); }
-
                 List<(RigidBody body, JVector vel, bool moving)> snapshot = [];
 
                 lock (_worldLock)
                 {
+                    // Serialize retirement and the next step with a completed Rider's Escape.
+                    while (_pendingActions.TryDequeue(out var action)) { action(); }
 
                     // 2. Take snapshot of bodies for state synchronization
                     foreach (var body in _bodies)
@@ -434,6 +434,42 @@ public class PhysicsManager
 
         slave.Transform.Local.Translate(xDelta, yDelta, zDelta);
         ApplyDeckRotation(slave.Transform.Local, slaveRigidBody.Orientation, slave.ShipController.Replication);
+    }
+
+    internal bool MoveEscapingShip(Character owner, Slave ship, SkillCastTarget target)
+    {
+        // Take the simulation lock before the attachment lock, as a physics step can retire a hull.
+        lock (_worldLock)
+        lock (ship.AttachmentSyncRoot)
+        {
+            if (!SimulationWorld.SlaveManager.TryEscapePlacement(owner, ship, target, out var request))
+                return false;
+
+            var body = ship.RigidBody;
+            body.Position = new JVector(request.Position.X, request.Position.Z, request.Position.Y);
+            body.Orientation = JQuaternion.CreateRotationY(request.Yaw);
+            body.Velocity = JVector.Zero;
+            body.AngularVelocity = JVector.Zero;
+            body.Force = JVector.Zero;
+            body.Torque = JVector.Zero;
+            body.SetActivationState(true);
+
+            _shipWaterfall.Remove(ship);
+            ShipWaterfallInteraction.ClearGroundState(ship);
+            ship.GroundPitchAngle = 0;
+            ship.BankAngle = 0;
+            ship.Speed = 0;
+            ship.StaticObstacleHullDamageContactActive = false;
+            ship.StaticObstacleHullDamageSecondsAccumulator = 0f;
+            ship.StaticObstacleHullDamageNoContactSeconds = 0f;
+            ship.ShipController.Replication.Reset();
+            SyncTransformWithRigidBody(ship);
+            ship.Transform.FinalizeTransform();
+            ship.CreateWaterAndLandSurfaceCache();
+            MovementValidation.RecordServerRelocation(ship);
+            SendUpdatedMovementData(ship, body, TimeSpan.Zero);
+            return true;
+        }
     }
 
     /// <summary>
