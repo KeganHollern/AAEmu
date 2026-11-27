@@ -154,6 +154,65 @@ public sealed partial class FallDamageTests
     }
 
     [Test]
+    public async Task OutdoorFurnace_PlayerLandsOnTheSlopedStoneBeforeTheLandingNotice()
+    {
+        await WithStaticDoodadWorld(async (world, _) =>
+        {
+            world.Template.GetCell(13, 15).VerifyCellLoaded();
+            var template = new DoodadTemplate
+            {
+                Id = 1749, ModelKindId = 1, Model = "cgf://objects/env/01_nuia/001_ndeco/making/ndeco_making_furnace01.cgf",
+                FuncGroups =
+                [
+                    new() { Id = 3332, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Start },
+                    new() { Id = 3333, GroupKindId = DoodadFuncGroups.DoodadFuncGroupKind.Normal }
+                ]
+            };
+            var furnace = Spawn(world, 70, template, new()
+            {
+                X = 13674.676f, Y = 15590.036f, Z = 236.1017f, Yaw = 29.8806f * MathF.PI / 180
+            });
+            var player = new InclinePlayer { ParentWorld = world, Region = furnace.Region, Hp = 9516 };
+            var ground = world.Template.GeoData;
+            // The exposed default collision triangle is 41.063 degrees above horizontal.
+            var foot = Encoded(new Vector3(13674.762f, 15590.14f, 237.43259f));
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, foot + Vector3.UnitZ * 0.04f)).IsFalse();
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, foot - Vector3.UnitZ * 0.04f)).IsFalse();
+            await Assert.That(ground.HasStaticDoodadFallSupport(new FallUnit { ParentWorld = world, Region = furnace.Region }, foot)).IsFalse();
+
+            player.Transform.Local.SetPosition(foot + Vector3.UnitZ * 1.3f);
+            player.ObserveFallMovement(false, 0);
+            player.Transform.Local.SetPosition(foot + Vector3.UnitZ * 0.975f);
+            player.ObserveFallMovement(false, 0.16);
+            await Assert.That(player.Impacts).IsEmpty();
+            player.Transform.Local.SetPosition(foot);
+            player.ObserveFallMovement(false, 0.32);
+            await Assert.That(player.Impacts).IsEquivalentTo(new ushort[] { 3120 });
+            player.ObserveFallMovement(true, 0.42);
+            await Assert.That(player.Impacts.Count).IsEqualTo(1);
+
+            // Across this edge the next physical face is 0.38 m lower and too steep to stand on.
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, Encoded(new(13674.846f, 15590.342f, 237.28285f)))).IsTrue();
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, Encoded(new(13674.857f, 15590.371f, 237.26f)))).IsFalse();
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, Encoded(new(13674.857f, 15590.371f, 236.89719f)))).IsFalse();
+            // The lower lip is 23.81 degrees. The southeast face uses the stock bounds index beyond 2 m.
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, Encoded(new(13674.499f, 15590.774f, 237.17398f)))).IsTrue();
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, Encoded(new(13675.551f, 15588.234f, 237.29785f)))).IsTrue();
+            furnace.FuncGroupId = 3333;
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, foot)).IsFalse();
+            furnace.FuncGroupId = 3332;
+            furnace.ParentObjId = 15;
+            await Assert.That(ground.HasStaticDoodadFallSupport(player, foot)).IsFalse();
+        });
+
+        static Vector3 Encoded(Vector3 point)
+        {
+            var position = Helpers.ConvertPosition(Helpers.ConvertPosition(point.X, point.Y, point.Z));
+            return new Vector3(position.x, position.y, position.z);
+        }
+    }
+
+    [Test]
     public async Task OutdoorFurnace_ConfirmsFirstFarLandingAndKeepsItsEdgeOpen()
     {
         await WithStaticDoodadWorld(async (world, housing) =>
