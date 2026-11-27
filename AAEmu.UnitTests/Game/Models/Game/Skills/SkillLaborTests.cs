@@ -157,12 +157,28 @@ public sealed partial class SkillLaborTests
     [Arguments(false)]
     public async Task VocationReward_JoinsTheLaborCheckpoint(bool succeeds)
     {
+        using var data = new CharacterAchievementsTests.AchievementDataBuilder();
+        data.AddAchievement(376, 100, false);
+        data.AddRecord(606, CharRecordKind.GetLifePoint, 0);
+        data.AddObjective(1, 376, 606);
+        var achievements = new CharacterAchievements(_owner, data.Build());
+        typeof(Character).GetField("<Achievements>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(_owner, achievements);
+        _owner.ChangeGamePoints(GamePointKind.Vocation, 10);
+        await Assert.That(_owner.TrySpendGamePoints(GamePointKind.Vocation, 6)).IsTrue();
         var skill = NewSkill();
-        skill.CommitLaborBatch = (_, _) => succeeds;
+        uint lifetimeAtSave = 0;
+        skill.CommitLaborBatch = (_, _) =>
+        {
+            lifetimeAtSave = achievements.GetAmount(376);
+            return succeeds;
+        };
         var result = SkillLaborBatch.Run(_owner, skill, true, () =>
             _owner.ChangeGamePoints(GamePointKind.Vocation, 7));
         await Assert.That(result).IsEqualTo(succeeds);
-        await Assert.That(_owner.VocationPoint).IsEqualTo(succeeds ? 7 : 0);
+        await Assert.That(lifetimeAtSave).IsEqualTo(17u);
+        await Assert.That(achievements.GetAmount(376)).IsEqualTo(succeeds ? 17u : 10u);
+        await Assert.That(_owner.VocationPoint).IsEqualTo(succeeds ? 11 : 4);
         await Assert.That(_owner.LaborPower).IsEqualTo((short)(succeeds ? 10 : 20));
     }
 
