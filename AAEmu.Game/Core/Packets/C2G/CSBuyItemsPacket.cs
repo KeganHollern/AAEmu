@@ -169,6 +169,8 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
         var result = purchase.TryPurchase(character);
         if (result != ErrorMessageType.NoErrorMessage)
             character.SendErrorMessage(result);
+        else if (display.NextPhase > 0 && display.NextPhase != display.GroupId)
+            doodad.DoChangePhase(character, display.NextPhase);
     }
 
     private void SendPurchaseError(StorePurchaseError error)
