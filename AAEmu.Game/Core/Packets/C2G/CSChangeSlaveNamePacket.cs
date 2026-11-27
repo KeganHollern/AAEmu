@@ -7,9 +7,9 @@ public class CSChangeSlaveNamePacket() : GamePacket(CSOffsets.CSChangeSlaveNameP
 {
     public override void Read(PacketStream stream)
     {
-        var tl = stream.ReadUInt16();
+        var tlId = stream.ReadUInt16();
         var name = stream.ReadString();
-
-        Logger.Debug("ChangeSlaveName, Tl: {0}, Name: {1}", tl, name);
+        var owner = Connection.ActiveChar;
+        owner?.ParentWorld?.SlaveManager.RenameVehicle(owner, tlId, name);
     }
 }

@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
@@ -15,6 +16,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Models;
+using AAEmu.Game.Models.Game.Names;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Buffs;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
@@ -49,6 +51,30 @@ public partial class SlaveManager(WorldInstance parentWorldInstance)
             var slaves = World.GetAllSlaves();
             return slaves.FirstOrDefault(slave => slave.Summoner?.ObjId == objId && !slave.IsDead &&
                 slave.ParentObj is not Slave && slave.OwnerType != BaseUnitType.Slave);
+        }
+    }
+
+    internal void RenameVehicle(Character owner, ushort tlId, string name)
+    {
+        if (owner == null || NameRules.Validate(name, NameType.Summon) != NameValidationResult.Valid)
+            return;
+
+        var vehicle = GetActiveSlaveByOwnerObjId(owner.ObjId);
+        if (vehicle == null || vehicle.TlId != tlId)
+            return;
+
+        lock (SaveManager.PersistenceSyncRoot)
+        lock (vehicle.AttachmentSyncRoot)
+        {
+            if (!ReferenceEquals(vehicle.Summoner, owner) || vehicle.OwnerId != owner.Id ||
+                vehicle.OwnerType != BaseUnitType.Character || vehicle.Id == 0 ||
+                vehicle.SummoningItem is not SummonSlave scroll || scroll.SlaveDbId != vehicle.Id ||
+                vehicle.AttachmentsRetired || vehicle.IsDead || !vehicle.IsVisible ||
+                !WorldManager.GetAround<Slave>(owner).Contains(vehicle))
+                return;
+
+            vehicle.Name = name.FirstCharToUpper();
+            vehicle.BroadcastPacket(new SCUnitNameChangedPacket(vehicle.ObjId, vehicle.Name), false);
         }
     }
 
