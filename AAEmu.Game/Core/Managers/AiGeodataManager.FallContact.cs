@@ -39,7 +39,7 @@ public partial class AiGeoDataManager
             return (origin + (float)parameter * direction).LengthSquared() <= RadiusSquared;
         }
     }
-    private readonly record struct SphereSurface(CryGeometryPart Part, CryBounds Bounds)
+    private readonly record struct CurvedSurface(CryGeometryPart Part, CryBounds Bounds)
     {
         public bool Touches(Vector3 foot, Vector2 rounding)
         {
@@ -58,12 +58,13 @@ public partial class AiGeoDataManager
 
         private bool TouchesAt(Vector3 foot) =>
             CryGeometryQueries.Raycast(Part, Matrix4x4.Identity, foot + Vector3.UnitZ * FallMovement.PositionTolerance,
-                -Vector3.UnitZ, 2 * FallMovement.PositionTolerance, true, out var hit) && hit.Normal.Z > PlayerFallNormalZ;
+                -Vector3.UnitZ, 2 * FallMovement.PositionTolerance, true, out var hit, null, includeCylinderEnds: false) &&
+            hit.Normal.Z > PlayerFallNormalZ;
     }
 
     private sealed record FallFaces(LevelFace[] Level, InclinedGroup[] Inclined, CylinderCap[] Caps)
     {
-        public SphereSurface[] Spheres { get; init; } = [];
+        public CurvedSurface[] CurvedSurfaces { get; init; } = [];
     }
 
     // All r208022 playable models use a minimum fall angle of 50 degrees.
@@ -130,8 +131,8 @@ public partial class AiGeoDataManager
                 return true;
         if (!playerInclines)
             return false;
-        foreach (ref readonly var sphere in faces.Spheres.AsSpan())
-            if (sphere.Touches(local, horizontalRounding))
+        foreach (ref readonly var surface in faces.CurvedSurfaces.AsSpan())
+            if (surface.Touches(local, horizontalRounding))
                 return true;
         foreach (var group in faces.Inclined)
         {
@@ -255,13 +256,13 @@ public partial class AiGeoDataManager
     {
         var inclined = new List<InclinedFace>();
         var caps = includeBrushPrimitives ? new List<CylinderCap>() : null;
-        var spheres = includeBrushPrimitives ? new List<SphereSurface>() : null;
-        var level = ReadLevelFaces(placement, asset, inclined, caps, spheres);
-        return new FallFaces(level, GroupInclines(inclined), caps?.ToArray() ?? []) { Spheres = spheres?.ToArray() ?? [] };
+        var curvedSurfaces = includeBrushPrimitives ? new List<CurvedSurface>() : null;
+        var level = ReadLevelFaces(placement, asset, inclined, caps, curvedSurfaces);
+        return new FallFaces(level, GroupInclines(inclined), caps?.ToArray() ?? []) { CurvedSurfaces = curvedSurfaces?.ToArray() ?? [] };
     }
 
     private static LevelFace[] ReadLevelFaces(Matrix4x4 placement, CryGeometryAsset asset,
-        List<InclinedFace> inclined = null, List<CylinderCap> brushCaps = null, List<SphereSurface> brushSpheres = null)
+        List<InclinedFace> inclined = null, List<CylinderCap> brushCaps = null, List<CurvedSurface> brushCurvedSurfaces = null)
     {
         if (asset.HasAnimatedCollision || asset.PoseRequirements.Any(pose => pose.AffectsCollision))
             return [];
@@ -274,10 +275,10 @@ public partial class AiGeoDataManager
             if (part.PhysicsType != 0x1000)
                 continue;
             var transform = part.Transform * offset;
-            if (brushSpheres != null && part.Shape is CrySphere { Radius: > 0 } && Matrix4x4.Invert(transform, out _))
+            if (brushCurvedSurfaces != null && HasCurvedFallSurface(part.Shape, transform) && Matrix4x4.Invert(transform, out _))
             {
-                var sphere = part with { Transform = transform };
-                brushSpheres.Add(new SphereSurface(sphere, CryGeometryQueries.GetBounds(sphere, Matrix4x4.Identity)));
+                var surface = part with { Transform = transform };
+                brushCurvedSurfaces.Add(new CurvedSurface(surface, CryGeometryQueries.GetBounds(surface, Matrix4x4.Identity)));
             }
             if (brushCaps != null && part.Shape is CryCylinder { IsCapsule: false } cylinder)
                 AddCylinderCap(brushCaps, cylinder, transform);
@@ -313,6 +314,17 @@ public partial class AiGeoDataManager
             }
         }
         return result.ToArray();
+    }
+
+    private static bool HasCurvedFallSurface(CryPhysicsShape shape, Matrix4x4 transform)
+    {
+        if (shape is CrySphere { Radius: > 0 })
+            return true;
+        if (shape is not CryCylinder { Radius: > 0, HalfHeight: > 0, IsCapsule: false } cylinder)
+            return false;
+        // A side normal is perpendicular to the transformed axis. Vertical walls cannot support feet.
+        var axis = Vector3.Normalize(Vector3.TransformNormal(cylinder.Axis, transform));
+        return axis.Z * axis.Z < 1f - PlayerFallNormalZ * PlayerFallNormalZ;
     }
 
     private static void AddCylinderCap(List<CylinderCap> caps, CryCylinder cylinder, Matrix4x4 transform)
