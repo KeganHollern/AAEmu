@@ -1,6 +1,7 @@
 ﻿using System.Net;
 
 using AAEmu.Commons.Network;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.L2G;
 using AAEmu.Game.Models;
@@ -19,9 +20,9 @@ public class PendingWorldAdmissionsTests
         var bytes = Convert.FromHexString(Golden);
         for (var length = 0; length < bytes.Length; length++)
             await Assert.That(LGPlayerEnterPacket.TryReadAdmission(new PacketStream(bytes[..length]),
-                out _, out _, out _, out _, out _, out _)).IsFalse();
+                out _, out _, out _, out _, out _, out _, out _, out _)).IsFalse();
         await Assert.That(LGPlayerEnterPacket.TryReadAdmission(new PacketStream([.. bytes, 0]),
-            out _, out _, out _, out _, out _, out _)).IsFalse();
+            out _, out _, out _, out _, out _, out _, out _, out _)).IsFalse();
     }
 
     [Test]
@@ -31,7 +32,7 @@ public class PendingWorldAdmissionsTests
         var bytes = Convert.FromHexString(Golden);
         Array.Clear(bytes, offset, offset == 28 ? 16 : 4);
         await Assert.That(LGPlayerEnterPacket.TryReadAdmission(new PacketStream(bytes),
-            out _, out _, out _, out _, out _, out _)).IsFalse();
+            out _, out _, out _, out _, out _, out _, out _, out _)).IsFalse();
     }
 
     [Test]
@@ -154,6 +155,63 @@ public class PendingWorldAdmissionsTests
         for (var i = 0; i < 3; i++)
             store.Consume(1, 42, ClientAddress, true, out _);
         await Assert.That(store.Consume(1, 42, ClientAddress, true, out _)).IsEqualTo(PendingWorldAccountResult.AddressBlocked);
+    }
+
+    [Test]
+    [Arguments("", true, 0, true)]
+    [Arguments("010000", true, 1, false)]
+    [Arguments("341201", true, 0x1234, true)]
+    [Arguments("FFFF01", true, 65535, true)]
+    [Arguments("000001", false, 0, false)]
+    [Arguments("010002", false, 0, false)]
+    [Arguments("0100", false, 0, false)]
+    [Arguments("01000100", false, 0, false)]
+    public async Task AdmissionPacket_ReadsOptionalPopulationCap(string suffix, bool valid, int expectedCap, bool expectedPermit)
+    {
+        var bytes = Convert.FromHexString(Golden + suffix);
+        var parsed = LGPlayerEnterPacket.TryReadAdmission(new PacketStream(bytes), out _, out _, out _, out _, out _,
+            out _, out var cap, out var permit);
+        await Assert.That(parsed).IsEqualTo(valid);
+        if (valid)
+        {
+            await Assert.That((int)cap).IsEqualTo(expectedCap);
+            await Assert.That(permit).IsEqualTo(expectedPermit);
+        }
+    }
+
+    [Test]
+    public async Task Reserve_LastSeat_ExpiresAtSixtySecondsAndCountsJoiningAccountUntilFinish()
+    {
+        var clock = new TestClock();
+        var store = new PendingWorldAdmissions(clock);
+        var accounts = Mock.Of<IAccountManager>();
+        accounts.GetConnectedAccountIds().Returns(Array.Empty<uint>());
+        WorldAdmissionStatus Reserve(uint account) => store.Reserve(account, account, null, ClientAddress, 1, accounts.Object);
+
+        await Assert.That(Reserve(41)).IsEqualTo(WorldAdmissionStatus.Reserved);
+        clock.Now += PendingWorldAdmissions.Lifetime - TimeSpan.FromTicks(1);
+        await Assert.That(Reserve(42)).IsEqualTo(WorldAdmissionStatus.Waiting);
+        clock.Now += TimeSpan.FromTicks(1);
+        await Assert.That(Reserve(42)).IsEqualTo(WorldAdmissionStatus.Reserved);
+
+        var result = store.Consume(42, 42, ClientAddress, true, out _, beginLogin: true);
+        await Assert.That(result).IsEqualTo(PendingWorldAccountResult.Consumed);
+        clock.Now += PendingWorldAdmissions.Lifetime;
+        await Assert.That(Reserve(43)).IsEqualTo(WorldAdmissionStatus.Waiting);
+        store.FinishLogin(42);
+        await Assert.That(Reserve(43)).IsEqualTo(WorldAdmissionStatus.Reserved);
+    }
+
+    [Test]
+    public async Task Reserve_ConcurrentRequestsForOneSeat_AdmitsOneAccount()
+    {
+        var store = new PendingWorldAdmissions();
+        var accounts = Mock.Of<IAccountManager>();
+        accounts.GetConnectedAccountIds().Returns(Array.Empty<uint>());
+        var results = await Task.WhenAll(Enumerable.Range(1, 32).Select(n => Task.Run(() =>
+            store.Reserve((uint)n, (uint)n, null, ClientAddress, 1, accounts.Object))));
+        await Assert.That(results.Count(status => status == WorldAdmissionStatus.Reserved)).IsEqualTo(1);
+        await Assert.That(results.Count(status => status == WorldAdmissionStatus.Waiting)).IsEqualTo(31);
     }
 
     private sealed class TestClock : TimeProvider
