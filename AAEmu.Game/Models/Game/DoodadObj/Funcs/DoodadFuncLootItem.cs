@@ -65,11 +65,10 @@ public class DoodadFuncLootItem : DoodadFuncTemplate
 
         if (granted)
         {
-            void RecordLoot() => character.Achievements?.Increment(CharRecordKind.GetLootitem, ItemId, 0, (uint)count);
             if (SkillLaborBatch.For(character) is { } batch)
-                batch.AfterCommit(RecordLoot);
+                batch.StageAchievementProgress(CharRecordKind.GetLootitem, ItemId, (uint)count);
             else
-                RecordLoot();
+                character.Achievements?.Increment(CharRecordKind.GetLootitem, ItemId, 0, (uint)count);
         }
 
         if (!granted)
